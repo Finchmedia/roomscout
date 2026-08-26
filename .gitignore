@@ -1,0 +1,15 @@
+node_modules/
+.next/
+dist/
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+.convex/
+tsconfig.tsbuildinfo
+
+# keep large media out of the public repo — serve via Vimeo / Convex storage
+*.mp4
+*.webm
+*.mov
