@@ -9,8 +9,8 @@ A band enters its profile once; RoomScout finds the rehearsal rooms, emails the 
 ## Tooling & deployment decisions (2026-08-26)
 
 - **In-product LLM = OpenAI API only** (that's what judges score: "OpenAI … does real work in your product"). Small/cheap model for bulk extraction; no OpenAI credits are provided, so the shared-directory cache saves OpenAI tokens as well as Firecrawl credits.
-- **Deploy on convex.site.** chatgpt.site would require building with Codex and a different deployment model — optional week-4 stretch goal only.
-- Build tooling is explicitly free choice per the rules ("use your favorite IDE").
+- **Build with Codex** as the primary coding agent (sponsor-aligned, and it keeps the chatgpt.site door open); agent context lives in `AGENTS.md`. Strategy/planning sessions may use other tools — disclosed honestly in the build log.
+- **Deploy on convex.site.** chatgpt.site (which requires Codex) stays an optional week-4 stretch goal.
 
 ## Schema draft (`convex/schema.ts`)
 
