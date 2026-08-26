@@ -6,6 +6,12 @@ Stand: 2026-08-26 · Deadline: 2026-09-22, 12:00 PM PT
 
 A band enters its profile once; RoomScout finds the rehearsal rooms, emails the studios, and streams parsed answers into a live board — while every search grows a shared public room directory.
 
+## Tooling & deployment decisions (2026-08-26)
+
+- **In-product LLM = OpenAI API only** (that's what judges score: "OpenAI … does real work in your product"). Small/cheap model for bulk extraction; no OpenAI credits are provided, so the shared-directory cache saves OpenAI tokens as well as Firecrawl credits.
+- **Deploy on convex.site.** chatgpt.site would require building with Codex and a different deployment model — optional week-4 stretch goal only.
+- Build tooling is explicitly free choice per the rules ("use your favorite IDE").
+
 ## Schema draft (`convex/schema.ts`)
 
 ```
