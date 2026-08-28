@@ -8,6 +8,8 @@ dist/
 *.log
 .convex/
 tsconfig.tsbuildinfo
+playwright-report/
+test-results/
 
 # keep large media out of the public repo — serve via Vimeo / Convex storage
 *.mp4
