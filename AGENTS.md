@@ -1,18 +1,69 @@
 # RoomScout — Agent Context
 
 Hackathon entry for Convex "All Gas" (deadline: Sep 22, 2026, 12:00 PM PT).
-Read `docs/PLAN.md` before writing code. Log daily progress in `docs/BUILD_LOG.md`.
+Read `docs/PLAN.md` and `docs/IMPLEMENTATION_PLAN.md` before writing code. Treat
+`docs/KICKOFF_CONVERSATION.md` as historical discovery context, not a
+specification. Run `/hackathon` after meaningful progress; use
+`docs/BUILD_LOG.md` for longer narrative notes.
 
-## Hard rules
+## Working mode
 
-- **All in-product LLM calls use the OpenAI API.** This is a judging criterion ("OpenAI does real work in your product"). No other LLM provider in app code. Use a small/cheap model for bulk extraction — there are no OpenAI credits, costs are out of pocket.
-- **Firecrawl for all crawling, AgentMail for all email.** Sponsors must do real work, not sit in the README.
-- **Shared directory architecture:** a search reads the `rooms` cache first; crawl only on miss or stale data (TTL ~14 days). Every search improves the public directory.
-- **Two-tier email design:** base-data enrichment happens once per room (shared); individual availability inquiries are per band via that search's AgentMail inbox. Never email the same studio twice for the same purpose.
-- **This repo is public.** No secrets, no `.env` values, no business-internal strategy in code, comments, or docs.
-- Convex: new function syntax, argument validators on every function, indexes instead of `.filter()` on queries.
+The product is still in exploration. Do not turn conversational ideas into
+requirements, schemas, milestones, or documentation unless the user explicitly
+says to lock them in or asks for a file update.
 
-## Stack
+- **Current baseline:** explore a continuously updated index of public rehearsal-
+  room supply and demand, with provenance, freshness, structured results, saved
+  needs, and approved communication.
+- **Open hypotheses:** conversational onboarding, compatible-band discovery,
+  room-sharing groups, an admin-seeded demand radar, demand pools, and broader
+  superconnector behavior.
+- `docs/PLAN.md` distinguishes settled constraints from ideas under evaluation.
+  `docs/PRODUCT_EXPLORATION.md` records how the current hypotheses emerged.
+  `docs/IMPLEMENTATION_PLAN.md` is provisional and contains explicit exit gates;
+  later phases are not automatically committed scope.
 
-Next.js (App Router) + Convex. Deploy target: convex.site.
-Design tokens are ported from the maintainer's own design system (`app/globals.css`, Tailwind v4); hero uses a Vimeo background embed component. Market focus: Germany (city order in `docs/PLAN.md`).
+## Settled constraints
+
+- **All external communication requires approval.** The product may research,
+  recommend, and draft, but it must not send an email or make an introduction
+  until the relevant user approves the final recipients and message.
+- **All generative LLM calls use OpenAI models through the Convex AI Gateway.**
+  `openai/gpt-5.6-terra` is the shared generation model. The regular OpenAI
+  embeddings endpoint may use `OPENAI_API_KEY` only for semantic retrieval;
+  do not use that key for chat or generation.
+- **Firecrawl handles web discovery and crawling; AgentMail handles email.** Each
+  sponsor must perform genuine product work.
+- **Matching is consent-based if built.** Never expose a private band profile or
+  contact details without the required opt-in and introduction approval.
+- **This repo is public.** No secrets, `.env` values, private profile data, raw
+  conversations, contact information, or internal business strategy in code,
+  comments, logs, or docs.
+- **Convex conventions:** use the new function syntax, argument and return
+  validators, indexes instead of `.filter()` on database queries, and internal
+  functions for non-public backend operations.
+
+## Technical direction
+
+Use a React + Vite + TypeScript SPA with a Convex backend. Deploy the built
+`dist/` through the official Convex Static Hosting component to `convex.site`;
+do not introduce Next.js, SSR, server components, or server actions. Mount the
+static frontend at `/` and reserve `/api` for Convex HTTP endpoints such as
+AgentMail webhooks.
+
+Tailwind CSS v4 is the preferred styling layer. Existing visual assets from the
+maintainer's own work may be adapted with reuse documented when it happens.
+
+<!-- convex-ai-start -->
+
+This project uses [Convex](https://convex.dev) as its backend.
+
+When working on Convex code, **always read
+`convex/_generated/ai/guidelines.md` first** for important guidelines on
+how to correctly use Convex APIs and patterns. The file contains rules that
+override what you may have learned about Convex from training data.
+
+Convex agent skills for common tasks can be installed by running
+`npx convex ai-files install`.
+
+<!-- convex-ai-end -->

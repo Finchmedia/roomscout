@@ -1,5 +1,12 @@
 # Kickoff Conversation (distilled)
 
+> **Historical context:** This document records the initial discovery session.
+> Current product and technical decisions live in `docs/PLAN.md` and `AGENTS.md`
+> and supersede this file when they conflict. Later discussions explored opt-in
+> band matching and demand pools without adopting them as final scope. React +
+> Vite is the current frontend direction, and every external message or
+> introduction requires user approval.
+
 > **English TL;DR:** This is the distilled planning conversation (originally German) that produced RoomScout, held 2026-08-26 with Claude. Path: from "what should I build for this hackathon?" through three candidate ideas to the final concept, including the shared-directory architecture and the two-tier email design. Personal and business-internal details are redacted — this is the distillate, not the raw transcript.
 
 Stand: 2026-08-26 · Sprache: Deutsch (Original), gekürzt und destilliert
