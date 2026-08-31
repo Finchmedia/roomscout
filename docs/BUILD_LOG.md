@@ -388,3 +388,18 @@ than silently pretending the source does not exist.
 The expanded validation suite now passes 133 tests across 32 files plus
 TypeScript. No provider credential was introduced and no external write was
 performed.
+
+## 2026-08-31 — Deployed Realtime proof and hardened webhook configuration
+
+Completed the previously outstanding deployed Voice proof through the production
+SPA. A dedicated test identity signed up through Convex Auth v2, opened the Scout,
+granted a synthetic browser microphone stream, established the real OpenAI
+Realtime WebRTC session, reached `Listening`, and closed cleanly at `Ended`.
+There were no browser console or page errors. Raw audio was not persisted.
+
+Generated independent strong Firecrawl webhook bearer secrets for Development
+and Production, configured the correct deployment-specific webhook URLs, kept
+Native Monitors explicitly disabled, and generated stable AgentMail mailbox
+address salts. Unauthenticated production calls to the Firecrawl webhook and
+Realtime endpoint return HTTP 401. AgentMail intentionally reports unavailable
+until its actual API key and provider-issued Svix signing secret are configured.

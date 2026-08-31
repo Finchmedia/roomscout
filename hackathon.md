@@ -200,3 +200,13 @@ automated access mechanisms without written consent. This keeps a major market
 source visible in the operator intelligence layer without pretending it is a
 permitted Browserbase target. Validation reached 133 tests across 32 files;
 controlled provider writes remain pending fresh production credentials.
+
+### 2026-08-31 - Production Realtime WebRTC proof
+
+Proved the deployed Voice Scout end to end through the production SPA: Convex
+Auth v2 sign-up, protected Scout route, synthetic microphone permission, real
+OpenAI Realtime session establishment, `Listening`, and clean `Ended` teardown.
+No console/page errors occurred and no raw audio was stored. Firecrawl webhook
+URLs and independent bearer secrets plus stable AgentMail address salts are now
+configured in Development and Production; Native Monitors remain explicitly off
+until the Firecrawl API key and reviewed pilot activation are available.
