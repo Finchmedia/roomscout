@@ -412,6 +412,15 @@ hr { border: 0; border-top: 1px solid var(--gray-800); }
 .metric .v small { margin-left: 7px; color: var(--gray-500); font-size: 11px; font-weight: 500; }
 .metric.warning { border-color: rgb(242 191 105 / 35%); }
 .rs-ops-overview__columns { grid-template-columns: minmax(330px, .8fr) minmax(0, 1.2fr); }
+.rs-provider-readiness { margin-top: 17px; }
+.rs-provider-readiness__summary { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.rs-provider-readiness__summary p { max-width: 800px; margin: 0; font-size: 12px; }
+.rs-provider-readiness__list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
+.rs-provider-readiness__item { min-width: 0; padding: 13px; background: var(--black-40); border: 1px solid var(--gray-800); border-radius: 8px; }
+.rs-provider-readiness__heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.rs-provider-readiness__heading h3 { margin: 0; color: #fff; font-size: 13px; }
+.rs-provider-readiness__checks { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 11px; }
+.rs-provider-readiness__item .hint { line-height: 1.45; }
 .rs-source-intelligence-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .rs-ops-commandbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .rs-ops-commandbar p { max-width: 760px; margin: 5px 0 0; font-size: 12px; }
@@ -671,7 +680,7 @@ hr { border: 0; border-top: 1px solid var(--gray-800); }
   .rs-mobile-tabs a { display: grid; place-items: center; align-content: center; gap: 4px; color: var(--gray-500); font-size: 10px; }
   .rs-mobile-tabs a.on { color: var(--signal); }
   .rs-mobile-tabs .cnt { display: none; }
-  .cols, .rs-scout-layout, .rs-scout-home-layout, .rs-ops-overview__columns, .rs-memory-layout, .rs-source-intelligence-grid, .rs-ops-detail-columns, .rs-portal-ops-grid { grid-template-columns: 1fr; }
+  .cols, .rs-scout-layout, .rs-scout-home-layout, .rs-ops-overview__columns, .rs-memory-layout, .rs-source-intelligence-grid, .rs-ops-detail-columns, .rs-portal-ops-grid, .rs-provider-readiness__list { grid-template-columns: 1fr; }
   .rs-scout-layout .rs-search-profile .lcard-body { min-height: auto; }
   .tools { align-items: stretch; flex-wrap: wrap; }
   .tools > .input { flex: 1 1 100%; }

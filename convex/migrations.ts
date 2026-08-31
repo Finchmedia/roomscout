@@ -138,3 +138,144 @@ export const seedPilotSourceIntelligence = internalMutation({
     return { geoAreas, platforms, links, coverage };
   },
 });
+
+const RESTRICTED_PLATFORM_POLICIES = [
+  {
+    slug: "kleinanzeigen",
+    name: "Kleinanzeigen",
+    canonicalDomain: "kleinanzeigen.de",
+    kind: "classifieds" as const,
+    evidenceUrls: [
+      "https://themen.kleinanzeigen.de/nutzungsbedingungen/",
+      "https://themen.kleinanzeigen.de/ip-eingeschraenkt/",
+    ],
+    flows: ["discovery", "listing", "contact", "reply", "auth"] as const,
+  },
+] as const;
+
+/**
+ * Records known negative capabilities as first-class source intelligence.
+ *
+ * A restricted platform remains visible to operators, but it cannot appear in
+ * musician source preferences or acquire an executable adapter. This migration
+ * intentionally stores only public policy URLs and normalized decisions.
+ */
+export const seedKnownRestrictedPolicies = internalMutation({
+  args: {},
+  returns: v.object({ platforms: v.number(), policies: v.number(), coverage: v.number() }),
+  handler: async (ctx) => {
+    const now = Date.now();
+    let platforms = 0;
+    let policies = 0;
+    let coverage = 0;
+
+    for (const seed of RESTRICTED_PLATFORM_POLICIES) {
+      let platform = await ctx.db
+        .query("sourcePlatforms")
+        .withIndex("by_canonical_domain", (q) =>
+          q.eq("canonicalDomain", seed.canonicalDomain),
+        )
+        .unique();
+      if (platform === null) {
+        const platformId = await ctx.db.insert("sourcePlatforms", {
+          slug: seed.slug,
+          name: seed.name,
+          canonicalDomain: seed.canonicalDomain,
+          kind: seed.kind,
+          status: "restricted",
+          firstSeenAt: now,
+          lastObservedAt: now,
+          createdAt: now,
+          updatedAt: now,
+        });
+        platform = await ctx.db.get(platformId);
+        platforms += 1;
+      } else if (platform.status !== "restricted") {
+        await ctx.db.patch(platform._id, {
+          status: "restricted",
+          lastObservedAt: now,
+          updatedAt: now,
+        });
+        platform = await ctx.db.get(platform._id);
+      }
+      if (platform === null) continue;
+
+      const pilotCities = await ctx.db
+        .query("geoAreas")
+        .withIndex("by_country_code_and_type", (q) =>
+          q.eq("countryCode", "DE").eq("type", "city"),
+        )
+        .collect();
+      for (const geoArea of pilotCities) {
+        for (const side of ["supply", "demand"] as const) {
+          const existingCoverage = await ctx.db
+            .query("sourceCoverage")
+            .withIndex("by_platform_and_geo_area_and_side", (q) =>
+              q.eq("platformId", platform!._id).eq("geoAreaId", geoArea._id).eq("side", side),
+            )
+            .first();
+          if (existingCoverage !== null) continue;
+          await ctx.db.insert("sourceCoverage", {
+            platformId: platform._id,
+            geoAreaId: geoArea._id,
+            side,
+            mode: "nationwide",
+            status: "unsupported",
+            confidence: 1,
+            lastObservedAt: now,
+            evidenceUrl: seed.evidenceUrls[0],
+            createdAt: now,
+            updatedAt: now,
+          });
+          coverage += 1;
+        }
+      }
+
+      for (const flow of seed.flows) {
+        const scopeKey = `${seed.slug}:${flow}`;
+        const existing = await ctx.db
+          .query("sourceFlowPolicies")
+          .withIndex("by_scope_key_and_flow_and_status", (q) =>
+            q.eq("scopeKey", scopeKey).eq("flow", flow).eq("status", "restricted"),
+          )
+          .unique();
+        if (existing !== null) continue;
+
+        const latest = await ctx.db
+          .query("sourceFlowPolicies")
+          .withIndex("by_scope_key_and_flow_and_version", (q) =>
+            q.eq("scopeKey", scopeKey).eq("flow", flow),
+          )
+          .order("desc")
+          .first();
+        if (latest !== null && latest.status !== "superseded") {
+          await ctx.db.patch(latest._id, { status: "superseded", updatedAt: now });
+        }
+        await ctx.db.insert("sourceFlowPolicies", {
+          platformId: platform._id,
+          scopeKey,
+          flow,
+          version: (latest?.version ?? 0) + 1,
+          status: "restricted",
+          decision: "prohibited",
+          maxAutomationLevel: "disabled",
+          userConnectionRequired: flow === "contact" || flow === "reply" || flow === "auth",
+          humanPresenceRequired: true,
+          accountCreationAllowed: false,
+          externalApprovalRequired: true,
+          robotsDecision: "unknown",
+          termsDecision: "disallowed",
+          retentionDays: 0,
+          evidenceUrls: [...seed.evidenceUrls],
+          approvedAt: now,
+          nextReviewAt: now + 30 * 24 * 60 * 60 * 1_000,
+          createdAt: now,
+          updatedAt: now,
+        });
+        policies += 1;
+      }
+    }
+
+    return { platforms, policies, coverage };
+  },
+});

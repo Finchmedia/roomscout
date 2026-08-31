@@ -362,3 +362,29 @@ mobile skip). The integrated backend and SPA were redeployed to
 HTTP 200. No live Firecrawl, AgentMail, or Browserbase write was performed: a
 fresh Browserbase key and the remaining provider configuration are still
 required for controlled proofs.
+
+## 2026-08-31 — Provider preflight and evidence-backed negative capabilities
+
+Added an operator-only Provider Readiness panel. It reports safe booleans and
+reasons for Firecrawl, AgentMail, Browserbase, Mapbox, OpenAI Direct/Realtime,
+and the browser Mapbox token without returning any environment value. Presence
+is deliberately not labelled provider acceptance; the panel distinguishes
+configuration readiness from a completed live proof.
+
+Ran a read-only live contract check against the current Bandnet contact form.
+The labels `Dein Name`, `Deine E-Mail-Adresse`, `Betreff`, and `Nachricht`, their
+control IDs, the `E-Mail senden` submit label, and the `/kontaktieren` form action
+match the reviewed Firecrawl workflow. The verifier filled and clicked nothing,
+and is available as `npm run verify:bandnet-form` for future drift checks.
+
+Recorded Kleinanzeigen as a negative capability rather than creating an unsafe
+Browserbase adapter. Its current official terms require registration for
+messages and prohibit automated crawlers/scrapers or other automated access
+mechanisms without written consent. The idempotent migration stores the public
+evidence URLs and restricted policies for discovery, listing, contact, reply,
+and auth. Pilot-city source coverage shows it as unavailable and excluded rather
+than silently pretending the source does not exist.
+
+The expanded validation suite now passes 133 tests across 32 files plus
+TypeScript. No provider credential was introduced and no external write was
+performed.

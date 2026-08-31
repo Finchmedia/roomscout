@@ -1,7 +1,10 @@
-import { usePaginatedQuery, useQuery } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
+import { useAction, usePaginatedQuery, useQuery } from "convex/react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../../convex/_generated/api";
 import { WorkspaceShell } from "../../components/navigation/WorkspaceShell";
+import { ProviderReadinessPanel } from "../../components/ops/ProviderReadinessPanel";
 import { EmptyState, LedgerCard, PageHeader } from "../../components/ui/LedgerCard";
 import { formatAge, toneForStatus, titleCase } from "./opsFormat";
 
@@ -10,6 +13,45 @@ export function OpsOverviewPage() {
   const platforms = usePaginatedQuery(api.sourceIntelligence.listPlatforms, {}, { initialNumItems: 50 });
   const newCandidates = usePaginatedQuery(api.sourceIntelligence.listCandidates, { status: "new" }, { initialNumItems: 50 });
   const portalConnections = useQuery(api.portalConnections.listMine, {});
+  const checkProviderReadiness = useAction(api.opsActions.providerReadiness);
+  const [providerReadiness, setProviderReadiness] = useState<
+    FunctionReturnType<typeof api.opsActions.providerReadiness> | null
+  >(null);
+  const [providerReadinessLoading, setProviderReadinessLoading] = useState(true);
+  const [providerReadinessError, setProviderReadinessError] = useState<string | null>(null);
+  const refreshProviderReadiness = useCallback(() => {
+    setProviderReadinessLoading(true);
+    setProviderReadinessError(null);
+    void checkProviderReadiness({})
+      .then(setProviderReadiness)
+      .catch((error: unknown) => {
+        setProviderReadinessError(
+          error instanceof Error ? error.message : "Provider readiness check failed.",
+        );
+      })
+      .finally(() => setProviderReadinessLoading(false));
+  }, [checkProviderReadiness]);
+
+  useEffect(() => {
+    let active = true;
+    void checkProviderReadiness({})
+      .then((result) => {
+        if (active) setProviderReadiness(result);
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setProviderReadinessError(
+            error instanceof Error ? error.message : "Provider readiness check failed.",
+          );
+        }
+      })
+      .finally(() => {
+        if (active) setProviderReadinessLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [checkProviderReadiness]);
 
   if (overview === undefined) {
     return (
@@ -84,6 +126,13 @@ export function OpsOverviewPage() {
           )}
         </LedgerCard>
       </div>
+      <ProviderReadinessPanel
+        error={providerReadinessError}
+        frontendMapboxConfigured={Boolean(import.meta.env.VITE_MAPBOX_ACCESS_TOKEN?.trim())}
+        loading={providerReadinessLoading}
+        onRefresh={refreshProviderReadiness}
+        readiness={providerReadiness}
+      />
     </WorkspaceShell>
   );
 }

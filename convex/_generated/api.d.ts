@@ -34,6 +34,7 @@ import type * as integrations_monitorReconciliation from "../integrations/monito
 import type * as integrations_piiRedaction from "../integrations/piiRedaction.js";
 import type * as integrations_portalSafety from "../integrations/portalSafety.js";
 import type * as integrations_portalWriteAdapters from "../integrations/portalWriteAdapters.js";
+import type * as integrations_providerReadiness from "../integrations/providerReadiness.js";
 import type * as integrations_sourceEntryExtraction from "../integrations/sourceEntryExtraction.js";
 import type * as integrations_sourceProbeAdapters from "../integrations/sourceProbeAdapters.js";
 import type * as integrations_structuredConvexGateway from "../integrations/structuredConvexGateway.js";
@@ -109,6 +110,7 @@ declare const fullApi: ApiFromModules<{
   "integrations/piiRedaction": typeof integrations_piiRedaction;
   "integrations/portalSafety": typeof integrations_portalSafety;
   "integrations/portalWriteAdapters": typeof integrations_portalWriteAdapters;
+  "integrations/providerReadiness": typeof integrations_providerReadiness;
   "integrations/sourceEntryExtraction": typeof integrations_sourceEntryExtraction;
   "integrations/sourceProbeAdapters": typeof integrations_sourceProbeAdapters;
   "integrations/structuredConvexGateway": typeof integrations_structuredConvexGateway;

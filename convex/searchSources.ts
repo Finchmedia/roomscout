@@ -50,7 +50,7 @@ export const listForNeed = query({
     for (const [platformKey, coverage] of byPlatform) {
       const platformId = (coverage.supply ?? coverage.demand)!.platformId;
       const platform = await ctx.db.get(platformId);
-      if (platform === null || platform.status === "restricted") continue;
+      if (platform === null) continue;
       const observed = [coverage.supply?.lastObservedAt, coverage.demand?.lastObservedAt].filter((value): value is number => value !== undefined);
       sources.push({
         platformId,
@@ -61,7 +61,9 @@ export const listForNeed = query({
         demandStatus: coverage.demand?.status,
         confidence: Math.max(coverage.supply?.confidence ?? 0, coverage.demand?.confidence ?? 0),
         lastObservedAt: observed.length ? Math.max(...observed) : undefined,
-        preference: preferenceByPlatform.get(platformKey) ?? "neutral" as const,
+        preference: platform.status === "restricted"
+          ? "exclude" as const
+          : preferenceByPlatform.get(platformKey) ?? "neutral" as const,
       });
     }
     return {

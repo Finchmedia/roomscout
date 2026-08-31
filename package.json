@@ -11,6 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "verify:bandnet-form": "node scripts/verify-bandnet-form.mjs",
     "convex:dev": "convex dev",
     "deploy": "npx @convex-dev/static-hosting deploy"
   },

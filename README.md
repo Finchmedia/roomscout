@@ -95,6 +95,13 @@ Only the reviewed Bandnet public-form workflow is production-shaped today;
 authenticated portal writes still require a reviewed real-source adapter.
 Translation is a later step.
 
+The Ops cockpit includes a provider-readiness preflight that never returns
+environment values. Known sources may also be explicitly restricted: for
+example, Kleinanzeigen is visible to operators but unavailable to musician
+searches because its current terms prohibit automated access without written
+permission. A read-only live Bandnet form-contract check can be rerun with
+`npm run verify:bandnet-form`.
+
 ## Local development
 
 ```sh

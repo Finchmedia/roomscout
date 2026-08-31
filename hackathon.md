@@ -185,3 +185,18 @@ Backend and SPA were redeployed successfully; live Health, Landing, Explore, and
 Map return HTTP 200. No provider-backed write was claimed: controlled Firecrawl,
 AgentMail, and Browserbase proofs still require fresh configured credentials,
 including rotation of the Browserbase key that appeared in chat.
+
+### 2026-08-31 - Provider readiness and policy evidence
+
+Added an operator-only Provider Readiness panel that exposes configuration
+states and safe reasons without exposing environment values. A read-only live
+contract verifier confirmed that the reviewed Bandnet Firecrawl workflow still
+matches the current form labels, control IDs, submit label, and action URL; it
+performed no fill or click.
+
+RoomScout now also records negative capabilities. Kleinanzeigen is represented
+as restricted and unavailable because its current official terms prohibit
+automated access mechanisms without written consent. This keeps a major market
+source visible in the operator intelligence layer without pretending it is a
+permitted Browserbase target. Validation reached 133 tests across 32 files;
+controlled provider writes remain pending fresh production credentials.
