@@ -13,8 +13,8 @@ the band send approved inquiries.
 
 This remains a useful product hypothesis. It gives a musician an immediate job
 to do and makes Firecrawl central to the experience. The exploration became more
-complicated after comparing that model with domain experience from Jumper and
-the findings in the Stuttgart rehearsal-room study.
+complicated after comparing that model with prior domain experience and regional
+research into the rehearsal-room market.
 
 ## Structural challenge: useful supply is often invisible
 
@@ -225,7 +225,8 @@ No option is selected yet.
   for later German or European expansion?
 - Does the best demo prove room discovery, demand coordination, or the transition
   between them?
-- Where should RoomScout end and Jumper begin?
+- Which capabilities belong in RoomScout, and which would distract from its
+  standalone user promise?
 
 These questions should be tested before the MVP, schema, or implementation order
 is locked.

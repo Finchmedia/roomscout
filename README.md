@@ -4,6 +4,8 @@
 
 Built for the Convex **"All Gas"** hackathon (Aug 25 – Sep 22, 2026).
 
+**Live prototype:** https://fleet-jackal-83.eu-west-1.convex.site
+
 ## Current product baseline
 
 RoomScout explores a continuously updated discovery layer for a fragmented,
@@ -14,17 +16,24 @@ shared index instead of repeating the same search across many sites.
 The current leading product loop is:
 
 1. maintain an operational registry of reviewed market sources,
-2. use scheduled Firecrawl scrapes with change tracking to detect new and
-   changed public supply and demand signals,
-3. use OpenAI to normalize and deduplicate the findings,
-4. store provenance, freshness, and canonical state in Convex,
+2. let Firecrawl Native Monitors detect page changes while Convex reconciles
+   monitor health and processes webhooks,
+3. expand changed index pages into individual listings and use OpenAI to
+   normalize the findings,
+4. redact public evidence, separate private contact candidates, deduplicate,
+   geocode, match, and store canonical state in Convex,
 5. let musicians search the live index and save a room need,
-6. prepare relevant alert or outreach drafts for explicit approval,
-7. send approved communication through AgentMail, and
-8. stream replies and status changes into the live Convex interface.
+6. let the text or voice Scout apply durable musician context to that search,
+7. choose which reviewed sources and connected portals participate in a search,
+8. prepare exact outreach actions for one-time approval or authorize a narrowly
+   scoped, versioned standing mandate, and
+9. stream email and platform replies into one channel-aware Inbox.
 
-No external communication is automatic. Every message remains a draft until the
-user approves its recipients and final content.
+Guided mode never communicates automatically. Outreach and Negotiation modes can
+act only under an explicit standing mandate that limits portals, action types,
+personal data, daily contacts/browser time, price, and expiry. Contracts,
+bookings, payments, passwords, 2FA, CAPTCHAs, and terms acceptance always stop
+for the user.
 
 ## Product exploration
 
@@ -48,47 +57,69 @@ The reasoning is recorded in
 ## Technical direction
 
 The application is a React + Vite + TypeScript SPA prepared for deployment with
-Convex Static Hosting to `convex.site`. The current scaffold includes Convex
-Auth v2 Alpha, the Convex Agent and Static Hosting components, the Convex AI
-Gateway using `openai/gpt-5.6-terra`, realtime-ready feature functions, and
-guarded Firecrawl and AgentMail integration seams.
+Convex Static Hosting to `convex.site`. It uses Convex Auth v2 Alpha, the Agent,
+Rate Limiter, and Static Hosting components, and the Convex AI Gateway with
+`openai/gpt-5.6-terra`. Direct OpenAI calls are limited to embeddings and the
+Realtime WebRTC session endpoint.
 
 | Sponsor | Intended role |
 |---|---|
-| **Convex** | Source Registry, canonical market state, webhooks, realtime search, approvals, and application-level jobs |
-| **Firecrawl** | public source discovery, extraction, recurring change-tracked retrieval, and change detection |
-| **AgentMail** | user-approved outreach and reply handling |
-| **OpenAI** | `gpt-5.6-terra` generation through Convex AI Gateway plus `text-embedding-3-small` semantic memory through the embeddings endpoint |
+| **Convex** | Source Registry, canonical market state, webhooks, realtime search, matching, approvals, rate limits, and reconciliation jobs |
+| **Firecrawl** | bounded Germany source discovery, Native Monitoring, public-page extraction, and reviewed public-form execution with Interact |
+| **AgentMail** | personal user inboxes, approved outreach, delivery events, and replies |
+| **OpenAI** | `gpt-5.6-terra` generation through Convex AI Gateway, `text-embedding-3-small` semantic retrieval, and `gpt-realtime-2.1` voice through WebRTC |
+| **Mapbox** | cached server-side geocoding and the public rehearsal-room globe/map |
+| **Browserbase** | isolated persistent user/portal login contexts, short-lived human Live Views, reviewed recon/Inbox sync, and code-owned approved portal actions |
 
 ## Relationship to Jumper
 
 RoomScout grows from domain knowledge gained while building Jumper, a platform
-for booking recording studios and rehearsal spaces. Jumper approaches the market
-through managed supply and booking. RoomScout currently explores demand-side
-discovery, public aggregation, and coordinated outreach. All RoomScout application
-code will be new; any reused visual assets will be disclosed in the build log.
+for music spaces. RoomScout is a separate public-web discovery experiment. All
+reuse from maintainer-owned visual work is disclosed in the build log; internal
+strategy and private project data are not part of this repository.
 
 ## Status
 
 The authenticated Scout conversation, reactive search card, durable musician
-memory, context import/review, and memory-management UI now run against Convex.
-Market cards remain visibly labelled examples until live ingestion is connected.
-Live URL, demo video, and social links will be recorded in
-[`docs/BUILD_LOG.md`](docs/BUILD_LOG.md) when they exist.
+memory, reviewed context import, semantic retrieval, and exact outreach approval
+run against Convex. The backend now includes Firecrawl Native Monitor ingestion,
+canonical signal matching, personal AgentMail inboxes, Realtime Voice session
+setup, Mapbox geocoding, Germany source discovery, Firecrawl Interact execution,
+per-portal Browserbase contexts, read-only source probes, source preferences,
+standing-mandate orchestration, unified communications, portal verification
+mail, and opportunity handoffs. Firecrawl form writes and Browserbase portal
+writes pass the same final policy/adapter/approval/mandate gate; unknown
+post-click outcomes are never retried automatically. No broad crawl or real
+provider-backed portal action has been run; those remain controlled live proofs.
+Only the reviewed Bandnet public-form workflow is production-shaped today;
+authenticated portal writes still require a reviewed real-source adapter.
+Translation is a later step.
 
 ## Local development
 
 ```sh
 npm install
+npx @convex-dev/auth
 npx convex dev
 npm run dev
 ```
 
-`npx convex dev` creates the local Convex values in `.env.local`;
+Run the Auth CLI once for each new development deployment so it can create that
+deployment's `AUTH_PRIVATE_KEY` and `AUTH_JWKS`; never copy those values into the
+repository. `npx convex dev` creates the local Convex values in `.env.local`;
 `.env.example` documents the additional provider configuration. Provider
 secrets belong in the Convex deployment environment, not in source files.
 Useful checks are `npm run typecheck`, `npm run lint`, `npm test`,
 `npm run test:e2e`, and `npm run build`.
+
+Firecrawl monitors are inert unless `FIRECRAWL_MONITORS_ENABLED=true`. Keep the
+flag off until the listed pilot sources pass policy review. AgentMail provisions
+a personal inbox lazily at the first outreach draft; it does not use a shared
+global inbox. Voice session setup is handled by the authenticated
+`POST /api/realtime/session` endpoint and never stores raw audio.
+Browserbase uses only `BROWSERBASE_API_KEY`; do not configure a project ID or
+store credentials/cookies in Convex. Rotate any credential ever pasted into a
+chat before enabling a live proof.
 
 ## Docs
 

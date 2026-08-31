@@ -17,6 +17,7 @@ import {
   createOpenAIEmbedding,
   OPENAI_EMBEDDING_MODEL,
 } from "./openaiEmbeddings";
+import { roomScoutRateLimiter } from "./rateLimits";
 
 const entityKinds = [
   "person",
@@ -248,6 +249,17 @@ async function insertFact(
   const factsToSupersede = input.replaceExisting
     ? activeFacts.filter((fact) => fact.predicate === predicate)
     : [];
+  if (factsToSupersede.length === 0) {
+    const activeOwnerFacts = await ctx.db
+      .query("memoryFacts")
+      .withIndex("by_owner_and_status", (q) =>
+        q.eq("ownerId", ownerId).eq("status", "active"),
+      )
+      .take(500);
+    if (activeOwnerFacts.length >= 500) {
+      throw new ConvexError({ code: "MEMORY_FACT_LIMIT", limit: 500 });
+    }
+  }
   await Promise.all(
     factsToSupersede.map(async (fact) => {
       await ctx.db.patch(fact._id, { status: "superseded", updatedAt: now });
@@ -351,6 +363,10 @@ export const importFacts = mutation({
   returns: v.object({ imported: v.number(), duplicateBatch: v.boolean() }),
   handler: async (ctx, args) => {
     const ownerId = await requireUserId(ctx);
+    await roomScoutRateLimiter.limit(ctx, "contextImport", {
+      key: ownerId,
+      throws: true,
+    });
     const batchId = cleanText(args.batchId, 100, "batchId");
     if (args.facts.length === 0 || args.facts.length > 40) {
       throw new ConvexError({ code: "INVALID_IMPORT_SIZE" });

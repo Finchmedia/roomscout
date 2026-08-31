@@ -28,10 +28,11 @@ says to lock them in or asks for a file update.
 - **All external communication requires approval.** The product may research,
   recommend, and draft, but it must not send an email or make an introduction
   until the relevant user approves the final recipients and message.
-- **All generative LLM calls use OpenAI models through the Convex AI Gateway.**
-  `openai/gpt-5.6-terra` is the shared generation model. The regular OpenAI
-  embeddings endpoint may use `OPENAI_API_KEY` only for semantic retrieval;
-  do not use that key for chat or generation.
+- **Text generation uses OpenAI through the Convex AI Gateway.**
+  `openai/gpt-5.6-terra` is the shared text-generation model. The regular OpenAI
+  endpoint may use `OPENAI_API_KEY` only for semantic embeddings and the
+  approved Realtime WebRTC voice flow; do not use that key for a second text
+  chat or normalization path.
 - **Firecrawl handles web discovery and crawling; AgentMail handles email.** Each
   sponsor must perform genuine product work.
 - **Matching is consent-based if built.** Never expose a private band profile or

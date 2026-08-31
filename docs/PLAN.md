@@ -1,6 +1,6 @@
 # RoomScout — Product Exploration & Technical Direction
 
-Status: discovery as of 2026-08-27 · Deadline: 2026-09-22, 12:00 PM PT
+Status: active product direction as of 2026-08-31 · Deadline: 2026-09-22, 12:00 PM PT
 
 This document keeps decisions separate from hypotheses. Product ideas discussed
 in conversation are not requirements until explicitly adopted.
@@ -19,12 +19,22 @@ in conversation are not requirements until explicitly adopted.
 
 ### Product boundaries
 
-- Every email and introduction requires explicit user approval of its final
-  recipients and content.
-- OpenAI is the only in-product model provider, routed through the Convex AI
-  Gateway with `openai/gpt-5.6-terra`.
+- Guided mode requires explicit approval of the exact destination and final
+  content. A user may separately activate a versioned, scoped, expiring
+  standing mandate for approved outreach actions. Contracts, terms acceptance,
+  bookings, payments, deposits, passwords, 2FA, and CAPTCHAs always require the
+  user.
+- OpenAI is the only in-product model provider. Text generation uses the Convex
+  AI Gateway with `openai/gpt-5.6-terra`; embeddings and Realtime WebRTC use the
+  direct OpenAI endpoints because the Gateway does not provide those endpoints.
 - Firecrawl performs web discovery and crawling; AgentMail handles approved
   email and replies.
+- Firecrawl Interact executes exact reviewed public-form workflows after a final
+  approval/mandate and policy check. CAPTCHA or uncertain completion pauses for
+  the user in Live View. Browserbase maintains one user-owned persistent context
+  per approved authenticated portal and may execute only code-owned reviewed
+  actions; RoomScout never stores portal credentials, cookies, or Live View
+  URLs.
 - Private band information and contact details cannot be exposed without the
   necessary consent.
 
@@ -111,17 +121,10 @@ part of the exploration, not a locked product decision.
 
 ## Relationship to Jumper
 
-The project comes from domain experience with Jumper, a recording-studio and
-rehearsal-space booking platform. RoomScout is being explored as a public
-aggregation and demand-side approach to the same constrained market, not as a
-duplicate booking platform.
-
-Potential distinctions include:
-
-- discovering supply that has not joined a platform,
-- building public room knowledge across fragmented sources,
-- reducing repetitive demand-side research and outreach,
-- and possibly coordinating compatible demand when supply alone is insufficient.
+The project comes from domain experience gained while building Jumper for music
+spaces. RoomScout is a separate public-web discovery experiment. This public
+repository documents RoomScout's product behavior and disclosed visual reuse,
+not private strategy or data from another project.
 
 ## Concepts under consideration
 
@@ -137,21 +140,24 @@ These are vocabulary for discussion, not a schema commitment:
 | Room-sharing match | practical compatibility around a room or local search |
 | Demand pool | an explicitly joined group coordinating a shared room inquiry |
 
-The final Convex schema, auth provider, TTL policy, indexes, matching method, and
-geographic rollout remain undecided.
+The Convex schema, Auth v2 provider, bounded TTL/rate policies, matching model,
+and Stuttgart/Berlin/Hamburg pilot are implemented. Wider German coverage is a
+source-discovery program whose candidates remain untrusted until reviewed.
 
 ## Communication boundary
 
-Research and drafting are not permission to send. Any future implementation
-should make the state transition visible:
+Research and drafting are not permission to send in Guided mode. Every action
+uses a visible state transition and an immutable payload hash:
 
 ```text
-drafted -> awaiting approval -> approved -> sent -> replied -> parsed
+drafted -> awaiting approval | authorized by standing mandate -> executing -> replied -> parsed
 ```
 
-For a group message, the product must define whose approval is required before
-anything is sent. For a band introduction, matching must be opt-in and private
-details must remain hidden until the consent flow is complete.
+Standing mandates are versioned and constrain portals, action types, personal
+data, daily contact/browser limits, price ceiling, expiry, and stop conditions.
+Editing a mandate creates a new version; revocation is an immediate kill switch.
+For a band introduction, matching remains opt-in and private details stay hidden
+until the consent flow is complete.
 
 ## Questions to explore before locking the MVP
 
@@ -168,8 +174,8 @@ details must remain hidden until the consent flow is complete.
 - Can the core demo work with one city and controlled outreach?
 - What minimum identity and auth model is necessary for private searches and
   approval records?
-- Which parts of Jumper's visual language help without making RoomScout feel like
-  a feature of the existing product?
+- Which parts of the maintainer's existing visual language help RoomScout while
+  preserving a clear standalone identity?
 
 ## Possible next steps—not a locked schedule
 

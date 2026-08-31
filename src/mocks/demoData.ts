@@ -2,7 +2,8 @@ export type SignalSide = "supply" | "demand";
 export type VerificationState =
   | "observed"
   | "source_verified"
-  | "user_verified";
+  | "user_verified"
+  | "conflicting";
 export type FreshnessState = "fresh" | "current" | "possibly_stale";
 
 export type SignalFact = {

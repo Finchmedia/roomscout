@@ -1,0 +1,77 @@
+.stage {
+  position: relative;
+  display: grid;
+  width: min(16rem, 58vw);
+  aspect-ratio: 1;
+  place-items: center;
+  isolation: isolate;
+}
+
+.halo,
+.haloSecondary {
+  position: absolute;
+  inset: 14%;
+  z-index: -2;
+  border: 1px solid rgb(255 107 44 / calc(0.18 + var(--volume) * 0.35));
+  border-radius: 48% 52% 57% 43% / 46% 45% 55% 54%;
+  opacity: calc(0.34 + var(--volume) * 0.6);
+  transform: scale(calc(1 + var(--volume) * 0.24));
+  transition: opacity 120ms linear, transform 100ms linear;
+  animation: orbit 8s linear infinite;
+}
+
+.haloSecondary {
+  inset: 5%;
+  border-color: rgb(255 129 77 / calc(0.08 + var(--volume) * 0.22));
+  border-radius: 58% 42% 44% 56% / 43% 55% 45% 57%;
+  animation-direction: reverse;
+  animation-duration: 12s;
+}
+
+.blob {
+  width: 58%;
+  height: 58%;
+  overflow: visible;
+  color: #ff6b2c;
+  filter: drop-shadow(0 0 calc(18px + var(--volume) * 38px) rgb(255 107 44 / 42%));
+  transform: scale(calc(0.9 + var(--volume) * 0.38));
+  transition: filter 100ms linear, transform 90ms linear;
+}
+
+.blobShape {
+  fill: currentColor;
+  transform-origin: center;
+  animation: breathe 4.8s ease-in-out infinite alternate;
+}
+
+.core {
+  position: absolute;
+  width: 18%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: rgb(255 255 255 / calc(0.32 + var(--volume) * 0.34));
+  box-shadow: 0 0 2rem rgb(255 255 255 / 25%);
+  transform: scale(calc(0.82 + var(--volume) * 0.48));
+  transition: transform 90ms linear;
+}
+
+.paused .blobShape,
+.paused .halo,
+.paused .haloSecondary {
+  animation-play-state: paused;
+}
+
+@keyframes breathe {
+  from { transform: scale(.96) rotate(-2deg); }
+  to { transform: scale(1.04) rotate(3deg); }
+}
+
+@keyframes orbit {
+  to { transform: scale(calc(1 + var(--volume) * 0.24)) rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .blobShape,
+  .halo,
+  .haloSecondary { animation: none; }
+}

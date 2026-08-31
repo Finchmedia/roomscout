@@ -2,17 +2,17 @@
 
 - **Project:** RoomScout
 - **Event:** Convex All Gas Hackathon
-- **What it does:** Builds a continuously updated index of public rehearsal-room supply and demand so musicians can search current listings, save needs, and approve follow-up communication.
-- **Live app:** not deployed
+- **What it does:** Builds a continuously updated index of public rehearsal-room supply and demand so musicians can search current listings, work with a context-aware text/voice Scout, and approve follow-up communication.
+- **Live app:** https://fleet-jackal-83.eu-west-1.convex.site
 - **Repo:** https://github.com/Finchmedia/roomscout
 - **Frontend:** React + Vite SPA prepared for Convex Static Hosting
-- **Convex deployment:** cloud Development deployment active; production not deployed
+- **Convex deployment:** Development and Production active; SPA on Convex Static Hosting
 - **Components:** Auth v2 Alpha, Agent, Static Hosting, Password, Username, Rate Limiter
 - **Convex features:** schema, indexed queries, mutations, actions, HTTP actions, scheduler, cron jobs, reactive subscriptions
 - **Auth:** Convex Auth v2 Alpha, Username + Password
-- **AI models:** OpenAI `gpt-5.6-terra` through Convex AI Gateway; `text-embedding-3-small` semantic memory through the OpenAI embeddings endpoint
+- **AI models:** OpenAI `gpt-5.6-terra` through Convex AI Gateway; `text-embedding-3-small` semantic retrieval and `gpt-realtime-2.1` voice through direct OpenAI endpoints
 - **Started:** 2026-08-26T13:55:26Z
-- **Last updated:** 2026-08-28T12:19:28Z
+- **Last updated:** 2026-08-31T00:00:00Z
 
 ## Log
 
@@ -98,3 +98,90 @@ property, so optional AI fields are now required-but-nullable and converted to
 omitted Convex values after validation. Finally, verified the newly configured
 OpenAI embeddings key with a real 512-dimensional `text-embedding-3-small`
 response. The probe exposed no secret and was deleted after the test.
+
+### 2026-08-28 - YOLO vertical architecture and live deployment
+Implemented Firecrawl Native Monitor synchronization and webhooks, multi-entry
+index extraction, bounded detail processing, two-snapshot stale safeguards, PII
+redaction, matching, geocoding, notifications, and reconciliation. Stuttgart,
+Berlin, and Hamburg pilot sources remain paused in `reviewing`; monitor creation
+is disabled unless `FIRECRAWL_MONITORS_ENABLED=true`. No broad crawl was run.
+
+Added one deterministic AgentMail inbox per user, lazy/idempotent provisioning,
+delivery and reply event handling, send recovery, and daily rate limits. Exact
+recipient/content approval remains mandatory, and no live mailbox or message was
+created in this pass.
+
+Added an authenticated OpenAI Realtime WebRTC session endpoint using
+`gpt-realtime-2.1`, shared Scout tools/memory, transcript deduplication, and a
+RoomScout-orange voice UI; audio is never stored and Voice cannot approve or send
+mail. Added cached Mapbox geocoding and adapted the maintainer-owned Jumper globe
+interaction for RoomScout aggregate areas and precision-labelled signal pins.
+Translation remains deferred. Controlled monitor, mail round-trip, deployed
+voice, and deployed map proofs are still outstanding.
+
+Wired productive musician and operator surfaces to real Convex data, completed
+the Realtime function-tool loop and shared transcript persistence, added private
+contact candidates plus open-ended musical facets to ingestion, and clustered
+the precision-labelled Mapbox view. Passed 43 unit tests, TypeScript, ESLint,
+production build, and five desktop/mobile browser flows. Generated separate
+Production Auth v2 keys and deployed backend plus SPA to
+https://fleet-jackal-83.eu-west-1.convex.site. Live Landing, Sign-up, and Health
+smokes pass without console errors. Four pilot sources are seeded but remain
+paused in `reviewing`, so no crawl or external send occurred.
+
+### 2026-08-31 - Source Intelligence and portal autopilot foundation
+
+Expanded RoomScout from a four-source index into a policy-aware source
+intelligence system. A bounded Germany query matrix can discover portal
+candidates with Firecrawl Search; Convex stores canonical platforms, geographic
+coverage, facts, adapters, checkpoints, policies, probe runs, and per-search
+source preferences. This pass seeded only conservative pilot coverage and did
+not launch a broad crawl.
+
+Implemented two honest interaction paths. Firecrawl Interact fills an approved
+public contact form and exposes an ephemeral preview for the user to submit.
+Browserbase uses a separate persistent Context for each user/portal pair, with
+short-lived Sessions for human login, reauthentication, read-only recon, and
+bounded platform-Inbox sync. RoomScout stores neither credentials/cookies nor
+Live View URLs, DOM snapshots, screenshots, recordings, or CAPTCHA solutions.
+
+Added versioned Research/Outreach/Negotiation standing mandates, an immediate
+kill switch, immutable action payload approvals, idempotent execution records,
+unified email/platform conversations, opportunities, and handoffs. Platform,
+action, personal-data, contact/browser, price, expiry, source-policy, complaint,
+and connection limits are rechecked. Contracts, terms acceptance, bookings,
+payments, deposits, passwords, 2FA, and CAPTCHAs always stop for the user.
+
+The implementation used no live Browserbase or Firecrawl credential and made no
+provider call. The pasted Browserbase key was considered compromised and must be
+rotated before a controlled provider proof.
+
+All 80 unit/integration tests, TypeScript, ESLint, production build, and five
+Desktop/Mobile Playwright flows passed. The backend and SPA were deployed to the
+existing Convex production URL. Health, Landing, SPA fallback, and Explore
+returned 200 without browser console errors; conservative pilot source coverage
+was seeded in Development and Production.
+
+### 2026-08-31 - Approved provider execution and portal connection UX
+
+Completed the guarded write layer. Firecrawl Interact can now execute the exact
+approved Bandnet public-form workflow when its current policy permits it, while
+CAPTCHA or ambiguous completion pauses for a user-controlled Live View. Added a
+Browserbase write executor that accepts only reviewed code-owned adapters and a
+separate persistent Context per user/portal; real authenticated portals remain
+fail-closed until their concrete adapters are reviewed. Portal login,
+reauthentication, pause/sync/disable, AgentMail registration address, and private
+verification-message handling are now visible in the musician UI.
+
+Added read-only source probes and a bounded standing-mandate orchestrator. The
+orchestrator handles at most one eligible Bandnet supply contact per owner/run
+and repeats owner, payload-hash, policy, adapter, mailbox, mandate, rate, and stop
+checks immediately before execution. It never handles passwords, 2FA, CAPTCHAs,
+terms, contracts, booking completion, or payment.
+
+The integrated deployment passed 126 tests in 28 files, TypeScript, ESLint,
+production build, and five Playwright flows with one expected responsive skip.
+Backend and SPA were redeployed successfully; live Health, Landing, Explore, and
+Map return HTTP 200. No provider-backed write was claimed: controlled Firecrawl,
+AgentMail, and Browserbase proofs still require fresh configured credentials,
+including rotation of the Browserbase key that appeared in chat.

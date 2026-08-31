@@ -1,9 +1,16 @@
-import { Brain, Download, LoaderCircle, Network, Trash2 } from "lucide-react";
+import { Brain, Download, LoaderCircle, Network, Trash2, Unplug } from "lucide-react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { ContextImportDialog } from "../../components/memory/ContextImportDialog";
+import {
+  PortalConnectionsWorkspace,
+  type AvailablePortal,
+  type PortalUiConnection,
+  type PortalUiStatus,
+} from "../../components/connections/PortalConnectionsWorkspace";
 import { WorkspaceShell } from "../../components/navigation/WorkspaceShell";
 import { ActionDialog } from "../../components/ui/ActionDialog";
 import { EmptyState, LedgerCard, PageHeader } from "../../components/ui/LedgerCard";
@@ -12,18 +19,49 @@ function label(value: string): string {
   return value.replaceAll("_", " ");
 }
 
+function domainFromUrl(value: string): string | undefined {
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return undefined;
+  }
+}
+
+function portalUiStatus(status: "draft" | "needs_auth" | "active" | "paused" | "reauth_required" | "disabled", policyDecision: "pending" | "allowed" | "restricted" | "prohibited"): PortalUiStatus {
+  if (status === "disabled" || policyDecision === "prohibited") return "disabled";
+  if (status === "needs_auth") return "login_needed";
+  if (status === "active") return "connected";
+  if (status === "reauth_required") return "reauth_required";
+  if (status === "paused") return "paused";
+  return "not_connected";
+}
+
 export function ProfilePage() {
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const currentUser = useQuery(api.users.current);
   const memory = useQuery(api.memory.listMine);
+  const mailbox = useQuery(api.mailboxes.getMine);
+  const portalRows = useQuery(api.portalConnections.listMine);
+  const connectableRows = useQuery(api.portalConnections.listConnectableSources, { limit: 50 });
   const deleteFact = useMutation(api.memory.deleteFact);
   const refreshEmbeddings = useAction(api.memory.refreshMyEmbeddings);
   const refreshContext = useAction(api.memory.refreshMyContext);
+  const ensureMailbox = useAction(api.mailboxes.ensureMine);
+  const startPortalAuthentication = useAction(api.browserbasePortal.startAuthentication);
+  const syncPortalInbox = useAction(api.browserbasePortal.syncInboxNow);
+  const disablePortalConnection = useAction(api.browserbasePortal.disableConnection);
+  const pausePortalConnection = useMutation(api.portalConnections.pauseMine);
+  const requestPortalConnection = useMutation(api.portalConnections.requestConnection);
   const [importOpen, setImportOpen] = useState(false);
   const [importedCount, setImportedCount] = useState<number>();
   const [forgetFactId, setForgetFactId] = useState<Id<"memoryFacts">>();
   const [forgetting, setForgetting] = useState(false);
   const [embeddingRefresh, setEmbeddingRefresh] = useState<"idle" | "working" | "missing-key" | "done">("idle");
   const [contextRefresh, setContextRefresh] = useState(false);
+  const [connectionError, setConnectionError] = useState("");
+  const [connectionWorking, setConnectionWorking] = useState<string>();
+  const [disableConnectionId, setDisableConnectionId] = useState<Id<"portalConnections">>();
 
   const profile = memory?.profile;
   const contextIsBuilding = profile && profile.contextVersion < profile.factVersion;
@@ -61,6 +99,148 @@ export function ProfilePage() {
     }
   }
 
+  const activeTab = searchParams.get("tab") === "connections" ? "connections" : "memory";
+  const portals: PortalUiConnection[] = (portalRows ?? []).map((connection) => ({
+    id: connection._id,
+    name: connection.platformName ?? connection.sourceName,
+    domain: domainFromUrl(connection.baseUrl),
+    status: portalUiStatus(connection.status, connection.policyDecision),
+    policyReady: connection.policyDecision === "allowed",
+    canAuthenticate: connection.policyDecision === "allowed" && (connection.status === "needs_auth" || connection.status === "reauth_required" || connection.status === "paused"),
+    canSync: connection.policyDecision === "allowed" && connection.status === "active" && connection.allowInboxPolling,
+    scopes: [connection.allowReadOnlyRecon ? "Read-only research" : "", connection.allowInboxPolling ? "Inbox sync" : ""].filter(Boolean),
+    lastVerifiedLabel: connection.lastSuccessAt ? new Date(connection.lastSuccessAt).toLocaleString() : undefined,
+    identityLabel: connection.label !== connection.sourceName && connection.label !== connection.platformName ? connection.label : undefined,
+    note: connection.policyDecision !== "allowed" ? `Platform policy: ${connection.policyDecision}.` : connection.lastErrorCode ? `Last connection error: ${connection.lastErrorCode}.` : connection.platformName ? `Reviewed source: ${connection.sourceName}.` : undefined,
+  }));
+  const connectedSourceIds = new Set((portalRows ?? []).map((connection) => String(connection.sourceId)));
+  const connectableSources: AvailablePortal[] = (connectableRows ?? []).filter((source) => !connectedSourceIds.has(String(source.sourceId))).map((source) => ({
+    id: source.sourceId,
+    name: source.name,
+    domain: domainFromUrl(source.baseUrl) ?? source.baseUrl,
+    url: source.baseUrl,
+    platformName: source.platformName,
+  }));
+
+  async function connectPortal(connectionId: string) {
+    setConnectionWorking(connectionId);
+    setConnectionError("");
+    try {
+      const result = await startPortalAuthentication({ connectionId: connectionId as Id<"portalConnections"> });
+      navigate(`/app/runs/${result.runId}`);
+    } catch (caught) {
+      setConnectionError(caught instanceof Error ? caught.message : "The secure portal session could not be started.");
+    } finally {
+      setConnectionWorking(undefined);
+    }
+  }
+
+  async function pausePortal(connectionId: string) {
+    setConnectionWorking(connectionId);
+    setConnectionError("");
+    try {
+      await pausePortalConnection({ connectionId: connectionId as Id<"portalConnections"> });
+    } catch (caught) {
+      setConnectionError(caught instanceof Error ? caught.message : "The portal connection could not be paused.");
+    } finally {
+      setConnectionWorking(undefined);
+    }
+  }
+
+  async function syncPortal(connectionId: string) {
+    setConnectionWorking(connectionId);
+    setConnectionError("");
+    try {
+      await syncPortalInbox({ connectionId: connectionId as Id<"portalConnections"> });
+    } catch (caught) {
+      setConnectionError(caught instanceof Error ? caught.message : "The portal inbox could not be synchronized.");
+    } finally {
+      setConnectionWorking(undefined);
+    }
+  }
+
+  async function addPortalSource(sourceId: string, connectionLabel: string) {
+    setConnectionWorking(sourceId);
+    setConnectionError("");
+    try {
+      await requestPortalConnection({ sourceId: sourceId as Id<"sources">, label: connectionLabel });
+    } catch (caught) {
+      setConnectionError(caught instanceof Error ? caught.message : "The portal connection could not be created.");
+    } finally {
+      setConnectionWorking(undefined);
+    }
+  }
+
+  async function provisionMailbox() {
+    setConnectionWorking("mailbox");
+    setConnectionError("");
+    try {
+      const result = await ensureMailbox();
+      if (result.status === "failed") setConnectionError(result.lastError ?? "The RoomScout email address could not be created.");
+    } catch (caught) {
+      setConnectionError(caught instanceof Error ? caught.message : "The RoomScout email address could not be created.");
+    } finally {
+      setConnectionWorking(undefined);
+    }
+  }
+
+  async function disablePortal() {
+    if (!disableConnectionId) return;
+    setConnectionWorking(disableConnectionId);
+    setConnectionError("");
+    try {
+      await disablePortalConnection({ connectionId: disableConnectionId });
+      setDisableConnectionId(undefined);
+    } catch (caught) {
+      setConnectionError(caught instanceof Error ? caught.message : "The portal connection could not be disabled.");
+    } finally {
+      setConnectionWorking(undefined);
+    }
+  }
+  const profileTabs = (
+    <div aria-label="Profile sections" className="rs-page-tabs" role="tablist">
+      <button aria-selected={activeTab === "memory"} className={activeTab === "memory" ? "on" : undefined} onClick={() => setSearchParams({ tab: "memory" })} role="tab" type="button">Scout memory</button>
+      <button aria-selected={activeTab === "connections"} className={activeTab === "connections" ? "on" : undefined} onClick={() => setSearchParams({ tab: "connections" })} role="tab" type="button">Connections</button>
+    </div>
+  );
+
+  if (activeTab === "connections") {
+    return (
+      <WorkspaceShell mode="musician">
+        <PageHeader eyebrow="Separate identities, explicit scopes" title="Profile & connections" />
+        {profileTabs}
+        <PortalConnectionsWorkspace
+          availablePortals={connectableSources}
+          error={connectionError}
+          loading={portalRows === undefined || connectableRows === undefined}
+          mailbox={mailbox}
+          onAuthenticate={(connectionId) => void connectPortal(connectionId)}
+          onCreate={(sourceId, connectionLabel) => void addPortalSource(sourceId, connectionLabel)}
+          onDisable={(connectionId) => setDisableConnectionId(connectionId as Id<"portalConnections">)}
+          onEnsureMailbox={() => void provisionMailbox()}
+          onPause={(connectionId) => void pausePortal(connectionId)}
+          onSync={(connectionId) => void syncPortal(connectionId)}
+          portals={portals}
+          workingId={connectionWorking}
+        />
+        <ActionDialog
+          description="This affects only the selected portal. Other connected sites keep their own Contexts."
+          footer={
+            <>
+              <button className="btn btn-g" disabled={Boolean(connectionWorking)} onClick={() => setDisableConnectionId(undefined)} type="button">Keep connected</button>
+              <button className="btn btn-p" disabled={Boolean(connectionWorking)} onClick={() => void disablePortal()} type="button"><Unplug aria-hidden="true" size={14} />Disable & delete Context</button>
+            </>
+          }
+          onOpenChange={(open) => { if (!open) setDisableConnectionId(undefined); }}
+          open={disableConnectionId !== undefined}
+          title="Disable this portal connection?"
+        >
+          <p>RoomScout will stop using this portal and ask Browserbase to delete its persisted Context. This removes the reusable portal session; it does not delete the account on the third-party website.</p>
+        </ActionDialog>
+      </WorkspaceShell>
+    );
+  }
+
   return (
     <WorkspaceShell mode="musician">
       <PageHeader
@@ -72,6 +252,7 @@ export function ProfilePage() {
         }
         title="Scout memory"
       />
+      {profileTabs}
 
       {importedCount !== undefined ? (
         <div className="rs-memory-notice" role="status">
@@ -167,7 +348,7 @@ export function ProfilePage() {
               <tr><td>Username</td><td>{currentUser?.displayName ?? currentUser?.username ?? "Loading…"}</td></tr>
               <tr><td>Role</td><td>{currentUser?.role ?? "Musician"}</td></tr>
               <tr><td>Raw import</td><td>Analyzed, never stored</td></tr>
-              <tr><td>Outreach</td><td>Exact approval always required</td></tr>
+              <tr><td>Outreach</td><td>Guided approval or active standing mandate</td></tr>
               <tr><td>Semantic index</td><td>{memory?.facts.filter((fact) => fact.embeddingState === "ready").length ?? 0} / {memory?.facts.length ?? 0} facts ready</td></tr>
             </tbody></table>
             {memory && memory.facts.some((fact) => fact.embeddingState !== "ready") ? (

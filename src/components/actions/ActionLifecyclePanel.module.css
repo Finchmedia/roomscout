@@ -1,0 +1,101 @@
+.panel {
+  display: grid;
+  gap: 10px;
+}
+
+.card {
+  display: grid;
+  gap: 9px;
+  padding: 11px;
+  background: rgb(0 0 0 / 24%);
+  border: 1px solid var(--gray-800);
+  border-radius: 8px;
+}
+
+.card[data-state="awaiting_approval"],
+.card[data-state="approved"] {
+  border-color: var(--signal-border);
+}
+
+.card[data-state="failed"],
+.card[data-state="cancelled"] {
+  border-color: rgb(242 191 105 / 42%);
+}
+
+.header,
+.meta,
+.controls,
+.humanControls {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.header {
+  justify-content: space-between;
+}
+
+.title {
+  margin: 0;
+  color: var(--gray-100);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.meta {
+  color: var(--gray-500);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.destination,
+.error,
+.notice {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.destination {
+  color: var(--gray-400);
+}
+
+.error {
+  color: #f2bf69;
+}
+
+.notice {
+  color: var(--gray-300);
+}
+
+.controls > :global(.btn),
+.humanControls > :global(.btn) {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+.humanBoundary {
+  display: grid;
+  gap: 8px;
+  padding: 9px;
+  background: rgb(242 191 105 / 7%);
+  border: 1px solid rgb(242 191 105 / 35%);
+  border-radius: 7px;
+}
+
+.liveView {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--signal);
+  font-size: 11px;
+}
+
+.empty {
+  margin: 0;
+  color: var(--gray-500);
+  font-size: 11px;
+}

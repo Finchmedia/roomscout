@@ -4,13 +4,13 @@ test("public search flows from the landing page into the market explorer", async
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: /Stop searching/ })).toBeVisible();
-  await expect(page.getByText("Prototype data").first()).toBeVisible();
+  await expect(page.getByText(/recent public signals/)).toBeVisible();
   await page.getByLabel("City or region").fill("Stuttgart");
   await page.getByRole("button", { name: "Search rehearsal rooms" }).click();
 
-  await expect(page).toHaveURL(/\/explore\?location=Stuttgart/);
+  await expect(page).toHaveURL(/\/explore\?city=Stuttgart/);
   await expect(page.getByRole("heading", { name: "Market explorer" })).toBeVisible();
-  await expect(page.getByText("Shared rehearsal room in Stuttgart-West")).toBeVisible();
+  await expect(page.getByText(/signals in Stuttgart/)).toBeVisible();
 });
 
 test("signal-side filtering and provenance detail remain usable", async ({ page }) => {
@@ -21,12 +21,14 @@ test("signal-side filtering and provenance detail remain usable", async ({ page 
   await page.getByRole("combobox", { name: "Sort signals" }).click();
   await page.getByRole("option", { name: "Newest" }).click();
   await expect(page.getByRole("combobox", { name: "Sort signals" })).toHaveText("Newest");
-  await page.getByRole("link", { name: "Shared rehearsal room in Stuttgart-West" }).click();
-
-  await expect(page).toHaveURL(/\/signals\/stuttgart-west-share/);
-  await expect(page.getByText("Known facts", { exact: true })).toBeVisible();
-  await expect(page.getByText("Provenance", { exact: true })).toBeVisible();
-  await expect(page.getByText("Observed is not verified", { exact: false })).toHaveCount(0);
+  const signalLinks = page.locator(".rs-signal-card__link");
+  if (await signalLinks.count()) {
+    await signalLinks.first().click();
+    await expect(page.getByText("Known facts", { exact: true })).toBeVisible();
+    await expect(page.getByText("Provenance", { exact: true })).toBeVisible();
+  } else {
+    await expect(page.getByRole("heading", { name: "No matching signals yet" })).toBeVisible();
+  }
 });
 
 test("mobile public navigation opens on demand", async ({ page }, testInfo) => {

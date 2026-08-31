@@ -1,13 +1,15 @@
+import { AgentMailClient } from "agentmail";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
+import { httpAction, internalAction, internalMutation } from "./_generated/server";
 import {
-  httpAction,
-  internalAction,
-  internalMutation,
-} from "./_generated/server";
+  bestMessageBody,
+  parseAgentMailEvent,
+} from "./integrations/agentmailPayload";
+import { envValue } from "./integrations/env";
 import { stableFingerprint } from "./integrations/fingerprints";
 import { verifySvixWebhook } from "./integrations/svix";
-import { envValue } from "./integrations/env";
+import { roomScoutRateLimiter } from "./rateLimits";
 
 const eventStatus = v.union(
   v.literal("processed"),
@@ -15,23 +17,51 @@ const eventStatus = v.union(
   v.literal("failed"),
 );
 
+const deliveryStatus = v.union(
+  v.literal("sent"),
+  v.literal("delivered"),
+  v.literal("bounced"),
+  v.literal("rejected"),
+  v.literal("complained"),
+);
+
+function createClient(apiKey: string): AgentMailClient {
+  return new AgentMailClient({ apiKey, timeoutInSeconds: 20, maxRetries: 2 });
+}
+
+function safeError(error: unknown, fallback: string): string {
+  return (error instanceof Error ? error.message : fallback)
+    .replace(/[\r\n]+/g, " ")
+    .slice(0, 500);
+}
+
 function recordOf(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null
+  return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
 }
 
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
-function stringList(value: unknown): string[] {
-  if (typeof value === "string") {
-    return [value];
+function eventMetadata(payload: unknown): {
+  eventId?: string;
+  eventType: string;
+} {
+  const root = recordOf(payload);
+  if (!root) {
+    return { eventType: "unknown" };
   }
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
-    : [];
+  const eventType =
+    typeof root.event_type === "string"
+      ? root.event_type
+      : typeof root.eventType === "string"
+        ? root.eventType
+        : "unknown";
+  const eventId =
+    typeof root.event_id === "string"
+      ? root.event_id
+      : typeof root.eventId === "string"
+        ? root.eventId
+        : undefined;
+  return { eventId, eventType };
 }
 
 export const recordWebhookEvent = internalMutation({
@@ -45,9 +75,7 @@ export const recordWebhookEvent = internalMutation({
     const existing = await ctx.db
       .query("providerEvents")
       .withIndex("by_provider_and_provider_event_id", (q) =>
-        q
-          .eq("provider", "agentmail")
-          .eq("providerEventId", args.providerEventId),
+        q.eq("provider", "agentmail").eq("providerEventId", args.providerEventId),
       )
       .unique();
     if (existing !== null) {
@@ -76,9 +104,7 @@ export const completeWebhookEvent = internalMutation({
     const event = await ctx.db
       .query("providerEvents")
       .withIndex("by_provider_and_provider_event_id", (q) =>
-        q
-          .eq("provider", "agentmail")
-          .eq("providerEventId", args.providerEventId),
+        q.eq("provider", "agentmail").eq("providerEventId", args.providerEventId),
       )
       .unique();
     if (event === null || event.status !== "received") {
@@ -96,34 +122,120 @@ export const completeWebhookEvent = internalMutation({
 export const processInboundMessage = internalAction({
   args: {
     providerEventId: v.string(),
+    inboxId: v.string(),
     providerThreadId: v.string(),
     providerMessageId: v.string(),
     from: v.string(),
     to: v.array(v.string()),
     subject: v.string(),
     body: v.string(),
+    needsFullFetch: v.boolean(),
+    htmlAvailable: v.boolean(),
     receivedAt: v.number(),
+    retryCount: v.number(),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
     try {
-      const messageId = await ctx.runMutation(
-        internal.inbox.storeInboundMessage,
-        {
-          providerThreadId: args.providerThreadId,
-          providerMessageId: args.providerMessageId,
-          from: args.from,
-          to: args.to,
-          subject: args.subject,
-          body: args.body,
-          receivedAt: args.receivedAt,
-        },
+      const mailbox = await ctx.runQuery(
+        internal.mailboxes.getByProviderInboxId,
+        { providerInboxId: args.inboxId },
       );
+      if (mailbox === null) {
+        await ctx.runMutation(internal.agentmail.completeWebhookEvent, {
+          providerEventId: args.providerEventId,
+          status: "ignored",
+          error: "Webhook inbox is not assigned to an active RoomScout mailbox.",
+        });
+        return null;
+      }
+
+      let body = args.body;
+      let from = args.from;
+      let to = args.to;
+      let subject = args.subject;
+      let receivedAt = args.receivedAt;
+      let htmlAvailable = args.htmlAvailable;
+      if (args.needsFullFetch) {
+        const apiKey = envValue("AGENTMAIL_API_KEY");
+        if (!apiKey) {
+          throw new Error("AgentMail API key is required to fetch message content.");
+        }
+        const full = await createClient(apiKey).inboxes.messages.get(
+          args.inboxId,
+          args.providerMessageId,
+        );
+        if (
+          full.inboxId !== args.inboxId ||
+          full.threadId !== args.providerThreadId ||
+          full.messageId !== args.providerMessageId
+        ) {
+          throw new Error("Fetched AgentMail message identifiers do not match webhook.");
+        }
+        body = bestMessageBody({
+          extractedText: full.extractedText,
+          text: full.text,
+          preview: full.preview,
+          html: full.html,
+        });
+        from = full.from;
+        to = full.to;
+        subject = full.subject ?? subject;
+        receivedAt = full.timestamp.getTime();
+        htmlAvailable = full.html !== undefined;
+      }
+
+      const messageId = await ctx.runMutation(internal.inbox.storeInboundMessage, {
+        mailboxId: mailbox.mailboxId,
+        providerThreadId: args.providerThreadId,
+        providerMessageId: args.providerMessageId,
+        providerEventId: args.providerEventId,
+        from,
+        to,
+        subject,
+        body,
+        htmlAvailable,
+        receivedAt,
+      });
+      if (messageId === null && args.retryCount < 3) {
+        await ctx.scheduler.runAfter(
+          (args.retryCount + 1) * 1_000,
+          internal.agentmail.processInboundMessage,
+          {
+            ...args,
+            body,
+            needsFullFetch: false,
+            from,
+            to,
+            subject,
+            receivedAt,
+            htmlAvailable,
+            retryCount: args.retryCount + 1,
+          },
+        );
+        return null;
+      }
+      const mailboxMessageId = messageId === null
+        ? await ctx.runMutation(internal.inbox.storeMailboxMessage, {
+            mailboxId: mailbox.mailboxId,
+            providerThreadId: args.providerThreadId,
+            providerMessageId: args.providerMessageId,
+            providerEventId: args.providerEventId,
+            from,
+            to,
+            subject,
+            body,
+            htmlAvailable,
+            receivedAt,
+          })
+        : null;
       await ctx.runMutation(internal.agentmail.completeWebhookEvent, {
         providerEventId: args.providerEventId,
-        status: messageId === null ? "ignored" : "processed",
+        status: messageId === null && mailboxMessageId === null ? "ignored" : "processed",
+        error: undefined,
       });
       if (messageId !== null) {
+        // Parsing can annotate the reply, but no action in this flow sends a reply.
         await ctx.scheduler.runAfter(0, internal.inbox.parseInboundReply, {
           messageId,
         });
@@ -132,7 +244,67 @@ export const processInboundMessage = internalAction({
       await ctx.runMutation(internal.agentmail.completeWebhookEvent, {
         providerEventId: args.providerEventId,
         status: "failed",
-        error: error instanceof Error ? error.message : "Inbound processing failed",
+        error: safeError(error, "Inbound processing failed"),
+      });
+    }
+    return null;
+  },
+});
+
+export const processDeliveryEvent = internalAction({
+  args: {
+    providerEventId: v.string(),
+    inboxId: v.string(),
+    providerThreadId: v.string(),
+    providerMessageId: v.string(),
+    status: deliveryStatus,
+    eventAt: v.number(),
+    error: v.optional(v.string()),
+    retryCount: v.number(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    try {
+      const mailbox = await ctx.runQuery(
+        internal.mailboxes.getByProviderInboxId,
+        { providerInboxId: args.inboxId },
+      );
+      if (mailbox === null) {
+        await ctx.runMutation(internal.agentmail.completeWebhookEvent, {
+          providerEventId: args.providerEventId,
+          status: "ignored",
+          error: "Delivery event inbox is not assigned to RoomScout.",
+        });
+        return null;
+      }
+      const applied = await ctx.runMutation(internal.inbox.applyDeliveryEvent, {
+        mailboxId: mailbox.mailboxId,
+        providerThreadId: args.providerThreadId,
+        providerMessageId: args.providerMessageId,
+        status: args.status,
+        eventAt: args.eventAt,
+        error: args.error,
+      });
+      if (!applied && args.retryCount < 3) {
+        await ctx.scheduler.runAfter(
+          (args.retryCount + 1) * 1_000,
+          internal.agentmail.processDeliveryEvent,
+          { ...args, retryCount: args.retryCount + 1 },
+        );
+        return null;
+      }
+      await ctx.runMutation(internal.agentmail.completeWebhookEvent, {
+        providerEventId: args.providerEventId,
+        status: applied ? "processed" : "ignored",
+        error: applied
+          ? undefined
+          : "No matching message was found for the mailbox and provider thread.",
+      });
+    } catch (error) {
+      await ctx.runMutation(internal.agentmail.completeWebhookEvent, {
+        providerEventId: args.providerEventId,
+        status: "failed",
+        error: safeError(error, "Delivery event processing failed"),
       });
     }
     return null;
@@ -143,17 +315,39 @@ export const sendApprovedDraft = internalAction({
   args: { draftId: v.id("outreachDrafts") },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const envelope = await ctx.runMutation(
-      internal.outreach.claimApprovedSend,
-      { draftId: args.draftId },
-    );
-    if (!envelope.shouldSend) {
+    const ownerId = await ctx.runQuery(internal.mailboxes.getDraftOwner, {
+      draftId: args.draftId,
+    });
+    if (ownerId === null) {
+      return null;
+    }
+    const mailbox = await ctx.runAction(internal.mailboxes.ensureForOwner, {
+      ownerId,
+    });
+    if (mailbox.status === "pending") {
+      await ctx.scheduler.runAfter(2_000, internal.agentmail.sendApprovedDraft, args);
+      return null;
+    }
+    if (mailbox.status !== "active") {
       return null;
     }
 
+    await roomScoutRateLimiter.limit(ctx, "agentMailUser", {
+      key: ownerId,
+      throws: true,
+    });
+    await roomScoutRateLimiter.limit(ctx, "agentMailGlobal", { throws: true });
+
+    // This mutation is the final exact-content approval gate. Provisioning occurs
+    // first so a failed mailbox setup never consumes an otherwise valid approval.
+    const envelope = await ctx.runMutation(internal.outreach.claimApprovedSend, {
+      draftId: args.draftId,
+    });
+    if (!envelope.shouldSend) {
+      return null;
+    }
     const apiKey = envValue("AGENTMAIL_API_KEY");
-    const inboxId = envValue("AGENTMAIL_INBOX_ID");
-    if (!apiKey || !inboxId) {
+    if (!apiKey) {
       await ctx.runMutation(internal.outreach.markSendFailed, {
         draftId: envelope.draftId,
         idempotencyKey: envelope.idempotencyKey,
@@ -163,50 +357,35 @@ export const sendApprovedDraft = internalAction({
     }
 
     try {
-      const response = await fetch(
-        `https://api.agentmail.to/v0/inboxes/${encodeURIComponent(
-          inboxId,
-        )}/messages/send`,
+      const sent = await createClient(apiKey).inboxes.messages.send(
+        mailbox.providerInboxId,
         {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-            "Idempotency-Key": envelope.idempotencyKey,
-          },
-          body: JSON.stringify({
-            to: [envelope.recipientEmail],
-            subject: envelope.subject,
-            text: envelope.body,
-          }),
+          to: [envelope.recipientEmail],
+          subject: envelope.subject,
+          text: envelope.body,
         },
+        { idempotencyKey: envelope.idempotencyKey },
       );
-      if (!response.ok) {
-        throw new Error(`AgentMail send failed with status ${response.status}`);
-      }
-      const payload = (await response.json()) as {
-        message_id?: string;
-        messageId?: string;
-        thread_id?: string;
-        threadId?: string;
-      };
-      const providerMessageId = payload.messageId ?? payload.message_id;
-      const providerThreadId = payload.threadId ?? payload.thread_id;
-      if (!providerMessageId || !providerThreadId) {
-        throw new Error("AgentMail response did not include message and thread IDs");
-      }
-      await ctx.runMutation(internal.outreach.markSent, {
+      const threadId = await ctx.runMutation(internal.outreach.markSent, {
         draftId: envelope.draftId,
         idempotencyKey: envelope.idempotencyKey,
-        providerMessageId,
-        providerThreadId,
-        from: envValue("ROOMSCOUT_FROM_EMAIL") ?? inboxId,
+        providerMessageId: sent.messageId,
+        providerThreadId: sent.threadId,
+        from: mailbox.emailAddress,
       });
+      if (threadId !== null) {
+        await ctx.runMutation(internal.inbox.attachMailboxToSentMessage, {
+          threadId,
+          mailboxId: mailbox.mailboxId,
+          providerInboxId: mailbox.providerInboxId,
+          providerMessageId: sent.messageId,
+        });
+      }
     } catch (error) {
       await ctx.runMutation(internal.outreach.markSendFailed, {
         draftId: envelope.draftId,
         idempotencyKey: envelope.idempotencyKey,
-        error: error instanceof Error ? error.message : "AgentMail send failed",
+        error: safeError(error, "AgentMail send failed"),
       });
     }
     return null;
@@ -233,74 +412,70 @@ export const webhook = httpAction(async (ctx, request) => {
     return Response.json({ error: "Invalid signature" }, { status: 401 });
   }
 
-  let payload: Record<string, unknown>;
+  let payload: unknown;
   try {
-    payload = recordOf(JSON.parse(body)) ?? {};
+    payload = JSON.parse(body);
   } catch {
     return Response.json({ error: "Invalid JSON" }, { status: 400 });
   }
-  const eventType = stringValue(payload.event_type) ?? "unknown";
-  const eventId =
-    stringValue(payload.event_id) ?? request.headers.get("svix-id") ?? "";
+  const metadata = eventMetadata(payload);
+  const eventId = metadata.eventId ?? request.headers.get("svix-id") ?? "";
   if (!eventId) {
     return Response.json({ error: "Missing event ID" }, { status: 400 });
   }
-  const receipt = await ctx.runMutation(
-    internal.agentmail.recordWebhookEvent,
-    {
-      providerEventId: eventId,
-      eventType,
-      payloadHash: stableFingerprint(body),
-    },
-  );
-  if (receipt.duplicate) {
-    return new Response(null, { status: 204 });
-  }
-
-  if (eventType !== "message.received") {
-    await ctx.runMutation(internal.agentmail.completeWebhookEvent, {
-      providerEventId: eventId,
-      status: "ignored",
-    });
-    return new Response(null, { status: 204 });
-  }
-  const message = recordOf(payload.message);
-  if (message === null) {
-    await ctx.runMutation(internal.agentmail.completeWebhookEvent, {
-      providerEventId: eventId,
-      status: "failed",
-      error: "Missing message payload",
-    });
-    return Response.json({ error: "Missing message" }, { status: 400 });
-  }
-
-  const providerThreadId = stringValue(message.thread_id);
-  const providerMessageId = stringValue(message.message_id);
-  if (!providerThreadId || !providerMessageId) {
-    await ctx.runMutation(internal.agentmail.completeWebhookEvent, {
-      providerEventId: eventId,
-      status: "failed",
-      error: "Missing provider identifiers",
-    });
-    return Response.json({ error: "Missing identifiers" }, { status: 400 });
-  }
-  const timestamp = Date.parse(
-    stringValue(message.timestamp) ?? stringValue(message.created_at) ?? "",
-  );
-  await ctx.scheduler.runAfter(0, internal.agentmail.processInboundMessage, {
+  const receipt = await ctx.runMutation(internal.agentmail.recordWebhookEvent, {
     providerEventId: eventId,
-    providerThreadId,
-    providerMessageId,
-    from:
-      stringValue(message.from) ?? stringList(message.from_)[0] ?? "unknown",
-    to: stringList(message.to),
-    subject: stringValue(message.subject) ?? "(no subject)",
-    body:
-      stringValue(message.extracted_text) ??
-      stringValue(message.text) ??
-      stringValue(message.preview) ??
-      "",
-    receivedAt: Number.isFinite(timestamp) ? timestamp : Date.now(),
+    eventType: metadata.eventType,
+    payloadHash: stableFingerprint(body),
   });
-  return new Response(null, { status: 204 });
+  if (receipt.duplicate) {
+    return new Response(null, { status: 200 });
+  }
+
+  const event = parseAgentMailEvent(payload);
+  if (event === null) {
+    const supported = new Set([
+      "message.received",
+      "message.sent",
+      "message.delivered",
+      "message.bounced",
+      "message.rejected",
+      "message.complained",
+    ]).has(metadata.eventType);
+    await ctx.runMutation(internal.agentmail.completeWebhookEvent, {
+      providerEventId: eventId,
+      status: supported ? "failed" : "ignored",
+      error: supported ? "Malformed AgentMail event payload." : undefined,
+    });
+    return new Response(null, { status: 200 });
+  }
+
+  if (event.kind === "received") {
+    await ctx.scheduler.runAfter(0, internal.agentmail.processInboundMessage, {
+      providerEventId: eventId,
+      inboxId: event.inboxId,
+      providerThreadId: event.providerThreadId,
+      providerMessageId: event.providerMessageId,
+      from: event.from,
+      to: event.to,
+      subject: event.subject,
+      body: event.body,
+      needsFullFetch: event.needsFullFetch,
+      htmlAvailable: event.htmlAvailable,
+      receivedAt: event.occurredAt,
+      retryCount: 0,
+    });
+  } else {
+    await ctx.scheduler.runAfter(0, internal.agentmail.processDeliveryEvent, {
+      providerEventId: eventId,
+      inboxId: event.inboxId,
+      providerThreadId: event.providerThreadId,
+      providerMessageId: event.providerMessageId,
+      status: event.status,
+      eventAt: event.occurredAt,
+      error: event.error,
+      retryCount: 0,
+    });
+  }
+  return new Response(null, { status: 200 });
 });

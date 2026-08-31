@@ -1,11 +1,57 @@
 import { Clock3, Eye, Link as LinkIcon, ShieldCheck } from "lucide-react";
-import { useState } from "react";
+import { useQuery } from "convex/react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { api } from "../../../convex/_generated/api";
+import type { Id } from "../../../convex/_generated/dataModel";
 import { PublicHeader } from "../../components/navigation/PublicHeader";
 import { SignalCard } from "../../components/signals/SignalCard";
-import { FixtureNotice, LedgerCard } from "../../components/ui/LedgerCard";
-import { demoSignals } from "../../mocks/demoData";
+import { LedgerCard } from "../../components/ui/LedgerCard";
+import type { MapMarketSignal } from "../../components/map";
+import type { MarketSignal } from "../../mocks/demoData";
+
+const LandingGlobe = lazy(async () => {
+  const module = await import("../../components/map/MarketGlobe");
+  return { default: module.MarketGlobe };
+});
+
+function toSignalCard(signal: {
+  _id: Id<"signals">;
+  side: "supply" | "demand";
+  title: string;
+  city: string;
+  district?: string;
+  summary: string;
+  arrangement: "permanent" | "shared" | "hourly" | "unknown";
+  priceEur?: number;
+  pricePeriod?: "hour" | "month" | "unknown";
+  requirements: string[];
+  status: "published" | "stale";
+  verification: "observed" | "verified" | "conflicting";
+  sourceCount: number;
+  firstSeenAt: number;
+  lastSeenAt: number;
+}): MarketSignal {
+  const ageHours = Math.max(0, Math.floor((Date.now() - signal.lastSeenAt) / 3_600_000));
+  return {
+    id: signal._id,
+    side: signal.side,
+    verification: signal.verification === "verified" ? "source_verified" : "observed",
+    freshness: signal.status === "stale" ? "possibly_stale" : ageHours < 24 ? "fresh" : "current",
+    freshnessLabel: signal.status === "stale" ? "Possibly stale" : ageHours < 1 ? "Checked within the hour" : `Checked ${ageHours} h ago`,
+    title: signal.title,
+    location: [signal.district, signal.city].filter(Boolean).join(", "),
+    arrangement: signal.arrangement === "unknown" ? undefined : signal.arrangement,
+    source: `${signal.sourceCount} public source${signal.sourceCount === 1 ? "" : "s"}`,
+    firstSeen: `First seen ${new Date(signal.firstSeenAt).toLocaleDateString()}`,
+    facts: [
+      ...(signal.priceEur === undefined ? [] : [{ label: "Price", value: `€${signal.priceEur} / ${signal.pricePeriod ?? "unknown"}` }]),
+      ...(signal.requirements.length ? [{ label: "Requirements", value: signal.requirements.join(" · ") }] : []),
+    ],
+    summary: signal.summary,
+  };
+}
 
 const howItWorks = [
   {
@@ -17,8 +63,8 @@ const howItWorks = [
     body: "Describe the room in your own words. The Scout turns it into a structured search you can review and edit before activation.",
   },
   {
-    title: "You review every external action",
-    body: "The Scout can explain a signal and draft an inquiry. Nothing is sent until you approve the exact recipient and message.",
+    title: "You set the action boundary",
+    body: "Use exact one-time approval in Guided mode, or a versioned standing mandate for listed communication actions. Agreements, bookings, and money always stay with you.",
   },
 ] as const;
 
@@ -32,10 +78,22 @@ const trustPoints = [
 export function LandingPage() {
   const navigate = useNavigate();
   const [location, setLocation] = useState("Stuttgart");
+  const recentSignals = useQuery(api.signals.list, { limit: 3 });
+  const areas = useQuery(api.map.listAreas);
+  const globeSignals = useMemo<MapMarketSignal[]>(() => (areas ?? []).map((area) => ({
+    id: `area-${area.city}`,
+    title: `${area.city} market area`,
+    coordinates: [area.longitude, area.latitude],
+    side: area.supplyCount >= area.demandCount ? "supply" : "demand",
+    locationLabel: area.city,
+    source: "RoomScout market index",
+    freshnessLabel: area.lastSignalAt ? `Updated ${new Date(area.lastSignalAt).toLocaleDateString()}` : "No recent signal",
+    summary: `${area.supplyCount} supply · ${area.demandCount} demand · ${area.verifiedCount} verified`,
+  })), [areas]);
 
   function submitSearch(event: FormEvent) {
     event.preventDefault();
-    const query = new URLSearchParams({ location: location.trim() || "Stuttgart" });
+    const query = new URLSearchParams({ city: location.trim() || "Stuttgart" });
     navigate(`/explore?${query.toString()}`);
   }
 
@@ -54,10 +112,20 @@ export function LandingPage() {
           </form>
           <Link to="/app/scout">Meet your Room Scout →</Link>
           <div className="proof">
-            <FixtureNotice />
-            <span className="mono">{demoSignals.length} example signals</span>
-            <span className="mono">Stuttgart demo geography</span>
+            <span className="mono">{recentSignals?.length ?? 0} recent public signals</span>
+            <span className="mono">{areas?.length ?? 0} geocoded market areas</span>
           </div>
+        </section>
+
+        <section aria-labelledby="market-map-heading" className="section rs-section">
+          <div className="sechead"><h2 id="market-map-heading">One market, many fragmented sources</h2><Link className="mono" to="/map">Open the full map →</Link></div>
+          {areas === undefined ? <div className="rs-route-state">Loading the market map…</div> : globeSignals.length === 0 ? (
+            <LedgerCard><p>The index is ready. City aggregates appear here after the controlled pilot publishes geocoded signals.</p></LedgerCard>
+          ) : (
+            <Suspense fallback={<div className="rs-route-state">Loading the interactive globe…</div>}>
+              <LandingGlobe initialZoom={3.5} signals={globeSignals} />
+            </Suspense>
+          )}
         </section>
 
         <section aria-labelledby="recent-signals" className="section rs-section">
@@ -66,7 +134,9 @@ export function LandingPage() {
             <Link className="mono" to="/explore">Open the market explorer →</Link>
           </div>
           <div className="grid3 rs-card-grid">
-            {demoSignals.slice(0, 3).map((signal) => <SignalCard compact key={signal.id} signal={signal} />)}
+            {recentSignals === undefined ? <div className="rs-route-state">Loading recent signals…</div> : recentSignals.length === 0 ? (
+              <LedgerCard><p>No public signals have been published yet. RoomScout does not fill an empty market with demo listings.</p></LedgerCard>
+            ) : recentSignals.map((signal) => <SignalCard compact key={signal._id} signal={toSignalCard(signal)} />)}
           </div>
         </section>
 

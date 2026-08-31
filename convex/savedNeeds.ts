@@ -1,5 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { requireUserId } from "./integrations/authz";
 
 const arrangementValidator = v.union(
@@ -13,6 +14,12 @@ const statusValidator = v.union(
   v.literal("paused"),
   v.literal("archived"),
 );
+const facetValidator = v.object({
+  namespace: v.string(),
+  key: v.string(),
+  value: v.union(v.string(), v.number(), v.boolean(), v.array(v.string())),
+  confidence: v.number(),
+});
 const needValidator = v.object({
   _id: v.id("savedNeeds"),
   _creationTime: v.number(),
@@ -25,6 +32,11 @@ const needValidator = v.object({
   schedule: v.array(v.string()),
   requirements: v.array(v.string()),
   openToSharing: v.optional(v.boolean()),
+  radiusKm: v.optional(v.number()),
+  genres: v.optional(v.array(v.string())),
+  instruments: v.optional(v.array(v.string())),
+  collaborationOpen: v.optional(v.boolean()),
+  facets: v.optional(v.array(facetValidator)),
   status: statusValidator,
   createdAt: v.number(),
   updatedAt: v.number(),
@@ -91,6 +103,11 @@ export const create = mutation({
     schedule: v.array(v.string()),
     requirements: v.array(v.string()),
     openToSharing: v.optional(v.boolean()),
+    radiusKm: v.optional(v.number()),
+    genres: v.optional(v.array(v.string())),
+    instruments: v.optional(v.array(v.string())),
+    collaborationOpen: v.optional(v.boolean()),
+    facets: v.optional(v.array(facetValidator)),
   },
   returns: v.id("savedNeeds"),
   handler: async (ctx, args) => {
@@ -106,6 +123,11 @@ export const create = mutation({
       schedule: normalizedList(args.schedule),
       requirements: normalizedList(args.requirements),
       openToSharing: args.openToSharing,
+      radiusKm: args.radiusKm,
+      genres: args.genres ? normalizedList(args.genres) : undefined,
+      instruments: args.instruments ? normalizedList(args.instruments) : undefined,
+      collaborationOpen: args.collaborationOpen,
+      facets: args.facets,
       status: "draft",
       createdAt: now,
       updatedAt: now,
@@ -118,13 +140,13 @@ export const getOrCreateDraft = mutation({
   returns: v.id("savedNeeds"),
   handler: async (ctx) => {
     const ownerId = await requireUserId(ctx);
-    const existing = await ctx.db
+    const candidates = await ctx.db
       .query("savedNeeds")
       .withIndex("by_owner", (q) => q.eq("ownerId", ownerId))
       .order("desc")
-      .filter((q) => q.neq(q.field("status"), "archived"))
-      .first();
-    if (existing !== null) return existing._id;
+      .take(20);
+    const existing = candidates.find((need) => need.status !== "archived");
+    if (existing !== undefined) return existing._id;
 
     const now = Date.now();
     return await ctx.db.insert("savedNeeds", {
@@ -153,6 +175,11 @@ export const update = mutation({
     schedule: v.optional(v.array(v.string())),
     requirements: v.optional(v.array(v.string())),
     openToSharing: v.optional(v.boolean()),
+    radiusKm: v.optional(v.number()),
+    genres: v.optional(v.array(v.string())),
+    instruments: v.optional(v.array(v.string())),
+    collaborationOpen: v.optional(v.boolean()),
+    facets: v.optional(v.array(facetValidator)),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -190,8 +217,23 @@ export const update = mutation({
       ...(args.openToSharing !== undefined
         ? { openToSharing: args.openToSharing }
         : {}),
+      ...(args.radiusKm !== undefined ? { radiusKm: args.radiusKm } : {}),
+      ...(args.genres !== undefined ? { genres: normalizedList(args.genres) } : {}),
+      ...(args.instruments !== undefined
+        ? { instruments: normalizedList(args.instruments) }
+        : {}),
+      ...(args.collaborationOpen !== undefined
+        ? { collaborationOpen: args.collaborationOpen }
+        : {}),
+      ...(args.facets !== undefined ? { facets: args.facets } : {}),
       updatedAt: Date.now(),
     });
+    if (need.status === "active") {
+      await ctx.scheduler.runAfter(0, internal.matches.recomputeNeed, {
+        ownerId,
+        savedNeedId: need._id,
+      });
+    }
     return null;
   },
 });
@@ -212,6 +254,12 @@ export const setStatus = mutation({
       throw new ConvexError({ code: "INCOMPLETE_NEED" });
     }
     await ctx.db.patch(need._id, { status: args.status, updatedAt: Date.now() });
+    if (args.status === "active") {
+      await ctx.scheduler.runAfter(0, internal.matches.recomputeNeed, {
+        ownerId,
+        savedNeedId: need._id,
+      });
+    }
     return null;
   },
 });
@@ -237,6 +285,11 @@ export const updateFromScout = internalMutation({
     schedule: v.optional(v.array(v.string())),
     requirements: v.optional(v.array(v.string())),
     openToSharing: v.optional(v.boolean()),
+    radiusKm: v.optional(v.number()),
+    genres: v.optional(v.array(v.string())),
+    instruments: v.optional(v.array(v.string())),
+    collaborationOpen: v.optional(v.boolean()),
+    facets: v.optional(v.array(facetValidator)),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -269,8 +322,23 @@ export const updateFromScout = internalMutation({
       ...(args.openToSharing !== undefined
         ? { openToSharing: args.openToSharing }
         : {}),
+      ...(args.radiusKm !== undefined ? { radiusKm: args.radiusKm } : {}),
+      ...(args.genres !== undefined ? { genres: normalizedList(args.genres) } : {}),
+      ...(args.instruments !== undefined
+        ? { instruments: normalizedList(args.instruments) }
+        : {}),
+      ...(args.collaborationOpen !== undefined
+        ? { collaborationOpen: args.collaborationOpen }
+        : {}),
+      ...(args.facets !== undefined ? { facets: args.facets } : {}),
       updatedAt: Date.now(),
     });
+    if (need.status === "active") {
+      await ctx.scheduler.runAfter(0, internal.matches.recomputeNeed, {
+        ownerId: args.ownerId,
+        savedNeedId: need._id,
+      });
+    }
     return null;
   },
 });

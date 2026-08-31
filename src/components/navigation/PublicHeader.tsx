@@ -23,6 +23,7 @@ export function PublicHeader() {
       </button>
       <nav aria-label="Public navigation" className={menuOpen ? "open" : undefined}>
         <NavLink onClick={() => setMenuOpen(false)} to="/explore">Explore</NavLink>
+        <NavLink onClick={() => setMenuOpen(false)} to="/map">Map</NavLink>
         <Link onClick={() => setMenuOpen(false)} to="/#how">How it works</Link>
         <NavLink onClick={() => setMenuOpen(false)} to="/sign-in">Sign in</NavLink>
         <Link className="btn btn-p" onClick={() => setMenuOpen(false)} to="/app/scout">Start my search</Link>

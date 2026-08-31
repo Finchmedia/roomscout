@@ -12,8 +12,10 @@ import {
 import { api } from "../../convex/_generated/api";
 import {
   AppExplorePage,
+  BrowserRunPage,
   ExplorePage,
   LandingPage,
+  MapPage,
   MusicianInboxPage,
   MySearchPage,
   OpsAuditPage,
@@ -71,6 +73,7 @@ function AppRoutes() {
       <Route element={<LandingPage />} path="/" />
       <Route element={<ExplorePage />} path="/explore" />
       <Route element={<SignalDetailPage />} path="/signals/:signalId" />
+      <Route element={<MapPage />} path="/map" />
       <Route element={<AuthRoute />} path="/sign-in" />
       <Route element={<AuthRoute />} path="/sign-up" />
 
@@ -79,6 +82,7 @@ function AppRoutes() {
       <Route element={<RequireAuth><MySearchPage /></RequireAuth>} path="/app/search" />
       <Route element={<RequireAuth><MusicianInboxPage /></RequireAuth>} path="/app/inbox" />
       <Route element={<RequireAuth><ProfilePage /></RequireAuth>} path="/app/profile" />
+      <Route element={<RequireAuth><BrowserRunPage /></RequireAuth>} path="/app/runs/:runId" />
 
       <Route element={<RequireAuth><RequireOperator><OpsOverviewPage /></RequireOperator></RequireAuth>} path="/ops" />
       <Route element={<RequireAuth><RequireOperator><OpsSignalsPage /></RequireOperator></RequireAuth>} path="/ops/signals" />

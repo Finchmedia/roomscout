@@ -1,6 +1,7 @@
 import { ConvexError } from "convex/values";
+import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import type { MutationCtx, QueryCtx } from "../_generated/server";
+import type { ActionCtx, MutationCtx, QueryCtx } from "../_generated/server";
 
 type DatabaseCtx = QueryCtx | MutationCtx;
 
@@ -29,12 +30,18 @@ export async function requireOperatorId(
   return userId;
 }
 
-export async function requireActionUserId(ctx: {
-  auth: { getUserIdentity: () => Promise<{ subject: string } | null> };
-}): Promise<Id<"users">> {
+export async function requireActionUserId(
+  ctx: Pick<ActionCtx, "auth" | "runQuery">,
+): Promise<Id<"users">> {
   const identity = await ctx.auth.getUserIdentity();
   if (identity === null) {
     throw new ConvexError({ code: "UNAUTHENTICATED" });
   }
-  return identity.subject as Id<"users">;
+  const userId = await ctx.runQuery(internal.users.resolveAuthSubject, {
+    subject: identity.subject,
+  });
+  if (userId === null) {
+    throw new ConvexError({ code: "INVALID_IDENTITY" });
+  }
+  return userId;
 }

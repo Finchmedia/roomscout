@@ -34,9 +34,11 @@ the user message is embedded and the most relevant private facts are appended
 to the deterministic context. Missing credentials degrade to deterministic
 fact and profile context rather than blocking the conversation.
 
-Generation and compression stay on Convex AI Gateway using
-`openai/gpt-5.6-terra`. Only embeddings call the regular OpenAI endpoint with
-`OPENAI_API_KEY` from the Convex deployment environment.
+Text generation, normalization, and compression stay on Convex AI Gateway using
+`openai/gpt-5.6-terra`. Embeddings call the regular OpenAI endpoint with
+`OPENAI_API_KEY` from the Convex deployment environment. Realtime Voice also
+uses that deployment key server-side to establish an authenticated WebRTC call;
+the key is never returned to the browser.
 
 The Development deployment now has `OPENAI_API_KEY`. A cloud smoke test on
 2026-08-28 returned the expected 512-dimensional `text-embedding-3-small`
@@ -46,6 +48,15 @@ to backfill existing facts.
 Cross-user band matching is not enabled by this private index. That requires a
 separate, explicitly opted-in discovery profile and disclosure policy; private
 memory must never become a public matching corpus implicitly.
+
+## Voice and memory
+
+The Realtime Voice Scout uses the same owned search, signal focus, Case Card,
+and memory domains as the text Scout. Voice tools may recall or write facts and
+create an outreach draft, but they cannot approve or send communication. Final
+transcript events may be deduplicated into the existing Agent thread; raw audio
+is never stored. Ending a voice session therefore does not create a separate or
+weaker memory silo.
 
 ## Context import
 

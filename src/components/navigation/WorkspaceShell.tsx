@@ -27,21 +27,6 @@ type NavItem = {
   count?: number;
 };
 
-const musicianItems: NavItem[] = [
-  { label: "Scout", to: "/app/scout", icon: Radar },
-  { label: "Explore", to: "/app/explore", icon: Search },
-  { label: "My search", to: "/app/search", icon: SlidersHorizontal },
-  { label: "Inbox", to: "/app/inbox", icon: Mail, count: 1 },
-];
-
-const opsItems: NavItem[] = [
-  { label: "Overview", to: "/ops", icon: Activity },
-  { label: "Signals", to: "/ops/signals", icon: Radio, count: 4 },
-  { label: "Sources", to: "/ops/sources", icon: Database },
-  { label: "Outreach", to: "/ops/outreach", icon: Send, count: 1 },
-  { label: "Inbox", to: "/ops/inbox", icon: Mail, count: 1 },
-];
-
 function NavigationItems({ items }: { items: NavItem[] }) {
   return items.map(({ label, to, icon: Icon, count }) => (
     <NavLink className={({ isActive }) => (isActive ? "on" : undefined)} end={to === "/ops"} key={to} to={to}>
@@ -62,6 +47,23 @@ export function WorkspaceShell({ children, mode }: WorkspaceShellProps) {
   const { signOut } = useAuthActions();
   const currentUser = useQuery(api.users.current);
   const isOps = mode === "ops";
+  const opsCounts = useQuery(api.ops.navCounts, isOps ? {} : "skip");
+  const inboxThreads = useQuery(api.inbox.listThreadsMine, isOps ? "skip" : { limit: 50 });
+  const newMatches = useQuery(api.matches.listMine, isOps ? "skip" : { status: "new", limit: 50 });
+  const approvalDrafts = useQuery(api.outreach.listMine, isOps ? "skip" : { status: "awaiting_approval", limit: 50 });
+  const musicianItems: NavItem[] = [
+    { label: "Scout", to: "/app/scout", icon: Radar, count: approvalDrafts?.length },
+    { label: "Explore", to: "/app/explore", icon: Search },
+    { label: "My search", to: "/app/search", icon: SlidersHorizontal, count: newMatches?.length },
+    { label: "Inbox", to: "/app/inbox", icon: Mail, count: inboxThreads?.filter((thread) => thread.status === "replied").length },
+  ];
+  const opsItems: NavItem[] = [
+    { label: "Overview", to: "/ops", icon: Activity },
+    { label: "Signals", to: "/ops/signals", icon: Radio, count: opsCounts?.signalReview },
+    { label: "Sources", to: "/ops/sources", icon: Database },
+    { label: "Outreach", to: "/ops/outreach", icon: Send, count: opsCounts?.outreach },
+    { label: "Inbox", to: "/ops/inbox", icon: Mail, count: opsCounts?.inbox },
+  ];
   const items = isOps ? opsItems : musicianItems;
   const home = isOps ? "/ops" : "/app/scout";
 

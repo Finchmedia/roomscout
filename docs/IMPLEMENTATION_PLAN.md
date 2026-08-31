@@ -1,18 +1,70 @@
 # RoomScout — Provisional Implementation Plan
 
-Status: implementation-ready working plan as of 2026-08-27. This plan follows
-the current leading product hypothesis, but it is not a declaration that every
-feature below belongs in the final MVP. Decision gates are included so the build
-can narrow as evidence arrives.
+Status: active implementation plan, updated 2026-08-28. The original staged
+gates remain useful for sequencing and review, but the approved YOLO build has
+implemented several later capabilities in parallel. Provider-backed live proofs
+remain deliberately bounded.
 
-**Provider correction, 2026-08-27:** Firecrawl's documented primitive used by
-the implemented MVP is `changeTracking` on repeated scrape/crawl calls. The
-current documentation does not establish the hypothetical `monitor.page` or
-`monitor.check.completed` API assumed in some later planning sections. In the
-implemented scaffold, Convex cron jobs claim due source targets, call Firecrawl,
-and persist idempotent ingestion events. Any remaining “monitor” terminology
-below should be read as a conceptual source target until those sections are
-rewritten.
+## Source Intelligence and portal-autopilot checkpoint — 2026-08-31
+
+The earlier first-slice non-goals below are retained as historical sequencing,
+but they no longer describe the implemented direction. RoomScout now contains:
+
+- a Germany-wide, bounded Firecrawl Search query matrix that persists candidates
+  into a review queue without starting a broad crawl;
+- geographic coverage, platform, fact, adapter, checkpoint, versioned policy,
+  and read-only probe models;
+- per-search source include/prefer/exclude controls and honest coverage labels;
+- Firecrawl Interact execution of exact, approved public contact forms. Reviewed
+  non-HITL workflows may submit after the final gate; CAPTCHA or uncertain state
+  pauses in a user-controlled Live View;
+- one Browserbase persistent Context per user and portal, with short-lived
+  Sessions, human login/2FA handoff, passive recon, bounded platform-inbox
+  synchronization, and approved writes through code-owned adapters;
+- versioned standing mandates for Research, Outreach, and Negotiation modes,
+  with platform/action/data scopes, contact/browser limits, price ceiling,
+  expiry, complaint stop, and a kill switch;
+- an exact-hash external-action ledger, one-time approvals, mandate snapshots,
+  idempotent executions, unified email/platform communication, opportunities,
+  and explicit handoffs.
+
+No password, cookie, DOM snapshot, screenshot, raw audio, or ephemeral Live View
+URL is stored. No agent can solve a CAPTCHA, enter a password or 2FA code, accept
+terms, sign an agreement, complete a booking, or spend money. The generic
+Browserbase write executor is implemented and covered by fixture adapters. A
+real portal remains non-executable until its concrete flow has an approved
+current policy and a tested code-owned adapter; this is a safety and correctness
+gate, not hidden autonomy.
+
+**Firecrawl architecture correction, 2026-08-28:** RoomScout now uses Firecrawl
+Native Monitoring as the retrieval scheduler. `monitor.page` and
+`monitor.check.completed` webhooks feed idempotent Convex ingestion. Convex owns
+the Source Registry, processing backlog, stale-state rules, and a reconciliation
+watchdog; its cron does not run a second scrape schedule. The older
+Convex-owned `changeTracking` scheduler described in the first scaffold has been
+superseded.
+
+## Implementation checkpoint — 2026-08-28
+
+The current vertical architecture includes:
+
+- a Source Registry plus Native Monitor synchronization and webhook ingestion;
+- index-page expansion into individual `sourceEntries`, with a five-detail limit
+  per pilot target and at most two concurrent Firecrawl requests;
+- public-signal redaction, private contact candidates, deterministic deduplication,
+  strict OpenAI normalization, embeddings, matching, geocoding, and notifications;
+- a persistent text Scout with structured search state, fact memory, context
+  compression, reviewed external-context import, and explicit Case Card modes;
+- personal AgentMail inbox provisioning and exact-content approvals;
+- an authenticated OpenAI Realtime WebRTC session endpoint with shared Scout
+  context and no stored audio; and
+- a RoomScout globe/map adapted from maintainer-owned Jumper map physics, with
+  cached Mapbox geocoding and visible location precision.
+
+The three source pilots—Stuttgart, Berlin, and Hamburg—are seeded in a paused
+review state. `FIRECRAWL_MONITORS_ENABLED` defaults off. No broad crawl, live
+mail send, or production-scale geocoding run is part of this checkpoint.
+Translation remains deferred.
 
 ## 1. Implementation target
 
@@ -57,49 +109,50 @@ user-facing hackathon promise.
 - Use AgentMail for an explicitly approved outbound message and an inbound reply.
 - Deploy the public SPA through Convex Static Hosting at `convex.site`.
 
-### Deliberate non-goals for the first vertical slice
+### Historical non-goals for the first vertical slice
 
-- Comprehensive coverage of Germany or Europe.
+- A completed comprehensive crawl of Germany or Europe.
 - Booking, payments, contracts, or availability management.
-- Autonomous account creation on third-party platforms.
+- Unreviewed autonomous account creation on third-party platforms.
 - Bypassing login barriers, CAPTCHAs, robots rules, or platform restrictions.
 - Bulk cold outreach or automatic introductions.
 - Publishing scraped identities or contact details.
 - General-purpose musician collaboration matching.
 - Production-grade graph analytics or embeddings before deterministic search and
   deduplication work.
-- Browserbase unless an approved source demonstrates a concrete need that
-  Firecrawl Interact and persistent profiles cannot satisfy.
+- Unreviewed Browserbase write automation. Browserbase is now implemented for
+  approved source recon, persistent user login, and passive Inbox retrieval.
 
 ## 3. Architecture and responsibility split
 
 ```mermaid
 flowchart LR
     A["Source discovery"] --> B["Source Registry in Convex"]
-    B --> C["Convex due-target cron"]
-    C --> D["Firecrawl scrape + changeTracking"]
-    D --> E["Idempotent Convex ingestion event"]
-    E --> F["Extraction and normalization"]
+    B --> C["Firecrawl Native Monitor"]
+    C --> D["Authenticated monitor webhook"]
+    D --> E["Index entries + bounded detail backlog"]
+    E --> F["Redact + normalize + deduplicate"]
     F --> G["Canonical supply + demand index"]
-    G --> H["Realtime search and source-health UI"]
-    G --> I["Saved need and matching"]
-    I --> J["Approved AgentMail message"]
-    J --> K["Reply webhook and live status"]
+    G --> H["Realtime search + map + source health"]
+    G --> I["Saved need + persistent matching"]
+    I --> J["Personal AgentMail draft + exact approval"]
+    J --> K["Delivery/reply webhook + live Inbox"]
+    G --> L["Text or Realtime Voice Scout"]
 ```
 
 | System | Primary responsibility |
 |---|---|
-| React + Vite | Public search, result detail, saved need, approval UI, and admin source-health views |
-| Convex | Source Registry, webhook ingestion, canonical state, indexes, realtime queries, job orchestration, approvals, and audit trail |
-| Firecrawl | Initial discovery, source extraction, repeated scrape/crawl retrieval, change detection, and optional permitted interaction |
-| OpenAI | Canonical field normalization, ambiguity handling, duplicate candidate scoring, concise explanations, and reply parsing |
-| AgentMail | Approved outbound email, inbound replies, thread state, and opt-in notification delivery |
+| React + Vite | Public search, result detail, saved need, Scout text/voice UI, map, approval UI, Inbox, and Ops views |
+| Convex | Source Registry, webhook ingestion, canonical state, indexes, realtime queries, matching, rate limits, approvals, audit trail, and reconciliation |
+| Firecrawl | Native Monitoring, changed-index extraction, and bounded detail-page retrieval |
+| OpenAI | Terra generation through the Convex AI Gateway, semantic embeddings, and Realtime Voice over WebRTC |
+| AgentMail | Personal user inboxes, approved outbound email, delivery events, inbound replies, and thread state |
+| Mapbox | Server-side cached geocoding plus browser globe and map rendering |
 
 ### Scheduling boundary
 
-Convex cron jobs own recurring retrieval for the implemented MVP. They claim a
-bounded set of due source targets and call Firecrawl with `changeTracking`.
-Firecrawl owns retrieval and change comparison; Convex owns cadence,
+Firecrawl Native Monitoring owns recurring retrieval. Convex stores the monitor
+mapping and expected cadence, receives authenticated events, and owns
 idempotency, application state, and maintenance:
 
 - mark stale signals according to source-specific freshness policies,
@@ -110,9 +163,9 @@ idempotency, application state, and maintenance:
 - prepare user alert candidates,
 - record source-health and job metrics.
 
-There must never be two active schedulers for the same retrieval. If a future
-Firecrawl scheduling product is adopted, ownership moves explicitly from the
-Convex target before activation.
+There must never be two active schedulers for the same retrieval. The Convex
+cron is only a reconciliation watchdog for missing checks, stuck events, stale
+signals, and bounded backlog recovery; it does not duplicate Firecrawl scrapes.
 
 ## 4. Product and data lifecycle
 
@@ -297,12 +350,14 @@ Each source is configured once, then maintained as an operational asset.
 5. Decide whether the source provides enough relevant, current information to
    justify ongoing credits and maintenance.
 
-### Step B: choose the monitor pattern
+### Step B: choose the monitored page pattern
 
-- **Page target:** stable result page with all or most current entries.
-- **Crawl target:** listings are individual pages and new URLs must be discovered.
-- **Search target:** recurring web-scale discovery across unknown or changing
-  domains.
+- **Index-page target:** stable result page from which individual current entries
+  and detail URLs can be extracted.
+- **Detail-page retrieval:** only new or meaningfully changed entries are scraped
+  and normalized.
+- **Discovery research:** additional domains enter `reviewing`; web-scale search
+  does not automatically publish or activate a monitor.
 - **Interact/profile:** only for an approved authenticated source where simple
   scraping is insufficient; not part of the initial core path.
 
@@ -316,9 +371,9 @@ Each source is configured once, then maintained as an operational asset.
 - Firecrawl goal and JSON schema where structured change tracking is valuable.
 - Version identifier so extraction changes are auditable and reprocessable.
 
-Change tracking depends on exact source URLs and consistent scrape parameters.
-The same URL should not alternate between incompatible tag, content-selection,
-or main-content settings.
+Monitoring and extraction depend on exact source URLs and consistent scrape
+parameters. The same URL should not alternate between incompatible tag,
+content-selection, or main-content settings.
 
 ### Step D: baseline and activate
 
@@ -433,6 +488,10 @@ Provisional route: `/api/webhooks/firecrawl`.
 6. Schedule processing and return promptly.
 7. Treat `monitor.page` as page-level work and `monitor.check.completed` as
    reconciliation/health information.
+8. For `new` and `changed`, scrape the current index, derive individual source
+   entries, and queue no more than five new detail pages per target in the pilot.
+9. Treat one missing snapshot as uncertainty. Mark an entry stale only after two
+   successful snapshots omit it; never mass-delete after one empty response.
 
 ### AgentMail endpoint
 
@@ -487,9 +546,28 @@ Provisional route: `/api/webhooks/agentmail`.
 - canonical signal creation/update,
 - realtime appearance in public search.
 
-Build the list and detail experience before committing to a geographic map. A
-map is valuable only after location quality and aggregation thresholds are good
-enough not to mislead.
+### Globe and map
+
+- The landing globe shows aggregated `marketAreas`; `/map` exposes city-level
+  pins and filters.
+- Exact pins are allowed only when the public source actually publishes exact
+  location information. District and city geocodes are visibly approximate.
+- Server-side Mapbox geocodes are cached in Convex; a failed geocode never blocks
+  signal publication.
+- The globe physics, fog, rotation, and fly-to behavior are adapted from the
+  maintainer's Jumper studio-map implementation and restyled for RoomScout.
+
+### Realtime Voice Scout
+
+- `POST /api/realtime/session` authenticates the Convex user, rate-limits session
+  creation, and proxies browser SDP to OpenAI `/v1/realtime/calls` using multipart
+  text fields named `sdp` and `session`.
+- The default model is `gpt-realtime-2.1`, configurable through the deployment
+  environment. The browser carries microphone and model audio through WebRTC.
+- Voice uses the same search, signal focus, draft, and memory domains as text.
+  Tools can create an outreach draft but cannot approve or send it.
+- Final transcripts and memory events may be stored; raw audio is never stored.
+- Mic denial, disconnect, mute, reconnect, and session-end states remain visible.
 
 ## 11. Implementation phases and exit gates
 
@@ -573,7 +651,8 @@ Tasks:
 
 - Add the authenticated Firecrawl webhook endpoint.
 - Process `monitor.page` and `monitor.check.completed` events idempotently.
-- Create or update source entries from structured snapshots/diffs.
+- Expand index snapshots into multiple source entries, then process only bounded
+  new or changed detail pages.
 - Handle new, changed, removed, same, and error states.
 - Add degraded-source safeguards against false mass removal.
 - Expose source health and recent ingestion events in the admin UI.
@@ -589,16 +668,17 @@ Exit gate:
 
 Tasks:
 
-- Add a second source with a different retrieval pattern.
-- Add a Firecrawl web-scale search monitor to discover new result URLs or source
-  candidates.
+- Seed reviewed pilot targets for Stuttgart, Berlin, and Hamburg without
+  activating them automatically.
+- Discover new result URLs or source candidates through controlled research;
+  do not start a web-scale monitor in this run.
 - Route discovered domains into `reviewing`, not directly into production.
 - Measure credits and expected monthly monitoring cost per source.
 - Add source-health thresholds and review reminders.
 
 Exit gate:
 
-- Page/crawl and search monitoring both feed the same ingestion contract.
+- All reviewed index-page patterns feed the same multi-entry ingestion contract.
 - New source candidates do not become public until reviewed.
 - Cost and health are visible per monitor.
 
@@ -629,7 +709,7 @@ Tasks:
 - Display observed/verified and fresh/stale distinctly.
 - Add source links and explain why a result is shown.
 - Add pagination before the dataset can grow without bound.
-- Add map or district aggregation only if geocoding quality passes review.
+- Add district/city aggregation and map pins with an explicit precision label.
 
 Exit gate:
 
@@ -642,12 +722,12 @@ Exit gate:
 
 Tasks:
 
-- Choose and implement the minimum identity/auth approach needed for private
-  saved needs and approvals.
+- Use Convex Auth v2 Alpha for private saved needs and approvals.
 - Add a structured saved-need form and lifecycle.
 - Match new signals against active needs with explainable rules.
 - Create alert drafts rather than sending immediately.
 - Add explicit recipient/content approval.
+- Lazily provision one deterministic personal AgentMail inbox per user.
 - Send an approved message through AgentMail and ingest delivery/reply events.
 - Parse a reply with OpenAI and update the live thread state.
 
@@ -715,6 +795,7 @@ Recommended demo sequence:
 5. Show a saved need become a match candidate.
 6. Approve one AgentMail message.
 7. Show the reply return and update the UI.
+8. Use Voice to update the same search card and show the city on the map.
 
 Exit gate:
 
@@ -804,12 +885,14 @@ requires them:
 
 | Decision | Needed by | Default recommendation |
 |---|---|---|
-| Pilot geography | Phase 0 | One city/region with the best source coverage; do not hard-code the data model to it |
-| Initial source cohort | Phase 0 | Public sources only, covering at least two different patterns |
-| First Firecrawl monitor types | Phase 3 | Page monitor first, then crawl or search for the second pattern |
-| Map in MVP | Phase 7 | Start with list and district aggregation; add map after location quality is proven |
-| Auth provider | Phase 8 | Delay until private saved needs are implemented; verify current official options then |
-| Embeddings | After Phase 6 | Add only if deterministic and structured matching leave a demonstrated gap |
+| Pilot geography | Implemented configuration | Stuttgart, Berlin, and Hamburg; each source starts paused in `reviewing` |
+| Initial source cohort | Implemented configuration | Public index pages only; five new details per target and two concurrent Firecrawl requests |
+| Retrieval ownership | Implemented | Firecrawl Native Monitoring; Convex only reconciles health and processing |
+| Map in MVP | Implemented foundation | Globe plus `/map`, with precision-aware cached Mapbox geocoding |
+| Auth provider | Implemented | Convex Auth v2 Alpha, Username + Password |
+| Embeddings | Implemented | Direct OpenAI `text-embedding-3-small`; exact constraints remain deterministic |
+| Voice | Implemented foundation | Direct OpenAI Realtime WebRTC; no audio storage and no send/approval tool |
+| AgentMail identity | Implemented foundation | Personal inbox per user, provisioned lazily at first outreach |
 | Authenticated third-party sources | After core index | Require source-specific permission and a human checkpoint |
 | Browserbase | After source evidence | Add only for a permitted flow Firecrawl cannot reliably support |
 | Band-to-band introductions | Phase 9 | Optional; never block the core index and alert loop |
@@ -825,11 +908,13 @@ The leading core hypothesis is proven when:
 - OpenAI performs evidence-grounded normalization or deduplication,
 - every result exposes provenance, freshness, and observed/verified state,
 - a musician can save a need and receive a relevant alert draft,
+- text and Voice update the same owned search and memory domains,
+- the globe/map shows only source-supported locations with visible precision,
 - one explicitly approved AgentMail message and reply complete the loop,
 - no source restriction, private contact, or unapproved message is bypassed,
 - automated tests and production smoke checks pass,
 - the documentation and hackathon evidence describe only what actually exists.
 
-Everything beyond this definition—maps, graph analytics, embeddings, autonomous
-source repair, room-sharing pools, and broader superconnector behavior—remains an
-extension until the core index proves useful.
+Everything beyond this definition—autonomous source repair, authenticated-source
+automation, room-sharing pools, translation, and broader superconnector
+behavior—remains an extension until the core index proves useful.

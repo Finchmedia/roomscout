@@ -1,10 +1,24 @@
 # RoomScout — Scaffold & Claude Design Port Plan
 
-**Status:** approved execution plan for the MVP prototype  
-**Last updated:** 2026-08-27  
+**Status:** scaffold history with an active integration checkpoint
+**Last updated:** 2026-08-28
 **Inputs:** `DESIGN_PRD.md`, the Claude Design RoomScout handoff, and the provisional product/implementation documents
 
-This plan turns the Claude Design handoff into the actual RoomScout application. It is intentionally narrower than `IMPLEMENTATION_PLAN.md`: it defines the scaffold, design port, integration seams, and the shortest end-to-end MVP path. Where Firecrawl event assumptions differ, the current Firecrawl documentation and this plan govern implementation.
+This plan turns the Claude Design handoff into the actual RoomScout application.
+It is intentionally narrower than `IMPLEMENTATION_PLAN.md`: it defines the
+scaffold, design port, integration seams, and the shortest end-to-end MVP path.
+The 2026-08-28 Firecrawl Native Monitor architecture in
+`IMPLEMENTATION_PLAN.md` supersedes the original retrieval contract below.
+
+## Integration checkpoint — 2026-08-28
+
+- The real Convex Scout, saved search, fact memory, context import, and profile
+  memory UI replaced their fixtures.
+- Firecrawl Native Monitoring, multi-entry extraction, personal AgentMail
+  inboxes, matching, Realtime Voice, and Mapbox/geographic foundations now exist
+  in the application code.
+- The remaining work is controlled provider proof and final frontend connection,
+  not a return to the original fixture-first architecture.
 
 ## Execution checkpoint — 2026-08-27
 
@@ -339,18 +353,24 @@ Scout tools may read signals, update a draft search, save a confirmed need, and 
 
 ### Firecrawl
 
-The default MVP path is:
+The implemented MVP path is:
 
-1. Convex cron selects due `sourceTargets`;
-2. an internal action calls Firecrawl `/scrape`, `/crawl`, or batch scrape with `markdown` plus `changeTracking` and a stable tag;
-3. Firecrawl reports `new`, `same`, `changed`, or `removed`;
-4. the result is converted into one internal ingestion-event contract;
-5. only new or meaningfully changed content reaches OpenAI normalization;
-6. Convex publishes the reviewed or demo-approved signal and subscribed screens update.
+1. Firecrawl Native Monitoring owns the public-page retrieval schedule;
+2. `monitor.page` and `monitor.check.completed` reach the authenticated Convex
+   webhook;
+3. Convex records provider IDs idempotently and schedules processing;
+4. a changed index page expands into individual `sourceEntries`;
+5. only bounded new or meaningfully changed detail pages reach OpenAI
+   normalization; and
+6. Convex publishes the signal, matches owned needs, and updates subscribed
+   screens.
 
-For asynchronous crawls, `/api/webhooks/firecrawl` accepts the currently documented `crawl.page` and `crawl.completed` callbacks. It verifies the supported signature/secret contract, stores a provider event idempotently, and delegates processing internally.
+The Convex cron reconciles monitor health and stuck work; it does not schedule a
+duplicate scrape. Pilot monitors remain off until each source is reviewed and
+`FIRECRAWL_MONITORS_ENABLED=true` is set deliberately.
 
-Do not implement the earlier speculative `monitor.page` or `monitor.check.completed` event names unless Firecrawl later documents them for the exact API being used.
+The original `sourceTargets` plus `changeTracking` sequence above is retained in
+Git history only and must not be restored alongside Native Monitoring.
 
 ### Approval and AgentMail
 
@@ -362,8 +382,10 @@ The approval boundary is data, not a checkbox:
 4. Any material edit invalidates the approval.
 5. Only an internal send action can call AgentMail.
 6. The action verifies ownership, approval status, unchanged fingerprint, and idempotency key.
-7. Delivery and reply events update the same mail thread.
-8. Incoming original content remains visible; OpenAI interpretation is separate and labelled.
+7. A deterministic personal mailbox is provisioned lazily for the user; there
+   is no global RoomScout sending inbox.
+8. Delivery and reply events update the same mail thread.
+9. Incoming original content remains visible; OpenAI interpretation is separate and labelled.
 
 Provider webhooks must verify signatures against the raw request body when required and deduplicate using stable provider event/message ids. Retries and double-clicks must not create duplicate sends.
 

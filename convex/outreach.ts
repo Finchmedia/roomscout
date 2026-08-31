@@ -456,6 +456,7 @@ export const claimApprovedSend = internalMutation({
     await ctx.db.patch(draft._id, {
       status: "sending",
       sendIdempotencyKey: idempotencyKey,
+      sendingStartedAt: Date.now(),
       error: undefined,
       updatedAt: Date.now(),
     });
@@ -500,6 +501,7 @@ export const markSent = internalMutation({
       await ctx.db.patch(draft._id, {
         status: "sent",
         providerThreadId: args.providerThreadId,
+        sendingStartedAt: undefined,
         updatedAt: Date.now(),
       });
       return existingMessage.threadId;
@@ -542,6 +544,7 @@ export const markSent = internalMutation({
       status: "sent",
       providerThreadId: args.providerThreadId,
       sentAt: now,
+      sendingStartedAt: undefined,
       error: undefined,
       updatedAt: now,
     });
@@ -566,9 +569,43 @@ export const markSendFailed = internalMutation({
       await ctx.db.patch(draft._id, {
         status: "failed",
         error: args.error.slice(0, 500),
+        sendingStartedAt: undefined,
         updatedAt: Date.now(),
+      });
+      await ctx.db.insert("notifications", {
+        ownerId: draft.ownerId,
+        kind: "outreach_failed",
+        title: "Outreach could not be sent",
+        body: args.error.slice(0, 500),
+        createdAt: Date.now(),
       });
     }
     return null;
+  },
+});
+
+export const recoverStuckSending = internalMutation({
+  args: { olderThanMs: v.number(), limit: v.number() },
+  returns: v.number(),
+  handler: async (ctx, args) => {
+    const cutoff = Date.now() - Math.max(60_000, args.olderThanMs);
+    const drafts = await ctx.db
+      .query("outreachDrafts")
+      .withIndex("by_status_and_updated_at", (q) =>
+        q.eq("status", "sending").lt("updatedAt", cutoff),
+      )
+      .take(Math.max(1, Math.min(50, Math.floor(args.limit))));
+    for (const draft of drafts) {
+      await ctx.db.patch(draft._id, {
+        status: "approved",
+        sendingStartedAt: undefined,
+        error: "Recovered an interrupted send; retrying with the same idempotency key.",
+        updatedAt: Date.now(),
+      });
+      await ctx.scheduler.runAfter(0, internal.agentmail.sendApprovedDraft, {
+        draftId: draft._id,
+      });
+    }
+    return drafts.length;
   },
 });

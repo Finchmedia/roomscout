@@ -4,6 +4,7 @@ const verificationLabels: Record<MarketSignal["verification"], string> = {
   observed: "Observed",
   source_verified: "Source verified",
   user_verified: "User verified",
+  conflicting: "Conflicting sources",
 };
 
 export function SignalBadge({ signal }: { signal: MarketSignal }) {
