@@ -22,6 +22,12 @@ describe("AgentMail component environment bridge", () => {
     expect(dependencyPatch).toContain(
       "AGENTMAIL_BASE_URL: v.optional(v.string())",
     );
+    expect(dependencyPatch).toContain(
+      "export const listInboxes = action({",
+    );
+    expect(dependencyPatch).toContain(
+      "export const getMessage = action({",
+    );
   });
 
   it("binds root deployment secrets into the isolated component", () => {

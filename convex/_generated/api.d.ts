@@ -25,6 +25,7 @@ import type * as http from "../http.js";
 import type * as inbox from "../inbox.js";
 import type * as ingestion from "../ingestion.js";
 import type * as integrations_agentmailPayload from "../integrations/agentmailPayload.js";
+import type * as integrations_agentmailWebhookBootstrap from "../integrations/agentmailWebhookBootstrap.js";
 import type * as integrations_auth from "../integrations/auth.js";
 import type * as integrations_authz from "../integrations/authz.js";
 import type * as integrations_contentHash from "../integrations/contentHash.js";
@@ -104,6 +105,7 @@ declare const fullApi: ApiFromModules<{
   inbox: typeof inbox;
   ingestion: typeof ingestion;
   "integrations/agentmailPayload": typeof integrations_agentmailPayload;
+  "integrations/agentmailWebhookBootstrap": typeof integrations_agentmailWebhookBootstrap;
   "integrations/auth": typeof integrations_auth;
   "integrations/authz": typeof integrations_authz;
   "integrations/contentHash": typeof integrations_contentHash;

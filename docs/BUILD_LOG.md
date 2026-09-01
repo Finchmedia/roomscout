@@ -580,5 +580,12 @@ been consumed through AgentMail, no persisted Browserbase signup/message has
 yet run, and no AgentMail send/reply round trip is claimed. The inbox-scoped key
 is sufficient for one controlled account, but per-user provisioning still
 requires an organization- or pod-scoped key with Inbox creation permission.
-The provider currently has no webhook configured and Convex has no corresponding
-AgentMail webhook secret, so inbound delivery remains deliberately unavailable.
+
+Configured one Inbox-scoped AgentMail webhook for the controlled account through
+an internal-only, confirmation-gated bootstrap. It targets only the Production
+Convex webhook endpoint and subscribes to received, sent, delivered, bounced,
+rejected, and complained message events. The returned signing secret was piped
+directly into the Production deployment without being displayed or written to
+the repository. An unsigned request now returns HTTP 401. No Inbox was created
+and no email was sent. A live inbound event still requires the explicitly
+approved controlled send/reply proof described above.

@@ -18,6 +18,16 @@ import {
   normalizeAgentMailMessage,
   parseAgentMailEvent,
 } from "./integrations/agentmailPayload";
+import {
+  CONTROLLED_AGENTMAIL_WEBHOOK_CLIENT_ID,
+  CONTROLLED_AGENTMAIL_WEBHOOK_EVENTS,
+  CONTROLLED_AGENTMAIL_WEBHOOK_URL,
+  parseAgentMailWebhookPage,
+  planScopedWebhookBootstrap,
+  resolveScopedWebhookSigningSecret,
+  signingSecretFromCreateResponse,
+} from "./integrations/agentmailWebhookBootstrap";
+import { envValue } from "./integrations/env";
 import { stableFingerprint } from "./integrations/fingerprints";
 
 const normalizedInbox = v.object({
@@ -54,6 +64,33 @@ function componentClient(): AgentMail {
   return new AgentMail(components.agentmail, {
     onEvent: internal.agentmailComponent.receiveEvent,
   });
+}
+
+async function agentmailWebhookRequest(
+  path: string,
+  init: { method: "GET" | "POST"; body?: unknown },
+): Promise<unknown> {
+  const apiKey = envValue("AGENTMAIL_API_KEY");
+  if (!apiKey) throw new Error("AGENTMAIL_API_KEY is not configured.");
+  const baseUrl = (
+    envValue("AGENTMAIL_BASE_URL") ?? "https://api.agentmail.to/v0"
+  ).replace(/\/$/, "");
+  const response = await fetch(`${baseUrl}${path}`, {
+    method: init.method,
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      ...(init.body === undefined
+        ? {}
+        : { "Content-Type": "application/json" }),
+    },
+    body: init.body === undefined ? undefined : JSON.stringify(init.body),
+  });
+  if (!response.ok) {
+    throw new Error(
+      `AgentMail scoped webhook ${init.method} failed (${response.status}).`,
+    );
+  }
+  return await response.json();
 }
 
 export async function handleAgentMailWebhook(
@@ -123,6 +160,58 @@ export const listAccessibleInboxes = internalAction({
       inboxes: result.inboxes.slice(0, 2),
       hasMore: result.nextPageToken !== undefined,
     };
+  },
+});
+
+/**
+ * Create or reuse the one controlled production webhook. The only return
+ * value is the signing secret so callers can pipe it directly into Convex
+ * environment configuration without including inbox identifiers in args.
+ */
+export const bootstrapControlledScopedWebhook = internalAction({
+  args: {
+    confirmation: v.literal(
+      "CREATE_OR_REUSE_PRODUCTION_AGENTMAIL_WEBHOOK",
+    ),
+  },
+  returns: v.string(),
+  handler: async (ctx) => {
+    const inboxPage = normalizeAgentMailInboxPage(
+      await componentClient().listInboxes(ctx, { limit: 2 }),
+    );
+    if (inboxPage.nextPageToken || inboxPage.inboxes.length !== 1) {
+      throw new Error("EXPECTED_EXACTLY_ONE_SCOPED_AGENTMAIL_INBOX");
+    }
+    const inbox = inboxPage.inboxes[0];
+    if (!inbox) {
+      throw new Error("EXPECTED_EXACTLY_ONE_SCOPED_AGENTMAIL_INBOX");
+    }
+    const inboxPath = `/inboxes/${encodeURIComponent(inbox.inboxId)}/webhooks`;
+    const page = parseAgentMailWebhookPage(
+      await agentmailWebhookRequest(`${inboxPath}?limit=100`, {
+        method: "GET",
+      }),
+    );
+    if (page.hasMore) {
+      throw new Error("CONTROLLED_AGENTMAIL_WEBHOOK_LIST_TRUNCATED");
+    }
+    const plan = planScopedWebhookBootstrap(page.webhooks);
+    if (plan.kind === "reuse") {
+      return resolveScopedWebhookSigningSecret(
+        plan.secret,
+        envValue("AGENTMAIL_WEBHOOK_SECRET"),
+      );
+    }
+
+    const created = await agentmailWebhookRequest(inboxPath, {
+      method: "POST",
+      body: {
+        url: CONTROLLED_AGENTMAIL_WEBHOOK_URL,
+        event_types: CONTROLLED_AGENTMAIL_WEBHOOK_EVENTS,
+        client_id: CONTROLLED_AGENTMAIL_WEBHOOK_CLIENT_ID,
+      },
+    });
+    return signingSecretFromCreateResponse(created);
   },
 });
 

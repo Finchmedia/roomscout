@@ -77,6 +77,7 @@ with evidence, and a duplicate replay producing no new entry. Added a
 reproducible compatibility patch for the official AgentMail Component under
 Convex 1.45; read-only Component access to the single scoped Inbox now succeeds
 without creating or sending anything. This checkpoint does not claim a
-Browserbase signup/message or AgentMail send/reply round trip; inbound mail
-still needs a provider webhook and secret, and per-user Inbox creation needs
-broader provider scope (`docs/BUILD_LOG.md`).
+Browserbase signup/message or AgentMail send/reply round trip. A narrowly scoped
+production webhook is now configured, its signing secret was transferred
+without disclosure, and unsigned requests return HTTP 401; per-user Inbox
+creation still needs broader provider scope (`docs/BUILD_LOG.md`).
