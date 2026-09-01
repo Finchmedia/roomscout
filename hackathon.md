@@ -12,7 +12,7 @@
 - **Auth:** Convex Auth
 - **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-realtime-2.1`
 - **Started:** 2026-08-26T13:55:26Z
-- **Last updated:** 2026-08-31T15:19:36Z
+- **Last updated:** 2026-09-01T09:24:30Z
 
 ## Log
 
@@ -57,10 +57,11 @@ no raw-audio persistence. Hardened the documented Firecrawl webhook and
 Realtime endpoint configuration while keeping native monitors disabled pending
 reviewed activation (`docs/BUILD_LOG.md`).
 
-### 2026-08-31 - working tree
+### 2026-09-01 - be3ac9c
 Replaced direct provider SDK calls with Components. AgentMail now owns durable
 inbox transport, sending, status tracking, and signed webhook dispatch behind
 RoomScout's exact-content approval gate. Vendored the complete official
 Firecrawl component locally and added Native Monitoring plus Interact without
-removing its durable crawl API (`convex/convex.config.ts`, `convex/components/`,
-`convex/agentmailComponent.ts`).
+removing its durable crawl API. Deployed both Components and the SPA to
+production; Health, Landing, and Explore returned HTTP 200
+(`convex/convex.config.ts`, `convex/components/`, `convex/agentmailComponent.ts`).

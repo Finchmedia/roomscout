@@ -437,8 +437,11 @@ one component outbound ID prevents duplicate enqueueing, but an exceptionally
 narrow accepted-response-lost retry remains a provider-component limitation and
 is documented rather than hidden.
 
-Verification passed with Convex component discovery/codegen and a successful
-development function upload, 192 application tests, 54 preserved/upstream and
-extension Firecrawl tests, full TypeScript, ESLint, and the production Vite
-build. These checks prove the component graph and application contracts; they
-do not claim a live monitor run or AgentMail delivery round trip.
+Verification passed with Convex component discovery/codegen, 192 application
+tests, 54 preserved/upstream and extension Firecrawl tests, full TypeScript,
+ESLint, and the production Vite build. The production deployment installed the
+AgentMail component, its two Workpools, the local Firecrawl component, the
+backend functions, and 14 static files. Health, Landing, and Explore returned
+HTTP 200. These checks prove the deployed component graph and application
+contracts; they do not claim a live monitor run or AgentMail delivery round
+trip.
