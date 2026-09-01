@@ -297,6 +297,7 @@ async function createForOpportunity(
       expiresAt: mandate.expiresAt,
       stopOnComplaint: mandate.stopOnComplaint,
       stopWhenSuitableRoomConfirmed: mandate.stopWhenSuitableRoomConfirmed,
+      commitmentBoundary: mandate.commitmentBoundary,
       stoppedAt: mandate.stoppedAt,
     },
     {
@@ -311,6 +312,7 @@ async function createForOpportunity(
       connectionActive: true,
       complaintRecorded: daily.complaintRecorded,
       suitableRoomConfirmed: daily.suitableRoomConfirmed,
+      bindingCommitment: false,
     },
   );
   if (!authorization.authorized) return null;

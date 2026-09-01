@@ -4,6 +4,7 @@ import { useState } from "react";
 import { api } from "../../../convex/_generated/api";
 import { WorkspaceShell } from "../../components/navigation/WorkspaceShell";
 import { EmptyState, PageHeader } from "../../components/ui/LedgerCard";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 import { formatAge, toneForStatus, titleCase } from "./opsFormat";
 
 const filters = ["all", "failed", "queued", "fetching", "processed", "none"] as const;
@@ -45,20 +46,20 @@ export function OpsSignalsPage() {
         <EmptyState body="The selected pipeline state currently contains no entries." title="Queue is empty" />
       ) : (
         <div className="lcard rs-review-table-wrap">
-          <table className="q rs-review-table">
-            <thead><tr><th>Entry</th><th>Side</th><th>Source</th><th>Detail state</th><th>Last seen</th></tr></thead>
-            <tbody>
+          <Table className="q rs-review-table">
+            <TableHeader><TableRow><TableHead>Entry</TableHead><TableHead>Side</TableHead><TableHead>Source</TableHead><TableHead>Detail state</TableHead><TableHead>Last seen</TableHead></TableRow></TableHeader>
+            <TableBody>
               {entries.map((entry) => (
-                <tr className={`row${entry._id === selected?._id ? " sel" : ""}`} key={entry._id}>
-                  <td><button className="rs-table-row-button" onClick={() => setSelectedId(entry._id)} type="button"><strong>{entry.title}</strong><span className="mono">{entry.city ?? "Location not extracted"}</span></button></td>
-                  <td><span className={`pill ${entry.side === "supply" ? "new" : ""}`}>{titleCase(entry.side)}</span></td>
-                  <td>{entry.sourceName}</td>
-                  <td><span className={`pill ${toneForStatus(entry.detailState)}`}>{titleCase(entry.detailState)}</span></td>
-                  <td className="mono">{formatAge(entry.lastSeenAt)}</td>
-                </tr>
+                <TableRow className={`row${entry._id === selected?._id ? " sel" : ""}`} key={entry._id}>
+                  <TableCell><button className="rs-table-row-button" onClick={() => setSelectedId(entry._id)} type="button"><strong>{entry.title}</strong><span className="mono">{entry.city ?? "Location not extracted"}</span></button></TableCell>
+                  <TableCell><span className={`pill ${entry.side === "supply" ? "new" : ""}`}>{titleCase(entry.side)}</span></TableCell>
+                  <TableCell>{entry.sourceName}</TableCell>
+                  <TableCell><span className={`pill ${toneForStatus(entry.detailState)}`}>{titleCase(entry.detailState)}</span></TableCell>
+                  <TableCell className="mono">{formatAge(entry.lastSeenAt)}</TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       )}
       <aside aria-label="Signal review detail" className={`drawer${selected ? " open" : ""}`}>
@@ -70,27 +71,27 @@ export function OpsSignalsPage() {
           <div className="dbody">
             <section>
               <h3>Pipeline state</h3>
-              <table className="facts"><tbody>
-                <tr><td>Source</td><td>{selected.sourceName}</td></tr>
-                <tr><td>Entry status</td><td>{titleCase(selected.status)}</td></tr>
-                <tr><td>Detail state</td><td>{titleCase(selected.detailState)}</td></tr>
-                <tr><td>Attempts</td><td>{selected.detailAttempts}</td></tr>
-                <tr><td>Private contacts</td><td>{selected.contactDataPresent ? "Extracted into restricted storage" : "None detected"}</td></tr>
-              </tbody></table>
+              <Table className="facts"><TableBody>
+                <TableRow><TableCell>Source</TableCell><TableCell>{selected.sourceName}</TableCell></TableRow>
+                <TableRow><TableCell>Entry status</TableCell><TableCell>{titleCase(selected.status)}</TableCell></TableRow>
+                <TableRow><TableCell>Detail state</TableCell><TableCell>{titleCase(selected.detailState)}</TableCell></TableRow>
+                <TableRow><TableCell>Attempts</TableCell><TableCell>{selected.detailAttempts}</TableCell></TableRow>
+                <TableRow><TableCell>Private contacts</TableCell><TableCell>{selected.contactDataPresent ? "Extracted into restricted storage" : "None detected"}</TableCell></TableRow>
+              </TableBody></Table>
               {selected.error ? <p className="fitline">{selected.error}</p> : null}
             </section>
             <section><h3>Redacted source excerpt</h3><blockquote className="evidence">{selected.excerpt || "No retained excerpt."}</blockquote></section>
             {selected.signal ? (
               <section>
                 <h3>Canonical signal</h3>
-                <table className="facts"><tbody>
-                  <tr><td>Title</td><td>{selected.signal.title}</td></tr>
-                  <tr><td>Arrangement</td><td>{titleCase(selected.signal.arrangement)}</td></tr>
-                  <tr><td>Price</td><td>{selected.signal.priceEur === undefined ? "Unknown" : `€${selected.signal.priceEur} / ${selected.signal.pricePeriod ?? "unknown"}`}</td></tr>
-                  <tr><td>Verification</td><td>{titleCase(selected.signal.verification)}</td></tr>
-                  <tr><td>Requirements</td><td>{selected.signal.requirements.join(", ") || "None extracted"}</td></tr>
-                  <tr><td>Unknowns</td><td>{selected.signal.unknowns.join(", ") || "None recorded"}</td></tr>
-                </tbody></table>
+                <Table className="facts"><TableBody>
+                  <TableRow><TableCell>Title</TableCell><TableCell>{selected.signal.title}</TableCell></TableRow>
+                  <TableRow><TableCell>Arrangement</TableCell><TableCell>{titleCase(selected.signal.arrangement)}</TableCell></TableRow>
+                  <TableRow><TableCell>Price</TableCell><TableCell>{selected.signal.priceEur === undefined ? "Unknown" : `€${selected.signal.priceEur} / ${selected.signal.pricePeriod ?? "unknown"}`}</TableCell></TableRow>
+                  <TableRow><TableCell>Verification</TableCell><TableCell>{titleCase(selected.signal.verification)}</TableCell></TableRow>
+                  <TableRow><TableCell>Requirements</TableCell><TableCell>{selected.signal.requirements.join(", ") || "None extracted"}</TableCell></TableRow>
+                  <TableRow><TableCell>Unknowns</TableCell><TableCell>{selected.signal.unknowns.join(", ") || "None recorded"}</TableCell></TableRow>
+                </TableBody></Table>
                 <p className="fitline">{selected.signal.summary}</p>
               </section>
             ) : <EmptyState body="Normalization has not produced a canonical signal for this entry." title="No canonical signal yet" />}

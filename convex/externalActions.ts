@@ -3,7 +3,12 @@ import type { Doc } from "./_generated/dataModel";
 import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { contentHash, normalizeEmail, normalizeText } from "./integrations/contentHash";
 import { requireUserId } from "./integrations/authz";
-import { authorizeFromMandate, type PersonalDataScope } from "./lib/mandateAuthorization";
+import {
+  authorizeFromMandate,
+  containsBindingCommitment,
+  countUniqueAttemptedRequests,
+  type PersonalDataScope,
+} from "./lib/mandateAuthorization";
 
 const actionTypeValidator = v.union(
   v.literal("send_email"), v.literal("submit_webform"), v.literal("send_platform_dm"),
@@ -16,7 +21,7 @@ const personalDataValidator = v.union(
   v.literal("budget"), v.literal("music_profile"),
 );
 const payloadValidator = v.union(
-  v.object({ kind: v.literal("platform_message"), threadId: v.optional(v.id("platformThreads")), recipients: v.array(v.string()), subject: v.optional(v.string()), body: v.string() }),
+  v.object({ kind: v.literal("platform_message"), threadId: v.optional(v.id("platformThreads")), targetPath: v.optional(v.string()), recipients: v.array(v.string()), senderLabel: v.optional(v.string()), subject: v.optional(v.string()), body: v.string() }),
   v.object({ kind: v.literal("contact_form"), targetUrl: v.string(), fields: v.array(v.object({ name: v.string(), label: v.optional(v.string()), value: v.string(), sensitivity: v.union(v.literal("normal"), v.literal("personal"), v.literal("sensitive")) })) }),
   v.object({ kind: v.literal("portal_account_operation"), connectionId: v.id("portalConnections"), operation: v.union(v.literal("connect"), v.literal("reauth"), v.literal("disconnect")), accountLabel: v.optional(v.string()) }),
   v.object({ kind: v.literal("email_message"), recipientName: v.string(), recipientEmail: v.string(), subject: v.string(), body: v.string() }),
@@ -49,7 +54,11 @@ function cleanPayload(payload: Doc<"actionRequests">["payload"]): Doc<"actionReq
   if (payload.kind === "platform_message") {
     const body = normalizeText(payload.body).slice(0, 20_000);
     if (!body || payload.recipients.length > 20) throw new ConvexError({ code: "INVALID_PLATFORM_ACTION" });
-    return { ...payload, recipients: [...new Set(payload.recipients.map((item) => normalizeText(item).slice(0, 320)).filter(Boolean))], subject: payload.subject ? normalizeText(payload.subject).slice(0, 200) : undefined, body };
+    const targetPath = payload.targetPath?.trim();
+    if (targetPath && (!targetPath.startsWith("/") || targetPath.startsWith("//") || targetPath.includes("..") || /[?#\\]/.test(targetPath))) {
+      throw new ConvexError({ code: "INVALID_PLATFORM_TARGET" });
+    }
+    return { ...payload, targetPath: targetPath?.slice(0, 500), recipients: [...new Set(payload.recipients.map((item) => normalizeText(item).slice(0, 320)).filter(Boolean))], senderLabel: payload.senderLabel ? normalizeText(payload.senderLabel).slice(0, 100) : undefined, subject: payload.subject ? normalizeText(payload.subject).slice(0, 200) : undefined, body };
   }
   if (payload.kind === "contact_form") {
     let url: URL;
@@ -338,11 +347,12 @@ export const submit = mutation({
       expiresAt: mandate.expiresAt,
       stopOnComplaint: mandate.stopOnComplaint,
       stopWhenSuitableRoomConfirmed: mandate.stopWhenSuitableRoomConfirmed,
+      commitmentBoundary: mandate.commitmentBoundary,
       stoppedAt: mandate.stoppedAt,
     }, {
       now: Date.now(), actionType: request.requestedActionType,
       platformId: request.platformId, personalData: request.personalDataScopes as PersonalDataScope[],
-      contactsAlreadyAttemptedToday: executions.length,
+      contactsAlreadyAttemptedToday: countUniqueAttemptedRequests(executions),
       browserMinutesUsedToday,
       proposedMonthlyPriceEur: request.proposedMonthlyPriceEur,
       policyDecision: policy?.decision ?? "unknown",
@@ -350,6 +360,7 @@ export const submit = mutation({
       connectionActive: connection?.ownerId === ownerId && connection.status === "active",
       complaintRecorded: mailThreads.some((thread) => thread.lastDeliveryStatus === "complained"),
       suitableRoomConfirmed: converted.length > 0,
+      bindingCommitment: containsBindingCommitment(request.payload),
     });
     if (!decision.authorized) {
       await ctx.db.patch(request._id, { status: "awaiting_approval", updatedAt: Date.now() });
@@ -556,6 +567,9 @@ export const claimForExecutor = internalMutation({
     ) {
       throw new ConvexError({ code: "ACTION_NOT_EXECUTABLE" });
     }
+    if (request.expiresAt !== undefined && request.expiresAt <= Date.now()) {
+      throw new ConvexError({ code: "ACTION_EXPIRED" });
+    }
     const [approval, platform, policy, binding, connection] = await Promise.all([
       ctx.db.query("actionApprovals").withIndex("by_request_and_content_version", (q) =>
         q.eq("requestId", request._id).eq("contentVersion", request.contentVersion),
@@ -647,13 +661,14 @@ export const claimForExecutor = internalMutation({
         expiresAt: mandate.expiresAt,
         stopOnComplaint: mandate.stopOnComplaint,
         stopWhenSuitableRoomConfirmed: mandate.stopWhenSuitableRoomConfirmed,
+        commitmentBoundary: mandate.commitmentBoundary,
         stoppedAt: mandate.stoppedAt,
       }, {
         now: Date.now(),
         actionType: request.requestedActionType,
         platformId: request.platformId,
         personalData: request.personalDataScopes as PersonalDataScope[],
-        contactsAlreadyAttemptedToday: executions.length,
+        contactsAlreadyAttemptedToday: countUniqueAttemptedRequests(executions),
         browserMinutesUsedToday: browserMinutes,
         proposedMonthlyPriceEur: request.proposedMonthlyPriceEur,
         policyDecision: policy.decision,
@@ -661,6 +676,7 @@ export const claimForExecutor = internalMutation({
         connectionActive: args.executor !== "browserbase" || connection?.status === "active",
         complaintRecorded: complainedThreads.some((thread) => thread.lastDeliveryStatus === "complained"),
         suitableRoomConfirmed: converted.length > 0,
+        bindingCommitment: containsBindingCommitment(request.payload),
       });
       if (!authorization.authorized) {
         throw new ConvexError({ code: "MANDATE_NO_LONGER_AUTHORIZES", reasons: authorization.reasons });
@@ -861,5 +877,78 @@ export const finishExecution = internalMutation({
       occurredAt: now,
     });
     return null;
+  },
+});
+
+/**
+ * Recovers leases abandoned between the transactional claim and provider
+ * completion. A running provider call is deliberately marked unknown rather
+ * than retryable because repeating it could create a duplicate external side
+ * effect.
+ */
+export const reapStaleExecutions = internalMutation({
+  args: {
+    olderThanMs: v.number(),
+    limit: v.number(),
+  },
+  returns: v.object({ failedBeforeProvider: v.number(), unknownProviderOutcome: v.number() }),
+  handler: async (ctx, args) => {
+    const olderThanMs = Math.max(60_000, Math.min(args.olderThanMs, 24 * 60 * 60 * 1_000));
+    const limit = Math.max(1, Math.min(Math.floor(args.limit), 100));
+    const cutoff = Date.now() - olderThanMs;
+    const [claimed, running] = await Promise.all([
+      ctx.db
+        .query("actionExecutions")
+        .withIndex("by_status_and_updated_at", (q) =>
+          q.eq("status", "claimed").lt("updatedAt", cutoff),
+        )
+        .take(limit),
+      ctx.db
+        .query("actionExecutions")
+        .withIndex("by_status_and_updated_at", (q) =>
+          q.eq("status", "running").lt("updatedAt", cutoff),
+        )
+        .take(limit),
+    ]);
+    let failedBeforeProvider = 0;
+    let unknownProviderOutcome = 0;
+    for (const execution of [...claimed, ...running].slice(0, limit)) {
+      const request = await ctx.db.get(execution.requestId);
+      if (request === null) continue;
+      const now = Date.now();
+      const providerMayHaveRun = execution.status === "running" || Boolean(execution.providerActionId);
+      const status = providerMayHaveRun ? "unknown" as const : "failed" as const;
+      const error = providerMayHaveRun
+        ? "EXECUTION_STALE_PROVIDER_OUTCOME_UNKNOWN"
+        : "EXECUTION_CLAIM_TIMED_OUT_BEFORE_PROVIDER";
+      await ctx.db.patch(execution._id, {
+        status,
+        completedAt: now,
+        error,
+        updatedAt: now,
+      });
+      await ctx.db.patch(request._id, {
+        status: providerMayHaveRun ? "executing" : "failed",
+        error,
+        updatedAt: now,
+      });
+      await ctx.db.insert("auditEvents", {
+        eventKey: `action:${request._id}:reaped:${execution.idempotencyKey}`,
+        actorType: "system",
+        entityKey: `action:${request._id}`,
+        eventType: providerMayHaveRun
+          ? "action.execution_outcome_unknown"
+          : "action.execution_claim_abandoned",
+        correlationId: execution.idempotencyKey,
+        actionRequestId: request._id,
+        executionId: execution._id,
+        afterHash: request.contentHash,
+        summary: error,
+        occurredAt: now,
+      });
+      if (providerMayHaveRun) unknownProviderOutcome += 1;
+      else failedBeforeProvider += 1;
+    }
+    return { failedBeforeProvider, unknownProviderOutcome };
   },
 });

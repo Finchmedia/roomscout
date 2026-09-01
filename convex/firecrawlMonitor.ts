@@ -40,8 +40,8 @@ export const reconcileNativeMonitors = internalAction({
     }
     const apiKey = envValue("FIRECRAWL_API_KEY");
     const webhookUrl = envValue("FIRECRAWL_WEBHOOK_URL");
-    const webhookSecret = envValue("FIRECRAWL_WEBHOOK_SECRET");
-    if (!apiKey || !webhookUrl || !webhookSecret) {
+    const webhookBearer = envValue("FIRECRAWL_MONITOR_WEBHOOK_BEARER");
+    if (!apiKey || !webhookUrl || !webhookBearer) {
       return { considered: 0, created: 0, updated: 0, unchanged: 0, failed: 0 };
     }
 
@@ -58,7 +58,7 @@ export const reconcileNativeMonitors = internalAction({
       const desired = buildDesiredMonitor({
         candidate,
         webhookUrl,
-        webhookSecret,
+        webhookBearer,
       });
       const fingerprint = monitorConfigFingerprint(desired, candidate.paused);
       try {
@@ -201,7 +201,11 @@ export const reconcileMonitorCheck = internalAction({
           const receipt = await ctx.runMutation(
             internal.ingestion.recordFirecrawlEvent,
             {
-              providerEventId: `monitor-check:${args.providerCheckId}:page:${page.id}`,
+              // v1 used only the inline monitor snapshot. Current Firecrawl
+              // checks may instead reference the completed scrape artifact,
+              // so version this receipt to let those previously ignored pages
+              // be reconciled once under the corrected contract.
+              providerEventId: `monitor-check:${args.providerCheckId}:page:${page.id}:artifact:v1`,
               sourceTargetId: args.sourceTargetId,
               eventType: "monitor.check.page",
               payloadHash: stableFingerprint(
@@ -238,8 +242,16 @@ export const reconcileMonitorCheck = internalAction({
             continue;
           }
 
+          let snapshot = page.snapshot?.json;
+          if (snapshot === undefined && page.currentScrapeId) {
+            const scrape = await firecrawl.getMonitorScrape(
+              ctx,
+              page.currentScrapeId,
+            );
+            snapshot = scrape.json ?? scrape.changeTracking?.json;
+          }
           const entries = extractSourceEntriesFromSnapshot({
-            snapshot: page.snapshot?.json,
+            snapshot,
             pageUrl: page.url,
             defaultSide: context.defaultSide,
           });

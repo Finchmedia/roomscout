@@ -2,6 +2,7 @@ import { ShieldCheck } from "lucide-react";
 import { useId, useState } from "react";
 import type { ActionApprovalRequest } from "../../features/agentOperations/types";
 import { ActionDialog } from "../ui/ActionDialog";
+import { Table, TableBody, TableCell, TableRow } from "../ui/table";
 
 type ActionApprovalSheetProps = {
   request: ActionApprovalRequest | null;
@@ -96,7 +97,7 @@ export function ActionApprovalSheet({ request, open, onOpenChange, onApprove, on
           </div>
         ) : <div className="rs-action-effect"><ShieldCheck aria-hidden="true" size={16} /><p><strong>One-time approval:</strong> nothing executes until you approve this exact destination and payload.</p></div>}
         <div className="rs-action-effect"><ShieldCheck aria-hidden="true" size={16} /><p><strong>What will happen:</strong> {request.effect}</p></div>
-        <table className="facts"><tbody><tr><td>Destination</td><td>{request.destination}</td></tr><tr><td>Acting as</td><td>{request.actingAs}</td></tr><tr><td>Action</td><td>{kindLabels[request.kind]}</td></tr>{standingAuthorization ? <tr><td>Authorization</td><td>Standing mandate v{standingAuthorization.mandateVersion}</td></tr> : <tr><td>Authorization</td><td>Approve once</td></tr>}</tbody></table>
+        <Table className="facts"><TableBody><TableRow><TableCell>Destination</TableCell><TableCell>{request.destination}</TableCell></TableRow><TableRow><TableCell>Acting as</TableCell><TableCell>{request.actingAs}</TableCell></TableRow><TableRow><TableCell>Action</TableCell><TableCell>{kindLabels[request.kind]}</TableCell></TableRow>{standingAuthorization ? <TableRow><TableCell>Authorization</TableCell><TableCell>YOLO mandate v{standingAuthorization.mandateVersion}</TableCell></TableRow> : <TableRow><TableCell>Authorization</TableCell><TableCell>Approve once</TableCell></TableRow>}</TableBody></Table>
         <section><span className="flabel">Exact payload</span><div className="rs-action-fields">{request.fields.map((field) => <div key={field.label}><span className="mono">{field.label}</span><p>{field.value}</p></div>)}</div></section>
         {needsOneTimeApproval ? <label className="ack" htmlFor={acknowledgementId}><input checked={acknowledged} id={acknowledgementId} onChange={(event) => setAcknowledged(event.target.checked)} type="checkbox" /><span>I approve this exact destination and payload for one execution.</span></label> : null}
         {error ? <p className="rs-form-error" role="alert">{error}</p> : null}

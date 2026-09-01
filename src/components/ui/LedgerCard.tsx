@@ -42,10 +42,6 @@ export function PageHeader({ title, meta, eyebrow }: PageHeaderProps) {
   );
 }
 
-export function FixtureNotice() {
-  return <span className="chip rs-fixture-notice">Prototype data</span>;
-}
-
 export function EmptyState({ title, body }: { title: string; body: string }) {
   return (
     <div className="rs-empty-state">

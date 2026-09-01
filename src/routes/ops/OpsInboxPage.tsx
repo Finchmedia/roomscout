@@ -5,6 +5,7 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { WorkspaceShell } from "../../components/navigation/WorkspaceShell";
 import { EmptyState, LedgerCard, PageHeader } from "../../components/ui/LedgerCard";
+import { Table, TableBody, TableCell, TableRow } from "../../components/ui/table";
 import { formatAge, toneForStatus, titleCase } from "./opsFormat";
 
 type Channel = "agentmail" | "platform";
@@ -82,15 +83,15 @@ export function OpsInboxPage() {
             {selected ? (
               <div className="stack">
                 <LedgerCard accent header={<><span className="type t-scout">Routing context</span><Bot aria-hidden="true" size={15} /></>}>
-                  <table className="facts"><tbody>
-                    <tr><td>Owner</td><td>{selected.ownerName}</td></tr>
-                    <tr><td>Recipient</td><td>{selected.recipientName} · {selected.recipientEmailMasked}</td></tr>
-                    <tr><td>Search</td><td>{selected.searchTitle}</td></tr>
-                    <tr><td>Signal</td><td>{selected.signalTitle}</td></tr>
-                    <tr><td>Thread</td><td>{titleCase(selected.status)}</td></tr>
-                    <tr><td>Delivery</td><td>{selected.deliveryStatus ? titleCase(selected.deliveryStatus) : "No provider update"}</td></tr>
-                    <tr><td>Latest direction</td><td>{selected.latestDirection ? titleCase(selected.latestDirection) : "No message"}</td></tr>
-                  </tbody></table>
+                  <Table className="facts"><TableBody>
+                    <TableRow><TableCell>Owner</TableCell><TableCell>{selected.ownerName}</TableCell></TableRow>
+                    <TableRow><TableCell>Recipient</TableCell><TableCell>{selected.recipientName} · {selected.recipientEmailMasked}</TableCell></TableRow>
+                    <TableRow><TableCell>Search</TableCell><TableCell>{selected.searchTitle}</TableCell></TableRow>
+                    <TableRow><TableCell>Signal</TableCell><TableCell>{selected.signalTitle}</TableCell></TableRow>
+                    <TableRow><TableCell>Thread</TableCell><TableCell>{titleCase(selected.status)}</TableCell></TableRow>
+                    <TableRow><TableCell>Delivery</TableCell><TableCell>{selected.deliveryStatus ? titleCase(selected.deliveryStatus) : "No provider update"}</TableCell></TableRow>
+                    <TableRow><TableCell>Latest direction</TableCell><TableCell>{selected.latestDirection ? titleCase(selected.latestDirection) : "No message"}</TableCell></TableRow>
+                  </TableBody></Table>
                   {selected.parsedSummary ? <p className="fitline"><MailCheck aria-hidden="true" size={15} />{selected.parsedSummary}</p> : null}
                   {selected.parsedFacts.length > 0 ? <ul className="checks">{selected.parsedFacts.map((fact) => <li className="check" key={fact}>{fact}</li>)}</ul> : null}
                   {selected.lastError ? <p className="fitline">{selected.lastError}</p> : null}

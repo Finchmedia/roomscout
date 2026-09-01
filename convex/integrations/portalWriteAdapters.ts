@@ -2,12 +2,16 @@ import type { Page } from "@browserbasehq/stagehand";
 import { buildAllowedPortalUrl } from "./portalSafety";
 
 export const PORTAL_WRITE_TTL_MS = 8 * 60_000;
+const PORTAL_WRITE_RECEIPT_POLL_MS = 250;
+const PORTAL_WRITE_RECEIPT_ATTEMPTS = 24;
 
 export type PortalWriteActionType = "send_platform_dm" | "publish_listing";
 
 export type PortalWritePayload = {
   kind: "platform_message";
   recipients: string[];
+  targetPath?: string;
+  senderLabel?: string;
   subject?: string;
   body: string;
 };
@@ -31,7 +35,7 @@ export type PortalWriteWorkflow = {
   adapterVersion: number;
   workflowKey: string;
   actionType: PortalWriteActionType;
-  path(input: { providerThreadId?: string }): string;
+  path(input: { providerThreadId?: string; payload: PortalWritePayload }): string;
   fields(payload: PortalWritePayload): PortalWriteField[];
   submitSelector: string;
   successSelector: string;
@@ -102,6 +106,30 @@ const FIXTURE_LISTING_WORKFLOW: PortalWriteWorkflow = {
   postSubmitPaths: ["/roomscout-fixture/listings"],
 };
 
+const ROOMSCOUT_DEV_MESSAGE_WORKFLOW: PortalWriteWorkflow = {
+  adapterKey: "roomscout-dev-v1",
+  adapterVersion: 1,
+  workflowKey: "roomscout-dev.platform-message.v1",
+  actionType: "send_platform_dm",
+  path: ({ providerThreadId, payload }) => {
+    if (providerThreadId) return `/inbox/${encodeURIComponent(providerThreadId)}`;
+    if (!payload.targetPath?.startsWith("/listings/")) {
+      throw new Error("PORTAL_TARGET_PATH_REQUIRED");
+    }
+    return payload.targetPath;
+  },
+  fields: (payload) => [
+    {
+      selector: '[data-roomscout-write="sender-label"]',
+      value: payload.senderLabel ?? "RoomScout musician",
+    },
+    { selector: '[data-roomscout-write="body"]', value: payload.body },
+  ],
+  submitSelector: '[data-roomscout-write="send"]',
+  successSelector: '[data-roomscout-write-result="sent"]',
+  postSubmitPaths: ["/listings", "/inbox"],
+};
+
 /**
  * Reviewed portal writes are code, not configuration. The database may select
  * one of these exact tuples, but it cannot inject selectors, scripts or paths.
@@ -111,6 +139,7 @@ const FIXTURE_LISTING_WORKFLOW: PortalWriteWorkflow = {
 const REVIEWED_WORKFLOWS: readonly PortalWriteWorkflow[] = [
   FIXTURE_MESSAGE_WORKFLOW,
   FIXTURE_LISTING_WORKFLOW,
+  ROOMSCOUT_DEV_MESSAGE_WORKFLOW,
 ];
 
 export function resolvePortalWriteWorkflow(input: {
@@ -136,10 +165,14 @@ export function buildPortalWriteUrl(input: {
   allowedPaths: readonly string[];
   workflow: PortalWriteWorkflow;
   providerThreadId?: string;
+  payload: PortalWritePayload;
 }): string {
   return buildAllowedPortalUrl({
     baseUrl: input.baseUrl,
-    path: input.workflow.path({ providerThreadId: input.providerThreadId }),
+    path: input.workflow.path({
+      providerThreadId: input.providerThreadId,
+      payload: input.payload,
+    }),
     allowedDomains: input.allowedDomains,
     allowedPaths: input.allowedPaths,
   });
@@ -274,6 +307,31 @@ export async function inspectPortalWriteSuccess(input: {
   };
 }
 
+async function waitForPortalWriteSuccess(input: {
+  page: PortalWritePage;
+  workflow: PortalWriteWorkflow;
+  allowedDomains: readonly string[];
+  allowedPaths: readonly string[];
+}): Promise<{
+  providerThreadId?: string;
+  providerMessageId?: string;
+} | null> {
+  for (let attempt = 0; attempt < PORTAL_WRITE_RECEIPT_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) {
+      await input.page.waitForTimeout(PORTAL_WRITE_RECEIPT_POLL_MS);
+    }
+    try {
+      const success = await inspectPortalWriteSuccess(input);
+      if (success) return success;
+    } catch {
+      // A client-rendered portal can still be on the pre-submit path while its
+      // authenticated mutation and route transition are settling. Keep the
+      // poll bounded and never click the submit control a second time.
+    }
+  }
+  return null;
+}
+
 export async function runDeterministicPortalWrite(input: {
   page: PortalWritePage;
   workflow: PortalWriteWorkflow;
@@ -325,8 +383,7 @@ export async function runDeterministicPortalWrite(input: {
     // Some reviewed portals update in place without a navigation event.
   }
   try {
-    await input.page.waitForTimeout(250);
-    const success = await inspectPortalWriteSuccess({
+    const success = await waitForPortalWriteSuccess({
       page: input.page,
       workflow: input.workflow,
       allowedDomains: input.allowedDomains,

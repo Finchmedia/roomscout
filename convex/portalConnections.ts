@@ -48,6 +48,15 @@ const runStatusValidator = v.union(
   v.literal("expired"),
 );
 
+const onboardingStageValidator = v.union(
+  v.literal("opening_signup"),
+  v.literal("waiting_verification"),
+  v.literal("submitting_verification"),
+  v.literal("human_required"),
+  v.literal("completed"),
+  v.literal("failed"),
+);
+
 const publicConnectionValidator = v.object({
   _id: v.id("portalConnections"),
   sourceId: v.id("sources"),
@@ -78,6 +87,7 @@ const publicRunValidator = v.object({
   endedAt: v.optional(v.number()),
   resultCount: v.optional(v.number()),
   errorCode: v.optional(v.string()),
+  onboardingStage: v.optional(onboardingStageValidator),
   createdAt: v.number(),
   updatedAt: v.number(),
 });
@@ -133,6 +143,7 @@ function toPublicRun(run: {
   endedAt?: number;
   resultCount?: number;
   errorCode?: string;
+  onboardingStage?: "opening_signup" | "waiting_verification" | "submitting_verification" | "human_required" | "completed" | "failed";
   createdAt: number;
   updatedAt: number;
 }) {
@@ -146,6 +157,7 @@ function toPublicRun(run: {
     endedAt: run.endedAt,
     resultCount: run.resultCount,
     errorCode: run.errorCode,
+    onboardingStage: run.onboardingStage,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
   };
@@ -371,6 +383,46 @@ export const reviewConnection = mutation({
   },
 });
 
+export const approveControlledDemoConnection = mutation({
+  args: { connectionId: v.id("portalConnections") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await requireOperatorId(ctx);
+    const connection = await ctx.db.get(args.connectionId);
+    if (connection === null) {
+      throw new ConvexError({ code: "CONNECTION_NOT_FOUND" });
+    }
+    const source = await ctx.db.get(connection.sourceId);
+    if (
+      source === null ||
+      source.slug !== "roomscout-dev-connected" ||
+      source.accessMode !== "authenticated" ||
+      source.automationReview !== "approved" ||
+      source.adapterKey !== "roomscout-dev-v1"
+    ) {
+      throw new ConvexError({ code: "CONTROLLED_DEMO_SOURCE_REQUIRED" });
+    }
+    const domain = normalizeHostname(source.baseUrl);
+    const now = Date.now();
+    await ctx.db.patch(connection._id, {
+      platformId: source.platformId,
+      status: "needs_auth",
+      policyDecision: "allowed",
+      allowReadOnlyRecon: false,
+      allowInboxPolling: true,
+      allowedDomains: [domain],
+      allowedPaths: ["/", "/sign-up", "/sign-in", "/listings", "/inbox"],
+      inboxPath: "/inbox",
+      adapterKey: "roomscout-dev-v1",
+      pollIntervalMinutes: 60,
+      lastErrorCode: undefined,
+      circuitOpenUntil: undefined,
+      updatedAt: now,
+    });
+    return null;
+  },
+});
+
 export const pauseMine = mutation({
   args: { connectionId: v.id("portalConnections") },
   returns: v.null(),
@@ -476,6 +528,7 @@ export const getConnectionForWorker = internalQuery({
     v.object({
       connectionId: v.id("portalConnections"),
       sourceId: v.id("sources"),
+      sourceSlug: v.string(),
       platformId: v.optional(v.id("sourcePlatforms")),
       baseUrl: v.string(),
       allowedDomains: v.array(v.string()),
@@ -511,6 +564,7 @@ export const getConnectionForWorker = internalQuery({
     return {
       connectionId: connection._id,
       sourceId: source._id,
+      sourceSlug: source.slug,
       platformId: connection.platformId ?? source.platformId,
       baseUrl: source.baseUrl,
       allowedDomains: connection.allowedDomains,
@@ -521,9 +575,7 @@ export const getConnectionForWorker = internalQuery({
       allowReadOnlyRecon: connection.allowReadOnlyRecon,
       allowInboxPolling: connection.allowInboxPolling,
       providerContextId:
-        context?.status === "ready" || context?.status === "reauth_required"
-          ? context.providerContextId
-          : undefined,
+        context?.status === "ready" ? context.providerContextId : undefined,
     };
   },
 });
@@ -539,6 +591,11 @@ export const getRunForOwner = internalQuery({
       kind: runKindValidator,
       status: runStatusValidator,
       expiresAt: v.number(),
+      onboardingStage: v.optional(onboardingStageValidator),
+      onboardingMailboxId: v.optional(v.id("userMailboxes")),
+      verificationMessageId: v.optional(v.id("mailboxMessages")),
+      verificationRequestedAt: v.optional(v.number()),
+      onboardingPollAttempt: v.optional(v.number()),
     }),
     v.null(),
   ),
@@ -553,7 +610,58 @@ export const getRunForOwner = internalQuery({
       kind: run.kind,
       status: run.status,
       expiresAt: run.expiresAt,
+      onboardingStage: run.onboardingStage,
+      onboardingMailboxId: run.onboardingMailboxId,
+      verificationMessageId: run.verificationMessageId,
+      verificationRequestedAt: run.verificationRequestedAt,
+      onboardingPollAttempt: run.onboardingPollAttempt,
     };
+  },
+});
+
+export const markAgentOnboardingState = internalMutation({
+  args: {
+    ownerId: v.id("users"),
+    runId: v.id("browserRuns"),
+    stage: onboardingStageValidator,
+    mailboxId: v.optional(v.id("userMailboxes")),
+    verificationMessageId: v.optional(v.id("mailboxMessages")),
+    verificationRequestedAt: v.optional(v.number()),
+    pollAttempt: v.optional(v.number()),
+    humanRequired: v.boolean(),
+    eventMessage: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (
+      run === null ||
+      run.ownerId !== args.ownerId ||
+      run.kind !== "authenticate" ||
+      ["completed", "failed", "stopped", "expired"].includes(run.status)
+    ) {
+      throw new ConvexError({ code: "AUTH_RUN_NOT_RESUMABLE" });
+    }
+    const now = Date.now();
+    await ctx.db.patch(run._id, {
+      status: args.humanRequired ? "human_required" : "running",
+      onboardingStage: args.stage,
+      onboardingMailboxId: args.mailboxId ?? run.onboardingMailboxId,
+      verificationMessageId:
+        args.verificationMessageId ?? run.verificationMessageId,
+      verificationRequestedAt:
+        args.verificationRequestedAt ?? run.verificationRequestedAt,
+      onboardingPollAttempt: args.pollAttempt ?? run.onboardingPollAttempt,
+      updatedAt: now,
+    });
+    await ctx.db.insert("browserRunEvents", {
+      runId: run._id,
+      ownerId: args.ownerId,
+      kind: args.humanRequired ? "human_required" : "progress",
+      message: args.eventMessage.slice(0, 100),
+      createdAt: now,
+    });
+    return null;
   },
 });
 
@@ -642,6 +750,12 @@ export const finishRun = internalMutation({
       resultCount: args.resultCount,
       errorCode: args.errorCode?.slice(0, 100),
       endedAt: now,
+      onboardingStage:
+        run.onboardingStage === undefined
+          ? undefined
+          : args.status === "completed"
+            ? "completed"
+            : "failed",
       updatedAt: now,
     });
     await ctx.db.insert("browserRunEvents", {

@@ -116,3 +116,14 @@ export const getCheck = action({
       { method: "GET" },
     )),
 });
+
+/** Retrieve the exact scrape artifact referenced by a monitor page result. */
+export const getScrape = action({
+  args: { scrapeId: v.string() },
+  returns: v.any(),
+  handler: async (_ctx, args) =>
+    data(await firecrawlRequest(
+      `/v2/scrape/${firecrawlId(args.scrapeId, "scrape_id")}`,
+      { method: "GET" },
+    )),
+});

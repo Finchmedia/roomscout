@@ -25,9 +25,19 @@ says to lock them in or asks for a file update.
 
 ## Settled constraints
 
-- **All external communication requires approval.** The product may research,
-  recommend, and draft, but it must not send an email or make an introduction
-  until the relevant user approves the final recipients and message.
+- **Approve / YOLO is the product rule.** Approve mode requires persisted exact
+  approval of the final destination and content for every external message.
+  YOLO mode may execute only allowlisted, non-binding communication under an
+  active, versioned, expiring standing mandate with daily limits and stop
+  conditions. Any agreement, booking, contract, payment, deposit, or other
+  binding commitment requires exact approval in every mode and channel;
+  credentials, 2FA and CAPTCHAs remain human-only. The sole controlled-demo
+  exception is the reviewed `roomscout-dev-v1` adapter on exactly
+  `https://roomscout.dev`: it may generate an ephemeral, unpersisted password
+  and submit one unambiguous numeric email-verification code received in the
+  user's AgentMail inbox. It must never follow verification links, solve a
+  CAPTCHA, accept terms, handle payment, or apply this exception to another
+  source, host, or adapter.
 - **Text generation uses OpenAI through the Convex AI Gateway.**
   `openai/gpt-5.6-terra` is the shared text-generation model. The regular OpenAI
   endpoint may use `OPENAI_API_KEY` only for semantic embeddings and the
@@ -46,9 +56,11 @@ says to lock them in or asks for a file update.
 
 ## Technical direction
 
-Use a React + Vite + TypeScript SPA with a Convex backend. Deploy the built
+Use a React + Vite + TypeScript SPA with a Convex backend for RoomScout. Deploy the built
 `dist/` through the official Convex Static Hosting component to `convex.site`;
-do not introduce Next.js, SSR, server components, or server actions. Mount the
+do not introduce Next.js, SSR, server components, or server actions into this
+app. The separate `roomscout-dev` test portal may use Next.js specifically to
+exercise realistic third-party SSR/auth/browser flows. Mount the
 static frontend at `/` and reserve `/api` for Convex HTTP endpoints such as
 AgentMail webhooks.
 

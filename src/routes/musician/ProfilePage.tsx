@@ -14,6 +14,7 @@ import {
 import { WorkspaceShell } from "../../components/navigation/WorkspaceShell";
 import { ActionDialog } from "../../components/ui/ActionDialog";
 import { EmptyState, LedgerCard, PageHeader } from "../../components/ui/LedgerCard";
+import { Table, TableBody, TableCell, TableRow } from "../../components/ui/table";
 
 function label(value: string): string {
   return value.replaceAll("_", " ");
@@ -49,6 +50,7 @@ export function ProfilePage() {
   const refreshContext = useAction(api.memory.refreshMyContext);
   const ensureMailbox = useAction(api.mailboxes.ensureMine);
   const startPortalAuthentication = useAction(api.browserbasePortal.startAuthentication);
+  const startAgentRegistration = useAction(api.browserbasePortal.startAgentRegistration);
   const syncPortalInbox = useAction(api.browserbasePortal.syncInboxNow);
   const disablePortalConnection = useAction(api.browserbasePortal.disableConnection);
   const pausePortalConnection = useMutation(api.portalConnections.pauseMine);
@@ -135,6 +137,25 @@ export function ProfilePage() {
     }
   }
 
+  async function letScoutRegister(connectionId: string) {
+    setConnectionWorking(connectionId);
+    setConnectionError("");
+    try {
+      const result = await startAgentRegistration({
+        connectionId: connectionId as Id<"portalConnections">,
+      });
+      navigate(`/app/runs/${result.runId}`);
+    } catch (caught) {
+      setConnectionError(
+        caught instanceof Error
+          ? caught.message
+          : "The controlled portal registration could not be started.",
+      );
+    } finally {
+      setConnectionWorking(undefined);
+    }
+  }
+
   async function pausePortal(connectionId: string) {
     setConnectionWorking(connectionId);
     setConnectionError("");
@@ -215,6 +236,7 @@ export function ProfilePage() {
           loading={portalRows === undefined || connectableRows === undefined}
           mailbox={mailbox}
           onAuthenticate={(connectionId) => void connectPortal(connectionId)}
+          onAgentRegister={(connectionId) => void letScoutRegister(connectionId)}
           onCreate={(sourceId, connectionLabel) => void addPortalSource(sourceId, connectionLabel)}
           onDisable={(connectionId) => setDisableConnectionId(connectionId as Id<"portalConnections">)}
           onEnsureMailbox={() => void provisionMailbox()}
@@ -344,13 +366,13 @@ export function ProfilePage() {
 
         <div className="stack">
           <LedgerCard header={<><span className="type">Account</span><span className="mono">Private workspace</span></>}>
-            <table className="facts"><tbody>
-              <tr><td>Username</td><td>{currentUser?.displayName ?? currentUser?.username ?? "Loading…"}</td></tr>
-              <tr><td>Role</td><td>{currentUser?.role ?? "Musician"}</td></tr>
-              <tr><td>Raw import</td><td>Analyzed, never stored</td></tr>
-              <tr><td>Outreach</td><td>Guided approval or active standing mandate</td></tr>
-              <tr><td>Semantic index</td><td>{memory?.facts.filter((fact) => fact.embeddingState === "ready").length ?? 0} / {memory?.facts.length ?? 0} facts ready</td></tr>
-            </tbody></table>
+            <Table className="facts"><TableBody>
+              <TableRow><TableCell>Username</TableCell><TableCell>{currentUser?.displayName ?? currentUser?.username ?? "Loading…"}</TableCell></TableRow>
+              <TableRow><TableCell>Role</TableCell><TableCell>{currentUser?.role ?? "Musician"}</TableCell></TableRow>
+              <TableRow><TableCell>Raw import</TableCell><TableCell>Analyzed, never stored</TableCell></TableRow>
+              <TableRow><TableCell>Outreach</TableCell><TableCell>Approve once or active non-binding YOLO mandate</TableCell></TableRow>
+              <TableRow><TableCell>Semantic index</TableCell><TableCell>{memory?.facts.filter((fact) => fact.embeddingState === "ready").length ?? 0} / {memory?.facts.length ?? 0} facts ready</TableCell></TableRow>
+            </TableBody></Table>
             {memory && memory.facts.some((fact) => fact.embeddingState !== "ready") ? (
               <div className="rs-memory-embedding-action">
                 <button className="btn btn-s btn-sm" disabled={embeddingRefresh === "working"} onClick={refreshSemanticMemory} type="button">

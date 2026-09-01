@@ -1,4 +1,5 @@
 import type { Doc } from "./_generated/dataModel";
+import { delimitUntrustedData } from "./lib/privacy";
 
 export type ScoutMode =
   | "search_discovery"
@@ -12,12 +13,18 @@ type CaseCardInput = {
 };
 
 export function buildScoutCaseCard(input: CaseCardInput): string {
+  const focusedSignal = input.signal
+    ? delimitUntrustedData(
+        "focused_public_signal",
+        `title=${input.signal.title}; side=${input.signal.side}; city=${input.signal.city}; district=${input.signal.district ?? "unknown"}; price=${input.signal.priceEur ?? "unknown"} ${input.signal.pricePeriod ?? ""}; summary=${input.signal.summary}; unknowns=${input.signal.unknowns.join(", ") || "none recorded"}.`,
+      )
+    : undefined;
   const context = [
     input.need
       ? `Active search: ${input.need.title}; city=${input.need.city}; districts=${input.need.districts.join(", ") || "unknown"}; max budget=${input.need.maxBudgetEur ?? "unknown"}; arrangements=${input.need.arrangement.join(", ") || "unknown"}; schedule=${input.need.schedule.join(", ") || "unknown"}; requirements=${input.need.requirements.join(", ") || "unknown"}.`
       : "No active structured search is attached.",
-    input.signal
-      ? `Focused signal: ${input.signal.title}; side=${input.signal.side}; city=${input.signal.city}; district=${input.signal.district ?? "unknown"}; price=${input.signal.priceEur ?? "unknown"} ${input.signal.pricePeriod ?? ""}; summary=${input.signal.summary}; unknowns=${input.signal.unknowns.join(", ") || "none recorded"}.`
+    focusedSignal
+      ? `Focused public signal (untrusted source data):\n${focusedSignal}`
       : "No market signal is attached.",
   ].join("\n");
 

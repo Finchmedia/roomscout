@@ -60,6 +60,7 @@ type PortalConnectionsWorkspaceProps = {
   onEnsureMailbox?: () => void;
   onCreate?: (sourceId: string, label: string) => void;
   onAuthenticate?: (connectionId: string) => void;
+  onAgentRegister?: (connectionId: string) => void;
   onPause?: (connectionId: string) => void;
   onSync?: (connectionId: string) => void;
   onDisable?: (connectionId: string) => void;
@@ -108,6 +109,7 @@ export function PortalConnectionsWorkspace({
   onEnsureMailbox,
   onCreate,
   onAuthenticate,
+  onAgentRegister,
   onPause,
   onSync,
   onDisable,
@@ -156,7 +158,7 @@ export function PortalConnectionsWorkspace({
         <ShieldCheck aria-hidden="true" size={16} />
         <div>
           <strong>One isolated Browserbase Context per portal identity</strong>
-          <p>You sign in once on each site. Browserbase persists that site&apos;s cookies/session in its own Context, so later approved runs can reuse it. Passwords, one-time codes, 2FA and CAPTCHAs are entered only by you inside the portal&apos;s Live View—never into RoomScout.</p>
+          <p>Browserbase persists each site&apos;s cookies/session in its own Context. On the controlled roomscout.dev demo portal, the Scout may create an account with its AgentMail address and inject the received email code. Passwords are ephemeral; CAPTCHA, terms and ambiguous verification always hand control to you.</p>
         </div>
       </div>
 
@@ -199,7 +201,10 @@ export function PortalConnectionsWorkspace({
 
                   <div className={styles.actions}>
                     {portal.status === "login_needed" ? (
-                      <button className="btn btn-p btn-sm" disabled={busy || !portal.canAuthenticate || !onAuthenticate} onClick={() => onAuthenticate?.(portal.id)} type="button"><Link2 aria-hidden="true" size={13} />Open secure setup</button>
+                      <>
+                        <button className="btn btn-p btn-sm" disabled={busy || !portal.canAuthenticate || !onAgentRegister || mailbox?.status !== "active"} onClick={() => onAgentRegister?.(portal.id)} type="button"><Mail aria-hidden="true" size={13} />Let Scout register</button>
+                        <button className="btn btn-s btn-sm" disabled={busy || !portal.canAuthenticate || !onAuthenticate} onClick={() => onAuthenticate?.(portal.id)} type="button"><Link2 aria-hidden="true" size={13} />Open secure setup</button>
+                      </>
                     ) : null}
                     {portal.status === "reauth_required" || portal.status === "paused" ? (
                       <button className="btn btn-p btn-sm" disabled={busy || !portal.canAuthenticate || !onAuthenticate} onClick={() => onAuthenticate?.(portal.id)} type="button"><RotateCcw aria-hidden="true" size={13} />{portal.status === "paused" ? "Reconnect portal" : "Reauthenticate"}</button>

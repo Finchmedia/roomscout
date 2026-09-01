@@ -38,4 +38,11 @@ crons.interval(
   { limit: 8 },
 );
 
+crons.interval(
+  "reap abandoned external action executions",
+  { minutes: 5 },
+  internal.externalActions.reapStaleExecutions,
+  { olderThanMs: 15 * 60 * 1_000, limit: 40 },
+);
+
 export default crons;

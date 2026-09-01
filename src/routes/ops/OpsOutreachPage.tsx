@@ -4,6 +4,7 @@ import { useState } from "react";
 import { api } from "../../../convex/_generated/api";
 import { WorkspaceShell } from "../../components/navigation/WorkspaceShell";
 import { EmptyState, LedgerCard, PageHeader } from "../../components/ui/LedgerCard";
+import { Table, TableBody, TableCell, TableRow } from "../../components/ui/table";
 import { formatAge, toneForStatus, titleCase } from "./opsFormat";
 
 const filters = ["all", "awaiting_approval", "approved", "sending", "sent", "replied", "failed", "rejected"] as const;
@@ -61,18 +62,18 @@ export function OpsOutreachPage() {
           {selected ? (
             <LedgerCard accent header={<><span className="type t-scout">Approval invariant</span><span className="mono">Version {selected.contentVersion}</span></>}>
               <div className="mailbox">{selected.recipientName} &lt;{selected.recipientEmailMasked}&gt;</div>
-              <table className="facts"><tbody>
-                <tr><td>Owner</td><td>{selected.ownerName}</td></tr>
-                <tr><td>From</td><td>{selected.senderAddressMasked ?? "Mailbox not provisioned"}</td></tr>
-                <tr><td>Search</td><td>{selected.needTitle}</td></tr>
-                <tr><td>Signal</td><td>{selected.signalTitle}</td></tr>
-                <tr><td>Subject</td><td>{selected.subject}</td></tr>
-                <tr><td>Status</td><td>{titleCase(selected.status)}</td></tr>
-                <tr><td>Delivery</td><td>{selected.deliveryStatus ? titleCase(selected.deliveryStatus) : "Not sent"}</td></tr>
-                <tr><td>Content fingerprint</td><td><span className="mono">{selected.contentHashPrefix}…</span></td></tr>
-                <tr><td>Approved</td><td>{formatAge(selected.approvedAt)}</td></tr>
-                <tr><td>Sent</td><td>{formatAge(selected.sentAt)}</td></tr>
-              </tbody></table>
+              <Table className="facts"><TableBody>
+                <TableRow><TableCell>Owner</TableCell><TableCell>{selected.ownerName}</TableCell></TableRow>
+                <TableRow><TableCell>From</TableCell><TableCell>{selected.senderAddressMasked ?? "Mailbox not provisioned"}</TableCell></TableRow>
+                <TableRow><TableCell>Search</TableCell><TableCell>{selected.needTitle}</TableCell></TableRow>
+                <TableRow><TableCell>Signal</TableCell><TableCell>{selected.signalTitle}</TableCell></TableRow>
+                <TableRow><TableCell>Subject</TableCell><TableCell>{selected.subject}</TableCell></TableRow>
+                <TableRow><TableCell>Status</TableCell><TableCell>{titleCase(selected.status)}</TableCell></TableRow>
+                <TableRow><TableCell>Delivery</TableCell><TableCell>{selected.deliveryStatus ? titleCase(selected.deliveryStatus) : "Not sent"}</TableCell></TableRow>
+                <TableRow><TableCell>Content fingerprint</TableCell><TableCell><span className="mono">{selected.contentHashPrefix}…</span></TableCell></TableRow>
+                <TableRow><TableCell>Approved</TableCell><TableCell>{formatAge(selected.approvedAt)}</TableCell></TableRow>
+                <TableRow><TableCell>Sent</TableCell><TableCell>{formatAge(selected.sentAt)}</TableCell></TableRow>
+              </TableBody></Table>
               {selected.error ? <p className="fitline">{selected.error}</p> : null}
               <p className="fitline"><ShieldCheck aria-hidden="true" size={15} /> The exact recipient, subject, body, content version, and hash are rechecked by the backend before an approved send. Message bodies stay out of this aggregate Ops query.</p>
             </LedgerCard>

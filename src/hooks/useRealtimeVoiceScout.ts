@@ -212,6 +212,7 @@ export function useRealtimeVoiceScout(options: UseRealtimeVoiceScoutOptions = {}
       "recall_relevant_memory",
       "get_focused_signal",
       "create_outreach_draft",
+      "create_webform_draft",
     ] as const;
     if (!allowedNames.includes(name as (typeof allowedNames)[number])) return;
     try {

@@ -10,6 +10,7 @@ const readiness = {
     status: "disabled" as const,
     apiKeyConfigured: true,
     webhookSecretConfigured: true,
+    monitorWebhookBearerConfigured: true,
     webhookUrlConfigured: true,
     webhookUrlValid: true,
     monitorsEnabled: false,

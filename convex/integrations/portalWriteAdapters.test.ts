@@ -99,8 +99,74 @@ describe("reviewed portal write adapters", () => {
         allowedPaths,
         workflow,
         providerThreadId: "thread/with spaces",
+        payload: {
+          kind: "platform_message",
+          recipients: ["Robin"],
+          body: "Hello",
+        },
       }),
     ).toBe("https://portal.example/roomscout-fixture/messages/thread%2Fwith%20spaces");
+  });
+
+  it("maps the controlled roomscout.dev listing and thread routes", () => {
+    const workflow = resolvePortalWriteWorkflow({
+      adapterKey: "roomscout-dev-v1",
+      adapterVersion: 1,
+      workflowKey: "roomscout-dev.platform-message.v1",
+      actionType: "send_platform_dm",
+    });
+    const payload = {
+      kind: "platform_message" as const,
+      targetPath: "/listings/listing-1",
+      recipients: ["Listing owner"],
+      senderLabel: "The Cooks",
+      body: "Is the room still available?",
+    };
+    expect(
+      buildPortalWriteUrl({
+        baseUrl: "https://roomscout.dev",
+        allowedDomains: ["roomscout.dev"],
+        allowedPaths: ["/listings", "/inbox"],
+        workflow,
+        payload,
+      }),
+    ).toBe("https://roomscout.dev/listings/listing-1");
+    expect(
+      buildPortalWriteUrl({
+        baseUrl: "https://roomscout.dev",
+        allowedDomains: ["roomscout.dev"],
+        allowedPaths: ["/listings", "/inbox"],
+        workflow,
+        providerThreadId: "thread-1",
+        payload,
+      }),
+    ).toBe("https://roomscout.dev/inbox/thread-1");
+  });
+
+  it("accepts a persisted receipt on the controlled listing after a first message", async () => {
+    const workflow = resolvePortalWriteWorkflow({
+      adapterKey: "roomscout-dev-v1",
+      adapterVersion: 1,
+      workflowKey: "roomscout-dev.platform-message.v1",
+      actionType: "send_platform_dm",
+    });
+    const { page } = fakePage({
+      url: "https://roomscout.dev/listings/listing-1",
+    });
+    const result = await runDeterministicPortalWrite({
+      page: page as never,
+      workflow,
+      payload: {
+        kind: "platform_message",
+        targetPath: "/listings/listing-1",
+        recipients: ["Listing owner"],
+        body: "Is the room still available?",
+      },
+      allowedDomains: ["roomscout.dev"],
+      allowedPaths: ["/listings", "/inbox"],
+      humanPresenceRequired: false,
+    });
+    expect(result).toMatchObject({ outcome: "succeeded", submitted: true });
   });
 
   it("fills deterministic selectors and clicks the reviewed send control once", async () => {
@@ -136,6 +202,40 @@ describe("reviewed portal write adapters", () => {
     expect(locators.get('[data-roomscout-write="body"]')?.fill).toHaveBeenCalledWith(
       "Is the rehearsal slot still free?",
     );
+    expect(locators.get('[data-roomscout-write="send"]')?.click).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts the controlled portal's in-place Convex receipt on a listing route", async () => {
+    const workflow = resolvePortalWriteWorkflow({
+      adapterKey: "roomscout-dev-v1",
+      adapterVersion: 1,
+      workflowKey: "roomscout-dev.platform-message.v1",
+      actionType: "send_platform_dm",
+    });
+    const { page, locators } = fakePage({
+      url: "https://roomscout.dev/listings/listing-1",
+    });
+    const result = await runDeterministicPortalWrite({
+      page: page as never,
+      workflow,
+      payload: {
+        kind: "platform_message",
+        targetPath: "/listings/listing-1",
+        recipients: ["Listing owner"],
+        senderLabel: "The Cooks",
+        body: "Is the room still available?",
+      },
+      allowedDomains: ["roomscout.dev"],
+      allowedPaths: ["/listings", "/inbox"],
+      humanPresenceRequired: false,
+    });
+    expect(result).toEqual({
+      outcome: "succeeded",
+      submitted: true,
+      providerThreadId: "thread-1",
+      providerMessageId: "message-1",
+    });
+    expect(locators.get('[data-roomscout-write="sender-label"]')?.fill).toHaveBeenCalledWith("The Cooks");
     expect(locators.get('[data-roomscout-write="send"]')?.click).toHaveBeenCalledTimes(1);
   });
 
@@ -211,6 +311,31 @@ describe("reviewed portal write adapters", () => {
       submitted: true,
       errorCode: "SUBMIT_RESULT_UNKNOWN",
     });
+    expect(locators.get('[data-roomscout-write="send"]')?.click).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for a client-rendered receipt without retrying the provider write", async () => {
+    const workflow = resolvePortalWriteWorkflow({
+      adapterKey: "roomscout-fixture-v1",
+      adapterVersion: 1,
+      workflowKey: "fixture.platform-message.v1",
+      actionType: "send_platform_dm",
+    });
+    const { page, locators } = fakePage();
+    const success = page.locator('[data-roomscout-write-result="sent"]');
+    success.isVisible.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+
+    const result = await runDeterministicPortalWrite({
+      page: page as never,
+      workflow,
+      payload: { kind: "platform_message", recipients: ["Robin"], body: "Hello" },
+      allowedDomains,
+      allowedPaths,
+      humanPresenceRequired: false,
+    });
+
+    expect(result).toMatchObject({ outcome: "succeeded", submitted: true });
+    expect(page.waitForTimeout).toHaveBeenCalledWith(250);
     expect(locators.get('[data-roomscout-write="send"]')?.click).toHaveBeenCalledTimes(1);
   });
 });

@@ -156,7 +156,7 @@ export function ApprovalComposer({
         <div>
           <label className="flabel" htmlFor={messageId}>Message</label>
           <textarea className="input" id={messageId} onChange={(event) => setMessageOverride(event.target.value)} rows={9} value={message} />
-          <p className="mono">Scout assumption: asking about drums and storage. Edit freely.</p>
+          <p className="mono">Review the Scout's wording and edit any assumption before approval.</p>
         </div>
         <label className="ack">
           <input checked={approved} onChange={(event) => setApproved(event.target.checked)} type="checkbox" />

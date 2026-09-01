@@ -52,6 +52,7 @@ export const providerReadiness = action({
       status: providerStatus,
       apiKeyConfigured: v.boolean(),
       webhookSecretConfigured: v.boolean(),
+      monitorWebhookBearerConfigured: v.boolean(),
       webhookUrlConfigured: v.boolean(),
       webhookUrlValid: v.boolean(),
       monitorsEnabled: v.boolean(),

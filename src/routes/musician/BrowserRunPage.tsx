@@ -18,6 +18,7 @@ export function BrowserRunPage() {
   const resumeAuthentication = useAction(api.browserbasePortal.resumeAuthentication);
   const stopRun = useAction(api.browserbasePortal.stopRun);
   const startAuthentication = useAction(api.browserbasePortal.startAuthentication);
+  const startAgentRegistration = useAction(api.browserbasePortal.startAgentRegistration);
   const ensureMailbox = useAction(api.mailboxes.ensureMine);
   const [liveView, setLiveView] = useState<{ url: string; expiresAt: number }>();
   const [working, setWorking] = useState(false);
@@ -29,12 +30,17 @@ export function BrowserRunPage() {
     id: storedRun._id,
     sourceName: connection.platformName ?? connection.sourceName,
     sourceDomain: (() => { try { return new URL(connection.baseUrl).hostname; } catch { return undefined; } })(),
-    searchTitle: storedRun.kind === "authenticate" ? "Connect portal account" : storedRun.kind === "inbox_sync" ? "Sync portal inbox" : "Review portal source",
+    searchTitle: storedRun.kind === "authenticate" ? storedRun.onboardingStage ? "Scout-assisted portal registration" : "Connect portal account" : storedRun.kind === "inbox_sync" ? "Sync portal inbox" : "Review portal source",
     mandateLabel: "Policy-reviewed portal run",
     state: liveView && storedRun.status === "human_required" ? "human_controlling" : storedRun.status === "running" ? "agent_running" : storedRun.status === "expired" ? "failed" : storedRun.status,
     liveViewUrl: liveView?.url,
-    humanPrompt: storedRun.status === "human_required" ? "Open Live View and complete login, registration, email verification, password, 2FA, or CAPTCHA yourself. RoomScout never receives those secrets." : undefined,
-    steps: [
+    humanPrompt: storedRun.status === "human_required" ? "The controlled automation stopped before an ambiguous or human-only step. Open Live View to review it; RoomScout will not accept terms, solve CAPTCHA, or guess a code." : undefined,
+    steps: storedRun.onboardingStage ? [
+      { id: "reserved", label: "Open isolated Browserbase Context", state: storedRun.status === "queued" ? "active" : "done" },
+      { id: "signup", label: "Register with personal AgentMail address", state: storedRun.onboardingStage === "opening_signup" ? "active" : "done" },
+      { id: "mail", label: "Receive and parse Clerk verification mail", state: storedRun.onboardingStage === "waiting_verification" ? "active" : storedRun.onboardingStage === "opening_signup" ? "pending" : storedRun.status === "failed" ? "blocked" : "done" },
+      { id: "verify", label: "Inject code and persist authenticated session", state: storedRun.onboardingStage === "submitting_verification" ? "active" : storedRun.status === "completed" ? "done" : storedRun.status === "human_required" || storedRun.status === "failed" ? "blocked" : "pending" },
+    ] : [
       { id: "reserved", label: "Session reserved", state: storedRun.status === "queued" ? "active" : "done" },
       { id: "human", label: "Human authentication", state: storedRun.status === "human_required" ? "active" : storedRun.status === "completed" ? "done" : "pending" },
       { id: "persist", label: "Persist authenticated Browserbase context", state: storedRun.status === "completed" ? "done" : storedRun.status === "failed" ? "blocked" : "pending" },
@@ -69,7 +75,9 @@ export function BrowserRunPage() {
     if (!storedRun) return;
     setWorking(true); setError("");
     try {
-      const next = await startAuthentication({ connectionId: storedRun.connectionId });
+      const next = storedRun.onboardingStage
+        ? await startAgentRegistration({ connectionId: storedRun.connectionId })
+        : await startAuthentication({ connectionId: storedRun.connectionId });
       setSignedInConfirmed(false);
       setLiveView(undefined);
       navigate(`/app/runs/${next.runId}`, { replace: true });
@@ -94,7 +102,7 @@ export function BrowserRunPage() {
       <div className="wrap rs-browser-run-page">
         {error ? <p className="rs-form-error" role="alert">{error}</p> : null}
         {storedRun === undefined || (storedRun && connection === undefined) ? <p className="mono">Loading persisted browser run…</p> : null}
-        {storedRun?.kind === "authenticate" && connection ? (
+        {storedRun?.kind === "authenticate" && connection && (!storedRun.onboardingStage || storedRun.status === "human_required") ? (
           <PortalAuthenticationGuide
             liveViewOpen={Boolean(liveView)}
             mailboxAddress={mailbox?.emailAddress}

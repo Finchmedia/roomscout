@@ -16,6 +16,9 @@ const app = defineApp({
     FIRECRAWL_API_KEY: v.string(),
     FIRECRAWL_API_URL: v.optional(v.string()),
     FIRECRAWL_WEBHOOK_SECRET: v.optional(v.string()),
+    FIRECRAWL_MONITOR_WEBHOOK_BEARER: v.optional(v.string()),
+    AGENTMAIL_API_KEY: v.string(),
+    AGENTMAIL_BASE_URL: v.optional(v.string()),
   },
 });
 
@@ -31,7 +34,12 @@ app.use(password);
 app.use(agent);
 app.use(rateLimiter);
 app.use(staticHosting);
-app.use(agentmail);
+app.use(agentmail, {
+  env: {
+    AGENTMAIL_API_KEY: app.env.AGENTMAIL_API_KEY,
+    AGENTMAIL_BASE_URL: app.env.AGENTMAIL_BASE_URL,
+  },
+});
 app.use(firecrawlRoomScout, {
   // Durable crawl callbacks are isolated from RoomScout's native-monitor
   // webhook at /api/webhooks/firecrawl.

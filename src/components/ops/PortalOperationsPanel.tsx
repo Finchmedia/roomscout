@@ -5,6 +5,7 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { formatAge, toneForStatus, titleCase } from "../../routes/ops/opsFormat";
 import { EmptyState, LedgerCard } from "../ui/LedgerCard";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 
 type ConnectionId = Id<"portalConnections">;
 type RunId = Id<"browserRuns">;
@@ -105,14 +106,14 @@ export function PortalOperationsPanel() {
           </div>
           {selected ? (
             <div className="stack">
-              <table className="facts"><tbody>
-                <tr><td>Status</td><td>{titleCase(selected.status)}</td></tr>
-                <tr><td>Policy</td><td>{titleCase(selected.policyDecision)}</td></tr>
-                <tr><td>Read-only recon</td><td>{selected.allowReadOnlyRecon ? "Allowed" : "Disabled"}</td></tr>
-                <tr><td>Inbox polling</td><td>{selected.allowInboxPolling ? `${selected.pollIntervalMinutes} min` : "Disabled"}</td></tr>
-                <tr><td>Next poll</td><td>{formatAge(selected.nextPollAt)}</td></tr>
-                <tr><td>Circuit breaker</td><td>{selected.circuitOpenUntil ? `Recorded until ${new Date(selected.circuitOpenUntil).toLocaleTimeString()} (${formatAge(selected.circuitOpenUntil)})` : "Closed"}</td></tr>
-              </tbody></table>
+              <Table className="facts"><TableBody>
+                <TableRow><TableCell>Status</TableCell><TableCell>{titleCase(selected.status)}</TableCell></TableRow>
+                <TableRow><TableCell>Policy</TableCell><TableCell>{titleCase(selected.policyDecision)}</TableCell></TableRow>
+                <TableRow><TableCell>Read-only recon</TableCell><TableCell>{selected.allowReadOnlyRecon ? "Allowed" : "Disabled"}</TableCell></TableRow>
+                <TableRow><TableCell>Inbox polling</TableCell><TableCell>{selected.allowInboxPolling ? `${selected.pollIntervalMinutes} min` : "Disabled"}</TableCell></TableRow>
+                <TableRow><TableCell>Next poll</TableCell><TableCell>{formatAge(selected.nextPollAt)}</TableCell></TableRow>
+                <TableRow><TableCell>Circuit breaker</TableCell><TableCell>{selected.circuitOpenUntil ? `Recorded until ${new Date(selected.circuitOpenUntil).toLocaleTimeString()} (${formatAge(selected.circuitOpenUntil)})` : "Closed"}</TableCell></TableRow>
+              </TableBody></Table>
               {selected.lastErrorCode ? <p className="fitline"><ShieldAlert aria-hidden="true" size={14} />{selected.lastErrorCode}</p> : null}
               <div className="actionsrow">
                 {selected.allowReadOnlyRecon && selected.status === "active" ? <button className="btn btn-s btn-sm" disabled={Boolean(working)} onClick={() => void run("Read-only recon", () => runRecon({ connectionId: selected._id }))} type="button"><Play aria-hidden="true" size={12} />Run recon</button> : null}
@@ -125,21 +126,21 @@ export function PortalOperationsPanel() {
                 <h3>Recent browser runs</h3>
                 {runs === undefined ? <p className="hint">Loading runs…</p> : runs.length === 0 ? <p className="hint">No Browserbase run has been reserved for this connection.</p> : (
                   <div className="lcard rs-review-table-wrap">
-                    <table className="q rs-review-table"><thead><tr><th>Kind</th><th>Status</th><th>Result</th><th>Created</th><th /></tr></thead><tbody>
+                    <Table className="q rs-review-table"><TableHeader><TableRow><TableHead>Kind</TableHead><TableHead>Status</TableHead><TableHead>Result</TableHead><TableHead>Created</TableHead><TableHead /></TableRow></TableHeader><TableBody>
                       {runs.map((browserRun) => (
-                        <tr key={browserRun._id}>
-                          <td>{titleCase(browserRun.kind)}</td>
-                          <td><span className={`pill ${toneForStatus(browserRun.status)}`}>{titleCase(browserRun.status)}</span></td>
-                          <td>{browserRun.resultCount ?? browserRun.errorCode ?? "—"}</td>
-                          <td className="mono">{formatAge(browserRun.createdAt)}</td>
-                          <td><div className="actionsrow">
+                        <TableRow key={browserRun._id}>
+                          <TableCell>{titleCase(browserRun.kind)}</TableCell>
+                          <TableCell><span className={`pill ${toneForStatus(browserRun.status)}`}>{titleCase(browserRun.status)}</span></TableCell>
+                          <TableCell>{browserRun.resultCount ?? browserRun.errorCode ?? "—"}</TableCell>
+                          <TableCell className="mono">{formatAge(browserRun.createdAt)}</TableCell>
+                          <TableCell><div className="actionsrow">
                             {browserRun.status === "human_required" ? <button className="btn btn-s btn-sm" disabled={Boolean(working)} onClick={() => void loadLiveView(browserRun._id)} type="button">Live View</button> : null}
                             {browserRun.status === "human_required" ? <button className="btn btn-p btn-sm" disabled={Boolean(working)} onClick={() => void run("Authentication confirmation", () => resumeAuthentication({ runId: browserRun._id }))} type="button">Confirm complete</button> : null}
                             {browserRun.status === "queued" || browserRun.status === "running" || browserRun.status === "human_required" ? <button className="btn btn-g btn-sm" disabled={Boolean(working)} onClick={() => void run("Run stop", () => stopRun({ runId: browserRun._id }))} type="button"><CircleStop aria-hidden="true" size={12} /></button> : null}
-                          </div></td>
-                        </tr>
+                          </div></TableCell>
+                        </TableRow>
                       ))}
-                    </tbody></table>
+                    </TableBody></Table>
                   </div>
                 )}
               </div>

@@ -487,6 +487,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         any,
         Name
       >;
+      getScrape: FunctionReference<
+        "action",
+        "internal",
+        { scrapeId: string },
+        any,
+        Name
+      >;
       list: FunctionReference<
         "action",
         "internal",

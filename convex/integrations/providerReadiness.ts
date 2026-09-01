@@ -49,6 +49,9 @@ export function deriveProviderReadiness(readEnv: ReadEnv) {
   const firecrawlWebhookSecretConfigured = present(
     readEnv("FIRECRAWL_WEBHOOK_SECRET"),
   );
+  const firecrawlMonitorBearerConfigured = present(
+    readEnv("FIRECRAWL_MONITOR_WEBHOOK_BEARER"),
+  );
   const firecrawlWebhookUrlConfigured = present(
     readEnv("FIRECRAWL_WEBHOOK_URL"),
   );
@@ -60,11 +63,14 @@ export function deriveProviderReadiness(readEnv: ReadEnv) {
   const firecrawlCoreConfigured =
     firecrawlApiKeyConfigured &&
     firecrawlWebhookSecretConfigured &&
+    firecrawlMonitorBearerConfigured &&
     firecrawlWebhookUrlValid;
   const firecrawlReasons: string[] = [];
   if (!firecrawlApiKeyConfigured) firecrawlReasons.push("API key is missing.");
   if (!firecrawlWebhookSecretConfigured)
-    firecrawlReasons.push("Webhook verification secret is missing.");
+    firecrawlReasons.push("Durable-crawl webhook HMAC secret is missing.");
+  if (!firecrawlMonitorBearerConfigured)
+    firecrawlReasons.push("Native-monitor webhook bearer is missing.");
   if (!firecrawlWebhookUrlConfigured)
     firecrawlReasons.push("Webhook URL is missing.");
   else if (!firecrawlWebhookUrlValid)
@@ -87,6 +93,10 @@ export function deriveProviderReadiness(readEnv: ReadEnv) {
   const agentmailCustomDomainConfigured = present(readEnv("AGENTMAIL_DOMAIN"));
   const agentmailReasons: string[] = [];
   if (!agentmailApiKeyConfigured) agentmailReasons.push("API key is missing.");
+  else
+    agentmailReasons.push(
+      "Credential presence only; per-user provisioning requires an organization- or pod-scoped key with inbox_create permission.",
+    );
   if (!agentmailWebhookSecretConfigured)
     agentmailReasons.push("Webhook verification secret is missing.");
   if (!agentmailAddressSaltConfigured)
@@ -151,6 +161,7 @@ export function deriveProviderReadiness(readEnv: ReadEnv) {
       status: firecrawlStatus,
       apiKeyConfigured: firecrawlApiKeyConfigured,
       webhookSecretConfigured: firecrawlWebhookSecretConfigured,
+      monitorWebhookBearerConfigured: firecrawlMonitorBearerConfigured,
       webhookUrlConfigured: firecrawlWebhookUrlConfigured,
       webhookUrlValid: firecrawlWebhookUrlValid,
       monitorsEnabled: firecrawlMonitorsEnabled,

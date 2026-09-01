@@ -131,7 +131,8 @@ frontend/backend integration slice.
 Replaced the fixture Scout onboarding with the real Convex Agent thread and a
 reactive `savedNeeds` search card. In a live German-language browser test, one
 message created the Stuttgart search, updated six visible constraints, and
-recorded separate durable facts about Glass Teeth, Marc, mobility, rehearsal
+recorded separate durable facts about the fictional test band Glass Teeth, its
+fictional member Marc, mobility, rehearsal
 times, equipment, and compatible room-sharing bands. A later turn correctly
 recalled the band's genres, equipment, and schedule without the user repeating
 them. Search activation now persists in Convex.
@@ -141,7 +142,8 @@ versioned three-part context compression, and a user-visible memory ledger.
 Added the external-assistant import flow: copy a privacy-aware prompt to
 ChatGPT/Claude, paste its export, analyze it with the Gateway, review every
 candidate, and confirm only selected facts. The raw export is not stored. A live
-test extracted and reviewed 12 facts across Daniel and Glass Teeth, then rebuilt
+test extracted and reviewed 12 facts across Daniel and the fictional Glass
+Teeth persona, then rebuilt
 the working context to version 6.
 
 Generation remains on Convex AI Gateway with `openai/gpt-5.6-terra`. At this
@@ -445,3 +447,138 @@ backend functions, and 14 static files. Health, Landing, and Explore returned
 HTTP 200. These checks prove the deployed component graph and application
 contracts; they do not claim a live monitor run or AgentMail delivery round
 trip.
+
+## 2026-09-01 — Approve / YOLO boundary and real corroboration
+
+Made the two authorization experiences explicit. Approve mode remains exact and
+per-message. YOLO uses a persisted, versioned standing mandate only for
+allowlisted, non-binding communication. A deterministic commitment boundary
+now escalates obvious agreements, bookings, contracts, deposits and acceptance
+language to exact approval across email, web forms and platform messages. The
+same boundary is rechecked immediately before a provider claim. Expired action
+requests cannot be claimed; a scheduled reaper fails abandoned pre-provider
+claims and marks stale in-flight provider outcomes `unknown` so RoomScout never
+retries a possibly completed external side effect. Kill-switch revocations now
+have one audit event per mandate, while retries count once per action request
+against the daily cap.
+
+Implemented conservative cross-source corroboration instead of treating the
+verification enum as decorative. Signals are linked only when side and city
+match and their meaningful title tokens are highly similar. Independent sources
+raise the source count and verification state; strong identity evidence with
+incompatible district, arrangement or price becomes `conflicting`. Every source
+keeps its own structured evidence snapshot and provenance. A stale source does
+not hide a signal while another independent source is still fresh.
+
+Also separated the official Firecrawl component's signed callback secret from
+the Native Monitor bearer header, added fixed-work comparison for the monitor
+credential, rate-limited context parsing and refresh, fixed late AgentMail
+delivery events overwriting `replied`, exposed persisted web-form actions in the
+unified Inbox, removed remaining fixture/dead integration adapters, and aligned
+the judge-facing Component list with the actual mounted graph. This entry records
+implemented and locally tested behavior only; it does not claim the still-open
+live Firecrawl Monitor or AgentMail round-trip proofs.
+
+## 2026-09-01 — Controlled portal and multi-provider onboarding loop
+
+Built `roomscout-dev` as a separate Next.js 16, Clerk, and Convex application
+instead of faking an authenticated third-party portal inside RoomScout. Its
+public supply and demand listings are server-rendered for Firecrawl; posting,
+native threads, and messages require a real Clerk identity. Public listing
+projections exclude the owner subject and Convex creation metadata, while thread
+queries enforce membership for both listing owners and participants.
+
+Added a reviewed `roomscout-dev-v1` Browserbase adapter and operator-only setup
+path in RoomScout. The Source Registry can idempotently create the controlled
+platform, public and authenticated sources, monitor target, first-party contact
+policy, and adapter binding. A connection can be approved only for that exact
+controlled source. Browserbase then provisions or reuses a user/portal Context,
+starts Clerk registration with the user's personal AgentMail address, waits for
+the verification message, extracts one unambiguous code, and types it into the
+same browser session. Ambiguous mail, CAPTCHA, terms, payment, password, or other
+human-only boundaries stop in a takeover state. The controlled first-time signup
+may use a generated ephemeral password; existing-credential prompts and password
+changes do not. Verification codes and generated ephemeral passwords are never
+persisted or logged.
+
+The same reviewed adapter can open one public listing, submit an exact approved
+platform message, and later poll the authenticated portal Inbox into RoomScout's
+unified private Inbox. Stable first-party DOM markers make this an honest,
+deterministic integration harness rather than a brittle production-site adapter.
+The public source is seeded paused, and the setup path neither starts a crawl nor
+sends a message.
+
+Initialized shadcn's local conventions and migrated all application table
+surfaces to one shared accessible Table primitive without reskinning RoomScout's
+custom interface. Final local verification passed 210 tests across 42 files,
+TypeScript, ESLint, and the Vite production build. The separate portal passed its
+authorization tests, TypeScript, ESLint, and Next.js production build. Read-only
+queries against both current Convex deployments still returned an empty public
+signal list. The portal has not yet been assigned its separate Clerk, Convex,
+Vercel, or domain configuration; no live provider action is claimed here.
+
+The configured AgentMail credential was reported as scoped to one existing
+Inbox. AgentMail documents that Inbox-scoped keys cannot gain organization-level
+`inbox_create`, so it cannot prove RoomScout's one-Inbox-per-user architecture.
+The readiness panel now states that requirement explicitly. RoomScout does not
+silently collapse users into a shared Inbox; the live proof needs an
+organization- or pod-scoped key with Inbox creation permission.
+
+## 2026-09-01 — Live Firecrawl transport proof and roomscout.dev deployment
+
+Ran the first real Firecrawl provider call through the deployed, locally
+extended Firecrawl Convex Component against the reviewed Bandnet Hamburg supply
+index. The provider returned HTTP 200, 3,647 Markdown characters and 23 links
+for one credit. Repeating the same bounded call from the Development deployment
+returned the same document from Firecrawl's cache, proving that the authorized
+Production provider credentials were copied into Development without exposing
+their values. No contact text was printed or persisted as part of this proof.
+This proves the Component transport and credential wiring.
+
+Then ran one bounded Native Monitor check against the first-party controlled
+`roomscout.dev` listing rather than a real third-party publisher. Firecrawl
+reported exactly one new page and charged five credits; its webhook reached
+Convex with HTTP 204. Reconciliation recovered the current scrape artifact,
+created one source entry, normalized it into one published observed Signal and
+stored its evidence. Public projection replaced the listing phone number with
+`[phone redacted]`. Reprocessing the same provider result created zero entries
+and queued zero detail jobs, proving the idempotency boundary. All third-party
+monitor targets remained paused.
+
+Deployed the separate controlled portal to https://roomscout.dev. Vercel owns
+and verifies the domain, the Next.js application runs in its own `roomscout-dev`
+project, and its data lives in the separate Convex Production deployment
+`sensible-ladybug-38`. Clerk uses a dedicated application; its publishable
+configuration and secret are stored in Vercel, while Convex stores only the
+Clerk issuer domain. Public Listings, Sign in, and Sign up returned HTTP 200;
+anonymous requests to Post listing and Inbox returned 307 redirects to the
+correct Clerk sign-in route. A real browser rendered the Clerk sign-up form,
+and the post-deploy Vercel log scan contained no runtime errors. The deployed
+authenticated Inbox and thread pages are server-rendered first, then subscribe
+to owner-scoped Convex queries so new messages update reactively without a
+reload. This records the deployed messaging surface; no live portal message is
+claimed.
+
+Convex 1.45 isolates Component environment variables. The published
+`@agentmail/convex@0.1.0` package still read `AGENTMAIL_API_KEY` internally
+without declaring or binding it and exposed several remote Component actions
+with the wrong visibility. Added a reproducible `patch-package` compatibility
+patch that declares and binds the typed environment and corrects those action
+exports while continuing to run the official Component code. A deployed,
+read-only Component call now sees exactly the single Inbox allowed by the
+configured inbox-scoped key; it did not create an Inbox or send mail. An
+internal-only, fingerprint-confirmed and collision-safe bootstrap can map that
+one Inbox to a selected controlled test owner without changing the normal
+one-Inbox-per-user provisioning architecture.
+
+The deployment followed a full green local gate: 225 RoomScout tests across 45
+files plus TypeScript, ESLint, and the Vite production build; the portal passed
+its authorization tests, TypeScript, ESLint, Next.js production build, Convex
+Development push, and Convex Production deployment. The remaining controlled
+proof is intentionally stated precisely: no Clerk verification email has yet
+been consumed through AgentMail, no persisted Browserbase signup/message has
+yet run, and no AgentMail send/reply round trip is claimed. The inbox-scoped key
+is sufficient for one controlled account, but per-user provisioning still
+requires an organization- or pod-scoped key with Inbox creation permission.
+The provider currently has no webhook configured and Convex has no corresponding
+AgentMail webhook secret, so inbound delivery remains deliberately unavailable.

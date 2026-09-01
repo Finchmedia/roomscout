@@ -192,6 +192,7 @@ async function seedOrchestrationFixture(
       expiresAt: options?.expiresAt ?? now + 86_400_000,
       stopOnComplaint: true,
       stopWhenSuitableRoomConfirmed: true,
+      commitmentBoundary: "non_binding_outreach_only",
       contentHash: "mandate-hash",
       activatedAt: now,
       ...(options?.status === "revoked" ? { stoppedAt: now } : {}),
@@ -280,6 +281,40 @@ it("does not orchestrate revoked or expired mandates", async () => {
   expect(
     await expiredTest.run(async (ctx) => (await ctx.db.get(expired.mandateId))?.status),
   ).toBe("expired");
+});
+
+it("records a durable audit event when the owner uses the search kill switch", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedOrchestrationFixture(t);
+  const owner = t.withIdentity({ subject: fixture.ownerId });
+
+  await expect(
+    owner.mutation(api.mandates.killSwitch, { savedNeedId: fixture.needId }),
+  ).resolves.toBe(1);
+
+  const state = await t.run(async (ctx) => ({
+    mandate: await ctx.db.get(fixture.mandateId),
+    auditEvents: await ctx.db
+      .query("auditEvents")
+      .withIndex("by_entity_key_and_occurred_at", (q) =>
+        q.eq("entityKey", `mandate:${fixture.mandateId}`),
+      )
+      .collect(),
+  }));
+  expect(state.mandate).toMatchObject({ status: "revoked" });
+  expect(state.auditEvents).toContainEqual(
+    expect.objectContaining({
+      actorType: "user",
+      actorUserId: fixture.ownerId,
+      eventType: "mandate.kill_switch_revoked",
+    }),
+  );
+
+  const orchestrated = await t.mutation(
+    internal.mandateOrchestrator.runForOwner,
+    { ownerId: fixture.ownerId },
+  );
+  expect(orchestrated.created).toBe(0);
 });
 
 it.each(["guided", "research_autopilot"] as const)(

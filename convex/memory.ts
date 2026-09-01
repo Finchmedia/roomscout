@@ -918,6 +918,10 @@ export const refreshMyContext = action({
   returns: v.object({ rebuiltVersion: v.optional(v.number()) }),
   handler: async (ctx): Promise<{ rebuiltVersion?: number }> => {
     const ownerId = await requireActionUserId(ctx);
+    await roomScoutRateLimiter.limit(ctx, "contextImport", {
+      key: ownerId,
+      throws: true,
+    });
     const factVersion: number | null = await ctx.runQuery(
       internal.memory.getFactVersion,
       { ownerId },
@@ -948,7 +952,11 @@ export const parseContextImport = action({
     facts: v.array(factCandidateValidator),
   }),
   handler: async (ctx, args) => {
-    await requireActionUserId(ctx);
+    const ownerId = await requireActionUserId(ctx);
+    await roomScoutRateLimiter.limit(ctx, "contextImport", {
+      key: ownerId,
+      throws: true,
+    });
     const text = args.text.trim();
     if (text.length < 20 || text.length > 50_000) {
       throw new ConvexError({ code: "INVALID_CONTEXT_IMPORT" });

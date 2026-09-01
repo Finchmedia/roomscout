@@ -52,6 +52,27 @@ describe("Native Monitoring extension", () => {
       "https://api.firecrawl.dev/v2/monitor/monitor%2Fone/checks/check%3Ftwo?limit=5&skip=10",
     );
   });
+
+  test("retrieves the exact scrape artifact referenced by a monitor page", async () => {
+    const t = initConvexTest();
+    const { calls } = mockFetch([
+      {
+        body: {
+          success: true,
+          data: { changeTracking: { json: { entries: [] } } },
+        },
+      },
+    ]);
+
+    await expect(
+      t.action(api.monitor.getScrape, { scrapeId: "scrape/one" }),
+    ).resolves.toEqual({ changeTracking: { json: { entries: [] } } });
+    expect(calls[0]).toEqual({
+      url: "https://api.firecrawl.dev/v2/scrape/scrape%2Fone",
+      method: "GET",
+      body: undefined,
+    });
+  });
 });
 
 describe("Interact extension", () => {
@@ -99,4 +120,3 @@ describe("Interact extension", () => {
     expect(calls).toHaveLength(1);
   });
 });
-

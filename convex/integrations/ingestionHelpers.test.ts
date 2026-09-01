@@ -89,7 +89,7 @@ describe("native monitor contract", () => {
         paused: false,
       },
       webhookUrl: "https://deployment.convex.site/api/webhooks/firecrawl",
-      webhookSecret: "first-secret",
+      webhookBearer: "first-secret",
     });
     const second = buildDesiredMonitor({
       candidate: {
@@ -101,16 +101,36 @@ describe("native monitor contract", () => {
         paused: false,
       },
       webhookUrl: "https://deployment.convex.site/api/webhooks/firecrawl",
-      webhookSecret: "rotated-secret",
+      webhookBearer: "rotated-secret",
     });
     expect(request.schedule.text).toBe("every 15 minutes");
     expect(request.webhook?.events).toEqual([
       "monitor.page",
       "monitor.check.completed",
     ]);
+    expect(request.targets[0]).not.toHaveProperty("id");
     expect(monitorConfigFingerprint(request, false)).toBe(
       monitorConfigFingerprint(second, false),
     );
+  });
+
+  it("uses Firecrawl's documented daily schedule instead of an invalid minute interval", () => {
+    const request = buildDesiredMonitor({
+      candidate: {
+        targetId: "target-daily",
+        sourceName: "Daily source",
+        url: "https://example.com/listings",
+        mode: "scrape",
+        scheduleMinutes: 1_440,
+        paused: false,
+      },
+      webhookUrl: "https://deployment.convex.site/api/webhooks/firecrawl",
+      webhookBearer: "secret",
+    });
+    expect(request.schedule).toEqual({
+      text: "daily",
+      timezone: "Europe/Berlin",
+    });
   });
 
   it("parses a monitor page webhook with a JSON snapshot", () => {
@@ -137,6 +157,29 @@ describe("native monitor contract", () => {
       pageUrl: "https://example.com/listings",
       changeStatus: "changed",
       snapshot: { entries: [] },
+    });
+  });
+
+  it("parses the current Firecrawl array-wrapped monitor webhook shape", () => {
+    expect(
+      parseMonitorWebhook({
+        type: "monitor.check.completed",
+        id: "evt-complete",
+        metadata: { sourceTargetId: "target-1" },
+        data: [
+          {
+            monitorId: "monitor-1",
+            checkId: "check-1",
+            status: "completed",
+          },
+        ],
+      }),
+    ).toMatchObject({
+      eventType: "monitor.check.completed",
+      providerEventId: "evt-complete",
+      providerMonitorId: "monitor-1",
+      providerCheckId: "check-1",
+      sourceTargetId: "target-1",
     });
   });
 });

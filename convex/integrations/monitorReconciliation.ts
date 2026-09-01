@@ -20,9 +20,15 @@ export type MonitorCandidate = {
 export function buildDesiredMonitor(args: {
   candidate: MonitorCandidate;
   webhookUrl: string;
-  webhookSecret: string;
+  webhookBearer: string;
 }): CreateMonitorRequest {
   const interval = Math.max(15, Math.floor(args.candidate.scheduleMinutes));
+  // Firecrawl's natural-language parser treats `every N minutes` as a
+  // minute-unit schedule and rejects values above 60. Use the provider's
+  // documented daily form for RoomScout's 24-hour source cadence.
+  const scheduleText = interval === 24 * 60
+    ? "daily"
+    : `every ${interval} minutes`;
   const scrapeOptions = {
     onlyMainContent: true,
     maxAge: 0,
@@ -38,13 +44,11 @@ export function buildDesiredMonitor(args: {
   const target =
     args.candidate.mode === "crawl"
       ? {
-          id: args.candidate.targetId,
           type: "crawl" as const,
           url: args.candidate.url,
           scrapeOptions,
         }
       : {
-          id: args.candidate.targetId,
           type: "scrape" as const,
           urls: [args.candidate.url],
           scrapeOptions,
@@ -53,12 +57,12 @@ export function buildDesiredMonitor(args: {
   return {
     name: `RoomScout · ${args.candidate.sourceName}`.slice(0, 120),
     schedule: {
-      text: `every ${interval} minutes`,
+      text: scheduleText,
       timezone: "Europe/Berlin",
     },
     webhook: {
       url: args.webhookUrl,
-      headers: { Authorization: `Bearer ${args.webhookSecret}` },
+      headers: { Authorization: `Bearer ${args.webhookBearer}` },
       metadata: { sourceTargetId: args.candidate.targetId },
       events: ["monitor.page", "monitor.check.completed"],
     },
@@ -118,7 +122,10 @@ function stringValue(...values: unknown[]): string | undefined {
 }
 
 export function parseMonitorWebhook(payload: Record<string, unknown>): ParsedMonitorWebhook {
-  const data = recordOf(payload.data) ?? {};
+  // Current Firecrawl monitor webhooks wrap event records in `data: [...]`,
+  // even though each monitor.page delivery normally contains one page.
+  const dataValue = Array.isArray(payload.data) ? payload.data[0] : payload.data;
+  const data = recordOf(dataValue) ?? {};
   const page = recordOf(data.page) ?? data;
   const rootMetadata = recordOf(payload.metadata) ?? {};
   const dataMetadata = recordOf(data.metadata) ?? {};

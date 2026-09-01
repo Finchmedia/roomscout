@@ -10,6 +10,8 @@ describe("provider readiness", () => {
     const values = {
       FIRECRAWL_API_KEY: "secret-firecrawl-sentinel",
       FIRECRAWL_WEBHOOK_SECRET: "secret-firecrawl-webhook-sentinel",
+      FIRECRAWL_MONITOR_WEBHOOK_BEARER:
+        "secret-firecrawl-monitor-bearer-sentinel",
       FIRECRAWL_WEBHOOK_URL: "https://roomscout.example/api/webhooks/firecrawl",
       FIRECRAWL_MONITORS_ENABLED: "true",
       AGENTMAIL_API_KEY: "secret-agentmail-sentinel",
@@ -33,6 +35,9 @@ describe("provider readiness", () => {
       monitorsEnabled: true,
     });
     expect(result.agentmail.status).toBe("configured");
+    expect(result.agentmail.reasons).toContain(
+      "Credential presence only; per-user provisioning requires an organization- or pod-scoped key with inbox_create permission.",
+    );
     expect(result.browserbase).toMatchObject({
       status: "configured",
       credentialPresenceOnly: true,
@@ -58,6 +63,7 @@ describe("provider readiness", () => {
       reader({
         FIRECRAWL_API_KEY: "configured",
         FIRECRAWL_WEBHOOK_SECRET: "configured",
+        FIRECRAWL_MONITOR_WEBHOOK_BEARER: "configured",
         FIRECRAWL_WEBHOOK_URL: "https://roomscout.example/api/webhooks/firecrawl",
         FIRECRAWL_MONITORS_ENABLED: "false",
       }),

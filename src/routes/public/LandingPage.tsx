@@ -37,7 +37,9 @@ function toSignalCard(signal: {
   return {
     id: signal._id,
     side: signal.side,
-    verification: signal.verification === "verified" ? "source_verified" : "observed",
+    verification: signal.verification === "verified"
+      ? "source_verified"
+      : signal.verification,
     freshness: signal.status === "stale" ? "possibly_stale" : ageHours < 24 ? "fresh" : "current",
     freshnessLabel: signal.status === "stale" ? "Possibly stale" : ageHours < 1 ? "Checked within the hour" : `Checked ${ageHours} h ago`,
     title: signal.title,

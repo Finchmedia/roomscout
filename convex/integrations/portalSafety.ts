@@ -111,6 +111,50 @@ export function buildAllowedPortalUrl(input: {
   return target.toString();
 }
 
+export function assertAuthenticatedPortalContract(input: {
+  url: string;
+  expectedPath: string;
+  contractState: string | null | undefined;
+  allowedStates: readonly string[];
+}): void {
+  const parsed = new URL(input.url);
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.pathname !== input.expectedPath ||
+    !input.contractState ||
+    !input.allowedStates.includes(input.contractState)
+  ) {
+    throw new Error("PORTAL_REAUTH_REQUIRED");
+  }
+}
+
+export function isControlledAgentRegistrationConnection(input: {
+  sourceSlug: string;
+  baseUrl: string;
+  accessMode: "public" | "authenticated";
+  adapterKey?: string;
+  allowedDomains: readonly string[];
+  allowedPaths: readonly string[];
+}): boolean {
+  try {
+    const base = new URL(input.baseUrl);
+    return (
+      input.sourceSlug === "roomscout-dev-connected" &&
+      base.protocol === "https:" &&
+      base.hostname === "roomscout.dev" &&
+      base.pathname === "/" &&
+      input.accessMode === "authenticated" &&
+      input.adapterKey === "roomscout-dev-v1" &&
+      input.allowedDomains.length === 1 &&
+      input.allowedDomains[0] === "roomscout.dev" &&
+      input.allowedPaths.includes("/sign-up") &&
+      input.allowedPaths.includes("/sign-in")
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function sanitizeProviderError(error: unknown): string {
   if (error instanceof Error) {
     if (error.name === "AbortError") return "PROVIDER_TIMEOUT";
@@ -135,6 +179,16 @@ export function sanitizeProviderError(error: unknown): string {
     if (upper.includes("PORTAL_WRITE_SESSION_EXPIRED")) {
       return "PORTAL_WRITE_SESSION_EXPIRED";
     }
+    if (upper.includes("PORTAL_SIGNUP_EMAIL_FIELD_MISSING")) {
+      return "PORTAL_SIGNUP_EMAIL_FIELD_MISSING";
+    }
+    if (upper.includes("PORTAL_SIGNUP_SUBMIT_MISSING")) {
+      return "PORTAL_SIGNUP_SUBMIT_MISSING";
+    }
+    if (upper.includes("PORTAL_VERIFICATION_FIELD_MISSING")) {
+      return "PORTAL_VERIFICATION_FIELD_MISSING";
+    }
+    if (upper.includes("VERIFICATION_TIMEOUT")) return "VERIFICATION_TIMEOUT";
     if (upper.includes("BROWSERBASE_WRITE_CONCURRENCY_LIMIT")) {
       return "BROWSERBASE_WRITE_CONCURRENCY_LIMIT";
     }

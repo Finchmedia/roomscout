@@ -38,6 +38,11 @@ const normalizedMessage = v.object({
   occurredAt: v.number(),
 });
 
+const accessibleInboxPage = v.object({
+  inboxes: v.array(normalizedInbox),
+  hasMore: v.boolean(),
+});
+
 const outboundStatus = v.object({
   status: vOutboundStatus,
   agentmailMessageId: v.union(v.string(), v.null()),
@@ -103,6 +108,21 @@ export const findInboxByClientId = internalAction({
       if (!pageToken) break;
     }
     return null;
+  },
+});
+
+/** Read-only provider probe used by the explicit controlled-demo bootstrap. */
+export const listAccessibleInboxes = internalAction({
+  args: {},
+  returns: accessibleInboxPage,
+  handler: async (ctx) => {
+    const result = normalizeAgentMailInboxPage(
+      await componentClient().listInboxes(ctx, { limit: 2 }),
+    );
+    return {
+      inboxes: result.inboxes.slice(0, 2),
+      hasMore: result.nextPageToken !== undefined,
+    };
   },
 });
 

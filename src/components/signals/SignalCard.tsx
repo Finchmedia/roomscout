@@ -1,6 +1,7 @@
 import { Bookmark } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { MarketSignal } from "../../mocks/demoData";
+import { Table, TableBody, TableCell, TableRow } from "../ui/table";
 import { Freshness, SignalBadge } from "./SignalBadge";
 
 type SignalCardProps = {
@@ -32,16 +33,16 @@ export function SignalCard({
         </Link>
         <div className="lloc">{signal.location}{signal.arrangement ? ` · ${signal.arrangement}` : ""}</div>
         {!compact ? (
-          <table className="facts">
-            <tbody>
+          <Table className="facts">
+            <TableBody>
               {signal.facts.map((fact) => (
-                <tr key={fact.label}>
-                  <td>{fact.label}</td>
-                  <td className={fact.unknown ? "unknown" : undefined}>{fact.value}</td>
-                </tr>
+                <TableRow key={fact.label}>
+                  <TableCell>{fact.label}</TableCell>
+                  <TableCell className={fact.unknown ? "unknown" : undefined}>{fact.value}</TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         ) : null}
         {signal.fit ? <p className="fitline">{signal.fit}</p> : null}
         {showActions ? (

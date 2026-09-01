@@ -14,15 +14,17 @@ import { MailboxVerificationPanel } from "../../components/actions/MailboxVerifi
 import { WorkspaceShell } from "../../components/navigation/WorkspaceShell";
 import { OpportunityHandoff } from "../../components/opportunities/OpportunityHandoff";
 import { EmptyState } from "../../components/ui/LedgerCard";
+import { Table, TableBody, TableCell, TableRow } from "../../components/ui/table";
 import { formatMessageTime } from "../../data/convexAdapters";
 import type { ActionApprovalRequest, CommunicationChannel, Opportunity } from "../../features/agentOperations/types";
 
 type ChannelFilter = "all" | "needs_action" | CommunicationChannel;
-type SelectedThread = { channel: "email" | "platform"; id: string };
+type SelectedThread = { channel: "email" | "platform" | "webform"; id: string };
 
-const channelLabels: Record<"email" | "platform", string> = {
+const channelLabels: Record<"email" | "platform" | "webform", string> = {
   email: "Email",
   platform: "Platform DM",
+  webform: "Web form",
 };
 
 function opportunityTitle(kind: "supply_match" | "demand_collaboration" | "source_lead"): string {
@@ -56,11 +58,25 @@ export function MusicianInboxPage() {
   const [executionResults, setExecutionResults] = useState<Partial<Record<Id<"actionRequests">, EphemeralActionExecution>>>({});
   const [mailboxError, setMailboxError] = useState("");
 
-  const visibleThreads = (threads ?? []).filter((thread) => {
+  const webformThreads = (actionRows ?? []).flatMap((action) => {
+    if (action.requestedActionType !== "submit_webform" || action.payload.kind !== "contact_form") return [];
+    const payload = action.payload;
+    return [{
+      channel: "webform" as const,
+      threadId: action._id,
+      subject: payload.fields.find((field) => field.name.toLowerCase().includes("subject"))?.value || "Web-form outreach",
+      status: action.status,
+      participants: [new URL(payload.targetUrl).hostname],
+      lastMessageAt: action.updatedAt,
+    }];
+  });
+  const unifiedThreads = [...(threads ?? []), ...webformThreads].sort((left, right) => right.lastMessageAt - left.lastMessageAt);
+  const visibleThreads = unifiedThreads.filter((thread) => {
     if (channelFilter === "all") return true;
     if (channelFilter === "email") return thread.channel === "email";
     if (channelFilter === "platform_dm") return thread.channel === "platform";
-    if (channelFilter === "webform") return false;
+    if (channelFilter === "webform") return thread.channel === "webform";
+    if (thread.channel === "webform") return thread.status === "awaiting_approval" || thread.status === "failed" || thread.status === "executing";
     return thread.channel === "email"
       ? thread.status === "replied" || thread.status === "failed"
       : thread.status === "open";
@@ -77,6 +93,9 @@ export function MusicianInboxPage() {
     api.platformInbox.getThreadMine,
     effectiveThread?.channel === "platform" ? { threadId: effectiveThread.id as Id<"platformThreads">, messageLimit: 100 } : "skip",
   );
+  const webformSelected = effectiveThread?.channel === "webform"
+    ? actionRows?.find((action) => action._id === effectiveThread.id && action.payload.kind === "contact_form")
+    : undefined;
 
   const opportunities: Opportunity[] = (opportunityRows ?? []).map((opportunity) => ({
     id: opportunity._id,
@@ -219,7 +238,7 @@ export function MusicianInboxPage() {
     }
   }
 
-  const selectedLoading = effectiveThread?.channel === "email" ? emailSelected === undefined : effectiveThread?.channel === "platform" ? platformSelected === undefined : false;
+  const selectedLoading = effectiveThread?.channel === "email" ? emailSelected === undefined : effectiveThread?.channel === "platform" ? platformSelected === undefined : effectiveThread?.channel === "webform" ? actionRows === undefined : false;
 
   return (
     <WorkspaceShell mode="musician">
@@ -232,7 +251,7 @@ export function MusicianInboxPage() {
       <div className="threepane rs-inbox">
         <section className="pane rs-inbox__threads">
           <header className="phead"><h2>Conversations</h2><span className="mono">Unified index, separate channels</span></header>
-          {threads === undefined ? <p className="rs-inbox__hint">Loading your communication threads…</p> : null}
+          {threads === undefined || actionRows === undefined ? <p className="rs-inbox__hint">Loading your communication threads…</p> : null}
           {visibleThreads.map((thread) => {
             const active = effectiveThread?.channel === thread.channel && effectiveThread.id === thread.threadId;
             return (
@@ -243,7 +262,7 @@ export function MusicianInboxPage() {
               </button>
             );
           })}
-          {threads && visibleThreads.length === 0 ? <p className="rs-inbox__hint">No real {channelFilter.replaceAll("_", " ")} threads exist. RoomScout does not display sample conversations in productive flows.</p> : null}
+          {threads && actionRows && visibleThreads.length === 0 ? <p className="rs-inbox__hint">No real {channelFilter.replaceAll("_", " ")} threads exist. RoomScout does not display sample conversations in productive flows.</p> : null}
         </section>
 
         <section className="pane rs-inbox__conversation">
@@ -269,13 +288,22 @@ export function MusicianInboxPage() {
               </div>
               <div className="cactions"><Link className="btn btn-p" to="/app/scout?mode=outreach_drafting"><Send aria-hidden="true" size={14} />Draft platform reply</Link><Link className="btn btn-s" to="/app/scout"><Bot aria-hidden="true" size={14} />Ask Scout</Link></div>
             </>
-          ) : <div className="convo"><EmptyState body="Select a real email or connected-platform thread to inspect its messages." title="No conversation selected" /></div>}
+          ) : webformSelected && webformSelected.payload.kind === "contact_form" ? (
+            <>
+              <header className="phead rs-inbox__conversation-head"><div><h1>{webformSelected.payload.fields.find((field) => field.name.toLowerCase().includes("subject"))?.value ?? "Web-form outreach"}</h1><span className="mono"><MessageSquare aria-hidden="true" size={11} /> Web form · {webformSelected.status}</span></div><span className="mono">Persisted action</span></header>
+              <div className="convo rs-communication-timeline">
+                <article className="mail out"><header className="mail-top"><span className="mono">Prepared for {new URL(webformSelected.payload.targetUrl).hostname}</span><time className="mono">{formatMessageTime(webformSelected.updatedAt)}</time></header><div className="mail-body">{webformSelected.payload.fields.map((field) => `${field.label ?? field.name}: ${field.value}`).join("\n\n")}</div></article>
+                <div className="rs-timeline-event"><MessageSquare aria-hidden="true" size={13} /><span><strong>Action state</strong> · {webformSelected.status}{webformSelected.error ? ` · ${webformSelected.error}` : ""}</span></div>
+              </div>
+              <div className="cactions">{webformSelected.status === "awaiting_approval" ? <button className="btn btn-p" onClick={() => setSelectedActionId(webformSelected._id)} type="button">Review exact form</button> : null}<Link className="btn btn-s" to="/app/scout?mode=outreach_drafting"><Bot aria-hidden="true" size={14} />Ask Scout</Link></div>
+            </>
+          ) : <div className="convo"><EmptyState body="Select a real email, web-form action, or connected-platform thread to inspect it." title="No conversation selected" /></div>}
         </section>
 
         <aside className="pane ctx rs-inbox__context">
           <section><h2>Scout mailbox</h2><strong>{mailbox?.emailAddress ?? (mailbox?.status === "provisioning" ? "Provisioning…" : "Created on first outreach")}</strong><span className="mono rs-brand-accent">{mailbox?.status ?? "Not provisioned"}</span></section>
-          <section><h2>Selected channel</h2><table className="facts"><tbody><tr><td>Type</td><td>{effectiveThread ? channelLabels[effectiveThread.channel] : "—"}</td></tr><tr><td>Storage</td><td>{effectiveThread?.channel === "platform" ? "Platform thread" : effectiveThread?.channel === "email" ? "AgentMail thread" : "—"}</td></tr></tbody></table></section>
-          <section><h2>Mandate boundary</h2><p>Guided requires exact approval. Active standing mandates cover only allowlisted actions. Terms, contracts, bookings, payments, deposits, passwords, 2FA, and CAPTCHA remain human-only.</p></section>
+          <section><h2>Selected channel</h2><Table className="facts"><TableBody><TableRow><TableCell>Type</TableCell><TableCell>{effectiveThread ? channelLabels[effectiveThread.channel] : "—"}</TableCell></TableRow><TableRow><TableCell>Storage</TableCell><TableCell>{effectiveThread?.channel === "platform" ? "Platform thread" : effectiveThread?.channel === "email" ? "AgentMail thread" : effectiveThread?.channel === "webform" ? "External action ledger" : "—"}</TableCell></TableRow></TableBody></Table></section>
+          <section><h2>Approve / YOLO boundary</h2><p>Approve mode requires the exact final message each time. YOLO covers only allowlisted, non-binding communication within a persisted mandate. Any agreement, booking, contract, payment, deposit, password, 2FA, or CAPTCHA remains an exact human decision.</p></section>
           <section>
             <h2>Account &amp; verification mail</h2>
             {mailboxError ? <p className="rs-form-error" role="alert">{mailboxError}</p> : null}

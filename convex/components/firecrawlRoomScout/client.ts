@@ -57,6 +57,7 @@ type RoomScoutExtensions = {
     run: InternalAction;
     listChecks: InternalAction;
     getCheck: InternalAction;
+    getScrape: InternalAction;
   };
   interact: {
     execute: InternalAction;
@@ -140,6 +141,10 @@ export class FirecrawlRoomScoutClient extends FirecrawlClient {
       checkId,
       ...options,
     });
+  }
+
+  getMonitorScrape(ctx: ActionCtx, scrapeId: string) {
+    return ctx.runAction(this.component.monitor.getScrape, { scrapeId });
   }
 
   /**

@@ -12,6 +12,7 @@ import type { ScoutConversationMessage } from "../../components/scout/ScoutConve
 import { SearchProfileCard } from "../../components/scout/SearchProfileCard";
 import { SignalCard } from "../../components/signals/SignalCard";
 import { LedgerCard, PageHeader } from "../../components/ui/LedgerCard";
+import { Table, TableBody, TableCell, TableRow } from "../../components/ui/table";
 import { RealtimeVoiceScout } from "../../components/voice";
 import type { MarketSignal, SavedSearch, SearchField } from "../../mocks/demoData";
 
@@ -84,7 +85,9 @@ function signalToCard(signal: {
   return {
     id: signal._id,
     side: signal.side,
-    verification: signal.verification === "verified" ? "source_verified" : "observed",
+    verification: signal.verification === "verified"
+      ? "source_verified"
+      : signal.verification,
     freshness: signal.status === "stale" ? "possibly_stale" : ageHours < 24 ? "fresh" : "current",
     freshnessLabel: signal.status === "stale" ? "Possibly stale" : ageHours < 1 ? "Checked within the hour" : `Checked ${ageHours} h ago`,
     title: signal.title,
@@ -345,12 +348,12 @@ export function ScoutPage() {
             <button className="btn btn-g btn-sm" onClick={() => setNeedStatus({ needId: need._id, status: need.status === "paused" ? "active" : "paused" })} type="button"><Pause aria-hidden="true" size={14} />{need.status === "paused" ? "Resume" : "Pause"}</button>
           </div>
           <LedgerCard header={<span className="type">Scout context</span>}>
-            <table className="facts"><tbody>
-              <tr><td>Facts</td><td>{memory?.facts.length ?? 0} durable memories</td></tr>
-              <tr><td>Context</td><td>Version {memory?.profile?.contextVersion ?? 0}</td></tr>
-              <tr><td>Semantics</td><td>{memory?.facts.filter((fact) => fact.embeddingState === "ready").length ?? 0} facts embedded</td></tr>
-              <tr><td>Outreach</td><td>Exact approval required</td></tr>
-            </tbody></table>
+            <Table className="facts"><TableBody>
+              <TableRow><TableCell>Facts</TableCell><TableCell>{memory?.facts.length ?? 0} durable memories</TableCell></TableRow>
+              <TableRow><TableCell>Context</TableCell><TableCell>Version {memory?.profile?.contextVersion ?? 0}</TableCell></TableRow>
+              <TableRow><TableCell>Semantics</TableCell><TableCell>{memory?.facts.filter((fact) => fact.embeddingState === "ready").length ?? 0} facts embedded</TableCell></TableRow>
+              <TableRow><TableCell>Outreach</TableCell><TableCell>Approve or non-binding YOLO mandate</TableCell></TableRow>
+            </TableBody></Table>
           </LedgerCard>
         </div>
       </div>

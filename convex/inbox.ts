@@ -300,6 +300,56 @@ export const updateMailboxMessageStatus = mutation({
   },
 });
 
+export const latestPortalVerificationForOwner = internalQuery({
+  args: {
+    ownerId: v.id("users"),
+    mailboxId: v.id("userMailboxes"),
+    receivedAfter: v.number(),
+    limit: v.number(),
+  },
+  returns: v.array(
+    v.object({
+      messageId: v.id("mailboxMessages"),
+      from: v.string(),
+      subject: v.string(),
+      body: v.string(),
+      receivedAt: v.number(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const mailbox = await ctx.db.get(args.mailboxId);
+    if (mailbox === null || mailbox.ownerId !== args.ownerId) return [];
+    const rows = await ctx.db
+      .query("mailboxMessages")
+      .withIndex("by_owner_and_received_at", (q) =>
+        q.eq("ownerId", args.ownerId).gte("receivedAt", args.receivedAfter),
+      )
+      .order("desc")
+      .take(Math.max(1, Math.min(20, Math.floor(args.limit))));
+    return rows
+      .filter((row) => row.kind === "portal_verification")
+      .map((message) => ({
+          messageId: message._id,
+          from: message.from,
+          subject: message.subject,
+          body: message.body,
+          receivedAt: message.receivedAt,
+        }));
+  },
+});
+
+export const markMailboxMessageReadInternal = internalMutation({
+  args: { ownerId: v.id("users"), messageId: v.id("mailboxMessages") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const message = await ctx.db.get(args.messageId);
+    if (message?.ownerId === args.ownerId && message.status === "unread") {
+      await ctx.db.patch(message._id, { status: "read", updatedAt: Date.now() });
+    }
+    return null;
+  },
+});
+
 export const attachMailboxToSentMessage = internalMutation({
   args: {
     threadId: v.id("mailThreads"),
@@ -430,7 +480,11 @@ export const applyDeliveryEvent = internalMutation({
       ctx.db.patch(thread.draftId, {
         deliveryStatus: args.status,
         error,
-        status: failed ? "failed" : "sent",
+        status: failed
+          ? "failed"
+          : thread.status === "replied"
+            ? "replied"
+            : "sent",
         updatedAt: Date.now(),
       }),
       ...(failed

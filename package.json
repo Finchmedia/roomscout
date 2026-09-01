@@ -11,6 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "postinstall": "patch-package",
     "verify:bandnet-form": "node scripts/verify-bandnet-form.mjs",
     "convex:dev": "convex dev",
     "deploy": "npx @convex-dev/static-hosting deploy"
@@ -37,6 +38,7 @@
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-router-dom": "7.18.2",
+    "tailwind-merge": "^3.6.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
@@ -54,6 +56,7 @@
     "eslint-plugin-react-hooks": "7.1.1",
     "eslint-plugin-react-refresh": "0.5.5",
     "jsdom": "30.0.1",
+    "patch-package": "^8.0.1",
     "tailwindcss": "4.3.3",
     "typescript": "6.0.3",
     "typescript-eslint": "8.68.0",

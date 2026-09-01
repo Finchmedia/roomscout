@@ -9,6 +9,7 @@ import {
 import { envValue } from "./integrations/env";
 import { stableFingerprint } from "./integrations/fingerprints";
 import { parseMonitorWebhook } from "./integrations/monitorReconciliation";
+import { constantTimeSecretMatches } from "./integrations/secureCompare";
 import { extractSourceEntriesFromSnapshot } from "./integrations/sourceEntryExtraction";
 
 const monitorState = v.union(
@@ -130,6 +131,7 @@ export const saveMonitorReconciliation = internalMutation({
       providerMonitorId: args.providerMonitorId,
       providerTargetId: args.providerTargetId,
       monitorStatus: args.state,
+      monitorError: undefined,
       updatedAt: now,
     });
     return null;
@@ -163,7 +165,11 @@ export const recordMonitorFailure = internalMutation({
       });
     }
     await Promise.all([
-      ctx.db.patch(target._id, { monitorStatus: "error", updatedAt: now }),
+      ctx.db.patch(target._id, {
+        monitorStatus: "error",
+        monitorError: args.error.slice(0, 500),
+        updatedAt: now,
+      }),
       ctx.db.patch(target.sourceId, {
         health: "degraded",
         updatedAt: now,
@@ -252,11 +258,16 @@ export const runDueTargets = internalAction({
 });
 
 export const webhook = httpAction(async (ctx, request) => {
-  const secret = envValue("FIRECRAWL_WEBHOOK_SECRET");
-  if (!secret) {
+  const bearer = envValue("FIRECRAWL_MONITOR_WEBHOOK_BEARER");
+  if (!bearer) {
     return Response.json({ error: "Webhook is not configured" }, { status: 503 });
   }
-  if (request.headers.get("authorization") !== `Bearer ${secret}`) {
+  if (
+    !(await constantTimeSecretMatches(
+      request.headers.get("authorization"),
+      `Bearer ${bearer}`,
+    ))
+  ) {
     return Response.json({ error: "Invalid authorization" }, { status: 401 });
   }
   const body = await request.text();

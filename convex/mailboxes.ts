@@ -11,6 +11,7 @@ import type { Id } from "./_generated/dataModel";
 import { requireUser } from "./integrations/auth";
 import { requireActionUserId } from "./integrations/authz";
 import { envValue } from "./integrations/env";
+import { stableFingerprint } from "./integrations/fingerprints";
 
 const publicMailbox = v.object({
   status: v.union(
@@ -53,6 +54,20 @@ const provisioningClaim = v.union(
 
 const PROVISIONING_LEASE_MS = 2 * 60 * 1_000;
 
+const controlledMailboxResult = v.object({
+  status: v.literal("active"),
+  mailboxId: v.id("userMailboxes"),
+  providerInboxId: v.string(),
+  emailAddress: v.string(),
+  reused: v.boolean(),
+});
+
+const controlledScopedInboxInspection = v.object({
+  count: v.number(),
+  hasMore: v.boolean(),
+  inboxFingerprint: v.optional(v.string()),
+});
+
 type ProvisioningClaim =
   | {
       outcome: "ready";
@@ -84,6 +99,19 @@ type PublicMailbox = {
   lastError?: string;
 };
 
+type ControlledMailboxResult = {
+  status: "active";
+  mailboxId: Id<"userMailboxes">;
+  providerInboxId: string;
+  emailAddress: string;
+  reused: boolean;
+};
+
+type AccessibleInboxPage = {
+  inboxes: Array<{ inboxId: string; email: string; clientId?: string }>;
+  hasMore: boolean;
+};
+
 function safeError(error: unknown): string {
   return (error instanceof Error ? error.message : "Mailbox provisioning failed")
     .replace(/[\r\n]+/g, " ")
@@ -109,6 +137,15 @@ async function mailboxDigest(ownerId: string, salt: string): Promise<string> {
 function usernameForClientId(clientId: string): string {
   const digest = clientId.replace(/^roomscout-user-/, "");
   return `rs-${digest.slice(0, 24).toLowerCase()}`;
+}
+
+function controlledInboxFingerprint(inbox: {
+  inboxId: string;
+  email: string;
+}): string {
+  return stableFingerprint(
+    `${inbox.inboxId}\n${inbox.email.trim().toLowerCase()}`,
+  );
 }
 
 export const getMine = query({
@@ -256,6 +293,142 @@ export const completeProvisioning = internalMutation({
       mailboxId: mailbox._id,
       providerInboxId: args.providerInboxId,
       emailAddress: args.emailAddress,
+    };
+  },
+});
+
+export const assignControlledScopedInbox = internalMutation({
+  args: {
+    ownerId: v.id("users"),
+    providerInboxId: v.string(),
+    emailAddress: v.string(),
+    clientId: v.string(),
+  },
+  returns: controlledMailboxResult,
+  handler: async (ctx, args) => {
+    if ((await ctx.db.get(args.ownerId)) === null) {
+      throw new ConvexError({ code: "USER_NOT_FOUND" });
+    }
+    const [ownerMailbox, inboxMailbox] = await Promise.all([
+      ctx.db
+        .query("userMailboxes")
+        .withIndex("by_owner", (q) => q.eq("ownerId", args.ownerId))
+        .unique(),
+      ctx.db
+        .query("userMailboxes")
+        .withIndex("by_provider_inbox_id", (q) =>
+          q.eq("providerInboxId", args.providerInboxId),
+        )
+        .unique(),
+    ]);
+    if (inboxMailbox && inboxMailbox.ownerId !== args.ownerId) {
+      throw new ConvexError({ code: "PROVIDER_INBOX_ALREADY_ASSIGNED" });
+    }
+    if (
+      ownerMailbox?.providerInboxId &&
+      ownerMailbox.providerInboxId !== args.providerInboxId
+    ) {
+      throw new ConvexError({ code: "OWNER_ALREADY_HAS_DIFFERENT_INBOX" });
+    }
+    if (ownerMailbox?.status === "disabled") {
+      throw new ConvexError({ code: "OWNER_MAILBOX_DISABLED" });
+    }
+    if (
+      ownerMailbox?.status === "active" &&
+      ownerMailbox.providerInboxId === args.providerInboxId &&
+      ownerMailbox.emailAddress === args.emailAddress
+    ) {
+      return {
+        status: "active" as const,
+        mailboxId: ownerMailbox._id,
+        providerInboxId: args.providerInboxId,
+        emailAddress: args.emailAddress,
+        reused: true,
+      };
+    }
+    const now = Date.now();
+    const patch = {
+      providerInboxId: args.providerInboxId,
+      emailAddress: args.emailAddress,
+      clientId: args.clientId,
+      status: "active" as const,
+      provisioningToken: undefined,
+      lastError: undefined,
+      updatedAt: now,
+    };
+    const mailboxId = ownerMailbox
+      ? ownerMailbox._id
+      : await ctx.db.insert("userMailboxes", {
+          ownerId: args.ownerId,
+          provider: "agentmail",
+          ...patch,
+          createdAt: now,
+        });
+    if (ownerMailbox) await ctx.db.patch(ownerMailbox._id, patch);
+    return {
+      status: "active" as const,
+      mailboxId,
+      providerInboxId: args.providerInboxId,
+      emailAddress: args.emailAddress,
+      reused: false,
+    };
+  },
+});
+
+/**
+ * Explicitly map the sole inbox visible to an inbox-scoped demo credential.
+ * This never creates an AgentMail inbox and never sends mail.
+ */
+export const bootstrapControlledScopedInbox = internalAction({
+  args: {
+    ownerId: v.id("users"),
+    expectedInboxFingerprint: v.string(),
+    confirmation: v.literal("MAP_EXISTING_SCOPED_INBOX"),
+  },
+  returns: controlledMailboxResult,
+  handler: async (ctx, args): Promise<ControlledMailboxResult> => {
+    const page: AccessibleInboxPage = await ctx.runAction(
+      internal.agentmailComponent.listAccessibleInboxes,
+      {},
+    );
+    if (page.hasMore || page.inboxes.length !== 1) {
+      throw new ConvexError({ code: "EXPECTED_EXACTLY_ONE_SCOPED_INBOX" });
+    }
+    const inbox = page.inboxes[0];
+    if (!inbox) {
+      throw new ConvexError({ code: "EXPECTED_EXACTLY_ONE_SCOPED_INBOX" });
+    }
+    if (controlledInboxFingerprint(inbox) !== args.expectedInboxFingerprint) {
+      throw new ConvexError({ code: "SCOPED_INBOX_CONFIRMATION_MISMATCH" });
+    }
+    return await ctx.runMutation(
+      internal.mailboxes.assignControlledScopedInbox,
+      {
+        ownerId: args.ownerId,
+        providerInboxId: inbox.inboxId,
+        emailAddress: inbox.email,
+        clientId: `roomscout-controlled-${stableFingerprint(inbox.inboxId)}`,
+      },
+    );
+  },
+});
+
+/** Read-only preflight; returns no provider inbox identifier or address. */
+export const inspectControlledScopedInbox = internalAction({
+  args: {},
+  returns: controlledScopedInboxInspection,
+  handler: async (ctx) => {
+    const page: AccessibleInboxPage = await ctx.runAction(
+      internal.agentmailComponent.listAccessibleInboxes,
+      {},
+    );
+    const inbox = page.inboxes.length === 1 ? page.inboxes[0] : undefined;
+    return {
+      count: page.inboxes.length,
+      hasMore: page.hasMore,
+      ...(inbox && !page.hasMore
+        ? { inboxFingerprint: controlledInboxFingerprint(inbox) }
+        : {}),
     };
   },
 });

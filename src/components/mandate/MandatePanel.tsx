@@ -6,10 +6,10 @@ import { ActionDialog } from "../ui/ActionDialog";
 import { LedgerCard } from "../ui/LedgerCard";
 
 const modeCopy: Record<ScoutMandateMode, { label: string; description: string }> = {
-  guided: { label: "Guided", description: "Scout prepares the next step. Every external communication requires exact one-time approval." },
+  guided: { label: "Approve", description: "Scout prepares the next step. Every external communication requires exact one-time approval." },
   research: { label: "Research", description: "Scout may browse allowlisted sources, read connected messages, and extract facts. It cannot communicate." },
-  outreach: { label: "Outreach", description: "An active, persisted, versioned mandate may execute only its listed communication actions within its limits." },
-  negotiation: { label: "Negotiation", description: "An active mandate may continue listed communication, but never agree terms, book, pay, or cross a human boundary." },
+  outreach: { label: "YOLO outreach", description: "A persisted mandate may execute only listed, non-binding communication within its limits." },
+  negotiation: { label: "YOLO negotiation", description: "Scout may continue non-binding negotiation, but any agreement, booking, contract, or payment returns to exact approval." },
 };
 
 const actionLabels: Record<MandateActionType, string> = {
@@ -128,7 +128,7 @@ export function MandatePanel({ mandate, platformOptions = [], onSave, onStatusCh
         <div className="rs-mandate-summary">
           <span><b>{mandate.sourceAllowlist.length}</b> sources</span><span><b>{mandate.platformAllowlist.length}</b> platforms</span><span><b>{mandate.dailyContactLimit}</b> contacts/day</span><span><b>{mandate.dailyBrowserMinutes}</b> browser min/day</span>
         </div>
-        <div className="rs-mandate-boundary"><ShieldCheck aria-hidden="true" size={15} /><span>Only listed communication actions can be authorized by an active, persisted and versioned Outreach or Negotiation mandate. Terms, contracts, bookings, payments, deposits, passwords, 2FA and CAPTCHA always stay with you.</span></div>
+        <div className="rs-mandate-boundary"><ShieldCheck aria-hidden="true" size={15} /><span>Approve checks every exact message. YOLO may cover only listed, non-binding communication under an active, versioned mandate. Agreements, contracts, bookings, payments, deposits, passwords, 2FA and CAPTCHA always return to you.</span></div>
         <div className="actionsrow rs-mandate-controls">
           {mandate.status === "active" ? <button className="btn btn-g btn-sm" disabled={!onStatusChange || saving} onClick={() => void changeStatus("paused")} type="button">Revoke mandate</button> : null}
           <button className="btn btn-g btn-sm rs-kill-button" disabled={!onStatusChange || saving || mandate.status === "killed"} onClick={() => void changeStatus("killed")} type="button"><Siren aria-hidden="true" size={13} />Kill switch</button>
@@ -136,7 +136,7 @@ export function MandatePanel({ mandate, platformOptions = [], onSave, onStatusCh
       </LedgerCard>
 
       <ActionDialog
-        description="A standing mandate authorizes only the exact actions and limits shown here. Hard human boundaries cannot be delegated."
+        description="YOLO authorizes only the listed non-binding actions and limits. Binding commitments and hard human boundaries cannot be delegated."
         footer={<><button className="btn btn-g" onClick={() => setOpen(false)} type="button">Cancel</button><button className="btn btn-p" disabled={!onSave || saving} onClick={() => void save()} type="button">{saving ? "Activating…" : onSave ? "Save and activate new version" : "Persistence not available"}</button></>}
         onOpenChange={setOpen}
         open={open}

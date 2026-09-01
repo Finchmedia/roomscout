@@ -7,12 +7,12 @@
 - **Repo:** https://github.com/Finchmedia/roomscout
 - **Frontend:** Convex static hosting
 - **Convex deployment:** https://perceptive-antelope-445.eu-west-1.convex.cloud
-- **Components:** @convex-dev/agent, @convex-dev/auth, @convex-dev/rate-limiter, @convex-dev/static-hosting
+- **Components:** @convex-dev/agent, @convex-dev/auth, @convex-dev/rate-limiter, @convex-dev/static-hosting, @agentmail/convex, firecrawlRoomScout (vendored local extension of @firecrawl/firecrawl-convex)
 - **Convex features:** schema, tables, indexes, vector search, queries, mutations, actions, HTTP actions, crons, scheduled functions, realtime queries, paginated queries
 - **Auth:** Convex Auth
 - **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-realtime-2.1`
 - **Started:** 2026-08-26T13:55:26Z
-- **Last updated:** 2026-09-01T09:24:30Z
+- **Last updated:** 2026-09-01T12:04:42Z
 
 ## Log
 
@@ -65,3 +65,18 @@ Firecrawl component locally and added Native Monitoring plus Interact without
 removing its durable crawl API. Deployed both Components and the SPA to
 production; Health, Landing, and Explore returned HTTP 200
 (`convex/convex.config.ts`, `convex/components/`, `convex/agentmailComponent.ts`).
+
+### 2026-09-01 - 27dca06
+Proved the deployed Firecrawl Component transport with one bounded, read-only
+Bandnet Hamburg scrape: HTTP 200, 3,647 Markdown characters, 23 links, and one
+credit. Deployed the separate controlled portal at `roomscout.dev` with Clerk,
+its own Convex deployment, public listings, and auth-gated reactive message
+threads. Then proved one bounded Native Monitor path against the first-party
+controlled portal: one new page, webhook HTTP 204, a redacted published Signal
+with evidence, and a duplicate replay producing no new entry. Added a
+reproducible compatibility patch for the official AgentMail Component under
+Convex 1.45; read-only Component access to the single scoped Inbox now succeeds
+without creating or sending anything. This checkpoint does not claim a
+Browserbase signup/message or AgentMail send/reply round trip; inbound mail
+still needs a provider webhook and secret, and per-user Inbox creation needs
+broader provider scope (`docs/BUILD_LOG.md`).

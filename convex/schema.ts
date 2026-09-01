@@ -91,7 +91,9 @@ const actionPayload = v.union(
   v.object({
     kind: v.literal("platform_message"),
     threadId: v.optional(v.id("platformThreads")),
+    targetPath: v.optional(v.string()),
     recipients: v.array(v.string()),
+    senderLabel: v.optional(v.string()),
     subject: v.optional(v.string()),
     body: v.string(),
   }),
@@ -241,6 +243,7 @@ export default defineSchema({
         v.literal("error"),
       ),
     ),
+    monitorError: v.optional(v.string()),
     lastCheckId: v.optional(v.string()),
     lastMonitorEventAt: v.optional(v.number()),
     cityScope: v.optional(v.string()),
@@ -353,6 +356,7 @@ export default defineSchema({
     .index("by_source_and_external_id", ["sourceId", "externalId"])
     .index("by_target_and_canonical_url", ["sourceTargetId", "canonicalUrl"])
     .index("by_detail_state_and_next_attempt", ["detailState", "nextDetailAttemptAt"])
+    .index("by_target_and_detail_state", ["sourceTargetId", "detailState"])
     .index("by_target_and_status", ["sourceTargetId", "status"]),
 
   signals: defineTable({
@@ -447,6 +451,18 @@ export default defineSchema({
     sourceTitle: v.string(),
     excerpt: v.string(),
     fingerprint: v.string(),
+    side: v.optional(signalSide),
+    title: v.optional(v.string()),
+    city: v.optional(v.string()),
+    district: v.optional(v.string()),
+    arrangement: v.optional(v.union(
+      v.literal("permanent"),
+      v.literal("shared"),
+      v.literal("hourly"),
+      v.literal("unknown"),
+    )),
+    priceEur: v.optional(v.number()),
+    pricePeriod: v.optional(v.union(v.literal("hour"), v.literal("month"), v.literal("unknown"))),
     observedAt: v.number(),
   })
     .index("by_signal", ["signalId"])
@@ -1370,6 +1386,20 @@ export default defineSchema({
     endedAt: v.optional(v.number()),
     resultCount: v.optional(v.number()),
     errorCode: v.optional(v.string()),
+    onboardingStage: v.optional(
+      v.union(
+        v.literal("opening_signup"),
+        v.literal("waiting_verification"),
+        v.literal("submitting_verification"),
+        v.literal("human_required"),
+        v.literal("completed"),
+        v.literal("failed"),
+      ),
+    ),
+    onboardingMailboxId: v.optional(v.id("userMailboxes")),
+    verificationMessageId: v.optional(v.id("mailboxMessages")),
+    verificationRequestedAt: v.optional(v.number()),
+    onboardingPollAttempt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -1463,6 +1493,7 @@ export default defineSchema({
     expiresAt: v.number(),
     stopOnComplaint: v.boolean(),
     stopWhenSuitableRoomConfirmed: v.boolean(),
+    commitmentBoundary: v.optional(v.literal("non_binding_outreach_only")),
     contentHash: v.string(),
     activatedAt: v.optional(v.number()),
     stoppedAt: v.optional(v.number()),

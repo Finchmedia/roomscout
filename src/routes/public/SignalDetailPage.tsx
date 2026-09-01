@@ -8,6 +8,7 @@ import { PublicHeader } from "../../components/navigation/PublicHeader";
 import { Freshness, SignalBadge } from "../../components/signals/SignalBadge";
 import { ActionDialog } from "../../components/ui/ActionDialog";
 import { EmptyState, LedgerCard } from "../../components/ui/LedgerCard";
+import { Table, TableBody, TableCell, TableRow } from "../../components/ui/table";
 import { formatMessageTime, publicSignalToMarketSignal } from "../../data/convexAdapters";
 
 export function SignalDetailPage() {
@@ -47,7 +48,7 @@ export function SignalDetailPage() {
         <div className="cols rs-signal-detail__columns">
           <div className="stack">
             <LedgerCard header={<span className={`type t-${signal.side}`}>Known facts</span>}>
-              <table className="facts"><tbody>{signal.facts.map((fact) => <tr key={fact.label}><td>{fact.label}</td><td className={fact.unknown ? "unknown" : undefined}>{fact.value}</td></tr>)}</tbody></table>
+              <Table className="facts"><TableBody>{signal.facts.map((fact) => <TableRow key={fact.label}><TableCell>{fact.label}</TableCell><TableCell className={fact.unknown ? "unknown" : undefined}>{fact.value}</TableCell></TableRow>)}</TableBody></Table>
               <p>{signal.summary}</p>
             </LedgerCard>
             <LedgerCard header={<span className="type">Unknown or unclear</span>}>
@@ -71,11 +72,11 @@ export function SignalDetailPage() {
               <p>Create or activate a saved search to see structured match reasons and uncertainties for this signal.</p>
             </LedgerCard>
             <LedgerCard header={<span className="type">Provenance</span>}>
-              <table className="facts"><tbody>
-                <tr><td>Source</td><td>{primaryEvidence?.sourceName ?? `${detail.signal.sourceCount} indexed source${detail.signal.sourceCount === 1 ? "" : "s"}`}</td></tr>
-                <tr><td>Evidence records</td><td>{detail.evidence.length}</td></tr>
-                <tr><td>Verification</td><td>{detail.signal.verification.replace("_", " ")}</td></tr>
-              </tbody></table>
+              <Table className="facts"><TableBody>
+                <TableRow><TableCell>Source</TableCell><TableCell>{primaryEvidence?.sourceName ?? `${detail.signal.sourceCount} indexed source${detail.signal.sourceCount === 1 ? "" : "s"}`}</TableCell></TableRow>
+                <TableRow><TableCell>Evidence records</TableCell><TableCell>{detail.evidence.length}</TableCell></TableRow>
+                <TableRow><TableCell>Verification</TableCell><TableCell>{detail.signal.verification.replace("_", " ")}</TableCell></TableRow>
+              </TableBody></Table>
               {primaryEvidence ? (
                 <>
                   <p className="evidence">{primaryEvidence.excerpt}</p>

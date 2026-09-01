@@ -6,6 +6,7 @@ import { WorkspaceShell } from "../../components/navigation/WorkspaceShell";
 import { PortalOperationsPanel } from "../../components/ops/PortalOperationsPanel";
 import { SourceIntelligencePanel } from "../../components/ops/SourceIntelligencePanel";
 import { EmptyState, LedgerCard, PageHeader } from "../../components/ui/LedgerCard";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 import { formatAge, formatDuration, toneForStatus, titleCase } from "./opsFormat";
 
 export function OpsSourcesPage() {
@@ -59,16 +60,16 @@ export function OpsSourcesPage() {
               header={<><span className="type">{source.name}</span><span className={`pill ${toneForStatus(source.health)}`}>{titleCase(source.health)}</span></>}
               key={source._id}
             >
-              <table className="facts">
-                <tbody>
-                  <tr><td>Scope</td><td>{source.geographicScope ?? "Not defined"}</td></tr>
-                  <tr><td>Side</td><td>{titleCase(source.side)}</td></tr>
-                  <tr><td>Lifecycle</td><td>{titleCase(source.status)}</td></tr>
-                  <tr><td>Automation review</td><td>{source.automationReview ? titleCase(source.automationReview) : "Pending metadata"}</td></tr>
-                  <tr><td>Access</td><td>{titleCase(source.accessMode ?? "public")}</td></tr>
-                  <tr><td>Last source check</td><td>{formatAge(source.lastCheckedAt)}</td></tr>
-                </tbody>
-              </table>
+              <Table className="facts">
+                <TableBody>
+                  <TableRow><TableCell>Scope</TableCell><TableCell>{source.geographicScope ?? "Not defined"}</TableCell></TableRow>
+                  <TableRow><TableCell>Side</TableCell><TableCell>{titleCase(source.side)}</TableCell></TableRow>
+                  <TableRow><TableCell>Lifecycle</TableCell><TableCell>{titleCase(source.status)}</TableCell></TableRow>
+                  <TableRow><TableCell>Automation review</TableCell><TableCell>{source.automationReview ? titleCase(source.automationReview) : "Pending metadata"}</TableCell></TableRow>
+                  <TableRow><TableCell>Access</TableCell><TableCell>{titleCase(source.accessMode ?? "public")}</TableCell></TableRow>
+                  <TableRow><TableCell>Last source check</TableCell><TableCell>{formatAge(source.lastCheckedAt)}</TableCell></TableRow>
+                </TableBody>
+              </Table>
               {source.policyNotes ? <p className="fitline">{source.policyNotes}</p> : null}
               <div className="actionsrow">
                 {source.automationReview !== "approved" ? (
@@ -85,23 +86,23 @@ export function OpsSourcesPage() {
                 <EmptyState body="This registry record has no Firecrawl target." title="No monitor target" />
               ) : (
                 <div className="lcard rs-review-table-wrap">
-                  <table className="q rs-review-table">
-                    <thead><tr><th>Target</th><th>Monitor</th><th>Cadence</th><th>Backlog</th><th>Last event</th></tr></thead>
-                    <tbody>
+                  <Table className="q rs-review-table">
+                    <TableHeader><TableRow><TableHead>Target</TableHead><TableHead>Monitor</TableHead><TableHead>Cadence</TableHead><TableHead>Backlog</TableHead><TableHead>Last event</TableHead></TableRow></TableHeader>
+                    <TableBody>
                       {source.targets.map((target) => {
                         const monitorState = target.monitor?.state ?? target.monitorStatus ?? "unconfigured";
                         return (
-                          <tr key={target._id}>
-                            <td><a href={target.url} rel="noreferrer" target="_blank">{new URL(target.url).hostname}</a><span className="mono">{target.successfulSnapshotCount} snapshots</span></td>
-                            <td><span className={`pill ${toneForStatus(monitorState)}`}>{titleCase(monitorState)}</span>{target.monitor?.error ? <span className="mono">{target.monitor.error}</span> : null}{source.status === "active" && target.providerMonitorId ? <button className="btn btn-g btn-sm" disabled={Boolean(working)} onClick={() => void run("Manual monitor check", () => runMonitorNow({ sourceTargetId: target._id as Id<"sourceTargets"> }))} type="button">Run once</button> : null}</td>
-                            <td>{formatDuration(target.scheduleMinutes)}<span className="mono">{target.paused ? "Paused" : "Scheduled"}</span></td>
-                            <td>{target.backlogCount}</td>
-                            <td>{formatAge(target.lastMonitorEventAt ?? target.monitor?.lastCheckAt ?? target.lastRunAt)}</td>
-                          </tr>
+                          <TableRow key={target._id}>
+                            <TableCell><a href={target.url} rel="noreferrer" target="_blank">{new URL(target.url).hostname}</a><span className="mono">{target.successfulSnapshotCount} snapshots</span></TableCell>
+                            <TableCell><span className={`pill ${toneForStatus(monitorState)}`}>{titleCase(monitorState)}</span>{target.monitor?.error || target.monitorError ? <span className="mono">{target.monitor?.error ?? target.monitorError}</span> : null}{source.status === "active" && target.providerMonitorId ? <button className="btn btn-g btn-sm" disabled={Boolean(working)} onClick={() => void run("Manual monitor check", () => runMonitorNow({ sourceTargetId: target._id as Id<"sourceTargets"> }))} type="button">Run once</button> : null}</TableCell>
+                            <TableCell>{formatDuration(target.scheduleMinutes)}<span className="mono">{target.paused ? "Paused" : "Scheduled"}</span></TableCell>
+                            <TableCell>{target.backlogCount}</TableCell>
+                            <TableCell>{formatAge(target.lastMonitorEventAt ?? target.monitor?.lastCheckAt ?? target.lastRunAt)}</TableCell>
+                          </TableRow>
                         );
                       })}
-                    </tbody>
-                  </table>
+                    </TableBody>
+                  </Table>
                 </div>
               )}
             </LedgerCard>

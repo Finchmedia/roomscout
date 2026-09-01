@@ -1,16 +1,22 @@
 import { v } from "convex/values";
 import { z } from "zod";
 import { internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import {
   internalAction,
   internalMutation,
   internalQuery,
+  type MutationCtx,
 } from "./_generated/server";
 import { generateRoomScoutObject } from "./ai";
 import { stableFingerprint } from "./integrations/fingerprints";
 import { redactContactData } from "./integrations/piiRedaction";
 import { delimitUntrustedData } from "./lib/privacy";
+import {
+  compareForCorroboration,
+  verificationFromEvidence,
+  type CorroborationSnapshot,
+} from "./lib/corroboration";
 import {
   extractSourceEntriesFromSnapshot,
   type SignalSide,
@@ -29,6 +35,103 @@ const arrangement = v.union(
   v.literal("hourly"),
   v.literal("unknown"),
 );
+
+function signalSnapshot(
+  signal: Pick<Doc<"signals">, "side" | "title" | "city" | "district" | "arrangement" | "priceEur" | "pricePeriod">,
+): CorroborationSnapshot {
+  return {
+    side: signal.side,
+    title: signal.title,
+    city: signal.city,
+    district: signal.district,
+    arrangement: signal.arrangement,
+    priceEur: signal.priceEur,
+    pricePeriod: signal.pricePeriod,
+  };
+}
+
+async function findCrossSourceSignal(
+  ctx: MutationCtx,
+  snapshot: CorroborationSnapshot,
+  sourceId: Id<"sources">,
+  excludeSignalId?: Id<"signals">,
+): Promise<{ signalId: Id<"signals">; relation: "corroborated" | "conflicting" } | null> {
+  const candidates = await ctx.db
+    .query("signals")
+    .withIndex("by_side_and_city_and_status", (q) =>
+      q.eq("side", snapshot.side).eq("city", snapshot.city).eq("status", "published"),
+    )
+    .take(100);
+  let best: { signalId: Id<"signals">; relation: "corroborated" | "conflicting"; score: number } | null = null;
+  for (const candidate of candidates) {
+    if (candidate._id === excludeSignalId) continue;
+    const evidence = await ctx.db
+      .query("signalEvidence")
+      .withIndex("by_signal", (q) => q.eq("signalId", candidate._id))
+      .take(25);
+    if (!evidence.some((item) => item.sourceId !== sourceId)) continue;
+    const decision = compareForCorroboration(signalSnapshot(candidate), snapshot);
+    if (decision.relation === "none" || (best && best.score >= decision.score)) continue;
+    best = { signalId: candidate._id, relation: decision.relation, score: decision.score };
+  }
+  return best ? { signalId: best.signalId, relation: best.relation } : null;
+}
+
+async function refreshSignalVerification(
+  ctx: MutationCtx,
+  signalId: Id<"signals">,
+): Promise<void> {
+  const [signal, evidence] = await Promise.all([
+    ctx.db.get(signalId),
+    ctx.db.query("signalEvidence").withIndex("by_signal", (q) => q.eq("signalId", signalId)).take(50),
+  ]);
+  if (!signal) return;
+  const fallback = signalSnapshot(signal);
+  const result = verificationFromEvidence(evidence.map((item) => ({
+    sourceId: item.sourceId,
+    side: item.side ?? fallback.side,
+    title: item.title ?? item.sourceTitle ?? fallback.title,
+    city: item.city ?? fallback.city,
+    district: item.district,
+    arrangement: item.arrangement ?? fallback.arrangement,
+    priceEur: item.priceEur,
+    pricePeriod: item.pricePeriod,
+  })));
+  await ctx.db.patch(signalId, result);
+}
+
+async function countPendingDetailsForTarget(
+  ctx: MutationCtx,
+  sourceTargetId: Id<"sourceTargets">,
+): Promise<number> {
+  const [queued, fetching] = await Promise.all([
+    ctx.db
+      .query("sourceEntries")
+      .withIndex("by_target_and_detail_state", (q) =>
+        q.eq("sourceTargetId", sourceTargetId).eq("detailState", "queued"),
+      )
+      .take(5),
+    ctx.db
+      .query("sourceEntries")
+      .withIndex("by_target_and_detail_state", (q) =>
+        q.eq("sourceTargetId", sourceTargetId).eq("detailState", "fetching"),
+      )
+      .take(5),
+  ]);
+  return Math.min(queued.length + fetching.length, 5);
+}
+
+function evidenceSnapshotFields(snapshot: CorroborationSnapshot) {
+  return {
+    side: snapshot.side,
+    title: snapshot.title,
+    city: snapshot.city,
+    district: snapshot.district,
+    arrangement: snapshot.arrangement,
+    priceEur: snapshot.priceEur,
+    pricePeriod: snapshot.pricePeriod,
+  };
+}
 
 export const recordFirecrawlEvent = internalMutation({
   args: {
@@ -222,6 +325,15 @@ export const upsertNormalizedSignal = internalMutation({
     }
 
     const now = Date.now();
+    const snapshot: CorroborationSnapshot = {
+      side: source.side === "both" ? "supply" : source.side,
+      title: args.title,
+      city: args.city,
+      district: args.district,
+      arrangement: args.arrangement,
+      priceEur: args.priceEur,
+      pricePeriod: args.pricePeriod,
+    };
     const existingEvidence = await ctx.db
       .query("signalEvidence")
       .withIndex("by_fingerprint", (q) =>
@@ -251,28 +363,31 @@ export const upsertNormalizedSignal = internalMutation({
           sourceUrl: args.sourceUrl,
           sourceTitle: args.sourceTitle,
           excerpt: args.excerpt,
+          ...evidenceSnapshotFields(snapshot),
           observedAt: now,
         });
       }
     } else {
-      signalId = await ctx.db.insert("signals", {
-        side: source.side === "both" ? "supply" : source.side,
-        title: args.title,
-        city: args.city,
-        district: args.district,
-        summary: args.summary,
-        arrangement: args.arrangement,
-        priceEur: args.priceEur,
-        pricePeriod: args.pricePeriod,
-        requirements: args.requirements,
-        unknowns: args.unknowns,
-        status: "published",
-        verification: "observed",
-        sourceCount: 1,
-        firstSeenAt: now,
-        lastSeenAt: now,
-        publishedAt: now,
-      });
+      const corroborated = await findCrossSourceSignal(ctx, snapshot, source._id);
+      signalId = corroborated?.signalId ?? await ctx.db.insert("signals", {
+          side: snapshot.side,
+          title: args.title,
+          city: args.city,
+          district: args.district,
+          summary: args.summary,
+          arrangement: args.arrangement,
+          priceEur: args.priceEur,
+          pricePeriod: args.pricePeriod,
+          requirements: args.requirements,
+          unknowns: args.unknowns,
+          status: "published",
+          verification: "observed",
+          sourceCount: 1,
+          firstSeenAt: now,
+          lastSeenAt: now,
+          publishedAt: now,
+        });
+      if (corroborated) await ctx.db.patch(signalId, { status: "published", lastSeenAt: now });
       await ctx.db.insert("signalEvidence", {
         signalId,
         sourceId: source._id,
@@ -281,9 +396,12 @@ export const upsertNormalizedSignal = internalMutation({
         sourceTitle: args.sourceTitle,
         excerpt: args.excerpt,
         fingerprint: args.fingerprint,
+        ...evidenceSnapshotFields(snapshot),
         observedAt: now,
       });
     }
+
+    if (signalId) await refreshSignalVerification(ctx, signalId);
 
     await Promise.all([
       ctx.db.patch(event._id, {
@@ -338,9 +456,15 @@ export const observeTrackedPage = internalMutation({
     if (evidence !== null) {
       const signal = await ctx.db.get(evidence.signalId);
       if (signal !== null) {
+        const relatedEvidence = args.changeStatus === "removed"
+          ? await ctx.db.query("signalEvidence").withIndex("by_signal", (q) => q.eq("signalId", signal._id)).take(50)
+          : [];
+        const independentlyFresh = relatedEvidence.some((item) =>
+          item.sourceId !== evidence.sourceId && item.observedAt >= now - 45 * 24 * 60 * 60 * 1_000,
+        );
         await ctx.db.patch(signal._id, {
           status:
-            args.changeStatus === "removed" ? "stale" : "published",
+            args.changeStatus === "removed" && !independentlyFresh ? "stale" : "published",
           lastSeenAt:
             args.changeStatus === "same" ? now : signal.lastSeenAt,
         });
@@ -670,6 +794,7 @@ export const upsertSourceEntries = internalMutation({
         status: "published" as const,
         lastSeenAt: now,
       };
+      const snapshot = signalSnapshot({ ...signalPatch });
       if (signalId) {
         const signal = await ctx.db.get(signalId);
         if (signal) {
@@ -679,14 +804,20 @@ export const upsertSourceEntries = internalMutation({
         }
       }
       if (!signalId) {
-        signalId = await ctx.db.insert("signals", {
-          ...signalPatch,
-          verification: "observed",
-          sourceCount: 1,
-          firstSeenAt: now,
-          publishedAt: now,
-          sourceEntryId,
-        });
+        const corroborated = await findCrossSourceSignal(ctx, snapshot, source._id);
+        if (corroborated) {
+          signalId = corroborated.signalId;
+          await ctx.db.patch(signalId, { status: "published", lastSeenAt: now });
+        } else {
+          signalId = await ctx.db.insert("signals", {
+            ...signalPatch,
+            verification: "observed",
+            sourceCount: 1,
+            firstSeenAt: now,
+            publishedAt: now,
+            sourceEntryId,
+          });
+        }
         await ctx.db.patch(sourceEntryId, { signalId });
       }
 
@@ -705,6 +836,7 @@ export const upsertSourceEntries = internalMutation({
           sourceUrl: entry.canonicalUrl,
           sourceTitle: entry.title,
           excerpt: entry.excerpt,
+          ...evidenceSnapshotFields(snapshot),
           observedAt: now,
         });
       } else {
@@ -716,9 +848,11 @@ export const upsertSourceEntries = internalMutation({
           sourceTitle: entry.title,
           excerpt: entry.excerpt,
           fingerprint: evidenceFingerprint,
+          ...evidenceSnapshotFields(snapshot),
           observedAt: now,
         });
       }
+      await refreshSignalVerification(ctx, signalId);
       await ctx.scheduler.runAfter(0, internal.matches.embedSignal, { signalId });
       await ctx.scheduler.runAfter(0, internal.map.geocodeSignal, { signalId });
     }
@@ -745,18 +879,19 @@ export const upsertSourceEntries = internalMutation({
         if (status === "stale") {
           stale += 1;
           if (previous.signalId) {
-            await ctx.db.patch(previous.signalId, { status: "stale" });
+            const evidence = await ctx.db.query("signalEvidence").withIndex("by_signal", (q) =>
+              q.eq("signalId", previous.signalId!),
+            ).take(50);
+            const independentlyFresh = evidence.some((item) =>
+              item.sourceId !== previous.sourceId && item.observedAt >= now - 45 * 24 * 60 * 60 * 1_000,
+            );
+            if (!independentlyFresh) await ctx.db.patch(previous.signalId, { status: "stale" });
           }
         }
       }
     }
 
-    const backlog = await ctx.db
-      .query("sourceEntries")
-      .withIndex("by_detail_state_and_next_attempt", (q) =>
-        q.eq("detailState", "queued"),
-      )
-      .take(6);
+    const backlogCount = await countPendingDetailsForTarget(ctx, target._id);
     await Promise.all([
       ctx.db.patch(event._id, {
         status: "processed",
@@ -769,7 +904,7 @@ export const upsertSourceEntries = internalMutation({
         lastRunAt: now,
         lastMonitorEventAt: now,
         successfulSnapshotCount: (target.successfulSnapshotCount ?? 0) + 1,
-        backlogCount: Math.min(backlog.length, 5),
+        backlogCount,
         updatedAt: now,
       }),
       ctx.db.patch(source._id, {
@@ -1009,6 +1144,25 @@ export const claimDetailBacklog = internalMutation({
   },
 });
 
+/** Repair/reconcile the bounded Ops backlog metric for one source target. */
+export const recountTargetDetailBacklog = internalMutation({
+  args: { sourceTargetId: v.id("sourceTargets") },
+  returns: v.number(),
+  handler: async (ctx, args) => {
+    const target = await ctx.db.get(args.sourceTargetId);
+    if (!target) return 0;
+    const backlogCount = await countPendingDetailsForTarget(
+      ctx,
+      args.sourceTargetId,
+    );
+    await ctx.db.patch(args.sourceTargetId, {
+      backlogCount,
+      updatedAt: Date.now(),
+    });
+    return backlogCount;
+  },
+});
+
 export const getDetailNormalizationContext = internalQuery({
   args: {
     sourceEntryId: v.id("sourceEntries"),
@@ -1090,7 +1244,9 @@ export const completeDetailNormalization = internalMutation({
     }
     const now = Date.now();
     let signalId = entry.signalId;
+    const previousSignalId = signalId;
     const signalPatch = {
+      side: entry.side,
       title: args.title,
       city: args.city,
       district: args.district,
@@ -1106,7 +1262,20 @@ export const completeDetailNormalization = internalMutation({
       status: "published" as const,
       lastSeenAt: now,
     };
-    if (signalId) {
+    const snapshot = signalSnapshot(signalPatch);
+    const currentEvidence = signalId
+      ? await ctx.db.query("signalEvidence").withIndex("by_signal", (q) => q.eq("signalId", signalId!)).take(25)
+      : [];
+    const alreadyCrossSource = currentEvidence.some((evidence) => evidence.sourceId !== entry.sourceId);
+    const corroborated = alreadyCrossSource
+      ? null
+      : await findCrossSourceSignal(ctx, snapshot, entry.sourceId, signalId);
+    if (corroborated) {
+      signalId = corroborated.signalId;
+      await ctx.db.patch(signalId, corroborated.relation === "corroborated"
+        ? signalPatch
+        : { status: "published", lastSeenAt: now });
+    } else if (signalId) {
       const signal = await ctx.db.get(signalId);
       if (signal) {
         await ctx.db.patch(signal._id, signalPatch);
@@ -1116,13 +1285,43 @@ export const completeDetailNormalization = internalMutation({
     }
     if (!signalId) {
       signalId = await ctx.db.insert("signals", {
-        side: entry.side,
         ...signalPatch,
         verification: "observed",
         sourceCount: 1,
         firstSeenAt: now,
         publishedAt: now,
         sourceEntryId: entry._id,
+      });
+    }
+    if (previousSignalId && previousSignalId !== signalId) {
+      await ctx.db.patch(previousSignalId, { status: "stale", sourceCount: 0, verification: "observed" });
+    }
+    const evidenceFingerprint = stableFingerprint(
+      `source-entry\n${entry.sourceTargetId}\n${entry.canonicalUrl}`,
+    );
+    const evidence = await ctx.db.query("signalEvidence").withIndex("by_fingerprint", (q) =>
+      q.eq("fingerprint", evidenceFingerprint),
+    ).first();
+    if (evidence) {
+      await ctx.db.patch(evidence._id, {
+        signalId,
+        sourceUrl: entry.canonicalUrl,
+        sourceTitle: args.title,
+        excerpt: args.excerpt,
+        ...evidenceSnapshotFields(snapshot),
+        observedAt: now,
+      });
+    } else {
+      await ctx.db.insert("signalEvidence", {
+        signalId,
+        sourceId: entry.sourceId,
+        sourceTargetId: entry.sourceTargetId,
+        sourceUrl: entry.canonicalUrl,
+        sourceTitle: args.title,
+        excerpt: args.excerpt,
+        fingerprint: evidenceFingerprint,
+        ...evidenceSnapshotFields(snapshot),
+        observedAt: now,
       });
     }
     const existingContacts = await ctx.db.query("signalContacts").withIndex("by_source_entry", (q) => q.eq("sourceEntryId", entry._id)).take(20);
@@ -1154,6 +1353,15 @@ export const completeDetailNormalization = internalMutation({
       updatedAt: now,
       error: undefined,
     });
+    const backlogCount = await countPendingDetailsForTarget(
+      ctx,
+      entry.sourceTargetId,
+    );
+    await ctx.db.patch(entry.sourceTargetId, { backlogCount, updatedAt: now });
+    await refreshSignalVerification(ctx, signalId);
+    if (previousSignalId && previousSignalId !== signalId) {
+      await refreshSignalVerification(ctx, previousSignalId);
+    }
     return true;
   },
 });
@@ -1182,6 +1390,11 @@ export const failDetailNormalization = internalMutation({
       updatedAt: now,
       error: args.error.slice(0, 500),
     });
+    const backlogCount = await countPendingDetailsForTarget(
+      ctx,
+      entry.sourceTargetId,
+    );
+    await ctx.db.patch(entry.sourceTargetId, { backlogCount, updatedAt: now });
     return retry;
   },
 });

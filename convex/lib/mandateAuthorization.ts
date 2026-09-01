@@ -42,6 +42,7 @@ export type MandateSnapshot = {
   expiresAt: number;
   stopOnComplaint: boolean;
   stopWhenSuitableRoomConfirmed: boolean;
+  commitmentBoundary?: "non_binding_outreach_only";
   stoppedAt?: number;
 };
 
@@ -58,6 +59,7 @@ export type ActionAuthorizationInput = {
   connectionActive: boolean;
   complaintRecorded: boolean;
   suitableRoomConfirmed: boolean;
+  bindingCommitment: boolean;
 };
 
 export type AuthorizationDecision = {
@@ -170,12 +172,71 @@ export function authorizeFromMandate(
   if (mandate.stopWhenSuitableRoomConfirmed && input.suitableRoomConfirmed) {
     reasons.push("The mandate stopped because a suitable room was confirmed.");
   }
+  if (
+    mandate.commitmentBoundary !== "non_binding_outreach_only" ||
+    input.bindingCommitment
+  ) {
+    reasons.push(
+      "Binding commitments always require exact human approval of the final content.",
+    );
+  }
 
   return {
     authorized: reasons.length === 0,
     exactApprovalRequired: reasons.length > 0,
     reasons,
   };
+}
+
+type ActionPayloadText =
+  | {
+      kind: "platform_message";
+      subject?: string;
+      body: string;
+    }
+  | {
+      kind: "contact_form";
+      fields: Array<{ name: string; label?: string; value: string }>;
+    }
+  | {
+      kind: "portal_account_operation";
+      operation: "connect" | "reauth" | "disconnect";
+      accountLabel?: string;
+    }
+  | {
+      kind: "email_message";
+      subject: string;
+      body: string;
+    };
+
+const BINDING_COMMITMENT_PATTERNS = [
+  /\b(?:we|i)\s+(?:accept|agree to|commit to|confirm)\b/i,
+  /\b(?:accept|confirm|complete)\s+(?:the\s+)?(?:offer|agreement|booking|lease|contract)\b/i,
+  /\b(?:we(?:'ll| will)|i(?:'ll| will))\s+take\s+(?:the|this)\s+(?:room|space|offer)\b/i,
+  /\b(?:binding|legally binding|sign(?:ing)? the contract|pay(?:ing)? (?:the )?deposit)\b/i,
+  /\b(?:wir|ich)\s+(?:nehmen|akzeptieren|best[aä]tigen|stimmen)\b.{0,40}\b(?:raum|angebot|vertrag|vereinbarung|buchung|mietvertrag)\b/i,
+  /\b(?:angebot|vertrag|vereinbarung|buchung|mietvertrag)\b.{0,40}\b(?:verbindlich|annehmen|akzeptieren|best[aä]tigen|unterschreiben)\b/i,
+  /\b(?:verbindlich zusagen|kaution (?:zahlen|überweisen)|vertrag unterschreiben)\b/i,
+];
+
+/**
+ * Conservative deterministic boundary for standing mandates. It is not used
+ * to prove that content is harmless; it only escalates obvious commitments to
+ * exact human approval across email, web forms and platform messages.
+ */
+export function containsBindingCommitment(payload: ActionPayloadText): boolean {
+  if (payload.kind === "portal_account_operation") return false;
+  const text =
+    payload.kind === "contact_form"
+      ? payload.fields.map((field) => `${field.label ?? field.name}: ${field.value}`).join("\n")
+      : `${payload.subject ?? ""}\n${payload.body}`;
+  return BINDING_COMMITMENT_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+export function countUniqueAttemptedRequests(
+  executions: ReadonlyArray<{ requestId: unknown }>,
+): number {
+  return new Set(executions.map((execution) => String(execution.requestId))).size;
 }
 
 export function isAlwaysHumanBoundary(action: string): boolean {

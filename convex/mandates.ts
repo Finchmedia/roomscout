@@ -52,6 +52,7 @@ const mandateValidator = v.object({
   expiresAt: v.number(),
   stopOnComplaint: v.boolean(),
   stopWhenSuitableRoomConfirmed: v.boolean(),
+  commitmentBoundary: v.optional(v.literal("non_binding_outreach_only")),
   contentHash: v.string(),
   activatedAt: v.optional(v.number()),
   stoppedAt: v.optional(v.number()),
@@ -71,6 +72,7 @@ function publicMandate(row: {
   allowedPersonalData: ("band_name" | "member_first_names" | "reply_email" | "phone" | "precise_location" | "availability" | "budget" | "music_profile")[];
   maxContactsPerDay: number; maxBrowserMinutesPerDay: number; maxMonthlyPriceEur?: number;
   expiresAt: number; stopOnComplaint: boolean; stopWhenSuitableRoomConfirmed: boolean;
+  commitmentBoundary?: "non_binding_outreach_only";
   contentHash: string; activatedAt?: number; stoppedAt?: number; createdAt: number; updatedAt: number;
 }) {
   return {
@@ -81,6 +83,7 @@ function publicMandate(row: {
     maxBrowserMinutesPerDay: row.maxBrowserMinutesPerDay, maxMonthlyPriceEur: row.maxMonthlyPriceEur,
     expiresAt: row.expiresAt, stopOnComplaint: row.stopOnComplaint,
     stopWhenSuitableRoomConfirmed: row.stopWhenSuitableRoomConfirmed,
+    commitmentBoundary: row.commitmentBoundary,
     contentHash: row.contentHash, activatedAt: row.activatedAt, stoppedAt: row.stoppedAt,
     createdAt: row.createdAt, updatedAt: row.updatedAt,
   };
@@ -97,6 +100,7 @@ type MandateInput = {
   expiresAt: number;
   stopOnComplaint: boolean;
   stopWhenSuitableRoomConfirmed: boolean;
+  commitmentBoundary?: "non_binding_outreach_only";
 };
 
 async function mandateHash(input: MandateInput): Promise<string> {
@@ -111,10 +115,14 @@ async function mandateHash(input: MandateInput): Promise<string> {
     String(input.expiresAt),
     String(input.stopOnComplaint),
     String(input.stopWhenSuitableRoomConfirmed),
+    input.commitmentBoundary ?? "",
   ]);
 }
 
 function validateLimits(input: MandateInput, now: number): void {
+  if (input.commitmentBoundary !== "non_binding_outreach_only") {
+    throw new ConvexError({ code: "MANDATE_COMMITMENT_BOUNDARY_REQUIRED" });
+  }
   if (!Number.isInteger(input.maxContactsPerDay) || input.maxContactsPerDay < 0 || input.maxContactsPerDay > 50) {
     throw new ConvexError({ code: "INVALID_CONTACT_LIMIT" });
   }
@@ -198,6 +206,7 @@ export const createDraft = mutation({
       expiresAt: args.expiresAt,
       stopOnComplaint: args.stopOnComplaint,
       stopWhenSuitableRoomConfirmed: args.stopWhenSuitableRoomConfirmed,
+      commitmentBoundary: "non_binding_outreach_only" as const,
     };
     const now = Date.now();
     validateLimits(input, now);
@@ -291,6 +300,16 @@ export const killSwitch = mutation({
     const now = Date.now();
     for (const mandate of active) {
       await ctx.db.patch(mandate._id, { status: "revoked", stoppedAt: now, updatedAt: now });
+      await ctx.db.insert("auditEvents", {
+        eventKey: `mandate:${mandate._id}:kill_switch:${mandate.version}`,
+        actorType: "user",
+        actorUserId: ownerId,
+        entityKey: `mandate:${mandate._id}`,
+        eventType: "mandate.kill_switch_revoked",
+        beforeHash: mandate.contentHash,
+        summary: "Standing authorization revoked by the search kill switch",
+        occurredAt: now,
+      });
     }
     return active.length;
   },

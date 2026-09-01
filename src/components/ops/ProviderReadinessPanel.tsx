@@ -38,7 +38,11 @@ export function ProviderReadinessPanel({
           status: readiness.firecrawl.status,
           checks: [
             mark(readiness.firecrawl.apiKeyConfigured, "Key"),
-            mark(readiness.firecrawl.webhookSecretConfigured, "Webhook secret"),
+            mark(readiness.firecrawl.webhookSecretConfigured, "Crawl HMAC"),
+            mark(
+              readiness.firecrawl.monitorWebhookBearerConfigured,
+              "Monitor bearer",
+            ),
             mark(
               readiness.firecrawl.webhookUrlConfigured &&
                 readiness.firecrawl.webhookUrlValid,

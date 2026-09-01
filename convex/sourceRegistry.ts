@@ -101,6 +101,220 @@ export const seedReviewSourcesInternal = internalMutation({
   handler: seedReviewSourceRecords,
 });
 
+/**
+ * Creates the two deliberately separate records needed for the controlled
+ * roomscout.dev proof: a public SSR listing source for Firecrawl and an
+ * authenticated source for per-user Browserbase Contexts. Nothing is crawled
+ * and no user connection is created by this mutation.
+ */
+export const seedControlledDemoPortal = mutation({
+  args: { baseUrl: v.string() },
+  returns: v.object({
+    platformId: v.id("sourcePlatforms"),
+    publicSourceId: v.id("sources"),
+    authenticatedSourceId: v.id("sources"),
+    publicTargetId: v.id("sourceTargets"),
+    contactPolicyId: v.id("sourceFlowPolicies"),
+    contactBindingId: v.id("sourceAdapterBindings"),
+  }),
+  handler: async (ctx, args) => {
+    const operatorId = await requireOperatorId(ctx);
+    const parsed = new URL(args.baseUrl);
+    if (
+      parsed.protocol !== "https:" ||
+      parsed.username ||
+      parsed.password ||
+      parsed.search ||
+      parsed.hash
+    ) {
+      throw new ConvexError({ code: "INVALID_DEMO_PORTAL_URL" });
+    }
+    const canonicalDomain = parsed.hostname.toLowerCase().replace(/^www\./, "");
+    if (!canonicalDomain || canonicalDomain === "localhost") {
+      throw new ConvexError({ code: "INVALID_DEMO_PORTAL_URL" });
+    }
+    const baseUrl = `${parsed.protocol}//${parsed.host}`;
+    const now = Date.now();
+
+    let platform = await ctx.db
+      .query("sourcePlatforms")
+      .withIndex("by_canonical_domain", (q) =>
+        q.eq("canonicalDomain", canonicalDomain),
+      )
+      .unique();
+    if (!platform) {
+      const platformId = await ctx.db.insert("sourcePlatforms", {
+        slug: "roomscout-dev",
+        name: "roomscout.dev controlled demo portal",
+        canonicalDomain,
+        kind: "community",
+        status: "active",
+        firstSeenAt: now,
+        lastObservedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      });
+      platform = await ctx.db.get(platformId);
+    }
+    if (!platform) throw new ConvexError({ code: "DEMO_PLATFORM_CREATE_FAILED" });
+
+    async function ensureSource(input: {
+      slug: string;
+      name: string;
+      accessMode: "public" | "authenticated";
+    }) {
+      const existing = await ctx.db
+        .query("sources")
+        .withIndex("by_slug", (q) => q.eq("slug", input.slug))
+        .unique();
+      if (existing) {
+        const expectedAdapter =
+          input.accessMode === "authenticated"
+            ? "roomscout-dev-v1"
+            : "generic-list-v1";
+        if (
+          existing.platformId !== platform!._id ||
+          existing.baseUrl !== baseUrl ||
+          existing.accessMode !== input.accessMode ||
+          existing.adapterKey !== expectedAdapter
+        ) {
+          throw new ConvexError({ code: "DEMO_SOURCE_CONFIGURATION_CONFLICT" });
+        }
+        return existing._id;
+      }
+      return await ctx.db.insert("sources", {
+        platformId: platform!._id,
+        slug: input.slug,
+        name: input.name,
+        baseUrl,
+        side: "both",
+        status: "paused",
+        health: "unknown",
+        geographicScope: "Controlled hackathon demo",
+        accessMode: input.accessMode,
+        automationReview: "approved",
+        policyNotes:
+          "First-party controlled demo surface. Public reads and authenticated messaging remain separate; no real third party receives test traffic.",
+        reviewedAt: now,
+        adapterKey:
+          input.accessMode === "authenticated"
+            ? "roomscout-dev-v1"
+            : "generic-list-v1",
+        publicDisplay: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    const publicSourceId = await ensureSource({
+      slug: "roomscout-dev-public",
+      name: "roomscout.dev · demo public listings",
+      accessMode: "public",
+    });
+    const authenticatedSourceId = await ensureSource({
+      slug: "roomscout-dev-connected",
+      name: "roomscout.dev · demo connected messaging",
+      accessMode: "authenticated",
+    });
+
+    const existingTargets = await ctx.db
+      .query("sourceTargets")
+      .withIndex("by_source", (q) => q.eq("sourceId", publicSourceId))
+      .take(20);
+    let publicTargetId = existingTargets.find((target) => target.url === baseUrl)?._id;
+    if (!publicTargetId) {
+      publicTargetId = await ctx.db.insert("sourceTargets", {
+        sourceId: publicSourceId,
+        url: baseUrl,
+        mode: "scrape",
+        changeTrackingTag: "roomscout-dev-public:v1",
+        scheduleMinutes: 24 * 60,
+        nextRunAt: now,
+        paused: true,
+        monitorStatus: "unconfigured",
+        sideScope: "both",
+        adapterKey: "generic-list-v1",
+        successfulSnapshotCount: 0,
+        backlogCount: 0,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    const scopeKey = `platform:${platform._id}:roomscout-dev:contact`;
+    const priorPolicies = await ctx.db
+      .query("sourceFlowPolicies")
+      .withIndex("by_scope_key_and_flow_and_status", (q) =>
+        q.eq("scopeKey", scopeKey).eq("flow", "contact").eq("status", "approved"),
+      )
+      .take(1);
+    let contactPolicyId = priorPolicies[0]?._id;
+    if (!contactPolicyId) {
+      contactPolicyId = await ctx.db.insert("sourceFlowPolicies", {
+        platformId: platform._id,
+        sourceId: authenticatedSourceId,
+        scopeKey,
+        flow: "contact",
+        version: 1,
+        status: "approved",
+        decision: "allowed",
+        maxAutomationLevel: "approved_execute",
+        userConnectionRequired: true,
+        humanPresenceRequired: false,
+        accountCreationAllowed: true,
+        externalApprovalRequired: true,
+        robotsDecision: "allowed",
+        termsDecision: "allowed",
+        retentionDays: 30,
+        evidenceUrls: [baseUrl],
+        reviewedBy: operatorId,
+        approvedAt: now,
+        nextReviewAt: now + 30 * 24 * 60 * 60_000,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    const existingBindings = await ctx.db
+      .query("sourceAdapterBindings")
+      .withIndex("by_scope_key_and_flow_and_status", (q) =>
+        q.eq("scopeKey", scopeKey).eq("flow", "contact").eq("status", "active"),
+      )
+      .take(1);
+    let contactBindingId = existingBindings[0]?._id;
+    if (!contactBindingId) {
+      contactBindingId = await ctx.db.insert("sourceAdapterBindings", {
+        platformId: platform._id,
+        sourceId: authenticatedSourceId,
+        scopeKey,
+        flow: "contact",
+        adapterKey: "roomscout-dev-v1",
+        adapterVersion: 1,
+        status: "active",
+        executor: "browserbase",
+        config: {
+          kind: "browserbase",
+          workflowKey: "roomscout-dev.platform-message.v1",
+          contextRequired: true,
+        },
+        configFingerprint: "roomscout-dev.platform-message.v1:1",
+        policyVersionId: contactPolicyId,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    return {
+      platformId: platform._id,
+      publicSourceId,
+      authenticatedSourceId,
+      publicTargetId,
+      contactPolicyId,
+      contactBindingId,
+    };
+  },
+});
+
 export const reviewSource = mutation({
   args: {
     sourceId: v.id("sources"),

@@ -106,7 +106,7 @@ it("does not execute from a standing approval after its mandate is revoked", asy
     const platformId = await ctx.db.insert("sourcePlatforms", { slug: "bandnet", name: "Bandnet", canonicalDomain: "bandnet.hamburg", kind: "community", status: "active", firstSeenAt: now, lastObservedAt: now, createdAt: now, updatedAt: now });
     const policyId = await ctx.db.insert("sourceFlowPolicies", { platformId, scopeKey: "bandnet:contact", flow: "contact", version: 1, status: "approved", decision: "allowed", maxAutomationLevel: "approved_execute", userConnectionRequired: false, humanPresenceRequired: false, accountCreationAllowed: false, externalApprovalRequired: true, robotsDecision: "allowed", termsDecision: "allowed", evidenceUrls: ["https://bandnet.hamburg/nutzungsbedingungen"], createdAt: now, updatedAt: now });
     const bindingId = await ctx.db.insert("sourceAdapterBindings", { platformId, scopeKey: "bandnet:contact", flow: "contact", adapterKey: "bandnet_contact_v1", adapterVersion: 1, status: "active", executor: "firecrawl", config: { kind: "firecrawl", extractionProfileKey: "bandnet_contact_v1", monitorDriven: false }, configFingerprint: "binding-hash", policyVersionId: policyId, createdAt: now, updatedAt: now });
-    const mandateId = await ctx.db.insert("searchMandates", { ownerId, savedNeedId: needId, version: 1, mode: "outreach_autopilot", status: "active", platformIds: [platformId], allowedActionTypes: ["submit_webform"], allowedPersonalData: [], maxContactsPerDay: 5, maxBrowserMinutesPerDay: 30, expiresAt: now + 86_400_000, stopOnComplaint: true, stopWhenSuitableRoomConfirmed: true, contentHash: "mandate-hash", activatedAt: now, createdAt: now, updatedAt: now });
+    const mandateId = await ctx.db.insert("searchMandates", { ownerId, savedNeedId: needId, version: 1, mode: "outreach_autopilot", status: "active", platformIds: [platformId], allowedActionTypes: ["submit_webform"], allowedPersonalData: [], maxContactsPerDay: 5, maxBrowserMinutesPerDay: 30, expiresAt: now + 86_400_000, stopOnComplaint: true, stopWhenSuitableRoomConfirmed: true, commitmentBoundary: "non_binding_outreach_only", contentHash: "mandate-hash", activatedAt: now, createdAt: now, updatedAt: now });
     const payload = { kind: "contact_form" as const, targetUrl: "https://bandnet.hamburg/kontakt/42", fields: [{ name: "message", value: "Hello", sensitivity: "normal" as const }] };
     const requestId = await ctx.db.insert("actionRequests", { ownerId, savedNeedId: needId, mandateId, platformId, adapterBindingId: bindingId, policyVersionId: policyId, automationMode: "standing_mandate", requestedActionType: "submit_webform", personalDataScopes: [], payload, contentVersion: 1, contentHash: "content-hash", status: "approved", createdAt: now, updatedAt: now });
     await ctx.db.insert("actionApprovals", { requestId, ownerId, contentVersion: 1, contentHash: "content-hash", payloadSnapshot: payload, policyVersionId: policyId, decision: "authorized_by_mandate", mandateId, mandateVersion: 1, mandateHash: "mandate-hash", decidedAt: now });
@@ -114,4 +114,43 @@ it("does not execute from a standing approval after its mandate is revoked", asy
     return { ownerId, requestId };
   });
   await expect(t.mutation(internal.externalActions.claimForExecutor, { ownerId: fixture.ownerId, requestId: fixture.requestId, executor: "firecrawl" })).rejects.toThrow();
+});
+
+it("rejects an exact approval whose action request expired before claim", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await t.run(async (ctx) => {
+    const now = Date.now();
+    const ownerId = await ctx.db.insert("users", { username: "owner", role: "musician", createdAt: now, lastSeenAt: now });
+    const platformId = await ctx.db.insert("sourcePlatforms", { slug: "bandnet", name: "Bandnet", canonicalDomain: "bandnet.hamburg", kind: "community", status: "active", firstSeenAt: now, lastObservedAt: now, createdAt: now, updatedAt: now });
+    const policyId = await ctx.db.insert("sourceFlowPolicies", { platformId, scopeKey: "bandnet:contact", flow: "contact", version: 1, status: "approved", decision: "allowed", maxAutomationLevel: "approved_execute", userConnectionRequired: false, humanPresenceRequired: false, accountCreationAllowed: false, externalApprovalRequired: true, robotsDecision: "allowed", termsDecision: "allowed", evidenceUrls: ["https://bandnet.hamburg/nutzungsbedingungen"], createdAt: now, updatedAt: now });
+    const bindingId = await ctx.db.insert("sourceAdapterBindings", { platformId, scopeKey: "bandnet:contact", flow: "contact", adapterKey: "bandnet_contact_v1", adapterVersion: 1, status: "active", executor: "firecrawl", config: { kind: "firecrawl", extractionProfileKey: "bandnet_contact_v1", monitorDriven: false }, configFingerprint: "binding-hash", policyVersionId: policyId, createdAt: now, updatedAt: now });
+    const payload = { kind: "contact_form" as const, targetUrl: "https://bandnet.hamburg/kontakt/42", fields: [{ name: "message", value: "Hello", sensitivity: "normal" as const }] };
+    const requestId = await ctx.db.insert("actionRequests", { ownerId, platformId, adapterBindingId: bindingId, policyVersionId: policyId, automationMode: "exact_once", requestedActionType: "submit_webform", personalDataScopes: [], payload, contentVersion: 1, contentHash: "content-hash", status: "approved", expiresAt: now - 1, createdAt: now, updatedAt: now });
+    await ctx.db.insert("actionApprovals", { requestId, ownerId, contentVersion: 1, contentHash: "content-hash", payloadSnapshot: payload, policyVersionId: policyId, decision: "approved", decidedAt: now });
+    return { ownerId, requestId };
+  });
+  await expect(t.mutation(internal.externalActions.claimForExecutor, { ownerId: fixture.ownerId, requestId: fixture.requestId, executor: "firecrawl" })).rejects.toThrow("ACTION_EXPIRED");
+});
+
+it("reaps abandoned claims but treats stale running provider calls as unknown", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await t.run(async (ctx) => {
+    const old = Date.now() - 60 * 60 * 1_000;
+    const ownerId = await ctx.db.insert("users", { username: "owner", role: "musician", createdAt: old, lastSeenAt: old });
+    const payload = { kind: "email_message" as const, recipientName: "Test", recipientEmail: "test@example.com", subject: "Room", body: "Available?" };
+    const firstRequestId = await ctx.db.insert("actionRequests", { ownerId, automationMode: "exact_once", requestedActionType: "send_email", personalDataScopes: [], payload, contentVersion: 1, contentHash: "one", status: "executing", createdAt: old, updatedAt: old });
+    const secondRequestId = await ctx.db.insert("actionRequests", { ownerId, automationMode: "exact_once", requestedActionType: "send_email", personalDataScopes: [], payload, contentVersion: 1, contentHash: "two", status: "executing", createdAt: old, updatedAt: old });
+    const firstApprovalId = await ctx.db.insert("actionApprovals", { requestId: firstRequestId, ownerId, contentVersion: 1, contentHash: "one", payloadSnapshot: payload, decision: "approved", decidedAt: old });
+    const secondApprovalId = await ctx.db.insert("actionApprovals", { requestId: secondRequestId, ownerId, contentVersion: 1, contentHash: "two", payloadSnapshot: payload, decision: "approved", decidedAt: old });
+    const claimedId = await ctx.db.insert("actionExecutions", { requestId: firstRequestId, ownerId, approvalId: firstApprovalId, status: "claimed", idempotencyKey: "one", startedAt: old, createdAt: old, updatedAt: old });
+    const runningId = await ctx.db.insert("actionExecutions", { requestId: secondRequestId, ownerId, approvalId: secondApprovalId, status: "running", idempotencyKey: "two", providerActionId: "provider-job", startedAt: old, createdAt: old, updatedAt: old });
+    return { claimedId, runningId, firstRequestId, secondRequestId };
+  });
+  expect(await t.mutation(internal.externalActions.reapStaleExecutions, { olderThanMs: 15 * 60 * 1_000, limit: 10 })).toEqual({ failedBeforeProvider: 1, unknownProviderOutcome: 1 });
+  expect(await t.run(async (ctx) => ({
+    claimed: (await ctx.db.get(fixture.claimedId))?.status,
+    running: (await ctx.db.get(fixture.runningId))?.status,
+    firstRequest: (await ctx.db.get(fixture.firstRequestId))?.status,
+    secondRequest: (await ctx.db.get(fixture.secondRequestId))?.status,
+  }))).toEqual({ claimed: "failed", running: "unknown", firstRequest: "failed", secondRequest: "executing" });
 });

@@ -9,6 +9,7 @@ import { WorkspaceShell } from "../../components/navigation/WorkspaceShell";
 import { SearchProfileCard } from "../../components/scout/SearchProfileCard";
 import { SearchSourcesPanel } from "../../components/search/SearchSourcesPanel";
 import { EmptyState, LedgerCard, PageHeader } from "../../components/ui/LedgerCard";
+import { Table, TableBody, TableCell, TableRow } from "../../components/ui/table";
 import { savedNeedToSearch } from "../../data/convexAdapters";
 import type { ScoutMandate } from "../../features/agentOperations/types";
 
@@ -193,7 +194,7 @@ export function MySearchPage() {
             <SearchProfileCard search={search} />
             <div className="actionsrow"><Link className="btn btn-s" to="/app/scout?mode=search_discovery"><Pencil aria-hidden="true" size={14} />Edit with Scout</Link></div>
             {activeMandate === undefined ? <EmptyState body="Loading the active version and authorization limits." title="Loading Scout mandate…" /> : <MandatePanel mandate={mandate} onSave={saveMandate} onStatusChange={changeMandateStatus} platformOptions={coverageSources.map((source) => ({ id: source.id, label: source.name }))} />}
-            <LedgerCard header={<span className="type">Alert settings</span>}><table className="facts"><tbody><tr><td>Channel</td><td>In-app notifications</td></tr><tr><td>Cadence</td><td>As matching signals arrive</td></tr><tr><td>External action</td><td>Guided approval or active standing mandate</td></tr></tbody></table></LedgerCard>
+            <LedgerCard header={<span className="type">Alert settings</span>}><Table className="facts"><TableBody><TableRow><TableCell>Channel</TableCell><TableCell>In-app notifications</TableCell></TableRow><TableRow><TableCell>Cadence</TableCell><TableCell>As matching signals arrive</TableCell></TableRow><TableRow><TableCell>External action</TableCell><TableCell>Approve once or active YOLO mandate</TableCell></TableRow></TableBody></Table></LedgerCard>
           </div>
           <div className="stack">
             <LedgerCard accent header={<><span className="type t-scout">Current matches</span><span className="mono">{needMatches.length} live</span></>}><p className="brief"><Bell aria-hidden="true" size={15} /><span>Matches use structured constraints plus semantic compatibility. Unknown facts remain visible as uncertainty.</span></p></LedgerCard>

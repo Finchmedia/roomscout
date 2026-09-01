@@ -5,6 +5,7 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { formatAge, toneForStatus, titleCase } from "../../routes/ops/opsFormat";
 import { EmptyState, LedgerCard } from "../ui/LedgerCard";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 
 const candidateStatuses = ["new", "reviewing", "promoted", "ignored", "merged"] as const;
 type CandidateStatus = (typeof candidateStatuses)[number];
@@ -280,11 +281,11 @@ export function SourceIntelligencePanel() {
             <section>
               <h3>Approved policies</h3>
               {approvedPolicies.results.length === 0 ? <p className="hint">No approved flow policy.</p> : (
-                <table className="facts"><tbody>
+                <Table className="facts"><TableBody>
                   {approvedPolicies.results.map((policy) => (
-                    <tr key={policy.id}><td>{titleCase(policy.flow)} · v{policy.version}</td><td><span className={`pill ${policy.decision === "allowed" ? "new" : "warn"}`}>{titleCase(policy.decision)}</span> {titleCase(policy.maxAutomationLevel)}{selectedPlatform?.canonicalDomain === "bandnet.hamburg" && policy.flow === "contact" ? <button className="btn btn-g btn-sm" disabled={Boolean(working)} onClick={() => void run("Bandnet contact adapter", () => upsertBinding({ platformId: selectedPlatformId, flow: "contact", adapterKey: "bandnet-contact-form-v1", executor: "firecrawl", config: { kind: "firecrawl", extractionProfileKey: "bandnet-contact-form-v1", monitorDriven: false }, configFingerprint: "bandnet-contact-form-v1:1", policyVersionId: policy.id }))} type="button">Bind reviewed form</button> : null}</td></tr>
+                    <TableRow key={policy.id}><TableCell>{titleCase(policy.flow)} · v{policy.version}</TableCell><TableCell><span className={`pill ${policy.decision === "allowed" ? "new" : "warn"}`}>{titleCase(policy.decision)}</span> {titleCase(policy.maxAutomationLevel)}{selectedPlatform?.canonicalDomain === "bandnet.hamburg" && policy.flow === "contact" ? <button className="btn btn-g btn-sm" disabled={Boolean(working)} onClick={() => void run("Bandnet contact adapter", () => upsertBinding({ platformId: selectedPlatformId, flow: "contact", adapterKey: "bandnet-contact-form-v1", executor: "firecrawl", config: { kind: "firecrawl", extractionProfileKey: "bandnet-contact-form-v1", monitorDriven: false }, configFingerprint: "bandnet-contact-form-v1:1", policyVersionId: policy.id }))} type="button">Bind reviewed form</button> : null}</TableCell></TableRow>
                   ))}
-                </tbody></table>
+                </TableBody></Table>
               )}
             </section>
             <section>
@@ -304,11 +305,11 @@ export function SourceIntelligencePanel() {
             <section>
               <h3>Active adapter bindings</h3>
               {adapters.length === 0 ? <p className="hint">No listing, contact, or auth adapter is active.</p> : (
-                <table className="facts"><tbody>
+                <Table className="facts"><TableBody>
                   {adapters.map((adapter) => (
-                    <tr key={adapter.id}><td>{titleCase(adapter.flow)}</td><td>{titleCase(adapter.executor)} · {adapter.adapterKey} v{adapter.adapterVersion}</td></tr>
+                    <TableRow key={adapter.id}><TableCell>{titleCase(adapter.flow)}</TableCell><TableCell>{titleCase(adapter.executor)} · {adapter.adapterKey} v{adapter.adapterVersion}</TableCell></TableRow>
                   ))}
-                </tbody></table>
+                </TableBody></Table>
               )}
             </section>
           </div>
@@ -335,12 +336,12 @@ export function SourceIntelligencePanel() {
           <EmptyState body="No stored probe run matches this state." title="Probe queue is empty" />
         ) : (
           <div className="lcard rs-review-table-wrap">
-            <table className="q rs-review-table">
-              <thead><tr><th>Run</th><th>Trigger</th><th>Observed</th><th>Result</th><th>Updated</th></tr></thead>
-              <tbody>{probeRuns.results.map((probe) => (
-                <tr key={probe.id}><td className="mono">{probe.id.slice(-8)}</td><td>{titleCase(probe.trigger)}</td><td>{probe.itemsObserved ?? "—"}</td><td><span className={`pill ${toneForStatus(probe.status)}`}>{titleCase(probe.status)}</span>{probe.error ? <span className="mono"><AlertTriangle aria-hidden="true" size={11} /> {probe.error}</span> : null}</td><td className="mono">{formatAge(probe.updatedAt)}</td></tr>
-              ))}</tbody>
-            </table>
+            <Table className="q rs-review-table">
+              <TableHeader><TableRow><TableHead>Run</TableHead><TableHead>Trigger</TableHead><TableHead>Observed</TableHead><TableHead>Result</TableHead><TableHead>Updated</TableHead></TableRow></TableHeader>
+              <TableBody>{probeRuns.results.map((probe) => (
+                <TableRow key={probe.id}><TableCell className="mono">{probe.id.slice(-8)}</TableCell><TableCell>{titleCase(probe.trigger)}</TableCell><TableCell>{probe.itemsObserved ?? "—"}</TableCell><TableCell><span className={`pill ${toneForStatus(probe.status)}`}>{titleCase(probe.status)}</span>{probe.error ? <span className="mono"><AlertTriangle aria-hidden="true" size={11} /> {probe.error}</span> : null}</TableCell><TableCell className="mono">{formatAge(probe.updatedAt)}</TableCell></TableRow>
+              ))}</TableBody>
+            </Table>
           </div>
         )}
       </LedgerCard>

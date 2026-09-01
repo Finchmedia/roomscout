@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertAuthenticatedPortalContract,
   buildAllowedPortalUrl,
   isAllowedHostname,
+  isControlledAgentRegistrationConnection,
   sanitizeInboxThreads,
   sanitizeProviderError,
   sanitizeReconItems,
@@ -31,6 +33,49 @@ describe("portalSafety", () => {
         allowedPaths: ["/inbox"],
       }),
     ).toThrow("DOMAIN_NOT_ALLOWED");
+  });
+
+  it("fails closed when an authenticated inbox or thread contract is missing", () => {
+    expect(() =>
+      assertAuthenticatedPortalContract({
+        url: "https://roomscout.dev/sign-in",
+        expectedPath: "/inbox",
+        contractState: null,
+        allowedStates: ["ready", "empty"],
+      }),
+    ).toThrow("PORTAL_REAUTH_REQUIRED");
+    expect(() =>
+      assertAuthenticatedPortalContract({
+        url: "https://roomscout.dev/inbox",
+        expectedPath: "/inbox",
+        contractState: "empty",
+        allowedStates: ["ready", "empty"],
+      }),
+    ).not.toThrow();
+  });
+
+  it("allows automated credentials only for the exact controlled portal", () => {
+    const reviewed = {
+      sourceSlug: "roomscout-dev-connected",
+      baseUrl: "https://roomscout.dev",
+      accessMode: "authenticated" as const,
+      adapterKey: "roomscout-dev-v1",
+      allowedDomains: ["roomscout.dev"],
+      allowedPaths: ["/sign-up", "/sign-in", "/inbox"],
+    };
+    expect(isControlledAgentRegistrationConnection(reviewed)).toBe(true);
+    expect(
+      isControlledAgentRegistrationConnection({
+        ...reviewed,
+        baseUrl: "https://lookalike.roomscout.dev",
+      }),
+    ).toBe(false);
+    expect(
+      isControlledAgentRegistrationConnection({
+        ...reviewed,
+        adapterKey: "another-adapter",
+      }),
+    ).toBe(false);
   });
 
   it("bounds and filters reconnaissance output", () => {
