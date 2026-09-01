@@ -1,11 +1,11 @@
 "use node";
 
 import { browserbase, type StagehandBrowser } from "@browserbasehq/stagehand";
-import Firecrawl from "firecrawl";
 import { v } from "convex/values";
-import { internal } from "./_generated/api";
+import { components, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { internalAction } from "./_generated/server";
+import { internalAction, type ActionCtx } from "./_generated/server";
+import { FirecrawlRoomScoutClient } from "./components/firecrawlRoomScout/client";
 import { envValue } from "./integrations/env";
 import {
   assertReviewedProbeUrl,
@@ -19,6 +19,8 @@ import {
   isAllowedHostname,
   sanitizeProviderError,
 } from "./integrations/portalSafety";
+
+const firecrawl = new FirecrawlRoomScoutClient(components.firecrawlRoomScout);
 
 type ClaimedProbe = {
   runId: Id<"sourceFlowProbeRuns">;
@@ -87,6 +89,7 @@ function assertFinalProbeUrl(claim: ClaimedProbe, value: string): string {
 }
 
 async function runFirecrawlProbe(
+  ctx: ActionCtx,
   claim: ClaimedProbe,
 ): Promise<RawProbeObservation> {
   if (claim.config.kind !== "firecrawl") {
@@ -102,12 +105,7 @@ async function runFirecrawlProbe(
   const apiKey = envValue("FIRECRAWL_API_KEY");
   if (!apiKey) throw new Error("FIRECRAWL_NOT_CONFIGURED");
   const targetUrl = assertFinalProbeUrl(claim, claim.targetUrl);
-  const client = new Firecrawl({
-    apiKey,
-    timeoutMs: claim.timeoutMs,
-    maxRetries: 1,
-  });
-  const document = await client.scrape(targetUrl, {
+  const document = await firecrawl.scrape(ctx, targetUrl, {
     formats: ["markdown", "links"],
     onlyMainContent: false,
     maxAge: 0,
@@ -296,7 +294,7 @@ export const run = internalAction({
     try {
       const observation =
         claim.executor === "firecrawl"
-          ? await runFirecrawlProbe(claim)
+          ? await runFirecrawlProbe(ctx, claim)
           : await runBrowserbaseProbe(claim);
       const normalized = await normalizeProbeObservation({
         flow: claim.flow,

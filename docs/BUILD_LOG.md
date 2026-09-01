@@ -403,3 +403,42 @@ Native Monitors explicitly disabled, and generated stable AgentMail mailbox
 address salts. Unauthenticated production calls to the Firecrawl webhook and
 Realtime endpoint return HTTP 401. AgentMail intentionally reports unavailable
 until its actual API key and provider-issued Svix signing secret are configured.
+
+## 2026-08-31 — Provider Components as the transport boundary
+
+Replaced the direct Firecrawl SDK integration with a source-preserving local
+fork of the official `@firecrawl/firecrawl-convex@0.1.1` component. The fork
+keeps the upstream durable crawl schema, page storage, webhook and polling
+lifecycle, signed callback handling, cancellation, resumption, and full client
+surface. RoomScout adds the documented Native Monitoring and Interact APIs,
+including zero transport retries for monitor mutations and mutating Interact
+programs. The upstream commit, exact extension delta, MIT license, update
+procedure, and ownership boundary are recorded beside the component source.
+
+All RoomScout Firecrawl paths now use that single component: bounded source
+discovery, read-only source probes, detail-page ingestion, Native Monitor
+reconciliation/manual runs, and approval-gated contact-form Interact. The app
+layer still owns operator authorization, source policy, exact approval hashes,
+rate limits, audit events, private Live View handling, and fail-closed outcomes.
+No broad crawl or mutating provider run was started during this migration.
+
+Mounted the official `@agentmail/convex@0.1.0` component and removed the direct
+AgentMail SDK. The component now provisions and looks up per-user inboxes,
+queues outbound mail durably, exposes transport status, fetches full messages,
+verifies signed webhooks, and dispatches provider events. RoomScout retains the
+user/mailbox ownership model, exact recipient and content approval, rate limits,
+thread projection, private Inbox, delivery notifications, and AI reply parsing.
+The component outbound ID is persisted separately so a stuck RoomScout send
+reconciles the existing component job rather than enqueueing another one.
+
+The official AgentMail component currently does not pass RoomScout's former
+provider idempotency header through its internal HTTP retry. App-level reuse of
+one component outbound ID prevents duplicate enqueueing, but an exceptionally
+narrow accepted-response-lost retry remains a provider-component limitation and
+is documented rather than hidden.
+
+Verification passed with Convex component discovery/codegen and a successful
+development function upload, 192 application tests, 54 preserved/upstream and
+extension Firecrawl tests, full TypeScript, ESLint, and the production Vite
+build. These checks prove the component graph and application contracts; they
+do not claim a live monitor run or AgentMail delivery round trip.

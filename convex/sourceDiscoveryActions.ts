@@ -1,14 +1,16 @@
 "use node";
 
-import Firecrawl from "firecrawl";
 import { ConvexError, v } from "convex/values";
-import { internal } from "./_generated/api";
+import { components, internal } from "./_generated/api";
 import { action } from "./_generated/server";
+import { FirecrawlRoomScoutClient } from "./components/firecrawlRoomScout/client";
 import { requireActionUserId } from "./integrations/authz";
 import { envValue } from "./integrations/env";
 import { normalizeDiscoveryHit } from "./lib/sourceCandidate";
 import { discoveryQuerySlice } from "./lib/sourceDiscoveryQueries";
 import { roomScoutRateLimiter } from "./rateLimits";
+
+const firecrawl = new FirecrawlRoomScoutClient(components.firecrawlRoomScout);
 
 export const runGermanySlice = action({
   args: {
@@ -39,7 +41,6 @@ export const runGermanySlice = action({
       limit: Math.min(3, Math.max(1, Math.floor(args.queryLimit ?? 1))),
     });
     const resultsPerQuery = Math.min(10, Math.max(1, Math.floor(args.resultsPerQuery ?? 5)));
-    const client = new Firecrawl({ apiKey, timeoutMs: 60_000, maxRetries: 1 });
     let candidatesSeen = 0;
     let candidatesCreated = 0;
     for (const discovery of slice.queries) {
@@ -56,7 +57,7 @@ export const runGermanySlice = action({
       });
       if (batch.duplicate) continue;
       try {
-        const response = await client.search(discovery.query, {
+        const response = await firecrawl.search(ctx, discovery.query, {
           sources: ["web"],
           limit: resultsPerQuery,
           location: "Germany",
@@ -65,15 +66,36 @@ export const runGermanySlice = action({
         });
         const unique = new Map<string, ReturnType<typeof normalizeDiscoveryHit>>();
         for (const hit of response.web ?? []) {
-          const url = "url" in hit
+          const metadata =
+            "metadata" in hit &&
+            typeof hit.metadata === "object" &&
+            hit.metadata !== null
+              ? (hit.metadata as Record<string, unknown>)
+              : undefined;
+          const directUrl = "url" in hit && typeof hit.url === "string"
             ? hit.url
-            : hit.metadata?.sourceURL ?? hit.metadata?.url;
+            : undefined;
+          const sourceUrl = typeof metadata?.sourceURL === "string"
+            ? metadata.sourceURL
+            : typeof metadata?.url === "string"
+              ? metadata.url
+              : undefined;
+          const url = directUrl ?? sourceUrl;
           if (!url) continue;
-          const metadata = "metadata" in hit ? hit.metadata : undefined;
           const normalized = normalizeDiscoveryHit({
             url,
-            title: "title" in hit ? hit.title : metadata?.title,
-            description: "description" in hit ? hit.description : metadata?.description,
+            title:
+              "title" in hit && typeof hit.title === "string"
+                ? hit.title
+                : typeof metadata?.title === "string"
+                  ? metadata.title
+                  : undefined,
+            description:
+              "description" in hit && typeof hit.description === "string"
+                ? hit.description
+                : typeof metadata?.description === "string"
+                  ? metadata.description
+                  : undefined,
           });
           if (normalized !== null) unique.set(normalized.canonicalKey, normalized);
         }

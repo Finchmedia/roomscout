@@ -1,4 +1,3 @@
-import { AgentMailClient } from "agentmail";
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import {
@@ -91,10 +90,6 @@ function safeError(error: unknown): string {
     .slice(0, 500);
 }
 
-function createClient(apiKey: string): AgentMailClient {
-  return new AgentMailClient({ apiKey, timeoutInSeconds: 20, maxRetries: 2 });
-}
-
 async function mailboxDigest(ownerId: string, salt: string): Promise<string> {
   const key = await crypto.subtle.importKey(
     "raw",
@@ -114,25 +109,6 @@ async function mailboxDigest(ownerId: string, salt: string): Promise<string> {
 function usernameForClientId(clientId: string): string {
   const digest = clientId.replace(/^roomscout-user-/, "");
   return `rs-${digest.slice(0, 24).toLowerCase()}`;
-}
-
-async function findInboxByClientId(
-  client: AgentMailClient,
-  clientId: string,
-) {
-  let pageToken: string | undefined;
-  for (let page = 0; page < 20; page += 1) {
-    const result = await client.inboxes.list({ limit: 100, pageToken });
-    const inbox = result.inboxes.find((candidate) => candidate.clientId === clientId);
-    if (inbox) {
-      return inbox;
-    }
-    pageToken = result.nextPageToken;
-    if (!pageToken) {
-      break;
-    }
-  }
-  return null;
 }
 
 export const getMine = query({
@@ -337,6 +313,36 @@ export const getByProviderInboxId = internalQuery({
   },
 });
 
+export const getActiveById = internalQuery({
+  args: { mailboxId: v.id("userMailboxes") },
+  returns: v.union(
+    v.object({
+      mailboxId: v.id("userMailboxes"),
+      ownerId: v.id("users"),
+      providerInboxId: v.string(),
+      emailAddress: v.string(),
+    }),
+    v.null(),
+  ),
+  handler: async (ctx, args) => {
+    const mailbox = await ctx.db.get(args.mailboxId);
+    if (
+      mailbox === null ||
+      mailbox.status !== "active" ||
+      !mailbox.providerInboxId ||
+      !mailbox.emailAddress
+    ) {
+      return null;
+    }
+    return {
+      mailboxId: mailbox._id,
+      ownerId: mailbox.ownerId,
+      providerInboxId: mailbox.providerInboxId,
+      emailAddress: mailbox.emailAddress,
+    };
+  },
+});
+
 export const ensureForOwner = internalAction({
   args: { ownerId: v.id("users") },
   returns: ensuredMailbox,
@@ -373,24 +379,21 @@ export const ensureForOwner = internalAction({
       return { status: claim.outcome };
     }
 
-    const client = createClient(apiKey);
     try {
       let inbox;
       try {
-        inbox = await client.inboxes.create({
+        inbox = await ctx.runAction(internal.agentmailComponent.createInbox, {
           username: usernameForClientId(claim.clientId),
           domain:
             envValue("AGENTMAIL_DOMAIN") ?? envValue("AGENTMAIL_INBOX_DOMAIN"),
           displayName: "RoomScout",
           clientId: claim.clientId,
-          metadata: {
-            roomscout_owner_hash: digest,
-            roomscout_product: "roomscout",
-            roomscout_environment: envValue("ROOMSCOUT_ENV") ?? "development",
-          },
         });
       } catch (createError) {
-        inbox = await findInboxByClientId(client, claim.clientId);
+        inbox = await ctx.runAction(
+          internal.agentmailComponent.findInboxByClientId,
+          { clientId: claim.clientId },
+        );
         if (!inbox) {
           throw createError;
         }

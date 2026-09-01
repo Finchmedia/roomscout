@@ -40,6 +40,24 @@ export type ParsedAgentMailEvent =
       occurredAt: number;
     };
 
+export type NormalizedAgentMailInbox = {
+  inboxId: string;
+  email: string;
+  clientId?: string;
+};
+
+export type NormalizedAgentMailMessage = {
+  inboxId: string;
+  threadId: string;
+  messageId: string;
+  from: string;
+  to: string[];
+  subject: string;
+  body: string;
+  htmlAvailable: boolean;
+  occurredAt: number;
+};
+
 function recordOf(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -96,6 +114,69 @@ function occurredAt(record: Record<string, unknown>): number {
     }
   }
   return Date.now();
+}
+
+export function normalizeAgentMailInbox(
+  value: unknown,
+): NormalizedAgentMailInbox | null {
+  const inbox = recordOf(value);
+  if (!inbox) return null;
+  const inboxId = stringValue(inbox, "inbox_id", "inboxId");
+  const email = stringValue(inbox, "email");
+  if (!inboxId || !email) return null;
+  return {
+    inboxId,
+    email,
+    clientId: stringValue(inbox, "client_id", "clientId"),
+  };
+}
+
+export function normalizeAgentMailInboxPage(value: unknown): {
+  inboxes: NormalizedAgentMailInbox[];
+  nextPageToken?: string;
+} {
+  const page = recordOf(value);
+  const inboxes = Array.isArray(page?.inboxes)
+    ? page.inboxes
+        .map(normalizeAgentMailInbox)
+        .filter((inbox): inbox is NormalizedAgentMailInbox => inbox !== null)
+    : [];
+  return {
+    inboxes,
+    nextPageToken: page
+      ? stringValue(page, "next_page_token", "nextPageToken")
+      : undefined,
+  };
+}
+
+export function normalizeAgentMailMessage(
+  value: unknown,
+): NormalizedAgentMailMessage | null {
+  const message = recordOf(value);
+  if (!message) return null;
+  const inboxId = stringValue(message, "inbox_id", "inboxId");
+  const threadId = stringValue(message, "thread_id", "threadId");
+  const messageId = stringValue(message, "message_id", "messageId");
+  if (!inboxId || !threadId || !messageId) return null;
+  const extractedText = stringValue(
+    message,
+    "extracted_text",
+    "extractedText",
+  );
+  const text = stringValue(message, "text");
+  const preview = stringValue(message, "preview");
+  const html = stringValue(message, "html", "extracted_html", "extractedHtml");
+  return {
+    inboxId,
+    threadId,
+    messageId,
+    from: addressValue(message.from) ?? "unknown",
+    to: addressList(message.to),
+    subject: stringValue(message, "subject") ?? "(no subject)",
+    body: bestMessageBody({ extractedText, text, preview, html }),
+    htmlAvailable: html !== undefined,
+    occurredAt: occurredAt(message),
+  };
 }
 
 export function htmlToPlainText(html: string): string {

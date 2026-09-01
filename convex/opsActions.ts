@@ -1,12 +1,14 @@
 "use node";
 
-import Firecrawl from "firecrawl";
 import { ConvexError, v } from "convex/values";
-import { internal } from "./_generated/api";
+import { components, internal } from "./_generated/api";
 import { action, type ActionCtx } from "./_generated/server";
+import { FirecrawlRoomScoutClient } from "./components/firecrawlRoomScout/client";
 import { requireActionUserId } from "./integrations/authz";
 import { envValue } from "./integrations/env";
 import { deriveProviderReadiness } from "./integrations/providerReadiness";
+
+const firecrawl = new FirecrawlRoomScoutClient(components.firecrawlRoomScout);
 
 async function requireActionOperator(ctx: ActionCtx) {
   const userId = await requireActionUserId(ctx);
@@ -26,8 +28,7 @@ export const runMonitorNow = action({
     if (!apiKey) throw new ConvexError({ code: "FIRECRAWL_NOT_CONFIGURED" });
     const target = await ctx.runQuery(internal.sourceRegistry.getTargetForRun, args);
     if (!target) throw new ConvexError({ code: "ACTIVE_MONITOR_NOT_FOUND" });
-    const firecrawl = new Firecrawl({ apiKey, timeoutMs: 60_000, maxRetries: 1 });
-    const check = await firecrawl.runMonitor(target.providerMonitorId);
+    const check = await firecrawl.runMonitor(ctx, target.providerMonitorId);
     return { checkId: check.id, status: check.status };
   },
 });

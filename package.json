@@ -16,6 +16,7 @@
     "deploy": "npx @convex-dev/static-hosting deploy"
   },
   "dependencies": {
+    "@agentmail/convex": "^0.1.0",
     "@ai-sdk/openai-compatible": "3.0.14",
     "@browserbasehq/sdk": "2.19.0",
     "@browserbasehq/stagehand": "4.0.2",
@@ -27,11 +28,9 @@
     "@radix-ui/react-dialog": "1.1.23",
     "@radix-ui/react-select": "2.3.7",
     "@x402/fetch": "^2.24.0",
-    "agentmail": "0.5.20",
     "ai": "7.0.83",
     "clsx": "2.1.1",
     "convex": "1.45.0",
-    "firecrawl": "4.37.0",
     "lucide-react": "1.34.0",
     "mapbox-gl": "^3.29.0",
     "playwright-core": "1.62.1",

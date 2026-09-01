@@ -37,7 +37,21 @@ const draftValidator = v.object({
   contentHash: v.string(),
   status: draftStatus,
   sendIdempotencyKey: v.optional(v.string()),
+  agentmailComponentOutboundId: v.optional(v.string()),
   providerThreadId: v.optional(v.string()),
+  mailboxId: v.optional(v.id("userMailboxes")),
+  providerMessageId: v.optional(v.string()),
+  deliveryStatus: v.optional(
+    v.union(
+      v.literal("queued"),
+      v.literal("sent"),
+      v.literal("delivered"),
+      v.literal("bounced"),
+      v.literal("rejected"),
+      v.literal("complained"),
+    ),
+  ),
+  sendingStartedAt: v.optional(v.number()),
   approvedAt: v.optional(v.number()),
   sentAt: v.optional(v.number()),
   error: v.optional(v.string()),
@@ -278,6 +292,7 @@ export const updateDraft = mutation({
       ]),
       status: "drafted",
       sendIdempotencyKey: undefined,
+      agentmailComponentOutboundId: undefined,
       approvedAt: undefined,
       error: undefined,
       updatedAt: Date.now(),
@@ -584,6 +599,28 @@ export const markSendFailed = internalMutation({
   },
 });
 
+export const touchComponentSend = internalMutation({
+  args: {
+    draftId: v.id("outreachDrafts"),
+    idempotencyKey: v.string(),
+    outboundId: v.string(),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const draft = await ctx.db.get(args.draftId);
+    if (
+      draft === null ||
+      draft.status !== "sending" ||
+      draft.sendIdempotencyKey !== args.idempotencyKey ||
+      draft.agentmailComponentOutboundId !== args.outboundId
+    ) {
+      return false;
+    }
+    await ctx.db.patch(draft._id, { updatedAt: Date.now() });
+    return true;
+  },
+});
+
 export const recoverStuckSending = internalMutation({
   args: { olderThanMs: v.number(), limit: v.number() },
   returns: v.number(),
@@ -596,6 +633,28 @@ export const recoverStuckSending = internalMutation({
       )
       .take(Math.max(1, Math.min(50, Math.floor(args.limit))));
     for (const draft of drafts) {
+      if (
+        draft.agentmailComponentOutboundId &&
+        draft.sendIdempotencyKey &&
+        draft.mailboxId
+      ) {
+        await ctx.db.patch(draft._id, {
+          error: "Recovered AgentMail component status reconciliation.",
+          updatedAt: Date.now(),
+        });
+        await ctx.scheduler.runAfter(
+          0,
+          internal.agentmail.reconcileApprovedSend,
+          {
+            draftId: draft._id,
+            mailboxId: draft.mailboxId,
+            idempotencyKey: draft.sendIdempotencyKey,
+            outboundId: draft.agentmailComponentOutboundId,
+            attempt: 0,
+          },
+        );
+        continue;
+      }
       await ctx.db.patch(draft._id, {
         status: "approved",
         sendingStartedAt: undefined,

@@ -46,8 +46,9 @@ export const prepareApprovedForm = action({
     await roomScoutRateLimiter.limit(ctx, "firecrawlInteractUser", { key: ownerId, throws: true });
     const form = await ctx.runQuery(internal.externalActions.getApprovedContactForm, { ownerId, requestId: args.requestId });
     if (form === null) throw new ConvexError({ code: "APPROVED_FORM_NOT_FOUND" });
+    firecrawlKey();
     const result = await prepareFormWithFirecrawl({
-      apiKey: firecrawlKey(),
+      ctx,
       url: form.targetUrl,
       fields: form.fields.map((field: { name: string; label?: string; value: string }) => ({ key: field.name, value: field.value, aliases: field.label ? [field.label, field.name] : [field.name] })),
     });
@@ -62,7 +63,7 @@ export const prepareApprovedForm = action({
       } catch { /* Provider output is advisory; live preview remains authoritative. */ }
       return { executionId, jobId: result.jobId, liveViewUrl: result.liveViewUrl, interactiveLiveViewUrl: result.interactiveLiveViewUrl, filled, missing, submitted: false as const };
     } catch (error) {
-      await stopFirecrawlInteraction({ apiKey: firecrawlKey(), jobId: result.jobId }).catch(() => undefined);
+      await stopFirecrawlInteraction({ ctx, jobId: result.jobId }).catch(() => undefined);
       throw error;
     }
   },
@@ -74,7 +75,8 @@ export const stopPreparedForm = action({
     const ownerId = await requireActionUserId(ctx);
     const interaction = await ctx.runQuery(internal.externalActions.getPreparedInteraction, { ownerId, requestId: args.requestId });
     if (interaction === null) throw new ConvexError({ code: "INTERACTION_NOT_FOUND" });
-    await stopFirecrawlInteraction({ apiKey: firecrawlKey(), jobId: interaction.jobId }).catch(() => undefined);
+    firecrawlKey();
+    await stopFirecrawlInteraction({ ctx, jobId: interaction.jobId }).catch(() => undefined);
     await ctx.runMutation(internal.externalActions.cancelPreparedInteraction, { ownerId, requestId: args.requestId, error: "USER_STOPPED_INTERACTION" });
     return null;
   },
@@ -148,7 +150,7 @@ async function executeApprovedForOwner(
   ownerId: Id<"users">,
   requestId: Id<"actionRequests">,
 ): Promise<ExecuteApprovedResult> {
-  const apiKey = firecrawlKey();
+  firecrawlKey();
   await roomScoutRateLimiter.limit(ctx, "firecrawlInteractUser", {
     key: ownerId,
     throws: true,
@@ -169,7 +171,7 @@ async function executeApprovedForOwner(
       );
       if (interaction !== null) {
         preview = await resumeFirecrawlInteractionPreview({
-          apiKey,
+          ctx,
           jobId: interaction.jobId,
         }).catch(() => undefined);
       }
@@ -246,7 +248,7 @@ async function executeApprovedForOwner(
 
   try {
     const result = await submitApprovedFormWithFirecrawl({
-      apiKey,
+      ctx,
       url: claim.payload.targetUrl,
       fields: claim.payload.fields.map((field) => ({
         name: field.name,
@@ -391,8 +393,9 @@ export const completeApprovedHumanStep = action({
     if (interaction === null || interaction.executionId !== args.executionId) {
       throw new ConvexError({ code: "INTERACTION_NOT_FOUND" });
     }
+    firecrawlKey();
     await stopFirecrawlInteraction({
-      apiKey: firecrawlKey(),
+      ctx,
       jobId: interaction.jobId,
     }).catch(() => undefined);
     await ctx.runMutation(internal.externalActions.confirmHumanExecution, {

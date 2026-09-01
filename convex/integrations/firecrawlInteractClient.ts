@@ -1,6 +1,10 @@
 "use node";
 
-import Firecrawl from "firecrawl";
+import { components } from "../_generated/api";
+import type { ActionCtx } from "../_generated/server";
+import { FirecrawlRoomScoutClient } from "../components/firecrawlRoomScout/client";
+
+const firecrawl = new FirecrawlRoomScoutClient(components.firecrawlRoomScout);
 
 export type FormPreparationField = {
   key: string;
@@ -376,14 +380,6 @@ output(successObserved ? "submitted_verified" : "verification_unknown", successO
 `;
 }
 
-function createClient(apiKey: string, maxRetries: number): Firecrawl {
-  return new Firecrawl({
-    apiKey,
-    timeoutMs: 60_000,
-    maxRetries,
-  });
-}
-
 function safeResultOutput(result: {
   output?: string;
   stdout?: string;
@@ -452,32 +448,33 @@ export function parseApprovedSubmissionOutput(
 }
 
 export async function prepareFormWithFirecrawl(args: {
-  apiKey: string;
+  ctx: ActionCtx;
   url: string;
   fields: FormPreparationField[];
   profileName?: string;
 }): Promise<FirecrawlFormPreview> {
-  const client = createClient(args.apiKey, 1);
-  const document = await client.scrape(args.url, {
+  const document = await firecrawl.startInteractiveScrape(args.ctx, args.url, {
     formats: ["markdown"],
     onlyMainContent: true,
     maxAge: 0,
     storeInCache: false,
     ...(args.profileName
-      ? { profile: { name: args.profileName, saveChanges: false } }
+      ? { extra: { profile: { name: args.profileName, saveChanges: false } } }
       : {}),
   });
-  const jobId = document.metadata?.scrapeId;
+  const scrapeId = document.metadata?.scrapeId;
+  const jobId = typeof scrapeId === "string" ? scrapeId : undefined;
   if (!jobId) {
     throw new Error("Firecrawl did not return an interactive scrape session.");
   }
-  const result = await client.interact(jobId, {
+  const result = await firecrawl.interact(args.ctx, jobId, {
     code: buildPreparationCode(args.fields),
     language: "node",
     timeout: 60,
+    mutating: false,
   });
   if (!result.success || (result.exitCode ?? 0) !== 0) {
-    await client.stopInteraction(jobId).catch(() => undefined);
+    await firecrawl.stopInteraction(args.ctx, jobId).catch(() => undefined);
     throw new Error(
       (result.error || result.stderr || "Firecrawl form preparation failed").slice(
         0,
@@ -496,7 +493,7 @@ export async function prepareFormWithFirecrawl(args: {
 }
 
 export async function submitApprovedFormWithFirecrawl(args: {
-  apiKey: string;
+  ctx: ActionCtx;
   url: string;
   fields: ApprovedFirecrawlSubmissionField[];
   workflow: ReviewedFirecrawlSubmitWorkflow;
@@ -506,7 +503,6 @@ export async function submitApprovedFormWithFirecrawl(args: {
 }): Promise<FirecrawlSubmissionResult> {
   // Retries are disabled for the mutating phase. A timeout after the click is
   // treated as indeterminate by the caller and must never trigger a resubmit.
-  const client = createClient(args.apiKey, 0);
   let jobId: string | null = null;
   let mutatingProgramDispatched = false;
   try {
@@ -517,25 +513,27 @@ export async function submitApprovedFormWithFirecrawl(args: {
       fields: args.fields,
       forceHumanPresence: args.forceHumanPresence,
     });
-    const document = await client.scrape(args.url, {
+    const document = await firecrawl.startInteractiveScrape(args.ctx, args.url, {
       formats: ["markdown"],
       onlyMainContent: true,
       maxAge: 0,
       storeInCache: false,
       ...(args.profileName
-        ? { profile: { name: args.profileName, saveChanges: false } }
+        ? { extra: { profile: { name: args.profileName, saveChanges: false } } }
         : {}),
     });
-    jobId = document.metadata?.scrapeId ?? null;
+    const scrapeId = document.metadata?.scrapeId;
+    jobId = typeof scrapeId === "string" ? scrapeId : null;
     if (!jobId) {
       throw new Error("FIRECRAWL_INTERACTIVE_SESSION_MISSING");
     }
     await args.onSessionCreated?.(jobId);
     mutatingProgramDispatched = true;
-    const result = await client.interact(jobId, {
+    const result = await firecrawl.interact(args.ctx, jobId, {
       code,
       language: "node",
       timeout: 60,
+      mutating: true,
     });
     if (!result.success || (result.exitCode ?? 0) !== 0) {
       throw new FirecrawlSubmissionError(
@@ -548,7 +546,7 @@ export async function submitApprovedFormWithFirecrawl(args: {
     }
     const parsed = parseApprovedSubmissionOutput(safeResultOutput(result));
     if (parsed.state === "submitted_verified") {
-      await client.stopInteraction(jobId).catch(() => undefined);
+      await firecrawl.stopInteraction(args.ctx, jobId).catch(() => undefined);
       return { jobId, ...parsed };
     }
     if (
@@ -556,7 +554,7 @@ export async function submitApprovedFormWithFirecrawl(args: {
       !result.liveViewUrl &&
       !result.interactiveLiveViewUrl
     ) {
-      await client.stopInteraction(jobId).catch(() => undefined);
+      await firecrawl.stopInteraction(args.ctx, jobId).catch(() => undefined);
       throw new FirecrawlSubmissionError(
         "FIRECRAWL_HUMAN_HANDOFF_UNAVAILABLE",
         false,
@@ -572,7 +570,7 @@ export async function submitApprovedFormWithFirecrawl(args: {
     };
   } catch (error) {
     if (jobId) {
-      await client.stopInteraction(jobId).catch(() => undefined);
+      await firecrawl.stopInteraction(args.ctx, jobId).catch(() => undefined);
     }
     if (error instanceof FirecrawlSubmissionError) throw error;
     throw new FirecrawlSubmissionError(
@@ -583,17 +581,17 @@ export async function submitApprovedFormWithFirecrawl(args: {
 }
 
 export async function resumeFirecrawlInteractionPreview(args: {
-  apiKey: string;
+  ctx: ActionCtx;
   jobId: string;
 }): Promise<{
   liveViewUrl?: string;
   interactiveLiveViewUrl?: string;
 }> {
-  const client = createClient(args.apiKey, 0);
-  const result = await client.interact(args.jobId, {
+  const result = await firecrawl.interact(args.ctx, args.jobId, {
     code: 'console.log(JSON.stringify({ state: "preview_only" }));',
     language: "node",
     timeout: 15,
+    mutating: false,
   });
   if (!result.success || (result.exitCode ?? 0) !== 0) {
     throw new Error("FIRECRAWL_INTERACTION_NOT_AVAILABLE");
@@ -607,9 +605,8 @@ export async function resumeFirecrawlInteractionPreview(args: {
 }
 
 export async function stopFirecrawlInteraction(args: {
-  apiKey: string;
+  ctx: ActionCtx;
   jobId: string;
 }): Promise<void> {
-  const client = createClient(args.apiKey, 1);
-  await client.stopInteraction(args.jobId);
+  await firecrawl.stopInteraction(args.ctx, args.jobId);
 }

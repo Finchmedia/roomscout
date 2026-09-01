@@ -1,4 +1,7 @@
-import type { CreateMonitorRequest, Monitor } from "firecrawl";
+import type {
+  CreateMonitorRequest,
+  NativeMonitor,
+} from "../components/firecrawlRoomScout/client";
 import { stableFingerprint } from "./fingerprints";
 import {
   SOURCE_ENTRY_CHANGE_TRACKING_SCHEMA,
@@ -83,7 +86,7 @@ export function monitorConfigFingerprint(
 }
 
 export function monitorMatchesDesired(
-  monitor: Monitor,
+  monitor: NativeMonitor,
   fingerprint: string,
   storedFingerprint: string | undefined,
   paused: boolean,

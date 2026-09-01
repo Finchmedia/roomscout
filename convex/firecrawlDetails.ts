@@ -1,12 +1,14 @@
 "use node";
 
 import { randomUUID } from "node:crypto";
-import Firecrawl from "firecrawl";
 import { v } from "convex/values";
-import { internal } from "./_generated/api";
+import { components, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { internalAction } from "./_generated/server";
+import { FirecrawlRoomScoutClient } from "./components/firecrawlRoomScout/client";
 import { envValue } from "./integrations/env";
+
+const firecrawl = new FirecrawlRoomScoutClient(components.firecrawlRoomScout);
 
 export const processDetailBacklog = internalAction({
   args: {},
@@ -33,11 +35,6 @@ export const processDetailBacklog = internalAction({
       return { claimed: 0, succeeded: 0, failed: 0 };
     }
 
-    const firecrawl = new Firecrawl({
-      apiKey,
-      timeoutMs: 60_000,
-      maxRetries: 2,
-    });
     const outcomes = await Promise.all(
       jobs.map(async (job: {
         sourceEntryId: Id<"sourceEntries">;
@@ -46,7 +43,7 @@ export const processDetailBacklog = internalAction({
         leaseId: string;
       }) => {
         try {
-          const document = await firecrawl.scrape(job.detailUrl, {
+          const document = await firecrawl.scrape(ctx, job.detailUrl, {
             formats: ["markdown"],
             onlyMainContent: true,
             maxAge: 0,

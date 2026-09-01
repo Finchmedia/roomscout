@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   bestMessageBody,
+  normalizeAgentMailInbox,
+  normalizeAgentMailInboxPage,
+  normalizeAgentMailMessage,
   parseAgentMailEvent,
 } from "./agentmailPayload";
 
@@ -106,5 +109,69 @@ describe("bestMessageBody", () => {
     expect(
       bestMessageBody({ html: "<style>.x{}</style><p>Hallo &amp; willkommen</p>" }),
     ).toBe("Hallo & willkommen");
+  });
+});
+
+describe("AgentMail component payload normalization", () => {
+  it("normalizes snake_case inbox responses without exposing provider shape", () => {
+    expect(
+      normalizeAgentMailInbox({
+        inbox_id: "inbox-1",
+        email: "rs-user@agentmail.to",
+        client_id: "roomscout-user-1",
+      }),
+    ).toEqual({
+      inboxId: "inbox-1",
+      email: "rs-user@agentmail.to",
+      clientId: "roomscout-user-1",
+    });
+    expect(
+      normalizeAgentMailInboxPage({
+        inboxes: [
+          {
+            inbox_id: "inbox-1",
+            email: "rs-user@agentmail.to",
+            client_id: "roomscout-user-1",
+          },
+          { invalid: true },
+        ],
+        next_page_token: "next-page",
+      }),
+    ).toEqual({
+      inboxes: [
+        {
+          inboxId: "inbox-1",
+          email: "rs-user@agentmail.to",
+          clientId: "roomscout-user-1",
+        },
+      ],
+      nextPageToken: "next-page",
+    });
+  });
+
+  it("normalizes component message reads and prefers extracted text", () => {
+    expect(
+      normalizeAgentMailMessage({
+        inbox_id: "inbox-1",
+        thread_id: "thread-1",
+        message_id: "message-1",
+        from: "owner@example.com",
+        to: [{ email: "rs-user@agentmail.to" }],
+        subject: "Re: rehearsal room",
+        extracted_text: "The room is still available.",
+        html: "<p>Fallback</p>",
+        timestamp: "2026-08-28T12:00:00.000Z",
+      }),
+    ).toEqual({
+      inboxId: "inbox-1",
+      threadId: "thread-1",
+      messageId: "message-1",
+      from: "owner@example.com",
+      to: ["rs-user@agentmail.to"],
+      subject: "Re: rehearsal room",
+      body: "The room is still available.",
+      htmlAvailable: true,
+      occurredAt: Date.parse("2026-08-28T12:00:00.000Z"),
+    });
   });
 });

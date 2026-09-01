@@ -9,6 +9,7 @@
  */
 
 import type * as agentmail from "../agentmail.js";
+import type * as agentmailComponent from "../agentmailComponent.js";
 import type * as ai from "../ai.js";
 import type * as auth from "../auth.js";
 import type * as browserbasePortal from "../browserbasePortal.js";
@@ -85,6 +86,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   agentmail: typeof agentmail;
+  agentmailComponent: typeof agentmailComponent;
   ai: typeof ai;
   auth: typeof auth;
   browserbasePortal: typeof browserbasePortal;
@@ -187,4 +189,6 @@ export declare const components: {
   agent: import("@convex-dev/agent/_generated/component.js").ComponentApi<"agent">;
   rateLimiter: import("@convex-dev/rate-limiter/_generated/component.js").ComponentApi<"rateLimiter">;
   staticHosting: import("@convex-dev/static-hosting/_generated/component.js").ComponentApi<"staticHosting">;
+  agentmail: import("@agentmail/convex/_generated/component.js").ComponentApi<"agentmail">;
+  firecrawlRoomScout: import("../components/firecrawlRoomScout/_generated/component.js").ComponentApi<"firecrawlRoomScout">;
 };

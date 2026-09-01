@@ -1,9 +1,9 @@
 "use node";
 
-import Firecrawl from "firecrawl";
 import { v } from "convex/values";
-import { internal } from "./_generated/api";
+import { components, internal } from "./_generated/api";
 import { internalAction } from "./_generated/server";
+import { FirecrawlRoomScoutClient } from "./components/firecrawlRoomScout/client";
 import { envValue } from "./integrations/env";
 import { stableFingerprint } from "./integrations/fingerprints";
 import {
@@ -12,6 +12,8 @@ import {
   monitorMatchesDesired,
 } from "./integrations/monitorReconciliation";
 import { extractSourceEntriesFromSnapshot } from "./integrations/sourceEntryExtraction";
+
+const firecrawl = new FirecrawlRoomScoutClient(components.firecrawlRoomScout);
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown Firecrawl monitor error";
@@ -47,11 +49,6 @@ export const reconcileNativeMonitors = internalAction({
       internal.firecrawl.listMonitorCandidates,
       {},
     );
-    const firecrawl = new Firecrawl({
-      apiKey,
-      timeoutMs: 30_000,
-      maxRetries: 2,
-    });
     let created = 0;
     let updated = 0;
     let unchanged = 0;
@@ -66,9 +63,9 @@ export const reconcileNativeMonitors = internalAction({
       const fingerprint = monitorConfigFingerprint(desired, candidate.paused);
       try {
         if (!candidate.providerMonitorId) {
-          const monitor = await firecrawl.createMonitor(desired);
+          const monitor = await firecrawl.createMonitor(ctx, desired);
           if (candidate.paused) {
-            await firecrawl.updateMonitor(monitor.id, { status: "paused" });
+            await firecrawl.updateMonitor(ctx, monitor.id, { status: "paused" });
           }
           await ctx.runMutation(
             internal.firecrawl.saveMonitorReconciliation,
@@ -84,7 +81,7 @@ export const reconcileNativeMonitors = internalAction({
           continue;
         }
 
-        const current = await firecrawl.getMonitor(candidate.providerMonitorId);
+        const current = await firecrawl.getMonitor(ctx, candidate.providerMonitorId);
         if (
           monitorMatchesDesired(
             current,
@@ -107,7 +104,7 @@ export const reconcileNativeMonitors = internalAction({
           continue;
         }
 
-        const monitor = await firecrawl.updateMonitor(current.id, {
+        const monitor = await firecrawl.updateMonitor(ctx, current.id, {
           name: desired.name,
           status: candidate.paused ? "paused" : "active",
           schedule: desired.schedule,
@@ -172,11 +169,6 @@ export const reconcileMonitorCheck = internalAction({
       return { pages: 0, entries: 0, queuedDetails: 0 };
     }
 
-    const firecrawl = new Firecrawl({
-      apiKey,
-      timeoutMs: 30_000,
-      maxRetries: 2,
-    });
     let skip = 0;
     let pageCount = 0;
     let entryCount = 0;
@@ -187,6 +179,7 @@ export const reconcileMonitorCheck = internalAction({
     try {
       for (let batch = 0; batch < 10; batch += 1) {
         const check = await firecrawl.getMonitorCheck(
+          ctx,
           args.providerMonitorId,
           args.providerCheckId,
           { limit: 100, skip },

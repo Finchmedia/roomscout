@@ -710,6 +710,10 @@ export default defineSchema({
       v.literal("failed"),
     ),
     sendIdempotencyKey: v.optional(v.string()),
+    // Durable transport handle owned by the isolated @agentmail/convex
+    // component. This is intentionally separate from providerMessageId,
+    // which is assigned only after AgentMail accepts the message.
+    agentmailComponentOutboundId: v.optional(v.string()),
     providerThreadId: v.optional(v.string()),
     approvedAt: v.optional(v.number()),
     sentAt: v.optional(v.number()),
