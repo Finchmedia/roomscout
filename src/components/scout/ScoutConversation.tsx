@@ -1,6 +1,5 @@
 import { LoaderCircle, Send } from "lucide-react";
-import { useId, useState } from "react";
-import type { FormEvent } from "react";
+import { useId, useState, type FormEvent, type ReactNode } from "react";
 import { LedgerCard } from "../ui/LedgerCard";
 
 export type ScoutConversationMessage = {
@@ -17,6 +16,22 @@ type ScoutConversationProps = {
   error?: string;
   compact?: boolean;
 };
+
+function renderScoutFormatting(body: string): ReactNode[] {
+  const parts: ReactNode[] = [];
+  const boldPattern = /\*\*([^*\n]+)\*\*/g;
+  let cursor = 0;
+
+  for (const match of body.matchAll(boldPattern)) {
+    const start = match.index;
+    if (start > cursor) parts.push(body.slice(cursor, start));
+    parts.push(<strong key={`${start}:${match[1]}`}>{match[1]}</strong>);
+    cursor = start + match[0].length;
+  }
+
+  if (cursor < body.length) parts.push(body.slice(cursor));
+  return parts;
+}
 
 export function ScoutConversation({ messages, starters = [], onSend, busy = false, error, compact = false }: ScoutConversationProps) {
   const inputId = useId();
@@ -47,7 +62,11 @@ export function ScoutConversation({ messages, starters = [], onSend, busy = fals
     >
       <div aria-live="polite" className="msgs">
         {messages.map((message) => (
-          <div className={`msg m-${message.author}`} key={message.id}>{message.body}</div>
+          <div className={`msg m-${message.author}`} key={message.id}>
+            {message.author === "user"
+              ? message.body
+              : renderScoutFormatting(message.body)}
+          </div>
         ))}
         {busy ? <div className="msg m-scout rs-scout-thinking"><LoaderCircle aria-hidden="true" className="rs-spin" size={14} />Scout is thinking…</div> : null}
       </div>
