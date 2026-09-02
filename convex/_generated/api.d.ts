@@ -14,6 +14,8 @@ import type * as ai from "../ai.js";
 import type * as auth from "../auth.js";
 import type * as browserbasePortal from "../browserbasePortal.js";
 import type * as communications from "../communications.js";
+import type * as controlledSourceProof from "../controlledSourceProof.js";
+import type * as controlledSourceProofActions from "../controlledSourceProofActions.js";
 import type * as crons from "../crons.js";
 import type * as externalActions from "../externalActions.js";
 import type * as firecrawl from "../firecrawl.js";
@@ -29,6 +31,7 @@ import type * as integrations_agentmailWebhookBootstrap from "../integrations/ag
 import type * as integrations_auth from "../integrations/auth.js";
 import type * as integrations_authz from "../integrations/authz.js";
 import type * as integrations_contentHash from "../integrations/contentHash.js";
+import type * as integrations_controlledSourceProofConfig from "../integrations/controlledSourceProofConfig.js";
 import type * as integrations_env from "../integrations/env.js";
 import type * as integrations_fingerprints from "../integrations/fingerprints.js";
 import type * as integrations_firecrawlInteractClient from "../integrations/firecrawlInteractClient.js";
@@ -94,6 +97,8 @@ declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   browserbasePortal: typeof browserbasePortal;
   communications: typeof communications;
+  controlledSourceProof: typeof controlledSourceProof;
+  controlledSourceProofActions: typeof controlledSourceProofActions;
   crons: typeof crons;
   externalActions: typeof externalActions;
   firecrawl: typeof firecrawl;
@@ -109,6 +114,7 @@ declare const fullApi: ApiFromModules<{
   "integrations/auth": typeof integrations_auth;
   "integrations/authz": typeof integrations_authz;
   "integrations/contentHash": typeof integrations_contentHash;
+  "integrations/controlledSourceProofConfig": typeof integrations_controlledSourceProofConfig;
   "integrations/env": typeof integrations_env;
   "integrations/fingerprints": typeof integrations_fingerprints;
   "integrations/firecrawlInteractClient": typeof integrations_firecrawlInteractClient;
