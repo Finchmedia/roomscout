@@ -589,3 +589,28 @@ directly into the Production deployment without being displayed or written to
 the repository. An unsigned request now returns HTTP 401. No Inbox was created
 and no email was sent. A live inbound event still requires the explicitly
 approved controlled send/reply proof described above.
+
+## 2026-09-02 — RoomScout-only Production ingestion proof
+
+Added an internal, confirmation-gated proof runner that can activate and run
+only the exact first-party source `https://roomscout.dev`. It refuses to start
+if any unrelated source is active, while the global recurring-monitor switch
+remains disabled. The deployed runner created one Native Monitor and initiated
+one bounded Production check against the portal's server-rendered listing
+index.
+
+Firecrawl reported one new page. The authenticated webhook and reconciliation
+pipeline produced exactly one `sourceEntry`, processed its detail page, and
+published one observed Stuttgart supply Signal. Contact detection was true,
+while the public Evidence projection replaced the detected phone-like value
+with `[phone redacted]`. The public `signals.list` query exposes the structured
+listing without contact data. Replaying the same provider check returned one
+page but zero new entries and zero queued detail jobs; the database remained at
+one entry and one Signal.
+
+After verification, the source target and its provider monitor were paused
+again. `FIRECRAWL_MONITORS_ENABLED` remained `false`, all four third-party pilot
+sources remained `reviewing` and paused, and no Browserbase action, AgentMail
+action, form submission, or external communication occurred. The change passed
+239 tests across 49 files, TypeScript, ESLint, and the Vite production build
+before deployment.

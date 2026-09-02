@@ -6,13 +6,13 @@
 - **Live app:** https://fleet-jackal-83.eu-west-1.convex.site
 - **Repo:** https://github.com/Finchmedia/roomscout
 - **Frontend:** Convex static hosting
-- **Convex deployment:** https://perceptive-antelope-445.eu-west-1.convex.cloud
+- **Convex deployment:** https://fleet-jackal-83.eu-west-1.convex.cloud
 - **Components:** @convex-dev/agent, @convex-dev/auth, @convex-dev/rate-limiter, @convex-dev/static-hosting, @agentmail/convex, firecrawlRoomScout (vendored local extension of @firecrawl/firecrawl-convex)
 - **Convex features:** schema, tables, indexes, vector search, queries, mutations, actions, HTTP actions, crons, scheduled functions, realtime queries, paginated queries
 - **Auth:** Convex Auth
 - **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-realtime-2.1`
 - **Started:** 2026-08-26T13:55:26Z
-- **Last updated:** 2026-09-01T12:04:42Z
+- **Last updated:** 2026-09-02T09:25:34Z
 
 ## Log
 
@@ -81,3 +81,12 @@ Browserbase signup/message or AgentMail send/reply round trip. A narrowly scoped
 production webhook is now configured, its signing secret was transferred
 without disclosure, and unsigned requests return HTTP 401; per-user Inbox
 creation still needs broader provider scope (`docs/BUILD_LOG.md`).
+
+### 2026-09-02 - 2d23689
+Added and deployed an internal proof runner that accepts only the first-party
+`roomscout.dev` source and refuses to run beside an unrelated active source.
+One bounded Production monitor check produced one redacted public Signal; a
+replay produced zero new entries, all third-party sources remained paused, and
+the monitor was paused again afterward. No message or browser action occurred
+(`convex/controlledSourceProof.ts`,
+`convex/controlledSourceProofActions.ts`, `docs/BUILD_LOG.md`).
