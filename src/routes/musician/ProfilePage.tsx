@@ -370,7 +370,7 @@ export function ProfilePage() {
               <TableRow><TableCell>Username</TableCell><TableCell>{currentUser?.displayName ?? currentUser?.username ?? "Loading…"}</TableCell></TableRow>
               <TableRow><TableCell>Role</TableCell><TableCell>{currentUser?.role ?? "Musician"}</TableCell></TableRow>
               <TableRow><TableCell>Raw import</TableCell><TableCell>Analyzed, never stored</TableCell></TableRow>
-              <TableRow><TableCell>Outreach</TableCell><TableCell>Approve once or active non-binding YOLO mandate</TableCell></TableRow>
+              <TableRow><TableCell>Autopilot</TableCell><TableCell>Non-binding outreach only · commitments stay with you</TableCell></TableRow>
               <TableRow><TableCell>Semantic index</TableCell><TableCell>{memory?.facts.filter((fact) => fact.embeddingState === "ready").length ?? 0} / {memory?.facts.length ?? 0} facts ready</TableCell></TableRow>
             </TableBody></Table>
             {memory && memory.facts.some((fact) => fact.embeddingState !== "ready") ? (

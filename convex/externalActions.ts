@@ -1,4 +1,5 @@
 import { ConvexError, v } from "convex/values";
+import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { contentHash, normalizeEmail, normalizeText } from "./integrations/contentHash";
@@ -222,7 +223,11 @@ export const createContactFormFromScout = internalMutation({
     subject: v.string(),
     body: v.string(),
   },
-  returns: v.id("actionRequests"),
+  returns: v.object({
+    requestId: v.id("actionRequests"),
+    status: v.union(v.literal("approved"), v.literal("awaiting_approval")),
+    authorizedByAutopilot: v.boolean(),
+  }),
   handler: async (ctx, args) => {
     const [owner, need, signal] = await Promise.all([
       ctx.db.get(args.ownerId),
@@ -281,24 +286,103 @@ export const createContactFormFromScout = internalMutation({
     };
     const now = Date.now();
     const hash = await payloadHash(payload);
+    const mandate = await ctx.db.query("searchMandates").withIndex("by_owner_and_saved_need_and_status", (q) =>
+      q.eq("ownerId", args.ownerId).eq("savedNeedId", need._id).eq("status", "active"),
+    ).unique();
+    let authorizedByAutopilot = false;
+    if (mandate !== null && policy.maxAutomationLevel === "approved_execute") {
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      const [executions, browserRuns, mailThreads, converted] = await Promise.all([
+        ctx.db.query("actionExecutions").withIndex("by_owner_and_created_at", (q) =>
+          q.eq("ownerId", args.ownerId).gte("createdAt", startOfDay.getTime()),
+        ).take(100),
+        ctx.db.query("browserRuns").withIndex("by_owner", (q) => q.eq("ownerId", args.ownerId)).order("desc").take(100),
+        ctx.db.query("mailThreads").withIndex("by_owner_and_last_message_at", (q) => q.eq("ownerId", args.ownerId)).order("desc").take(50),
+        ctx.db.query("opportunities").withIndex("by_saved_need_and_status_and_updated_at", (q) =>
+          q.eq("savedNeedId", need._id).eq("status", "converted"),
+        ).take(1),
+      ]);
+      const browserMinutesUsedToday = browserRuns.reduce((total, run) => {
+        const startedAt = run.startedAt ?? run.createdAt;
+        if (startedAt < startOfDay.getTime()) return total;
+        return total + Math.max(0, ((run.endedAt ?? now) - startedAt) / 60_000);
+      }, 0);
+      const authorization = authorizeFromMandate({
+        mode: mandate.mode,
+        status: "active",
+        platformIds: mandate.platformIds,
+        allowedActionTypes: mandate.allowedActionTypes,
+        allowedPersonalData: mandate.allowedPersonalData,
+        maxContactsPerDay: mandate.maxContactsPerDay,
+        maxBrowserMinutesPerDay: mandate.maxBrowserMinutesPerDay,
+        maxMonthlyPriceEur: mandate.maxMonthlyPriceEur,
+        expiresAt: mandate.expiresAt,
+        stopOnComplaint: mandate.stopOnComplaint,
+        stopWhenSuitableRoomConfirmed: mandate.stopWhenSuitableRoomConfirmed,
+        commitmentBoundary: mandate.commitmentBoundary,
+        stoppedAt: mandate.stoppedAt,
+      }, {
+        now,
+        actionType: "submit_webform",
+        platformId: source.platformId,
+        personalData: ["reply_email"],
+        contactsAlreadyAttemptedToday: countUniqueAttemptedRequests(executions),
+        browserMinutesUsedToday,
+        policyDecision: policy.decision,
+        policyAutomationLevel: policy.maxAutomationLevel,
+        connectionActive: true,
+        complaintRecorded: mailThreads.some((thread) => thread.lastDeliveryStatus === "complained"),
+        suitableRoomConfirmed: converted.length > 0,
+        bindingCommitment: containsBindingCommitment(payload),
+      });
+      authorizedByAutopilot = authorization.authorized;
+    }
     const requestId = await ctx.db.insert("actionRequests", {
       ownerId: args.ownerId,
       savedNeedId: need._id,
+      mandateId: authorizedByAutopilot ? mandate?._id : undefined,
       platformId: source.platformId,
       adapterBindingId: binding._id,
       policyVersionId: policy._id,
-      automationMode: "exact_once",
+      automationMode: authorizedByAutopilot ? "standing_mandate" : "exact_once",
       requestedActionType: "submit_webform",
       personalDataScopes: ["reply_email"],
       payload,
       contentVersion: 1,
       contentHash: hash,
-      status: "awaiting_approval",
+      status: authorizedByAutopilot ? "approved" : "awaiting_approval",
+      expiresAt: authorizedByAutopilot && mandate ? Math.min(mandate.expiresAt, now + 24 * 60 * 60 * 1_000) : undefined,
       createdAt: now,
       updatedAt: now,
     });
-    await ctx.db.insert("auditEvents", { eventKey: `action:${requestId}:approval_requested:1`, actorType: "system", actorUserId: args.ownerId, entityKey: `action:${requestId}`, eventType: "action.scout_drafted_webform", actionRequestId: requestId, policyId: policy._id, afterHash: hash, occurredAt: now });
-    return requestId;
+    if (authorizedByAutopilot && mandate) {
+      await ctx.db.insert("actionApprovals", {
+        requestId,
+        ownerId: args.ownerId,
+        contentVersion: 1,
+        contentHash: hash,
+        payloadSnapshot: payload,
+        policyVersionId: policy._id,
+        decision: "authorized_by_mandate",
+        mandateId: mandate._id,
+        mandateVersion: mandate.version,
+        mandateHash: mandate.contentHash,
+        decidedAt: now,
+      });
+      await ctx.db.insert("auditEvents", { eventKey: `action:${requestId}:scout_autopilot:1`, actorType: "system", actorUserId: args.ownerId, entityKey: `action:${requestId}`, eventType: "action.scout_authorized_by_mandate", actionRequestId: requestId, policyId: policy._id, afterHash: hash, occurredAt: now });
+      await ctx.scheduler.runAfter(0, internal.firecrawlInteract.executeApprovedWorker, {
+        ownerId: args.ownerId,
+        requestId,
+      });
+    } else {
+      await ctx.db.insert("auditEvents", { eventKey: `action:${requestId}:approval_requested:1`, actorType: "system", actorUserId: args.ownerId, entityKey: `action:${requestId}`, eventType: "action.scout_drafted_webform", actionRequestId: requestId, policyId: policy._id, afterHash: hash, occurredAt: now });
+    }
+    return {
+      requestId,
+      status: authorizedByAutopilot ? "approved" as const : "awaiting_approval" as const,
+      authorizedByAutopilot,
+    };
   },
 });
 
@@ -668,7 +752,12 @@ export const claimForExecutor = internalMutation({
         actionType: request.requestedActionType,
         platformId: request.platformId,
         personalData: request.personalDataScopes as PersonalDataScope[],
-        contactsAlreadyAttemptedToday: countUniqueAttemptedRequests(executions),
+        // Re-claiming or resuming the same idempotent request must not consume
+        // another contact slot. Other requests still count, including failed
+        // attempts, because they may already have reached the recipient.
+        contactsAlreadyAttemptedToday: countUniqueAttemptedRequests(
+          executions.filter((execution) => execution.requestId !== request._id),
+        ),
         browserMinutesUsedToday: browserMinutes,
         proposedMonthlyPriceEur: request.proposedMonthlyPriceEur,
         policyDecision: policy.decision,

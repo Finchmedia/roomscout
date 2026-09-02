@@ -12,6 +12,7 @@ type SearchProfileCardProps = {
   canConfirm?: boolean;
   confirming?: boolean;
   confirmationHint?: string;
+  confirmationLabel?: string;
 };
 
 export function SearchProfileCard({
@@ -24,6 +25,7 @@ export function SearchProfileCard({
   canConfirm = true,
   confirming = false,
   confirmationHint,
+  confirmationLabel = "Confirm search",
 }: SearchProfileCardProps) {
   const total = totalFields ?? search.fields.length;
   const complete = Math.min(progress, total);
@@ -63,7 +65,7 @@ export function SearchProfileCard({
           </div>
           <p className="mono">{complete} of {total} high-value fields set</p>
           {confirmationHint ? <p className="hint">{confirmationHint}</p> : null}
-          <button className="btn btn-p" disabled={!canConfirm || confirming} onClick={onConfirm} type="button">{confirming ? "Activating…" : "Confirm search"}</button>
+          <button className="btn btn-p" disabled={!canConfirm || confirming} onClick={onConfirm} type="button">{confirming ? "Starting…" : confirmationLabel}</button>
         </div>
       ) : null}
     </LedgerCard>

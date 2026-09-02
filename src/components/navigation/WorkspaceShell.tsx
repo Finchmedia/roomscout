@@ -18,7 +18,6 @@ import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { api } from "../../../convex/_generated/api";
-import { RoomScoutMark } from "../brand/RoomScoutMark";
 
 type NavItem = {
   label: string;
@@ -76,9 +75,8 @@ export function WorkspaceShell({ children, mode }: WorkspaceShellProps) {
     <div className={`shell rs-workspace rs-workspace--${mode}`}>
       <aside className="side rs-sidebar">
         <Link aria-label={isOps ? "RoomScout Ops home" : "RoomScout home"} className="brand" to={home}>
-          <RoomScoutMark size={22} />
-          <b>
-            RoomScout {isOps ? <span className="rs-brand-accent">Ops</span> : null}
+          <b className="rs-wordmark">
+            roomscout {isOps ? <span className="rs-brand-accent">ops</span> : null}
           </b>
         </Link>
         <nav aria-label={isOps ? "Operations" : "RoomScout"} className="nav">

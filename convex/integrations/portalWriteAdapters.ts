@@ -36,7 +36,10 @@ export type PortalWriteWorkflow = {
   workflowKey: string;
   actionType: PortalWriteActionType;
   path(input: { providerThreadId?: string; payload: PortalWritePayload }): string;
-  fields(payload: PortalWritePayload): PortalWriteField[];
+  fields(input: {
+    payload: PortalWritePayload;
+    providerThreadId?: string;
+  }): PortalWriteField[];
   submitSelector: string;
   successSelector: string;
   postSubmitPaths: readonly string[];
@@ -74,7 +77,7 @@ const FIXTURE_MESSAGE_WORKFLOW: PortalWriteWorkflow = {
     providerThreadId
       ? `/roomscout-fixture/messages/${encodeURIComponent(providerThreadId)}`
       : "/roomscout-fixture/messages/new",
-  fields: (payload) => [
+  fields: ({ payload }) => [
     ...(payload.recipients.length > 0
       ? [{ selector: '[data-roomscout-write="recipient"]', value: payload.recipients.join(", ") }]
       : []),
@@ -94,7 +97,7 @@ const FIXTURE_LISTING_WORKFLOW: PortalWriteWorkflow = {
   workflowKey: "fixture.publish-listing.v1",
   actionType: "publish_listing",
   path: () => "/roomscout-fixture/listings/new",
-  fields: (payload) => {
+  fields: ({ payload }) => {
     if (!payload.subject) throw new Error("LISTING_TITLE_REQUIRED");
     return [
       { selector: '[data-roomscout-write="title"]', value: payload.subject },
@@ -118,11 +121,13 @@ const ROOMSCOUT_DEV_MESSAGE_WORKFLOW: PortalWriteWorkflow = {
     }
     return payload.targetPath;
   },
-  fields: (payload) => [
-    {
-      selector: '[data-roomscout-write="sender-label"]',
-      value: payload.senderLabel ?? "RoomScout musician",
-    },
+  fields: ({ payload, providerThreadId }) => [
+    ...(providerThreadId
+      ? []
+      : [{
+          selector: '[data-roomscout-write="sender-label"]',
+          value: payload.senderLabel ?? "RoomScout musician",
+        }]),
     { selector: '[data-roomscout-write="body"]', value: payload.body },
   ],
   submitSelector: '[data-roomscout-write="send"]',
@@ -336,6 +341,7 @@ export async function runDeterministicPortalWrite(input: {
   page: PortalWritePage;
   workflow: PortalWriteWorkflow;
   payload: PortalWritePayload;
+  providerThreadId?: string;
   allowedDomains: readonly string[];
   allowedPaths: readonly string[];
   humanPresenceRequired: boolean;
@@ -351,7 +357,10 @@ export async function runDeterministicPortalWrite(input: {
     return { outcome: "human_required", blocker: initialBlocker, submitted: false };
   }
 
-  for (const field of input.workflow.fields(input.payload)) {
+  for (const field of input.workflow.fields({
+    payload: input.payload,
+    providerThreadId: input.providerThreadId,
+  })) {
     await (await requireUniqueVisible(input.page, field.selector)).fill(field.value);
   }
 

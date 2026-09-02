@@ -65,8 +65,8 @@ const howItWorks = [
     body: "Describe the room in your own words. The Scout turns it into a structured search you can review and edit before activation.",
   },
   {
-    title: "You set the action boundary",
-    body: "Use exact one-time approval in Guided mode, or a versioned standing mandate for listed communication actions. Agreements, bookings, and money always stay with you.",
+    title: "Your Scout starts working",
+    body: "Autopilot handles non-binding outreach and follow-up. RoomScout comes back to you when an agreement, booking, or payment needs a real decision.",
   },
 ] as const;
 

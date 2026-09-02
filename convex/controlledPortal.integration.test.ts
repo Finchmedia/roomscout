@@ -106,6 +106,30 @@ it("does not let a musician create approved first-party source records", async (
   ).rejects.toThrow();
 });
 
+it("never binds the first-party adapter to a lookalike or unrelated host", async () => {
+  const t = convexTest(schema, modules);
+  const operatorId = await t.run(async (ctx) => {
+    const now = Date.now();
+    return await ctx.db.insert("users", {
+      username: "operator",
+      role: "operator",
+      createdAt: now,
+      lastSeenAt: now,
+    });
+  });
+  const operator = t.withIdentity({ subject: operatorId });
+  await expect(
+    operator.mutation(api.sourceRegistry.seedControlledDemoPortal, {
+      baseUrl: "https://lookalike.roomscout.dev",
+    }),
+  ).rejects.toThrow("INVALID_DEMO_PORTAL_URL");
+  await expect(
+    operator.mutation(api.sourceRegistry.seedControlledDemoPortal, {
+      baseUrl: "https://unrelated.example",
+    }),
+  ).rejects.toThrow("INVALID_DEMO_PORTAL_URL");
+});
+
 it("fails closed when fixed demo source slugs already belong to another portal", async () => {
   const t = convexTest(schema, modules);
   const operatorId = await t.run(async (ctx) => {
@@ -122,9 +146,17 @@ it("fails closed when fixed demo source slugs already belong to another portal",
     baseUrl: "https://roomscout.dev",
   });
 
+  await t.run(async (ctx) => {
+    const source = await ctx.db
+      .query("sources")
+      .withIndex("by_slug", (q) => q.eq("slug", "roomscout-dev-connected"))
+      .unique();
+    if (!source) throw new Error("fixture source missing");
+    await ctx.db.patch(source._id, { baseUrl: "https://unrelated.example" });
+  });
   await expect(
     operator.mutation(api.sourceRegistry.seedControlledDemoPortal, {
-      baseUrl: "https://unrelated.example",
+      baseUrl: "https://roomscout.dev",
     }),
   ).rejects.toThrow("DEMO_SOURCE_CONFIGURATION_CONFLICT");
 });

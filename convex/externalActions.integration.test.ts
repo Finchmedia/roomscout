@@ -6,6 +6,25 @@ import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
 
+async function seedStandingClaimFixture(t: ReturnType<typeof convexTest>) {
+  return await t.run(async (ctx) => {
+    const now = Date.now();
+    const ownerId = await ctx.db.insert("users", { username: "owner", role: "musician", createdAt: now, lastSeenAt: now });
+    const needId = await ctx.db.insert("savedNeeds", { ownerId, title: "Room", city: "Hamburg", districts: [], arrangement: ["shared"], schedule: [], requirements: [], status: "active", createdAt: now, updatedAt: now });
+    const platformId = await ctx.db.insert("sourcePlatforms", { slug: "bandnet", name: "Bandnet", canonicalDomain: "bandnet.hamburg", kind: "community", status: "active", firstSeenAt: now, lastObservedAt: now, createdAt: now, updatedAt: now });
+    const policyId = await ctx.db.insert("sourceFlowPolicies", { platformId, scopeKey: "bandnet:contact", flow: "contact", version: 1, status: "approved", decision: "allowed", maxAutomationLevel: "approved_execute", userConnectionRequired: false, humanPresenceRequired: false, accountCreationAllowed: false, externalApprovalRequired: true, robotsDecision: "allowed", termsDecision: "allowed", evidenceUrls: ["https://bandnet.hamburg/nutzungsbedingungen"], createdAt: now, updatedAt: now });
+    const bindingId = await ctx.db.insert("sourceAdapterBindings", { platformId, scopeKey: "bandnet:contact", flow: "contact", adapterKey: "bandnet_contact_v1", adapterVersion: 1, status: "active", executor: "firecrawl", config: { kind: "firecrawl", extractionProfileKey: "bandnet_contact_v1", monitorDriven: false }, configFingerprint: "binding-hash", policyVersionId: policyId, createdAt: now, updatedAt: now });
+    const mandateId = await ctx.db.insert("searchMandates", { ownerId, savedNeedId: needId, version: 1, mode: "outreach_autopilot", status: "active", platformIds: [platformId], allowedActionTypes: ["submit_webform"], allowedPersonalData: [], maxContactsPerDay: 1, maxBrowserMinutesPerDay: 30, expiresAt: now + 86_400_000, stopOnComplaint: true, stopWhenSuitableRoomConfirmed: true, commitmentBoundary: "non_binding_outreach_only", contentHash: "mandate-hash", activatedAt: now, createdAt: now, updatedAt: now });
+    const payload = { kind: "contact_form" as const, targetUrl: "https://bandnet.hamburg/kontakt/42", fields: [{ name: "message", value: "Is the room still available?", sensitivity: "normal" as const }] };
+    const createRequest = async (contentHash: string) => {
+      const requestId = await ctx.db.insert("actionRequests", { ownerId, savedNeedId: needId, mandateId, platformId, adapterBindingId: bindingId, policyVersionId: policyId, automationMode: "standing_mandate" as const, requestedActionType: "submit_webform" as const, personalDataScopes: [], payload, contentVersion: 1, contentHash, status: "approved" as const, expiresAt: now + 86_400_000, createdAt: now, updatedAt: now });
+      await ctx.db.insert("actionApprovals", { requestId, ownerId, contentVersion: 1, contentHash, payloadSnapshot: payload, policyVersionId: policyId, decision: "authorized_by_mandate", mandateId, mandateVersion: 1, mandateHash: "mandate-hash", decidedAt: now });
+      return requestId;
+    };
+    return { ownerId, firstRequestId: await createRequest("first-hash") };
+  });
+}
+
 it("binds an exact approval to the owner, version, hash, and payload", async () => {
   const t = convexTest(schema, modules);
   const { userId, otherUserId, needId } = await t.run(async (ctx) => {
@@ -114,6 +133,78 @@ it("does not execute from a standing approval after its mandate is revoked", asy
     return { ownerId, requestId };
   });
   await expect(t.mutation(internal.externalActions.claimForExecutor, { ownerId: fixture.ownerId, requestId: fixture.requestId, executor: "firecrawl" })).rejects.toThrow();
+});
+
+it("resumes one idempotent mandate request without charging its contact slot twice", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedStandingClaimFixture(t);
+
+  const first = await t.mutation(internal.externalActions.claimForExecutor, {
+    ownerId: fixture.ownerId,
+    requestId: fixture.firstRequestId,
+    executor: "firecrawl",
+  });
+  const resumed = await t.mutation(internal.externalActions.claimForExecutor, {
+    ownerId: fixture.ownerId,
+    requestId: fixture.firstRequestId,
+    executor: "firecrawl",
+  });
+
+  expect(first.alreadyClaimed).toBe(false);
+  expect(resumed).toMatchObject({
+    executionId: first.executionId,
+    executionStatus: "claimed",
+    alreadyClaimed: true,
+  });
+
+  const secondRequestId = await t.run(async (ctx) => {
+    const now = Date.now();
+    const firstRequest = await ctx.db.get(fixture.firstRequestId);
+    if (firstRequest === null || !firstRequest.savedNeedId || !firstRequest.mandateId || !firstRequest.platformId || !firstRequest.adapterBindingId || !firstRequest.policyVersionId) {
+      throw new Error("Standing-action fixture is incomplete");
+    }
+    const contentHash = "second-hash";
+    const requestId = await ctx.db.insert("actionRequests", {
+      ownerId: fixture.ownerId,
+      savedNeedId: firstRequest.savedNeedId,
+      mandateId: firstRequest.mandateId,
+      platformId: firstRequest.platformId,
+      adapterBindingId: firstRequest.adapterBindingId,
+      policyVersionId: firstRequest.policyVersionId,
+      automationMode: "standing_mandate",
+      requestedActionType: "submit_webform",
+      personalDataScopes: [],
+      payload: firstRequest.payload,
+      contentVersion: 1,
+      contentHash,
+      status: "approved",
+      expiresAt: now + 86_400_000,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await ctx.db.insert("actionApprovals", {
+      requestId,
+      ownerId: fixture.ownerId,
+      contentVersion: 1,
+      contentHash,
+      payloadSnapshot: firstRequest.payload,
+      policyVersionId: firstRequest.policyVersionId,
+      decision: "authorized_by_mandate",
+      mandateId: firstRequest.mandateId,
+      mandateVersion: 1,
+      mandateHash: "mandate-hash",
+      decidedAt: now,
+    });
+    return requestId;
+  });
+
+  await expect(
+    t.mutation(internal.externalActions.claimForExecutor, {
+      ownerId: fixture.ownerId,
+      requestId: secondRequestId,
+      executor: "firecrawl",
+    }),
+  ).rejects.toThrow("MANDATE_NO_LONGER_AUTHORIZES");
 });
 
 it("rejects an exact approval whose action request expired before claim", async () => {

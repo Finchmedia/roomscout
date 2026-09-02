@@ -32,6 +32,7 @@ export function MySearchPage() {
   const setSourcePreference = useMutation(api.searchSources.setPreference);
   const createMandateDraft = useMutation(api.mandates.createDraft);
   const activateMandate = useMutation(api.mandates.activate);
+  const enableDefaultAutopilot = useMutation(api.mandates.enableDefaultAutopilot);
   const revokeMandate = useMutation(api.mandates.revoke);
   const killMandates = useMutation(api.mandates.killSwitch);
   const [working, setWorking] = useState(false);
@@ -83,6 +84,8 @@ export function MySearchPage() {
         await killMandates({ savedNeedId: need._id });
       } else if (status === "paused" && activeMandate) {
         await revokeMandate({ mandateId: activeMandate._id });
+      } else if (status === "active") {
+        await enableDefaultAutopilot({ savedNeedId: need._id });
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The mandate could not be updated.");
@@ -168,10 +171,12 @@ export function MySearchPage() {
     stopConditions: [activeMandate.stopOnComplaint ? "A complaint is received" : "Complaint stop disabled", activeMandate.stopWhenSuitableRoomConfirmed ? "A suitable room is confirmed" : "Confirmation stop disabled"],
     persisted: true,
   } : {
-    mode: "guided", status: "draft", goal: need.title,
+    mode: "negotiation", status: "draft", goal: need.title,
     sourceAllowlist: coverageSources.filter((source) => source.included).map((source) => source.domain),
-    platformAllowlist: [], allowedActionTypes: [], dataScopes: [], dailyContactLimit: 0,
-    dailyBrowserMinutes: 0, maxMonthlyPriceEur: need.maxBudgetEur,
+    platformAllowlist: coverageSources.filter((source) => source.included).map((source) => source.id),
+    allowedActionTypes: ["send_email", "submit_webform", "send_platform_dm", "create_portal_account", "publish_listing", "propose_visit"],
+    dataScopes: ["band_name", "reply_email", "availability", "budget", "music_profile"], dailyContactLimit: 10,
+    dailyBrowserMinutes: 30, maxMonthlyPriceEur: need.maxBudgetEur,
     expiresAt: defaultMandateExpiry, killSwitchEnabled: true,
     stopConditions: ["Search is paused", "A login or human-only step is required", "A suitable room reaches agreement handoff"], persisted: false,
   };
@@ -194,7 +199,7 @@ export function MySearchPage() {
             <SearchProfileCard search={search} />
             <div className="actionsrow"><Link className="btn btn-s" to="/app/scout?mode=search_discovery"><Pencil aria-hidden="true" size={14} />Edit with Scout</Link></div>
             {activeMandate === undefined ? <EmptyState body="Loading the active version and authorization limits." title="Loading Scout mandate…" /> : <MandatePanel mandate={mandate} onSave={saveMandate} onStatusChange={changeMandateStatus} platformOptions={coverageSources.map((source) => ({ id: source.id, label: source.name }))} />}
-            <LedgerCard header={<span className="type">Alert settings</span>}><Table className="facts"><TableBody><TableRow><TableCell>Channel</TableCell><TableCell>In-app notifications</TableCell></TableRow><TableRow><TableCell>Cadence</TableCell><TableCell>As matching signals arrive</TableCell></TableRow><TableRow><TableCell>External action</TableCell><TableCell>Approve once or active YOLO mandate</TableCell></TableRow></TableBody></Table></LedgerCard>
+            <LedgerCard header={<span className="type">Updates</span>}><Table className="facts"><TableBody><TableRow><TableCell>Channel</TableCell><TableCell>In-app notifications</TableCell></TableRow><TableRow><TableCell>Cadence</TableCell><TableCell>As matches and replies arrive</TableCell></TableRow><TableRow><TableCell>Decision point</TableCell><TableCell>Agreements, bookings, or money</TableCell></TableRow></TableBody></Table></LedgerCard>
           </div>
           <div className="stack">
             <LedgerCard accent header={<><span className="type t-scout">Current matches</span><span className="mono">{needMatches.length} live</span></>}><p className="brief"><Bell aria-hidden="true" size={15} /><span>Matches use structured constraints plus semantic compatibility. Unknown facts remain visible as uncertainty.</span></p></LedgerCard>

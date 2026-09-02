@@ -1,4 +1,5 @@
 import { ConvexError, v } from "convex/values";
+import { internal } from "./_generated/api";
 import { contentHash } from "./integrations/contentHash";
 import { requireUserId } from "./integrations/authz";
 import { mutation, query } from "./_generated/server";
@@ -139,6 +140,153 @@ function validateLimits(input: MandateInput, now: number): void {
     throw new ConvexError({ code: "MODE_CANNOT_AUTHORIZE_EXTERNAL_ACTIONS" });
   }
 }
+
+const DEFAULT_AUTOPILOT_ACTIONS = [
+  "send_email",
+  "submit_webform",
+  "send_platform_dm",
+  "create_portal_account",
+  "publish_listing",
+  "propose_visit_time",
+] as const;
+
+const DEFAULT_AUTOPILOT_DATA = [
+  "band_name",
+  "reply_email",
+  "availability",
+  "budget",
+  "music_profile",
+] as const;
+
+/**
+ * Turns the simple product choice, "let my Scout handle the search", into an
+ * explicit, persisted mandate. The richer controls remain available through
+ * createDraft, while this safe default never delegates a binding commitment.
+ */
+export const enableDefaultAutopilot = mutation({
+  args: { savedNeedId: v.id("savedNeeds") },
+  returns: v.object({
+    mandateId: v.id("searchMandates"),
+    contentHash: v.string(),
+    created: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const ownerId = await requireUserId(ctx);
+    const need = await ctx.db.get(args.savedNeedId);
+    if (need === null || need.ownerId !== ownerId || need.status === "archived") {
+      throw new ConvexError({ code: "NEED_NOT_FOUND" });
+    }
+
+    const now = Date.now();
+    const active = await ctx.db
+      .query("searchMandates")
+      .withIndex("by_owner_and_saved_need_and_status", (q) =>
+        q.eq("ownerId", ownerId).eq("savedNeedId", args.savedNeedId).eq("status", "active"),
+      )
+      .unique();
+    if (
+      active !== null &&
+      active.mode === "negotiation_autopilot" &&
+      active.commitmentBoundary === "non_binding_outreach_only" &&
+      active.expiresAt > now
+    ) {
+      if (need.status !== "active") {
+        await ctx.db.patch(need._id, { status: "active", updatedAt: now });
+      }
+      await ctx.scheduler.runAfter(0, internal.mandateOrchestrator.runForOwner, {
+        ownerId,
+        limit: 3,
+      });
+      return { mandateId: active._id, contentHash: active.contentHash, created: false };
+    }
+
+    const [platforms, preferences, priorRows] = await Promise.all([
+      ctx.db
+        .query("sourcePlatforms")
+        .withIndex("by_status_and_last_observed_at", (q) => q.eq("status", "active"))
+        .order("desc")
+        .take(50),
+      ctx.db
+        .query("searchSourcePreferences")
+        .withIndex("by_saved_need_and_platform", (q) => q.eq("savedNeedId", args.savedNeedId))
+        .take(100),
+      ctx.db
+        .query("searchMandates")
+        .withIndex("by_owner_and_saved_need_and_status", (q) =>
+          q.eq("ownerId", ownerId).eq("savedNeedId", args.savedNeedId),
+        )
+        .take(100),
+    ]);
+    const excludedPlatformIds = new Set(
+      preferences
+        .filter((preference) => preference.ownerId === ownerId && preference.preference === "exclude")
+        .map((preference) => String(preference.platformId)),
+    );
+    const platformIds = platforms
+      .map((platform) => platform._id)
+      .filter((platformId) => !excludedPlatformIds.has(String(platformId)));
+    const expiresAt = now + 30 * 24 * 60 * 60 * 1_000;
+    const input: MandateInput = {
+      mode: "negotiation_autopilot",
+      platformIds: platformIds.map(String),
+      allowedActionTypes: [...DEFAULT_AUTOPILOT_ACTIONS],
+      allowedPersonalData: [...DEFAULT_AUTOPILOT_DATA],
+      maxContactsPerDay: 10,
+      maxBrowserMinutesPerDay: 30,
+      maxMonthlyPriceEur: need.maxBudgetEur,
+      expiresAt,
+      stopOnComplaint: true,
+      stopWhenSuitableRoomConfirmed: true,
+      commitmentBoundary: "non_binding_outreach_only",
+    };
+    validateLimits(input, now);
+    const hash = await mandateHash(input);
+    const version = priorRows.reduce((maximum, row) => Math.max(maximum, row.version), 0) + 1;
+    const mandateId = await ctx.db.insert("searchMandates", {
+      ownerId,
+      savedNeedId: args.savedNeedId,
+      version,
+      supersedesMandateId: active?._id,
+      mode: input.mode,
+      status: "active",
+      platformIds,
+      allowedActionTypes: [...DEFAULT_AUTOPILOT_ACTIONS],
+      allowedPersonalData: [...DEFAULT_AUTOPILOT_DATA],
+      maxContactsPerDay: input.maxContactsPerDay,
+      maxBrowserMinutesPerDay: input.maxBrowserMinutesPerDay,
+      maxMonthlyPriceEur: input.maxMonthlyPriceEur,
+      expiresAt,
+      stopOnComplaint: true,
+      stopWhenSuitableRoomConfirmed: true,
+      commitmentBoundary: "non_binding_outreach_only",
+      contentHash: hash,
+      activatedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    if (active !== null) {
+      await ctx.db.patch(active._id, { status: "superseded", stoppedAt: now, updatedAt: now });
+    }
+    if (need.status !== "active") {
+      await ctx.db.patch(need._id, { status: "active", updatedAt: now });
+    }
+    await ctx.db.insert("auditEvents", {
+      eventKey: `mandate:${mandateId}:default_autopilot:${version}`,
+      actorType: "user",
+      actorUserId: ownerId,
+      entityKey: `mandate:${mandateId}`,
+      eventType: "mandate.default_autopilot_activated",
+      afterHash: hash,
+      summary: "Activated default RoomScout Autopilot for non-binding search work",
+      occurredAt: now,
+    });
+    await ctx.scheduler.runAfter(0, internal.mandateOrchestrator.runForOwner, {
+      ownerId,
+      limit: 3,
+    });
+    return { mandateId, contentHash: hash, created: true };
+  },
+});
 
 export const listMine = query({
   args: { savedNeedId: v.optional(v.id("savedNeeds")), limit: v.optional(v.number()) },

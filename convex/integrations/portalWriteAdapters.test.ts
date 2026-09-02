@@ -239,6 +239,38 @@ describe("reviewed portal write adapters", () => {
     expect(locators.get('[data-roomscout-write="send"]')?.click).toHaveBeenCalledTimes(1);
   });
 
+  it("does not fill the immutable sender identity when replying to a controlled portal thread", async () => {
+    const workflow = resolvePortalWriteWorkflow({
+      adapterKey: "roomscout-dev-v1",
+      adapterVersion: 1,
+      workflowKey: "roomscout-dev.platform-message.v1",
+      actionType: "send_platform_dm",
+    });
+    const { page, locators } = fakePage({
+      url: "https://roomscout.dev/inbox/thread-1",
+    });
+    const result = await runDeterministicPortalWrite({
+      page: page as never,
+      workflow,
+      payload: {
+        kind: "platform_message",
+        recipients: [],
+        senderLabel: "A label the portal must ignore",
+        body: "Thanks, Tuesday works for us.",
+      },
+      providerThreadId: "thread-1",
+      allowedDomains: ["roomscout.dev"],
+      allowedPaths: ["/listings", "/inbox"],
+      humanPresenceRequired: false,
+    });
+    expect(result).toMatchObject({ outcome: "succeeded", submitted: true });
+    expect(locators.has('[data-roomscout-write="sender-label"]')).toBe(false);
+    expect(locators.get('[data-roomscout-write="body"]')?.fill).toHaveBeenCalledWith(
+      "Thanks, Tuesday works for us.",
+    );
+    expect(locators.get('[data-roomscout-write="send"]')?.click).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     ["password", { password: true }],
     ["two_factor", { twoFactor: true }],

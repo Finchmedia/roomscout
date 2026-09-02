@@ -382,7 +382,7 @@ export const sendMessage = action({
       });
       const createWebformDraft = createTool({
         description:
-          "Create a private, exact-review contact-form action for the focused listing when RoomScout has a reviewed webform adapter. You provide only subject and message prose; RoomScout resolves destination, sender identity, fields, policy, and adapter from trusted state. This never approves or submits it.",
+          "Prepare a contact-form action for the focused listing when RoomScout has a reviewed webform adapter. You provide only subject and message prose; RoomScout resolves destination, sender identity, fields, policy, and adapter from trusted state. An active Autopilot mandate may authorize and execute a non-binding message. Otherwise it becomes a human review step.",
         inputSchema: z.object({
           subject: z.string(),
           body: z.string(),
@@ -392,7 +392,7 @@ export const sendMessage = action({
           if (mailbox.status !== "active") {
             return { drafted: false, reason: "A personal RoomScout reply inbox is not ready." };
           }
-          const requestId: Id<"actionRequests"> = await ctx.runMutation(
+          const result: { requestId: Id<"actionRequests">; status: "approved" | "awaiting_approval"; authorizedByAutopilot: boolean } = await ctx.runMutation(
             internal.externalActions.createContactFormFromScout,
             {
               ownerId,
@@ -403,7 +403,13 @@ export const sendMessage = action({
               body: input.body,
             },
           );
-          return { drafted: true, requestId, channel: "webform" };
+          return {
+            drafted: true,
+            requestId: result.requestId,
+            channel: "webform",
+            status: result.status,
+            authorizedByAutopilot: result.authorizedByAutopilot,
+          };
         },
       });
       const responseText: string = (await scoutAgent.generateText(

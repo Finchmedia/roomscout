@@ -87,21 +87,21 @@ export function ActionApprovalSheet({ request, open, onOpenChange, onApprove, on
         : <><button className="btn btn-g" onClick={() => changeOpen(false)} type="button">Close</button><button className="btn btn-s" disabled={working || !onPauseMandate} onClick={() => void pauseMandate()} type="button">{working ? "Pausing…" : "Pause mandate"}</button></>}
       onOpenChange={changeOpen}
       open={open}
-      title={needsOneTimeApproval ? "Action requires your approval" : "Action authorized by mandate"}
+      title={needsOneTimeApproval ? "This step needs you" : "Handled by Autopilot"}
     >
       <div className="rs-action-approval">
         {standingAuthorization ? (
           <div className={`rs-action-authorization${standingAuthorization.executionAllowed ? " is-authorized" : ""}`}>
             <ShieldCheck aria-hidden="true" size={16} />
-            <p><strong>{standingAuthorization.executionAllowed ? "Authorized by standing mandate" : "Not authorized by this mandate"}</strong><br />{standingAuthorization.mandateLabel} · version {standingAuthorization.mandateVersion}{standingAuthorization.executionAllowed ? " allows this listed communication action." : " does not cover this exact action, so one-time approval is required."}</p>
+            <p><strong>{standingAuthorization.executionAllowed ? "Covered by Autopilot" : "Outside the current Autopilot boundary"}</strong><br />{standingAuthorization.mandateLabel} · version {standingAuthorization.mandateVersion}{standingAuthorization.executionAllowed ? " allows this non-binding action." : " does not cover this exact action, so your decision is required."}</p>
           </div>
         ) : <div className="rs-action-effect"><ShieldCheck aria-hidden="true" size={16} /><p><strong>One-time approval:</strong> nothing executes until you approve this exact destination and payload.</p></div>}
         <div className="rs-action-effect"><ShieldCheck aria-hidden="true" size={16} /><p><strong>What will happen:</strong> {request.effect}</p></div>
-        <Table className="facts"><TableBody><TableRow><TableCell>Destination</TableCell><TableCell>{request.destination}</TableCell></TableRow><TableRow><TableCell>Acting as</TableCell><TableCell>{request.actingAs}</TableCell></TableRow><TableRow><TableCell>Action</TableCell><TableCell>{kindLabels[request.kind]}</TableCell></TableRow>{standingAuthorization ? <TableRow><TableCell>Authorization</TableCell><TableCell>YOLO mandate v{standingAuthorization.mandateVersion}</TableCell></TableRow> : <TableRow><TableCell>Authorization</TableCell><TableCell>Approve once</TableCell></TableRow>}</TableBody></Table>
+        <Table className="facts"><TableBody><TableRow><TableCell>Destination</TableCell><TableCell>{request.destination}</TableCell></TableRow><TableRow><TableCell>Acting as</TableCell><TableCell>{request.actingAs}</TableCell></TableRow><TableRow><TableCell>Action</TableCell><TableCell>{kindLabels[request.kind]}</TableCell></TableRow>{standingAuthorization ? <TableRow><TableCell>Authorization</TableCell><TableCell>Autopilot v{standingAuthorization.mandateVersion}</TableCell></TableRow> : <TableRow><TableCell>Authorization</TableCell><TableCell>Your decision</TableCell></TableRow>}</TableBody></Table>
         <section><span className="flabel">Exact payload</span><div className="rs-action-fields">{request.fields.map((field) => <div key={field.label}><span className="mono">{field.label}</span><p>{field.value}</p></div>)}</div></section>
         {needsOneTimeApproval ? <label className="ack" htmlFor={acknowledgementId}><input checked={acknowledged} id={acknowledgementId} onChange={(event) => setAcknowledged(event.target.checked)} type="checkbox" /><span>I approve this exact destination and payload for one execution.</span></label> : null}
         {error ? <p className="rs-form-error" role="alert">{error}</p> : null}
-        <p className="rs-hard-boundary-note">Standing mandates never authorize terms, contracts, bookings, payments, deposits, passwords, 2FA, or CAPTCHA.</p>
+        <p className="rs-hard-boundary-note">Autopilot never authorizes terms, contracts, bookings, payments, deposits, passwords, 2FA, or CAPTCHA.</p>
       </div>
     </ActionDialog>
   );

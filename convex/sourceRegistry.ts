@@ -122,6 +122,9 @@ export const seedControlledDemoPortal = mutation({
     const parsed = new URL(args.baseUrl);
     if (
       parsed.protocol !== "https:" ||
+      parsed.hostname.toLowerCase() !== "roomscout.dev" ||
+      parsed.port ||
+      (parsed.pathname !== "/" && parsed.pathname !== "") ||
       parsed.username ||
       parsed.password ||
       parsed.search ||

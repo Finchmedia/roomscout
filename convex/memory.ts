@@ -704,6 +704,10 @@ export const refreshMyEmbeddings = action({
   returns: v.object({ processed: v.number(), configured: v.boolean() }),
   handler: async (ctx): Promise<{ processed: number; configured: boolean }> => {
     const ownerId = await requireActionUserId(ctx);
+    await roomScoutRateLimiter.limit(ctx, "contextImport", {
+      key: ownerId,
+      throws: true,
+    });
     if (!process.env.OPENAI_API_KEY) return { processed: 0, configured: false };
     const factIds: Id<"memoryFacts">[] = await ctx.runQuery(
       internal.memory.getEmbeddingCandidates,

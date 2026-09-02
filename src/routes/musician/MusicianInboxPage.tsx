@@ -303,25 +303,30 @@ export function MusicianInboxPage() {
         <aside className="pane ctx rs-inbox__context">
           <section><h2>Scout mailbox</h2><strong>{mailbox?.emailAddress ?? (mailbox?.status === "provisioning" ? "Provisioning…" : "Created on first outreach")}</strong><span className="mono rs-brand-accent">{mailbox?.status ?? "Not provisioned"}</span></section>
           <section><h2>Selected channel</h2><Table className="facts"><TableBody><TableRow><TableCell>Type</TableCell><TableCell>{effectiveThread ? channelLabels[effectiveThread.channel] : "—"}</TableCell></TableRow><TableRow><TableCell>Storage</TableCell><TableCell>{effectiveThread?.channel === "platform" ? "Platform thread" : effectiveThread?.channel === "email" ? "AgentMail thread" : effectiveThread?.channel === "webform" ? "External action ledger" : "—"}</TableCell></TableRow></TableBody></Table></section>
-          <section><h2>Approve / YOLO boundary</h2><p>Approve mode requires the exact final message each time. YOLO covers only allowlisted, non-binding communication within a persisted mandate. Any agreement, booking, contract, payment, deposit, password, 2FA, or CAPTCHA remains an exact human decision.</p></section>
-          <section>
-            <h2>Account &amp; verification mail</h2>
-            {mailboxError ? <p className="rs-form-error" role="alert">{mailboxError}</p> : null}
-            <MailboxVerificationPanel messages={mailboxMessages} onStatusChange={changeMailboxMessageStatus} />
-          </section>
-          <section>
-            <h2>External action ledger</h2>
-            {actionError ? <p className="rs-form-error" role="alert">{actionError}</p> : null}
-            <ActionLifecyclePanel
-              actions={actionRows?.slice(0, 10)}
-              busyActionId={busyActionId}
-              executionResults={executionResults}
-              onConfirmHumanCompleted={confirmHumanAction}
-              onExecute={executeApprovedAction}
-              onReview={setSelectedActionId}
-            />
-          </section>
-          <section><h2>Opportunities</h2>{handoffError ? <p className="rs-form-error" role="alert">{handoffError}</p> : null}{opportunityRows === undefined ? <p>Loading…</p> : opportunities.length ? opportunities.slice(0, 3).map((opportunity) => <OpportunityHandoff key={opportunity.id} onMarkHandedOff={markHandedOff} opportunity={opportunity} />) : <p>No persisted opportunity is ready for handoff.</p>}</section>
+          <section><h2>Autopilot boundary</h2><p>RoomScout handles non-binding messages and follow-ups. Agreements, bookings, contracts, and money always come back to you.</p></section>
+          <details className="rs-inbox-advanced">
+            <summary>Advanced activity</summary>
+            <div>
+              <section>
+                <h2>Account &amp; verification mail</h2>
+                {mailboxError ? <p className="rs-form-error" role="alert">{mailboxError}</p> : null}
+                <MailboxVerificationPanel messages={mailboxMessages} onStatusChange={changeMailboxMessageStatus} />
+              </section>
+              <section>
+                <h2>External action ledger</h2>
+                {actionError ? <p className="rs-form-error" role="alert">{actionError}</p> : null}
+                <ActionLifecyclePanel
+                  actions={actionRows?.slice(0, 10)}
+                  busyActionId={busyActionId}
+                  executionResults={executionResults}
+                  onConfirmHumanCompleted={confirmHumanAction}
+                  onExecute={executeApprovedAction}
+                  onReview={setSelectedActionId}
+                />
+              </section>
+              <section><h2>Opportunities</h2>{handoffError ? <p className="rs-form-error" role="alert">{handoffError}</p> : null}{opportunityRows === undefined ? <p>Loading…</p> : opportunities.length ? opportunities.slice(0, 3).map((opportunity) => <OpportunityHandoff key={opportunity.id} onMarkHandedOff={markHandedOff} opportunity={opportunity} />) : <p>No persisted opportunity is ready for handoff.</p>}</section>
+            </div>
+          </details>
         </aside>
       </div>
       <ActionApprovalSheet

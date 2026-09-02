@@ -1,7 +1,6 @@
 import { Menu, X } from "lucide-react";
 import { useState } from "react";
 import { Link, NavLink } from "react-router-dom";
-import { RoomScoutMark } from "../brand/RoomScoutMark";
 
 export function PublicHeader() {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -9,8 +8,7 @@ export function PublicHeader() {
   return (
     <header className="pubhead rs-public-header">
       <Link aria-label="RoomScout home" className="brand" to="/">
-        <RoomScoutMark />
-        <b>RoomScout</b>
+        <b className="rs-wordmark">roomscout</b>
       </Link>
       <button
         aria-expanded={menuOpen}

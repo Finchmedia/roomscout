@@ -24,7 +24,7 @@ export function ConnectionsPanel({ mailbox, portals, connectableSources = [], lo
       </LedgerCard>
 
       <LedgerCard header={<><span className="type">Connected portals</span><span className="mono">User-authorized identities</span></>}>
-        <div className="rs-connection-boundary"><ShieldCheck aria-hidden="true" size={15} /><p>A connection alone is never authorization. A persisted standing mandate may allow listed communication actions; passwords, 2FA, CAPTCHA, terms, contracts, bookings, payments, and deposits remain human-only.</p></div>
+        <div className="rs-connection-boundary"><ShieldCheck aria-hidden="true" size={15} /><p>Connected portals let Autopilot work for you, but never authorize credentials, 2FA, CAPTCHA, agreements, bookings, or payments.</p></div>
       </LedgerCard>
 
       {connectableSources.length ? <LedgerCard header={<><span className="type">Available portal connections</span><span className="mono">Reviewed authenticated sources</span></>}>

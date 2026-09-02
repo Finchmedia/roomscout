@@ -393,12 +393,22 @@ export const approveControlledDemoConnection = mutation({
       throw new ConvexError({ code: "CONNECTION_NOT_FOUND" });
     }
     const source = await ctx.db.get(connection.sourceId);
+    let sourceUrl: URL | undefined;
+    try {
+      sourceUrl = source ? new URL(source.baseUrl) : undefined;
+    } catch {
+      sourceUrl = undefined;
+    }
     if (
       source === null ||
       source.slug !== "roomscout-dev-connected" ||
       source.accessMode !== "authenticated" ||
       source.automationReview !== "approved" ||
-      source.adapterKey !== "roomscout-dev-v1"
+      source.adapterKey !== "roomscout-dev-v1" ||
+      sourceUrl?.protocol !== "https:" ||
+      sourceUrl.hostname !== "roomscout.dev" ||
+      sourceUrl.port !== "" ||
+      (sourceUrl.pathname !== "/" && sourceUrl.pathname !== "")
     ) {
       throw new ConvexError({ code: "CONTROLLED_DEMO_SOURCE_REQUIRED" });
     }

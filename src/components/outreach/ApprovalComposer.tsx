@@ -138,7 +138,7 @@ export function ApprovalComposer({
       }
       onOpenChange={handleOpenChange}
       open={open}
-      title="Review & approve inquiry"
+      title="Manual send review"
     >
       <div className="rs-approval-form">
         <div>
@@ -156,7 +156,7 @@ export function ApprovalComposer({
         <div>
           <label className="flabel" htmlFor={messageId}>Message</label>
           <textarea className="input" id={messageId} onChange={(event) => setMessageOverride(event.target.value)} rows={9} value={message} />
-          <p className="mono">Review the Scout's wording and edit any assumption before approval.</p>
+          <p className="mono">This fallback lets you review wording when a source is not covered by Autopilot.</p>
         </div>
         <label className="ack">
           <input checked={approved} onChange={(event) => setApproved(event.target.checked)} type="checkbox" />

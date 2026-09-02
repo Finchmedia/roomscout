@@ -381,7 +381,7 @@ export const executeTool = action({
       if (mailbox.status !== "active") {
         return { outputJson: JSON.stringify({ drafted: false, reason: "A personal RoomScout reply inbox is not ready." }) };
       }
-      const requestId = await ctx.runMutation(internal.externalActions.createContactFormFromScout, {
+      const result = await ctx.runMutation(internal.externalActions.createContactFormFromScout, {
         ownerId,
         savedNeedId: session.activeNeedId,
         signalId: session.focusedSignalId,
@@ -389,7 +389,7 @@ export const executeTool = action({
         subject: input.subject,
         body: input.body,
       });
-      return { outputJson: JSON.stringify({ drafted: true, requestId, channel: "webform" }) };
+      return { outputJson: JSON.stringify({ drafted: true, ...result, channel: "webform" }) };
     }
     const input = outreachSchema.parse(parsed);
     await ctx.runAction(internal.mailboxes.ensureForOwner, { ownerId });
@@ -417,7 +417,7 @@ export const getInstructions = action({
         scoutBaseInstructions,
         context.caseCard,
         memoryContext,
-        "VOICE RULES: Be concise and conversational. Use tools to make durable changes. Never approve or send communication.",
+        "VOICE RULES: Be concise and conversational. Use tools to make durable changes. An active Autopilot mandate may authorize a non-binding tool action through server-side policy; never claim that a message was sent unless the tool confirms it. Never make a binding commitment.",
       ].join("\n\n"),
       contextVersion: `${context.activeNeedId ?? "none"}:${context.focusedSignalId ?? "none"}:${context.caseCard.length}`,
     };

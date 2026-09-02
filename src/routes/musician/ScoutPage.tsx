@@ -114,6 +114,7 @@ export function ScoutPage() {
   const getOrCreateDraft = useMutation(api.savedNeeds.getOrCreateDraft);
   const getOrCreateThread = useMutation(api.scout.getOrCreateThread);
   const setNeedStatus = useMutation(api.savedNeeds.setStatus);
+  const enableDefaultAutopilot = useMutation(api.mandates.enableDefaultAutopilot);
   const setScoutFocus = useMutation(api.scout.setFocus);
   const sendScoutMessage = useAction(api.scout.sendMessage);
   const initDraftRef = useRef(false);
@@ -141,6 +142,7 @@ export function ScoutPage() {
   );
   const matches = useQuery(api.matches.listMine, { limit: 30 });
   const outreachDrafts = useQuery(api.outreach.listMine, { limit: 50 });
+  const activeMandate = useQuery(api.mandates.getActiveMine, need ? { savedNeedId: need._id } : "skip");
 
   useEffect(() => {
     if (needs === undefined || needs.length > 0 || initDraftRef.current) return;
@@ -217,7 +219,7 @@ export function ScoutPage() {
     setActivating(true);
     setScoutError("");
     try {
-      await setNeedStatus({ needId: need._id, status: "active" });
+      await enableDefaultAutopilot({ savedNeedId: need._id });
     } catch (error) {
       setScoutError(readableError(error));
     } finally {
@@ -238,7 +240,7 @@ export function ScoutPage() {
       setDraftSignal(signal);
       await sendScoutMessage({
         threadId,
-        message: `Help me draft a careful inquiry about “${signal.title}”. First identify any missing recipient information. Do not approve or send anything.`,
+        message: `Handle the next appropriate inquiry about “${signal.title}”. Use the active Autopilot mandate for non-binding outreach when the reviewed source flow permits it. If RoomScout needs a human step or the action could create a commitment, prepare a clear handoff instead.`,
       });
     } catch (error) {
       setScoutError(readableError(error));
@@ -294,7 +296,8 @@ export function ScoutPage() {
           <SearchProfileCard
             canConfirm={canActivate}
             confirming={activating}
-            confirmationHint={canActivate ? "You can activate now and refine the rest with your Scout." : "Tell your Scout which city or area to search before activating."}
+            confirmationHint={canActivate ? "Start Autopilot now. RoomScout can keep refining the search, contact suitable leads, and ask you only before a commitment." : "Tell your Scout which city or area to search before starting Autopilot."}
+            confirmationLabel="Start Autopilot"
             fields={search.fields}
             onConfirm={activateSearch}
             progress={search.fields.length}
@@ -352,7 +355,7 @@ export function ScoutPage() {
               <TableRow><TableCell>Facts</TableCell><TableCell>{memory?.facts.length ?? 0} durable memories</TableCell></TableRow>
               <TableRow><TableCell>Context</TableCell><TableCell>Version {memory?.profile?.contextVersion ?? 0}</TableCell></TableRow>
               <TableRow><TableCell>Semantics</TableCell><TableCell>{memory?.facts.filter((fact) => fact.embeddingState === "ready").length ?? 0} facts embedded</TableCell></TableRow>
-              <TableRow><TableCell>Outreach</TableCell><TableCell>Approve or non-binding YOLO mandate</TableCell></TableRow>
+              <TableRow><TableCell>Autopilot</TableCell><TableCell>{activeMandate === undefined ? "Loading…" : activeMandate && (activeMandate.mode === "outreach_autopilot" || activeMandate.mode === "negotiation_autopilot") ? `On · mandate v${activeMandate.version}` : "Off · messages wait for review"}</TableCell></TableRow>
             </TableBody></Table>
           </LedgerCard>
         </div>

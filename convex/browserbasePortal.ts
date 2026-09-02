@@ -438,6 +438,33 @@ async function detectRegistrationHumanBlocker(
   });
 }
 
+async function assertControlledPortalAuthenticated(
+  page: Page,
+  connection: WorkerConnection,
+): Promise<void> {
+  const inboxUrl = buildAllowedPortalUrl({
+    baseUrl: connection.baseUrl,
+    path: "/inbox",
+    allowedDomains: connection.allowedDomains,
+    allowedPaths: connection.allowedPaths,
+  });
+  await page.goto(inboxUrl);
+  await page.waitForLoadState("domcontentloaded", 20_000);
+  await page.waitForTimeout(750);
+  assertFinalDomain(await page.url(), connection.allowedDomains);
+  const contractState = await page.evaluate(() =>
+    document
+      .querySelector<HTMLElement>("[data-roomscout-inbox-state]")
+      ?.dataset.roomscoutInboxState ?? null,
+  );
+  assertAuthenticatedPortalContract({
+    url: await page.url(),
+    expectedPath: "/inbox",
+    contractState,
+    allowedStates: ["ready", "empty"],
+  });
+}
+
 export const runRecon = action({
   args: { connectionId: v.id("portalConnections"), path: v.optional(v.string()) },
   returns: v.object({
@@ -713,6 +740,7 @@ export const startAgentRegistration = action({
       if (!(await hasVisibleLocator(page, VERIFICATION_SELECTORS))) {
         const current = new URL(await page.url());
         if (!current.pathname.startsWith("/sign-up")) {
+          await assertControlledPortalAuthenticated(page, connection);
           await releaseProviderSession(client, browser.sessionId);
           await ctx.runMutation(internal.portalConnections.finishRun, {
             runId,
@@ -936,6 +964,7 @@ export const continueAgentRegistration = internalAction({
         );
         return null;
       }
+      await assertControlledPortalAuthenticated(page, connection);
       await ctx.runMutation(internal.inbox.markMailboxMessageReadInternal, {
         ownerId: args.ownerId,
         messageId: message.messageId,
@@ -1565,6 +1594,7 @@ async function executeApprovedWriteForOwner(
       page,
       workflow,
       payload: claim.payload,
+      providerThreadId: existingThread?.providerThreadId,
       allowedDomains: connection.allowedDomains,
       allowedPaths: connection.allowedPaths,
       humanPresenceRequired: claim.humanPresenceRequired,
