@@ -613,4 +613,8 @@ again. `FIRECRAWL_MONITORS_ENABLED` remained `false`, all four third-party pilot
 sources remained `reviewing` and paused, and no Browserbase action, AgentMail
 action, form submission, or external communication occurred. The change passed
 239 tests across 49 files, TypeScript, ESLint, and the Vite production build
-before deployment.
+before deployment. Firecrawl's check-status endpoint still labelled the manual
+check `running` after its only page result had been delivered and fully
+processed; re-enabling the monitor briefly did not change that provider status,
+so it was returned to `paused`. This is retained as a provider-state follow-up,
+not reported as a completed-check event.
