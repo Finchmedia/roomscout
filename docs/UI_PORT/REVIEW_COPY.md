@@ -440,3 +440,67 @@ carry no code names.
   localisation to the backlog.
 - **`factsFromNeed` labels and values** — ten labels and nine value templates that exist in English
   today. They are a translation job, not new copy, and §11 Q14 has not settled the facet-label part.
+
+---
+
+## 12. Copy-layer triage (2026-09-09, afternoon)
+
+Added after the section above, from the open questions the German extraction and the copy runtime
+raised. Every decision behind these rows is recorded in `DECISIONS.md` under
+"Copy-layer decisions (2026-09-09, afternoon)"; the item number is named in each Note.
+
+### 12.1 The missing singular for the import change-log line
+
+„{n} Angaben aus Beispiel-Kontext übernommen“ is a hard plural with no singular, so importing one
+entry renders „1 Angaben …“. `knowledge.import.pickCount` („{n} ausgewählt“) lets the user pick a
+single fact, so n=1 is reachable. The same string exists twice, once per surface, with a different
+placeholder name in each — both spellings are verbatim source and neither is renamed. The two keys
+become `{ one, other }` in one change (`DECISIONS.md` item 82).
+
+| Proposed key | DE (proposed) | EN (proposed) | Where it appears | Note | Status |
+|---|---|---|---|---|---|
+| `settings.knowledge.log.entry.imported.one` | {n} Angabe aus Beispiel-Kontext übernommen | {n} entry taken from the example context | Settings → Was dein Scout weiß, change log | The missing singular. Only „Angaben“ → „Angabe“ changes; the rest is the shipped string | PROPOSED |
+| `settings.knowledge.log.entry.imported.other` | {n} Angaben aus Beispiel-Kontext übernommen | {n} entries taken from the example context | same row | **DE exists** (`settings.ts` `knowledge.log.entry.imported`). Listed so the pair is visible; only the English is new | PROPOSED |
+| `scout.data.log.knowledgeImported.one` | {count} Angabe aus Beispiel-Kontext übernommen | {count} entry taken from the example context | Scout, change log in „Was dein Scout weiß“ | Identical string, `{count}` per SCOUT §18.19. Must land in the same change as the Settings twin | PROPOSED |
+| `scout.data.log.knowledgeImported.other` | {count} Angaben aus Beispiel-Kontext übernommen | {count} entries taken from the example context | same row | **DE exists** (`scout.ts` `data.log.knowledgeImported`) | PROPOSED |
+
+This is the fifth plural case. `COMPONENT_MAP.md` §6.3 names four and needs the addition.
+
+### 12.2 The two remaining false demo sentences on the review card
+
+`DECISIONS.md` item 30 replaces the complete subline because it claims nothing is sent. Two review
+strings end with the same sentence and were never covered by it (`DECISIONS.md` item 85). In the
+real app the acceptance really is sent, which also makes the disclaimer's subjunctive wrong: it says
+the Scout *would* commit, when it does.
+
+| Proposed key | DE (proposed) | EN (proposed) | Where it appears | Note | Status |
+|---|---|---|---|---|---|
+| `scout.review.accept.disclaimer` | Mit deiner Bestätigung sagt der Scout dem Anbieter verbindlich zu. | With your confirmation the Scout gives the provider a binding acceptance. | Review card, under the accept control | Replaces „Mit deiner Bestätigung würde der Scout dem Anbieter verbindlich zusagen. In dieser Demo wird nichts versendet.“ Two edits: the false second sentence goes, and „würde … zusagen“ becomes „sagt … zu“ | PROPOSED |
+| `scout.review.question.answer` | Ich sage dem Anbieter verbindlich zu und schicke euch die Bestätigung mit allen Bedingungen. Ihr könnt ab dem 1. Oktober proben. | I give the provider a binding acceptance and send you the confirmation with all the terms. You can rehearse from 1 October. | Review card, the Scout's answer to „Was passiert dann?“ | Replaces the same trailing sentence. The first two sentences are the shipped string, unchanged. Register: **euch** the confirmation, **ihr** rehearse | PROPOSED |
+
+⚠ The complete headline („Euer nächster Proberaum steht bereit.“) is still open for the same reason
+and is deliberately not proposed here — see the note in group 5 and `DATA_BINDING_PLAN.md` §11 Q5.
+
+### 12.3 What item 45's truncation actually produces
+
+`DECISIONS.md` item 45 drops the sentence pointing at the demo control bar, with no replacement, but
+`OPERATOR_SCREENS.md` still carries both sentences, so the extraction shipped them doc-verbatim
+(`DECISIONS.md` item 102). No new wording is authored here; these two rows exist so the exact
+truncated result is visible before it is written into `operator.ts`.
+
+| Proposed key | DE (proposed) | EN (proposed) | Where it appears | Note | Status |
+|---|---|---|---|---|---|
+| `operator.overview.calm.text` | Keine Aufgabe braucht Aufmerksamkeit. | No task needs attention. | Operator → Betrieb im Blick, calm banner | Truncation only. Drops „Beispielstörung über die Demo-Steuerung laden.“ per item 45 | PROPOSED |
+| `operator.diag.empty` | Keine offenen Störungen. | No open incidents. | Operator → Diagnose, no-incident card | Truncation only. Drops „Über die Demo-Steuerung lässt sich eine Beispielstörung laden.“ per item 45. The German gains the sentence-final period the source already has | PROPOSED |
+
+### 12.4 Rows deliberately not added here
+
+- **Language-toggle and navigation-sheet labels** are already proposed in groups 7 and 8. One
+  control serves the landing header and the profile menu, so no landing-specific toggle key is
+  added (`DECISIONS.md` items 80 and 81).
+- **Plural forms for `operator.overview.attention.text` and
+  `operator.integrations.browserbase.test.incident`**, which hard-code the count 1. Neither is bound
+  to a live count, so no plural is invented for a hypothetical (`DECISIONS.md` item 99). They are a
+  `BACKLOG.md` §3 conditional.
+- **A replacement for `operator.host.now.format`.** It is kept verbatim as a dead-but-catalogued key
+  and is translated as it stands (`DECISIONS.md` item 78).

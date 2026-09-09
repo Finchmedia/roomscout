@@ -627,3 +627,584 @@ live under `/Users/danielfinke/Documents/STARTUPS/ROOMSCOUT/roomscout/`.
   `/Users/danielfinke/Documents/STARTUPS/ROOMSCOUT/roomscout/src/ui/motion/`.
 - The `COMPONENT_MAP.md` rule stands: nothing under `src/ui` imports from `src/components` except
   `@/components/ui`.
+
+---
+
+## Copy-layer decisions (2026-09-09, afternoon)
+
+**Decided: 2026-09-09, afternoon.** The German copy extraction (five surface dictionaries plus the
+`common.*` bag, `src/ui/copy/de/*.ts`) and the copy runtime (`types.ts`, `format.ts`,
+`LocaleProvider.tsx`, `useCopy.ts`, `LanguageToggle.tsx`, `copy.test.ts`) raised open questions that
+items 1–68 above do not answer. This section answers them, numbering on from 68, one entry per
+distinct question, deduplicated across the eleven agents that raised them. `Raised by` names the
+agent and surface so a question can be traced back.
+
+Three rules decide most of them, and they are worth stating once:
+
+- **Verbatim wins.** A source string's placeholder name and value shape are part of the string.
+  `{count}` on one surface and `{n}` on another are not unified, and `{budget}` keeps whichever
+  value shape its own key expects. Both names stay in the `CopyVars` union; each key's expected
+  shape is documented in a comment beside it when the surface is built.
+- **One key per visible variant.** Two keys carrying the same German string are not a bug and are
+  not hoisted. English may legitimately diverge between them.
+- **No invented copy.** A string the prototype never contained is proposed in
+  `docs/UI_PORT/REVIEW_COPY.md`, never written straight into a dictionary.
+
+---
+
+### Key shape and naming
+
+**69. `hero.cta.secondary` is both a leaf („So funktioniert’s“) and a namespace (`.arrow` = „↓“) in
+`LANDING_SCREENS.md` §17.2 — which shape ships?** [decided]
+
+- **Raised by** extract:landing, fix:landing.
+- **Decision.** The shipped shape stands: `landing.hero.cta.secondary.label` plus
+  `landing.hero.cta.secondary.arrow`. The alternative sibling-leaf spelling `secondaryArrow` is
+  rejected, because `.label` + `.arrow` is the pattern `operator.flags.preview.arrow` already uses.
+- **Consequence.** `en.ts` and `LANDING_SCREENS.md` §17.2 mirror the `.label` sub-key; the alias
+  `doc hero.cta.secondary → dictionary hero.cta.secondary.label` is recorded in
+  `COMPONENT_MAP.md` §6.1 as the third hand-edit, so a doc-driven key checker does not report a
+  false failure.
+
+**70. Eleven Scout doc keys are both a leaf and a namespace; the bare value moved to `.text`. Is
+that the sanctioned resolution?** [decided]
+
+- **Raised by** extract:scout.
+- **Decision.** Yes. The `.text` sub-key is the standing resolution for every leaf/branch collision,
+  on every surface. No string changed; eleven paths gained a segment.
+- **Consequence.** `COMPONENT_MAP.md` §6.1 records all eleven renames — `discovery.ended`,
+  `facts.ort`, `activity.found`, `activity.found2`, `clarification.yes`, `clarification.no`,
+  `offer.prompt`, `review.accept`, `data.knowledge.genre`, `data.knowledge.mates`,
+  `data.knowledge.amps` — and `SCOUT_SCREENS.md` §18 mirrors them, so `en.ts` and the parity test
+  agree.
+
+**71. The two Settings plural folds rename four doc keys — is the fold accepted?** [decided]
+
+- **Raised by** extract:settings.
+- **Decision.** Accepted. `billing.usage.searchesOne`/`searchesMany` fold into
+  `settings.billing.usage.searches.{one,other}`, and `knowledge.import.doneOne`/`doneMany` into
+  `settings.knowledge.import.done.{one,other}`. The values are verbatim; only the key shape changed.
+- **Consequence.** `SETTINGS_SCREENS.md` §17.6 and §17.9 are amended to the object shape so a
+  doc↔dictionary diff needs no special case, and `COMPONENT_MAP.md` §6.1 lists the four renames.
+
+**72. `settings.import.title` uses the doc's numeric keys `1`/`2`/`3` — rename them?** [decided]
+
+- **Raised by** extract:settings (twice).
+- **Decision.** No rename. The quoted `"1"`/`"2"`/`"3"` keys stay, because `step1`/`step2`/`step3`
+  are already taken by the sibling `import.step1.*` blocks and any other renaming invents a
+  vocabulary the docs do not have. `DeepLeafPaths` handles them.
+- **Consequence.** `settings.import.title.1` is a valid `CopyKey`; no document changes.
+
+**73. Adding the expired detail string forces `operator.tasks.t2.detail` from a leaf into an object
+— which shape?** [decided]
+
+- **Raised by** extract:operator (twice), fix:operator.
+- **Decision.** `{ default, expired }`, mirroring the `t3.detail` shape that already ships. The
+  rename and the new string land in one edit, never separately.
+- **Consequence.** Listed under *Deferred to the surface build* below with the exact paths;
+  `OPERATOR_SCREENS.md` §17.4 takes the object shape.
+
+---
+
+### Placeholders and value shapes
+
+**74. `scout.brief.sheet.count` uses `{count}` and `settings.knowledge.import.done` uses `{n}` for
+structurally identical plurals — unify?** [decided]
+
+- **Raised by** fix:scout, extract:scout.
+- **Decision.** No unification. Both spellings are verbatim source, both stay in `COPY_VAR_NAMES`,
+  and no file renames unilaterally. The same holds for `scout.data.log.knowledgeImported` (`{count}`)
+  against its Settings twin (`{n}`).
+- **Consequence.** `COMPONENT_MAP.md` §6.3 records the split as intentional rather than as a defect
+  to be fixed later.
+
+**75. `{budget}` carries three different value shapes across four verbatim keys — disambiguate the
+token?** [decided]
+
+- **Raised by** fix:scout.
+- **Decision.** The token name stays `{budget}` everywhere; renaming it would edit verbatim §18
+  values. The resolved forms are named keys (`scout.facts.budget.lower.*`,
+  `scout.facts.budget.compact.*`), so a caller never transforms a translated string. Each key's
+  expected shape is documented in a comment beside it.
+- **Consequence.** The wiring contract — full label for `autopilot.approval.message`, compact label
+  for `autopilot.brief.pill.compact`, bare number for `candidates.budget.over` and
+  `deadEnd.option.budget.title` — is confirmed when those components are built.
+
+**76. `SCOUT_STATE.md` §20.6 names the over-budget placeholder `{budgetNum}`; `SCOUT_SCREENS.md`
+§18.17 says `{budget}`.** [decided]
+
+- **Raised by** extract:scout, fix:scout.
+- **Decision.** `SCOUT_SCREENS.md` is canonical. `{budget}` is correct; `{budgetNum}` is a document
+  error and appears in no shipped value.
+- **Consequence.** `SCOUT_STATE.md` line 1650 is corrected. Listed under *Doc patches pending*.
+
+**77. `{time}` exists in no source dictionary — is the port-only placeholder sanctioned?** [decided]
+
+- **Raised by** extract:operator (twice), fix:scout.
+- **Decision.** Yes. `operator.sources.check.renewed` and `scout.data.time.today` both ship
+  „Heute, {time}“, per item 44 and `COMPONENT_MAP.md` §6.3, and `{time}` joins the interpolation
+  union. The prototype's `"Heute, {h}:{mm}"` survives only as a comment.
+- **Consequence.** `COMPONENT_MAP.md` §6.3's placeholder union gains `{time}`.
+
+**78. With `check.renewed` now `Intl`-formatted, nothing consumes `operator.host.now.format`
+(„{prefix}, {h}:{mm}“) and `host.now.prefix` — keep or drop?** [decided]
+
+- **Raised by** extract:operator (twice), fix:scout.
+- **Decision.** Keep both, verbatim, as documented dead keys. They are §17.12 source copy and the
+  only carriers of `{prefix}`; deleting source strings to tidy a dictionary is the wrong direction.
+  No component may consume them. They are removed in the same change that ports the host's `now()`
+  helper to `Intl`, not before.
+- **Consequence.** `OPERATOR_SCREENS.md` §17.12 marks the pair dead-but-catalogued; `en.ts`
+  translates them.
+
+**79. Arrow glyphs are split inconsistently in the source: only the hero CTA breaks its „↓“ into its
+own key.** [decided]
+
+- **Raised by** extract:landing.
+- **Decision.** Leave all four as the source has them. `how.link.features`,
+  `features.autopilot.link` and `closing.cta.secondary` keep the arrow baked into the string;
+  `hero.cta.secondary` keeps its split, which item 69 already forced. No further splitting.
+- **Consequence.** No document changes; `en.ts` mirrors the same four shapes.
+
+---
+
+### Strings the prototype never contained
+
+**80. The DE/EN language toggle has no strings anywhere — labels and `aria-label`.** [decided,
+maintainer review pending]
+
+- **Raised by** extract:landing (twice), extract:settings, runtime.
+- **Decision.** The strings are the ones already proposed in `REVIEW_COPY.md` §7:
+  `common.language.toggleAria`, `.shortDe`, `.shortEn` for the control that the landing header and
+  the profile menu share, plus `settings.profile.language.label|de|en|aria` for the Settings row.
+  One control, one key set — landing does not get its own toggle keys. Nothing is written into
+  `de/common.ts` before the maintainer accepts §7, so `LanguageToggle.tsx` keeps its hard-coded
+  `Record<Locale, string>` map and ships `role="group"` with no `aria-label` until then.
+- **Consequence.** `LANDING_SCREENS.md` §3 and §17.1 gain the toggle once §7 is accepted; the
+  `LanguageToggle` map move is listed under *Deferred to the surface build*.
+
+**81. The narrow-viewport navigation sheets have no trigger, close or `aria-label` strings.**
+[decided, maintainer review pending]
+
+- **Raised by** extract:landing, fix:landing.
+- **Decision.** `REVIEW_COPY.md` §8 already proposes all four —
+  `landing.header.nav.openAria`, `landing.header.nav.closeAria`, `settings.nav.pickerAria`,
+  `operator.nav.pickerAria`. They stand. Reusing `common.close` („Schließen“) for the landing sheet
+  is rejected: an icon-only close in a navigation sheet wants „Menü schließen“, and the two keys can
+  legitimately diverge in English.
+- **Consequence.** Landing gains two keys once §8 is accepted, moving its count from 123 to 125.
+
+**82. „{n} Angaben aus Beispiel-Kontext übernommen“ is a hard plural with no singular — n=1 renders
+„1 Angaben …“.** [decided, maintainer review pending]
+
+- **Raised by** fix:settings, fix:scout.
+- **Decision.** A German singular is authored through `REVIEW_COPY.md` (new §12) rather than
+  invented in an extraction: „{n} Angabe aus Beispiel-Kontext übernommen“, and its Scout twin with
+  `{count}`. Both keys then become `{ one, other }`. This is the fifth plural case, which
+  `COMPONENT_MAP.md` §6.3 does not list.
+- **Consequence.** `settings.knowledge.log.entry.imported` and `scout.data.log.knowledgeImported`
+  convert in one change — see *Deferred to the surface build*. §6.3's plural inventory gains a fifth
+  row.
+
+**83. `settings.privacy.portals.sub.other` is a `REVIEW_COPY.md` §10 proposal that already ships
+inside the dictionary.** [decided, maintainer review pending]
+
+- **Raised by** fix:settings, runtime.
+- **Decision.** It stays shipped. `COMPONENT_MAP.md` §6.3 orders the plural form, so a singular-only
+  node would be the larger deviation. If the maintainer rejects the wording, only that one value
+  changes; if `DATA_BINDING_PLAN.md` §5.7's drop of „simuliert“ is taken, both forms lose the word
+  together.
+- **Consequence.** The plural-leaf assertion in `copy.test.ts` depends on the path existing; a
+  rejection shrinks the expected list.
+
+**84. `operator.tasks.t2.detail.expired` has no source string — the one key of 174 not shipped.**
+[decided, maintainer review pending]
+
+- **Raised by** extract:operator (twice), fix:operator.
+- **Decision.** Item 42 stands, and the copy is the `REVIEW_COPY.md` §9 row, assembled verbatim from
+  the Diagnose sheet's Ursache and Auswirkung lines so the two surfaces cannot drift. It lands
+  together with the item 73 shape change.
+- **Consequence.** Until it lands, the expanded Aufträge row renders a blank detail stripe in the
+  incident state. That is accepted, not worked around.
+
+**85. `scout.review.accept.disclaimer` and `scout.review.question.answer` end with the same false
+demo sentence as the complete subline, and nothing replaces them.** [decided, maintainer review
+pending]
+
+- **Raised by** fix:scout.
+- **Decision.** They get the same treatment as item 30. „In dieser Demo wird nichts versendet.“ is
+  false in the real app and is dropped from both; the disclaimer's subjunctive („würde … zusagen“)
+  becomes indicative, since the acceptance really is sent. Replacements are proposed in
+  `REVIEW_COPY.md` §12 rather than edited in place.
+- **Consequence.** `SCOUT_SCREENS.md` §11 takes the two new values; both are listed under *Deferred
+  to the surface build*.
+
+**86. Item 30's replacement subline is written down but `scout.complete.subline` still ships the
+false one.** [decided, maintainer review pending]
+
+- **Raised by** fix:scout.
+- **Decision.** The `REVIEW_COPY.md` §5 wording is the value. The extraction was right to leave the
+  swap to a separate edit; that edit is now scheduled.
+- **Consequence.** `SCOUT_SCREENS.md` §12 line 1197 is patched in the same change.
+
+**87. The complete headline („Euer nächster Proberaum steht bereit.“) overstates a sent
+acceptance.** [decided, maintainer review pending]
+
+- **Raised by** fix:scout, `REVIEW_COPY.md` §5.
+- **Decision.** Left open deliberately. This is `DATA_BINDING_PLAN.md` §11 Q5, a product call about
+  what the app claims at that moment, not a copy-layer question. No replacement is invented; the
+  headline ships as it is until Q5 is answered.
+- **Consequence.** `BACKLOG.md` §2 keeps the headline open after item 30 closes.
+
+**88. `data.summary.pattern` shipped as bracket notation that `interpolate()` cannot render.**
+[decided]
+
+- **Raised by** extract:scout.
+- **Decision.** Resolved in the dictionary as item 11 requires: `scout.data.summary` is now a set of
+  per-case sentence templates (`empty`, `band.{fourFromOrt,four,fromOrt,plain}`,
+  `seeks.{sharedAndStorage,shared,roomAndStorage,room,storage}`), every word taken from the §20.13
+  fragment it replaces, with the default case rendering byte-for-byte as the doc's own example
+  sentence. The nine concatenation fragments are not shipped.
+- **Consequence.** `SCOUT_STATE.md` §5.3 and §20.13 replace the fragment bag with the template set;
+  `en.ts` writes one English sentence per case rather than translating fragments.
+
+**89. Three `SCOUT_STATE.md` §20 strings have no `SCOUT_SCREENS.md` §18 counterpart and were not
+shipped.** [decided]
+
+- **Raised by** extract:scout.
+- **Decision.** Superseded. `scout.autopilot.brief.pill.compact` and `.budget.fallback` now ship as
+  port keys replacing §18.10's pre-resolved `autopilot.briefPill` literal, and the release-budget
+  fallback is covered by `scout.facts.budget.lower.*`. Nothing from §20 is missing after that.
+- **Consequence.** `COMPONENT_MAP.md` §6.2's Scout block counts are re-measured — see item 112.
+
+---
+
+### Duplicates, and what stays out of `common.*`
+
+**90. Roughly forty values are duplicated verbatim across distinct keys on all four surfaces — are
+the duplicates deliberate?** [decided]
+
+- **Raised by** extract:landing (twice), extract:settings (twice), extract:operator (twice).
+- **Decision.** Deliberate, and confirmed: one key per visible variant. This covers Landing's eleven
+  duplicate values, Settings' „Gespeichert“/„Abbrechen“/„Zurück“/„Schließen“/„Details“/„Speichern“
+  clusters, and Operator's „Bereit“, „Konfiguriert“, „Diagnose“, „Anmeldung abgelaufen“ and
+  „Nächster Schritt“. No further hoisting into `common.*`.
+- **Consequence.** `COMPONENT_MAP.md` §6.1 records the confirmation, so the next reader does not
+  re-open it as a de-duplication task.
+
+**91. Should `common.*` be widened further — „Kopiert“, „Kopieren“, „Zurück zum Scout“?** [decided]
+
+- **Raised by** extract:settings, fix:settings.
+- **Decision.** No. `common.*` stays at eleven keys: the seven source keys plus `save`, `apply`,
+  `discard`, `next` from item 17. „Kopiert“/„Kopieren“ stay per-surface, and „Zurück zum Scout“ is
+  explicitly not hoisted — `COMPONENT_MAP.md` §D14 gives the sidebar back label two per-surface keys
+  on purpose, and a third alias would let them drift. The item 17 widening covers generic action
+  verbs, not navigation labels.
+- **Consequence.** `COMPONENT_MAP.md` §6.2's `common` bag is closed at eleven keys. A component that
+  needs a shared back label picks `settings.nav.back` or `scout.chrome.menu.backToScout` explicitly.
+
+**92. Two near-identical clipboard-failure strings coexist.** [decided]
+
+- **Raised by** extract:settings.
+- **Decision.** Both stay. `settings.sources.address.copyFail` and `common.copyFailedToast` are
+  verbatim from the docs, sit on different affordances (an address field versus a global toast), and
+  may legitimately diverge in English.
+- **Consequence.** No change; the near-duplicate is annotated so it does not read as a bug.
+
+**93. `scout.data.name.default` duplicates `common.demoName` („Herzbuben“).** [decided]
+
+- **Raised by** extract:scout.
+- **Decision.** Both stay. Both source docs list them, and demo-data naming is not a shared concept
+  worth a single origin.
+- **Consequence.** No change.
+
+**94. 21 of the 27 `scout.data.*` keys duplicate a `settings.*` string verbatim — should Settings
+read the Scout keys instead?** [decided]
+
+- **Raised by** fix:scout.
+- **Decision.** No cross-surface refactor. Both dictionaries keep their keys, the origin comments
+  from item 16 stay, and the runtime test that asserts the pairs are in sync stays. `en.ts`
+  translating each string twice is the accepted cost of surface-owned namespaces.
+- **Consequence.** `COMPONENT_MAP.md` §6.1 notes the sync test as the guard against drift.
+
+**95. `operator.settings.*` and `operator.scout.*` are quoted copies of strings the Settings and
+Scout dictionaries own.** [decided]
+
+- **Raised by** extract:operator.
+- **Decision.** Operator keeps its own copies, as `OPERATOR_SCREENS.md` §17.12 frames them. Operator
+  is an internal surface and must not break when a musician-facing string is reworded.
+- **Consequence.** The assembled `de` nests `operatorDe` under `operator`; it is never spread, or
+  those blocks would silently merge into the real Scout and Settings namespaces.
+
+**96. Three Operator keys duplicate `common.*` values — should call sites read `common.*`?**
+[decided]
+
+- **Raised by** fix:operator.
+- **Decision.** Call sites read the Operator keys (`flags.action.cancel`, `tasks.action.details`,
+  `diagSheet.close.aria`). `COMPONENT_MAP.md` §6.2 counts them inside Operator's 174, and mixing the
+  two dictionaries at the call site is what would let them drift.
+- **Consequence.** No change.
+
+---
+
+### Literals, counts and time
+
+**97. Landing's hard-coded times and currency literals — tokenise them?** [decided]
+
+- **Raised by** extract:landing (twice), fix:landing.
+- **Decision.** They stay literal. `features.followup.msg1.time` („Heute, 14:27“), `.msg2.time` and
+  every currency literal (`offer.price.amount`, `features.memory.row.budget.*`, `fact.budget.*`,
+  `work.context.pill`) are landing demo data, not bound values. **Correction to the warning left in
+  `landing.ts`:** the English pair is "Today, 14:27", not "Today, 2:27 PM". Item 44 fixes 24-hour
+  time in both languages and outranks the note in the file.
+- **Consequence.** `en.ts` writes 24-hour English for both stamps; the in-file comment is corrected
+  when the landing surface is built.
+
+**98. `operator.events.time.0941` / `.0942` are hard-coded clock strings under quoted numeric
+keys.** [decided]
+
+- **Raised by** extract:operator (twice).
+- **Decision.** They stay as literals under their quoted keys. They are demo timeline content, and
+  `en.ts` carries them over unchanged rather than transliterating them.
+- **Consequence.** When the event log is fed from real data they take the same `Intl` treatment as
+  `sources.check.renewed`; recorded in `BACKLOG.md` §3.
+
+**99. `overview.attention.text` and `integrations.browserbase.test.incident` hard-code the count
+1.** [decided]
+
+- **Raised by** extract:operator, fix:operator.
+- **Decision.** They ship as plain strings, verbatim. No plural is invented for a count that is not
+  bound to anything. If either is ever bound to a live count, the `{ one, other }` pair is authored
+  through `REVIEW_COPY.md` first.
+- **Consequence.** `BACKLOG.md` §3 records the conditional; §6.3's plural inventory stays free of an
+  Operator case for now.
+
+**100. `scout.brief.sheet.count.one` hard-codes the numeral („1 Wunsch gemerkt“) while
+`SCOUT_STATE.md` §20.11 parametrises it.** [decided]
+
+- **Raised by** fix:scout.
+- **Decision.** `SCOUT_SCREENS.md` §18.9 is canonical, so the hard-coded numeral stays. It is
+  correct for German and English, which are the only two locales in scope.
+- **Consequence.** `SCOUT_STATE.md` §20.11 is annotated rather than followed; a third locale whose
+  `one` category also covers 21 and 31 would re-open it.
+
+**101. Item 44 gives the English example „Today, 9:41“, but `Intl` with the `en` tag pads it to
+"09:41".** [decided]
+
+- **Raised by** runtime.
+- **Decision.** Resolve the `en` locale to `en-GB` inside `formatTime`. Item 44's literal example is
+  the specification, `hour12: false` stays, and `en-GB` renders "9:41" the way `de` renders „9:41“.
+  Accepting "Today, 09:41" would silently contradict a decision that was written with an example.
+- **Consequence.** `format.ts` maps the locale tag; the test's `/^0?9:41$/` tightens to `9:41`.
+  Listed under *Deferred to the surface build*.
+
+---
+
+### Contradictions between documents
+
+Where an agent found a document contradicting `DECISIONS.md`, this document wins and the document is
+patched. The patches are collected under *Doc patches pending* below.
+
+**102. Item 45 drops the demo-bar sentence, but `OPERATOR_SCREENS.md` still carries both sentences
+at four line positions, so `operator.ts` shipped them doc-verbatim.** [decided]
+
+- **Raised by** fix:operator.
+- **Decision.** Item 45 stands and is not reversed. `operator.overview.calm.text` truncates to
+  „Keine Aufgabe braucht Aufmerksamkeit.“ and `operator.diag.empty` to „Keine offenen Störungen.“
+  The extraction was right not to re-type a source string on its own authority; the truncation is
+  now authorised, and both values appear in `REVIEW_COPY.md` §12 so the exact result is visible
+  before it lands.
+- **Consequence.** `OPERATOR_SCREENS.md` lines 462, 835, 1402 and 1575 are patched; the two value
+  edits are listed under *Deferred to the surface build*.
+
+**103. Item 27 versus `SCOUT_SCREENS.md` lines 1229 and 2014, which still say to keep the literal
+„Budget bis 400 €“.** [decided]
+
+- **Raised by** fix:scout.
+- **Decision.** The applied reading is correct: item 27 makes the *number* dynamic, so
+  `deadEnd.option.budget.title` is „Budget bis {budget} €“ and renders identically at the default.
+  Item 27 does not authorise dropping the word „Budget“; a `deadBudget` string reading „Bis 400 €“
+  would be a copy edit, and none is wanted.
+- **Consequence.** `SCOUT_SCREENS.md` §13 is patched to the dynamic line at both positions.
+
+**104. Item 44 mandates `hour12: false`, but `OPERATOR_SCREENS.md` §17.5 and `COMPONENT_MAP.md` §6.3
+still print `{ hour: 'numeric', minute: '2-digit' }` and the example "Today, 9:41 AM".** [decided]
+
+- **Raised by** fix:operator, `REVIEW_COPY.md` §9.
+- **Decision.** Item 44 wins. Both option lists gain `hour12: false` and both examples lose the
+  meridiem. `REVIEW_COPY.md` §9's second correction also stands: „Letzter Demo-Check“ is a column on
+  the Quellen page (`OPERATOR_SCREENS.md` §6), not on Betrieb im Blick, so item 44's consequence line
+  cites the wrong section.
+- **Consequence.** Three document patches, listed below.
+
+**105. `DECISIONS.md` item 28 keeps the „Foto folgt vom Anbieter“ placeholder while
+`DATA_BINDING_PLAN.md` §4.7 says to hide the media cell.** [decided]
+
+- **Raised by** `REVIEW_COPY.md` §4.
+- **Decision.** Both, on different surfaces. The review card and the offer card use the placeholder
+  (item 28), because the user has committed attention to one room and an empty cell reads as a
+  broken image. Candidate list cards hide the media cell (§4.7), because a wall of placeholders
+  implies photos are coming for every room.
+- **Consequence.** `SCOUT_SCREENS.md` §11 keeps the placeholder, §14 hides the cell;
+  `DATA_BINDING_PLAN.md` §4.7 is narrowed to the list surface.
+
+**106. `autopilot.approval.toLabel` = „An: “ carries a load-bearing trailing space.** [decided]
+
+- **Raised by** extract:scout, fix:scout.
+- **Decision.** It stays verbatim for now, and the durable fix is scheduled: when the approval card
+  is built, the gap moves into markup and the value becomes „An:“ in both locales. An invisible
+  trailing space is not something every future translator will preserve.
+- **Consequence.** The change must land before `en.ts` is authored, or English inherits the space.
+  Listed under *Deferred to the surface build*; `SCOUT_STATE.md` §20.12 already has the spaceless
+  value and needs no patch.
+
+---
+
+### Copy runtime and assembly
+
+**107. Two assemblies of the German root now exist: `src/ui/copy/de.ts` and
+`src/ui/copy/de/index.ts`.** [decided]
+
+- **Raised by** runtime, fix:settings, fix:landing.
+- **Decision.** Collapse onto `src/ui/copy/de/index.ts`. A `de.ts` file sitting beside a `de/`
+  directory is a module-resolution hazard for a path (`./de`) that both satisfy, and the per-surface
+  split already lives under `de/`. `de.ts`'s negative-guarantee types and its mutual-assignability
+  assertion move into `de/index.ts`; `de.ts` is deleted. English mirrors the shape as
+  `src/ui/copy/en/index.ts`.
+- **Consequence.** `COMPONENT_MAP.md` §6.2's `src/ui/copy/de.ts` path is corrected to the directory
+  form. Listed under *Deferred to the surface build*.
+
+**108. Is `dev.ts` composed into the shipped dictionary?** [decided]
+
+- **Raised by** fix:landing.
+- **Decision.** No. The assembled root composes five bags — `common`, `scout`, `settings`,
+  `operator`, `landing`. `dev.ts` is imported directly by the gallery route only and is excluded
+  from the DE↔EN parity test, which is what items 20 and 56 already imply.
+- **Consequence.** `COMPONENT_MAP.md` §6.2 states the five-bag composition explicitly.
+
+**109. The demo/`v1` exclusion test cannot assert "no key path contains 'demo' or 'v1'" — 21
+legitimate product leaves carry a `demo` segment.** [decided]
+
+- **Raised by** runtime.
+- **Decision.** The implemented reading is correct and is the contract: no path starts with
+  `scout.demo.` or `landing.v1.`, plus `'demo' in de.scout === false` and `'v1' in de.landing ===
+  false`. `settings.sources.demo.*`, `settings.knowledge.demo.*` and `landing.header.cta.demo` are
+  product copy about demo data, which is a different thing from prototype-only copy.
+- **Consequence.** `COMPONENT_MAP.md` §6.1 rule 2 is restated in those terms so the test and the
+  rule read the same.
+
+**110. `t` is typed to `StringCopyKey` and `tp` to `PluralCopyKey`, not both to `CopyKey` as the
+§6.4 snippet has it.** [decided]
+
+- **Raised by** runtime.
+- **Decision.** The narrower typing stands. Rendering a plural object with `t` would print
+  `[object Object]`, and pointing `tp` at a plain string is equally a bug; both are now compile
+  errors. `CopyKey` stays exported as the union of all leaves.
+- **Consequence.** `COMPONENT_MAP.md` §6.4's snippet is updated to the two-key-type signature.
+
+**111. `COPY_VAR_NAMES` is derived from today's dictionaries and asserted in both directions, so
+removing the last use of a placeholder breaks the suite.** [decided]
+
+- **Raised by** runtime.
+- **Decision.** Keep the bidirectional assertion. It is a deliberate canary: `{city}`, `{profile}`,
+  `{usage}`, `{origin}` and `{price}` each have exactly one occurrence, and a copy edit that
+  silently drops one is exactly what the test should catch. Re-deriving the list is a one-line
+  change made knowingly.
+- **Consequence.** No change; the canary is documented in `copy.test.ts`.
+
+**112. The leaf count is 885 against `COMPONENT_MAP.md` §6.5's measured 871 source keys.**
+[decided]
+
+- **Raised by** runtime, fix:scout.
+- **Decision.** Neither number is wrong; they count different things. A `{ one, other }` object is
+  one leaf and two doc keys, and the documented hand-edits move the rest. §6.5 stops quoting a
+  single total and instead carries both figures with the reconciliation: source keys, shipped
+  leaves, and the per-surface delta (scout +13, settings −2, operator −1, landing 0, common +4).
+  `en.ts` parity is sized from the shipped leaf count, never from 871.
+- **Consequence.** `COMPONENT_MAP.md` §6.2 per-block counts and §6.5 are re-measured before either
+  number is quoted again.
+
+**113. `LocaleProvider` is not mounted anywhere.** [decided]
+
+- **Raised by** runtime.
+- **Decision.** Mounting it is app wiring, not copy-layer work, and it belongs to the first surface
+  build that calls `useCopy()`. It wraps the router in `src/main.tsx`.
+- **Consequence.** Listed under *Deferred to the surface build*; no screen may call `useCopy()`
+  before it lands.
+
+**114. `scout.discovery.inlineBrief.label` is a confirmed dead binding — keep or drop?** [decided]
+
+- **Raised by** extract:scout, fix:scout.
+- **Decision.** Keep it, annotated as dead. It is §18.6 source copy, and dropping it would make the
+  block's key count disagree with the document for no gain. It costs one English translation.
+- **Consequence.** `SCOUT_SCREENS.md` §18.6 marks it dead; wiring the inline brief stays a
+  `BACKLOG.md` item rather than a reason to delete the key.
+
+**115. Is Operator translated at all — does `en/operator.ts` have to exist?** [decided]
+
+- **Raised by** extract:operator.
+- **Decision.** Yes, unchanged from item 19. Operator is translated, `en.ts` covers all five
+  namespaces, and the parity test covers all of them. Operator English is still the last batch.
+- **Consequence.** The DE tree is already shaped for it; no change.
+
+---
+
+### Deferred to the surface build
+
+These are the changes this section authorises but does not make. Each names the exact key paths, so
+the Scout, Settings, Operator and foundation builders can pick them up without re-reading the
+reasoning above.
+
+1. **`operator.tasks.t2.detail` → `{ default, expired }`** (items 73, 84). Rename
+   `operator.tasks.t2.detail` to `operator.tasks.t2.detail.default`, add
+   `operator.tasks.t2.detail.expired` with the `REVIEW_COPY.md` §9 value. One edit, both halves.
+2. **`settings.knowledge.log.entry.imported` → `{ one, other }`** (item 82). `one` from
+   `REVIEW_COPY.md` §12, `other` is today's value. Placeholder stays `{n}`.
+3. **`scout.data.log.knowledgeImported` → `{ one, other }`** (item 82). Same change, placeholder
+   stays `{count}`. Lands in the same commit as item 2 above, never alone.
+4. **`scout.complete.subline`** (item 86) takes the `REVIEW_COPY.md` §5 value.
+5. **`scout.review.accept.disclaimer` and `scout.review.question.answer`** (item 85) take the
+   `REVIEW_COPY.md` §12 values.
+6. **`operator.overview.calm.text` and `operator.diag.empty`** (item 102) truncate to their first
+   sentence, per `REVIEW_COPY.md` §12.
+7. **`scout.autopilot.approval.toLabel`** (item 106) becomes „An:“ and the gap moves into markup.
+   Must land before `en.ts` is authored.
+8. **Collapse `src/ui/copy/de.ts` into `src/ui/copy/de/index.ts`** (item 107) and delete `de.ts`,
+   carrying over its negative-guarantee types.
+9. **`formatTime` resolves the `en` tag to `en-GB`** (item 101), and `copy.test.ts` tightens its
+   expectation to `9:41`.
+10. **Mount `LocaleProvider`** around the router in `src/main.tsx` (item 113).
+11. **`LanguageToggle.tsx` moves its hard-coded label map onto `common.language.shortDe|shortEn`**
+    and gains the `toggleAria` group label, once `REVIEW_COPY.md` §7 is accepted (item 80).
+12. **`settings.privacy.portals.sub`** reverts to a plain string, and the plural-leaf list in
+    `copy.test.ts` shrinks, if `REVIEW_COPY.md` §10 is rejected (item 83).
+
+### Doc patches pending
+
+1. `COMPONENT_MAP.md` §6.1 — record the third hand-edit (`hero.cta.secondary` → `.label`), the
+   eleven Scout `.text` moves, the four Settings plural-fold renames, the duplicate-value
+   confirmation from item 90, and the restated demo/`v1` rule from item 109.
+2. `COMPONENT_MAP.md` §6.2 — the assembly path is `src/ui/copy/de/index.ts`, the composition is five
+   bags, the `common` bag is closed at eleven keys, and the per-block counts are re-measured.
+3. `COMPONENT_MAP.md` §6.3 — add `{time}` to the placeholder union, add the fifth plural case, add
+   `hour12: false` and drop the "Today, 9:41 AM" example, and record the `{n}`/`{count}` and
+   `{budget}` shape splits as intentional.
+4. `COMPONENT_MAP.md` §6.4 — the `t` / `tp` signatures take `StringCopyKey` and `PluralCopyKey`.
+5. `COMPONENT_MAP.md` §6.5 — carry source keys and shipped leaves as two figures with the
+   per-surface delta, instead of one 871 total.
+6. `OPERATOR_SCREENS.md` §17.5 — `hour12: false` in the option list, and „Letzter Demo-Check“ is a
+   §6 Quellen column, not §5.
+7. `OPERATOR_SCREENS.md` §5, §10 and §17 — lines 462, 835, 1402 and 1575 truncate to the first
+   sentence per item 45.
+8. `OPERATOR_SCREENS.md` §17.4 — `tasks.t2.detail` takes the `{ default, expired }` shape.
+9. `OPERATOR_SCREENS.md` §17.12 — mark `host.now.format` / `.prefix` dead-but-catalogued.
+10. `SCOUT_SCREENS.md` §12 line 1197 — the item 30 subline.
+11. `SCOUT_SCREENS.md` §13 lines 1229 and 2014 — the dynamic dead-end budget line.
+12. `SCOUT_SCREENS.md` §18 — the eleven `.text` paths, and §18.6's dead `inlineBrief.label`.
+13. `SCOUT_STATE.md` §20.6 line 1650 — `{budgetNum}` → `{budget}`.
+14. `SCOUT_STATE.md` §20.11 — annotate the `brief.sheet.count.one` numeral as §18.9's, deliberately.
+15. `SCOUT_STATE.md` §5.3 and §20.13 — replace the nine `summary()` fragments with the per-case
+    templates.
+16. `SETTINGS_SCREENS.md` §17.6 and §17.9 — the two plural objects.
+17. `LANDING_SCREENS.md` §3 and §17.1 — the header language toggle and the two navigation-sheet
+    keys, once `REVIEW_COPY.md` §7 and §8 are accepted.
