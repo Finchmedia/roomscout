@@ -235,6 +235,9 @@ scoping the port and again before deleting anything.
 
 ## 3. Open questions for the maintainer
 
+> **All 68 questions below are answered in `DECISIONS.md` (decided 2026-09-09).** Read that
+> document before acting on anything in this section.
+
 Consolidated from the eleven per-document lists, deduplicated and grouped. Each item names the
 document(s) that raised it. Items marked **blocks build** must be answered before the corresponding
 step of `COMPONENT_MAP.md` Part 7.
