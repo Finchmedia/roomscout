@@ -25,17 +25,26 @@
  * hover --rs-surface-hover-soft. Icons inherit the ink colour (17px), they are
  * not muted like in stock shadcn.
  *
+ * Glyphs come from `@/components/ui/icon` (the DS stroke set), never from
+ * lucide — readme.md § Iconography: "No icon font, no CDN set."
+ *
  * Additions on top of the shadcn API (all optional, defaults are the DS look):
- *   · `size` on Content/SubContent — "default" = DS 240px, "compact" = the
+ *   · `size` on Content/SubContent — "default" = DS 240px, "compact" (alias
+ *     "sm", the shadcn size name, so installed blocks keep compiling) = the
  *     stock shadcn 8rem for dense menus.
  *   · `description` on Label — renders the DS identity block's 12.5px muted
  *     second line under the name.
+ *
+ * Sizing a glyph: rows force DS 17px onto every `<svg>` that has no `size-*`
+ * class, and that CSS wins over the width/height attributes `<Icon size>`
+ * renders. To use another size, pass a class — `<Icon className="size-5" />`,
+ * not `<Icon size={20} />`.
  */
 
 import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
-import { CheckIcon, ChevronRightIcon, CircleIcon } from "lucide-react"
+import { Icon } from "@/components/ui/icon"
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui"
 
 /**
@@ -43,12 +52,28 @@ import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui"
  * the DS entry motion; the DS menu unmounts without an exit animation.
  */
 const dropdownMenuContentVariants = cva(
-  "z-50 flex flex-col gap-0.5 overflow-x-hidden overflow-y-auto rounded-card border border-rs-border-panel bg-rs-surface-menu p-2 text-rs-ink shadow-menu origin-(--radix-dropdown-menu-content-transform-origin) data-[state=open]:animate-[rsFadeUp_0.18s_ease_both]",
+  [
+    "z-50 flex flex-col gap-0.5 overflow-x-hidden overflow-y-auto",
+    "rounded-card border border-rs-border-panel bg-rs-surface-menu p-2 shadow-menu",
+    // The surface is portaled to document.body, so it carries its own font
+    // instead of borrowing one from the trigger's context — ProfileMenu.jsx:7
+    // sets `fontFamily: var(--font-sans)`, and tooltip.tsx/sheet.tsx do the same.
+    "font-sans text-rs-ink",
+    "origin-(--radix-dropdown-menu-content-transform-origin)",
+    // ProfileMenu.jsx:7 applies `animation: rsFadeUp .18s ease both`
+    // unconditionally, so this stays ungated — a `forceMount` Content animates
+    // like any other. .18s has no duration token (--duration-fast is .15s,
+    // --duration-quick .2s) and the `animate-rs-fade-up` utility is the .3s
+    // content entry, so the literal below is deliberate: do not "tokenise" it.
+    "animate-[rsFadeUp_0.18s_ease_both]",
+  ].join(" "),
   {
     variants: {
       size: {
         default: "min-w-60",
-        compact: "min-w-[8rem]",
+        compact: "min-w-32",
+        /** shadcn size name — alias of `compact`, so installed blocks type-check. */
+        sm: "min-w-32",
       },
     },
     defaultVariants: {
@@ -62,14 +87,35 @@ const dropdownMenuContentVariants = cva(
  * and SubTrigger so every row in a menu lands on the same rhythm.
  */
 const dropdownMenuItemVariants = cva(
-  "relative flex cursor-pointer items-center gap-2.5 rounded-control px-3 py-2.5 text-[length:var(--text-body-sm-size)] transition-colors duration-(--duration-fast) ease-out-soft outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-[17px]",
+  [
+    "relative flex cursor-pointer items-center gap-2.5 rounded-control px-3 py-2.5",
+    "text-[length:var(--text-body-sm-size)]",
+    // ProfileMenu.jsx:11 swaps the row background from React state with no
+    // transition; the fingerprint for a ghost hover in the prototype is
+    // TOKENS.md A13 `transition: background .15s` (= --duration-fast), and
+    // ease-out-soft is what every hover in this folder uses.
+    "transition-colors duration-(--duration-fast) ease-out-soft",
+    // DS focus ring: 2px solid orange, 2px offset (readme.md § Hover/Press,
+    // TOKENS.md F17) — the .07 white wash alone is no visible focus state.
+    // Radix focuses rows on pointermove, so `focus-visible:` stays invisible
+    // for mouse users and only shows up for keyboard navigation.
+    // `outline-solid` re-arms --tw-outline-style, which `outline-none` clears.
+    "outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rs-orange",
+    "select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+    // DS rows carry 17px glyphs (SCOUT_SCREENS §2.4.3). This beats `<Icon size>`
+    // (a presentation attribute); override with a `size-*` class instead.
+    "[&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-[17px]",
+  ].join(" "),
   {
     variants: {
       variant: {
         default:
           "text-rs-ink hover:bg-rs-surface-hover-soft focus:bg-rs-surface-hover-soft data-[state=open]:bg-rs-surface-hover-soft",
+        // The DS menu has exactly one row-hover surface and there is no
+        // red-tint surface token, so a destructive row carries its meaning in
+        // the ink (--rs-red-text) and keeps the DS hover wash.
         destructive:
-          "text-rs-red-text hover:bg-rs-red/15 focus:bg-rs-red/15 data-[state=open]:bg-rs-red/15",
+          "text-rs-red-text hover:bg-rs-surface-hover-soft focus:bg-rs-surface-hover-soft data-[state=open]:bg-rs-surface-hover-soft",
       },
     },
     defaultVariants: {
@@ -107,6 +153,10 @@ function DropdownMenuContent({
   className,
   // DS gap between the 42px avatar button and the menu (SCOUT_SCREENS §2.4.3:
   // wrapper is 42px tall, panel sits at top:52px) — --space-4.
+  // The DS screen recreation disagrees: ui_kits/roomscout-app/App.jsx:92
+  // positions the menu from the app root (top 66 desktop / 56 narrow under an
+  // 84/64 header), which works out to a ~3px gap. The extracted prototype spec
+  // is the more literal source, so 10 stays.
   sideOffset = 10,
   size = "default",
   ...props
@@ -179,7 +229,8 @@ function DropdownMenuCheckboxItem({
     >
       <span className="pointer-events-none absolute left-3 flex size-[17px] items-center justify-center text-rs-orange-light">
         <DropdownMenuPrimitive.ItemIndicator>
-          <CheckIcon className="size-4" />
+          {/* DS check glyph (stroke 2.2); the row rule sizes it to 17px. */}
+          <Icon name="check" />
         </DropdownMenuPrimitive.ItemIndicator>
       </span>
       {children}
@@ -215,7 +266,8 @@ function DropdownMenuRadioItem({
     >
       <span className="pointer-events-none absolute left-3 flex size-[17px] items-center justify-center text-rs-orange-light">
         <DropdownMenuPrimitive.ItemIndicator>
-          <CircleIcon className="size-2 fill-current" />
+          {/* The DS icon set has no dot glyph — the marker is a plain circle. */}
+          <span className="block size-2 rounded-circle bg-current" />
         </DropdownMenuPrimitive.ItemIndicator>
       </span>
       {children}
@@ -276,6 +328,12 @@ function DropdownMenuSeparator({
   )
 }
 
+/**
+ * Keyboard-shortcut hint — shadcn parity only. The prototype has no keyboard
+ * shortcuts anywhere (SCOUT_SCREENS §2.4.3 lists none), so there is no DS spec
+ * for this affordance; it borrows the DS micro size, the overline tracking and
+ * the muted ink so a shadcn block that uses it still reads as RoomScout.
+ */
 function DropdownMenuShortcut({
   className,
   ...props
@@ -284,7 +342,7 @@ function DropdownMenuShortcut({
     <span
       data-slot="dropdown-menu-shortcut"
       className={cn(
-        "ml-auto text-[length:var(--text-micro-size)] tracking-widest text-rs-ink-6",
+        "ml-auto text-[length:var(--text-micro-size)] tracking-[var(--text-overline-tracking)] text-rs-ink-6",
         className
       )}
       {...props}
@@ -314,7 +372,8 @@ function DropdownMenuSubTrigger({
       {...props}
     >
       {children}
-      <ChevronRightIcon className="ml-auto size-4" />
+      {/* DS chevron glyph (stroke 2); the row rule sizes it to 17px. */}
+      <Icon name="chevron-right" className="ml-auto" />
     </DropdownMenuPrimitive.SubTrigger>
   )
 }
@@ -352,3 +411,11 @@ export {
   DropdownMenuSubTrigger,
   DropdownMenuSubContent,
 }
+
+// Exported like every other cva in this folder (buttonVariants, badgeVariants,
+// noticeVariants) so a consumer — an installed shadcn block, a later src/ui
+// screen — can put the DS surface or row geometry on a non-Radix element.
+// The cva() calls are not plain constants, so the react-refresh rule cannot
+// see them as such.
+// eslint-disable-next-line react-refresh/only-export-components
+export { dropdownMenuContentVariants, dropdownMenuItemVariants }

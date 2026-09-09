@@ -14,8 +14,10 @@ import { cn } from "@/lib/utils"
  * `design-system/components/core/icon/Icon.jsx` (same `d` strings, same
  * primitives, same per-glyph stroke width): 24×24 viewBox, `currentColor`,
  * round caps and joins, stroke-width 1.6 for fact/nav glyphs, 1.7–1.9 for
- * controls, 2–2.2 for chevrons and checks. `play` and `bars` are the two filled
- * glyphs (`fill: currentColor`, no stroke).
+ * controls, 2–2.2 for chevrons and checks; `mail` is the single 1.5 outlier, so
+ * the set spans 1.5–2.2 (the DS's own "1.6–2.2" in `Icon.d.ts` and the "40
+ * glyphs" count in `design-system/readme.md` are both stale). `play` and `bars`
+ * are the two filled glyphs (`fill: currentColor`, no stroke).
  *
  * Usage notes from `Icon.prompt.md`:
  * - Fact glyphs are `pin` (Ort), `users` (Band), `clock` (Zeit), `drum`
@@ -25,10 +27,28 @@ import { cn } from "@/lib/utils"
  * - `ICON_NAMES` lists every name, in source order, for the gallery card.
  *
  * There is no icon-size token in `src/styles/tokens.css`, so `size` stays the
- * DS's plain pixel number (default 18). Colour is never baked in: the SVG
- * inherits `currentColor`, and `color` only sets the CSS `color` property — pass
- * a token (`var(--rs-orange)`, `var(--text-muted)`) or a Tailwind text utility
- * on `className`.
+ * DS's plain pixel number (default 18) — the recurring 16 / 18 / 20 / 22 call
+ * sites have no `--rs-icon-*` token to reach for yet. Colour is never baked in:
+ * the SVG inherits `currentColor`, and `color` only sets the CSS `color`
+ * property — pass a token (`var(--rs-orange)`, `var(--text-muted)`) or a
+ * Tailwind text utility on `className`.
+ *
+ * Deliberate deviations from `Icon.jsx`, all recorded on purpose:
+ * - `name` is the {@link IconName} union, not the DS's `name: string`. Call
+ *   sites that index by data (`<Icon name={ICON[f.id]} />` in the gallery) need
+ *   the source data typed as `IconName`, or an `as IconName` cast. The runtime
+ *   `?? GLYPHS.close` fallback is kept for those casts and for untyped JS
+ *   consumers, so a dynamic name can never render an empty box.
+ * - `flex: none` ships as the `flex-none` utility instead of an inline style, so
+ *   a consumer's `className="grow"` can win (twMerge resolves the conflict). In
+ *   the DS the inline declaration beat every class; only a consumer `style` could
+ *   override it.
+ * - `focusable="false"` is added on top of the DS attributes — it keeps legacy
+ *   Edge/IE from putting the glyph in the tab order and is inert elsewhere.
+ * - `children` are rendered (the DS's JSX child `{p.d}` silently dropped them,
+ *   contradicting its own `Icon.d.ts`), and rendered *before* the glyph so a
+ *   `<title>` is the first child element of the `<svg>`, as the SVG spec and the
+ *   accessible-name computation expect.
  */
 
 /** One entry of the glyph registry. */
@@ -99,16 +119,30 @@ const DEFAULT_STROKE_WIDTH = 1.7
 /** The DS default pixel size. */
 const DEFAULT_SIZE = 18
 
-interface IconProps extends React.SVGAttributes<SVGSVGElement> {
+// `React.ComponentProps<"svg">` rather than the DS's `React.SVGAttributes`:
+// only the former carries `ref`, which React 19 passes as a plain prop (no
+// forwardRef needed) and which Radix `asChild` / tooltip triggers require.
+interface IconProps extends React.ComponentProps<"svg"> {
   /** Icon name from the RoomScout set; see {@link ICON_NAMES}. */
   name: IconName
   /** Pixel size (default 18). */
   size?: number
-  /** Overrides the glyph's own stroke width (1.5–2.2 in the set). */
+  /**
+   * Overrides the glyph's own stroke width (1.5–2.2 in the set). A
+   * non-positive value falls back to the glyph's own weight, like the DS's
+   * `strokeWidth || p.sw || 1.7`.
+   */
   strokeWidth?: number
   /** CSS `color` for the glyph — pass a token, e.g. `var(--rs-orange)`. */
   color?: string
-  /** Extra SVG content (e.g. a `<title>`), rendered after the glyph. */
+  /**
+   * Accessible name. Set it when the glyph carries meaning on its own (a status
+   * icon in a table cell); it swaps the decorative `aria-hidden` for
+   * `role="img"` + `aria-label`. Leave it off inside a labelled control — an
+   * `IconButton`, a button with text — where the glyph is decorative.
+   */
+  label?: string
+  /** Extra SVG content (e.g. a `<title>`), rendered before the glyph. */
   children?: React.ReactNode
   style?: React.CSSProperties
 }
@@ -116,17 +150,20 @@ interface IconProps extends React.SVGAttributes<SVGSVGElement> {
 /**
  * Stroke icon from the RoomScout set. Inherits `currentColor`, so it takes the
  * ink of whatever it sits in; decorative by default (`aria-hidden`), which every
- * call site in the prototype relies on — pass `aria-hidden={false}` plus a
- * `<title>` child when a glyph carries meaning on its own.
+ * call site in the prototype relies on — pass `label` when a glyph carries
+ * meaning on its own, which turns it into `role="img"` + `aria-label`. For an
+ * external label, `aria-labelledby` still works: pass it together with
+ * `role="img"` and `aria-hidden={false}`, both of which override the defaults.
  *
  * Unknown names fall back to `close`, exactly as the DS component does, so a
- * dynamic name can never render an empty box.
+ * cast or untyped dynamic name can never render an empty box.
  */
 function Icon({
   name,
   size = DEFAULT_SIZE,
   strokeWidth,
   color,
+  label,
   className,
   style,
   children,
@@ -134,6 +171,13 @@ function Icon({
 }: IconProps) {
   const glyph: Glyph = GLYPHS[name] ?? GLYPHS.close
   const filled = glyph.fill === true
+  // DS parity (`strokeWidth || p.sw || 1.7`): a non-positive override would
+  // erase the stroke, so it falls back to the glyph's own weight.
+  const stroke =
+    strokeWidth !== undefined && strokeWidth > 0
+      ? strokeWidth
+      : (glyph.sw ?? DEFAULT_STROKE_WIDTH)
+  const semantic = label !== undefined
 
   return (
     <svg
@@ -144,17 +188,19 @@ function Icon({
       height={size}
       fill={filled ? "currentColor" : "none"}
       stroke={filled ? "none" : "currentColor"}
-      strokeWidth={strokeWidth ?? glyph.sw ?? DEFAULT_STROKE_WIDTH}
+      strokeWidth={stroke}
       strokeLinecap="round"
       strokeLinejoin="round"
-      aria-hidden="true"
+      role={semantic ? "img" : undefined}
+      aria-label={semantic ? label : undefined}
+      aria-hidden={semantic ? undefined : true}
       focusable="false"
       className={cn("flex-none", className)}
       style={{ color, ...style }}
       {...props}
     >
-      {glyph.d}
       {children}
+      {glyph.d}
     </svg>
   )
 }

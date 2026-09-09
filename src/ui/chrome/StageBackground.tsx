@@ -1,5 +1,5 @@
 import * as React from "react"
-import { cva } from "class-variance-authority"
+import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
 /**
@@ -28,18 +28,40 @@ import { cn } from "@/lib/utils"
  * `.rs-bg` also paints `--surface-page` under the photo; the wrapper repeats it
  * as `bg-rs-surface-page` so the ground is correct before the image decodes.
  *
- * Per the readme, the stack's position never changes between states — hence
- * `position="fixed"` (the default): one viewport-sized backdrop that survives
- * every stage morph. `position="absolute"` is the §2.3 reading, where the
- * layers are siblings inside the absolutely positioned stage frame; use it when
- * the backdrop must be clipped to that frame (the mobile device frame of §2.2).
+ * `.rs-grain` is a SIBLING that follows `.rs-bg`, never its child: `::after`
+ * (the scrim) is the last box of `.rs-bg` in tree order, so a nested grain
+ * would paint *under* the scrim and its `mix-blend-mode: overlay` would blend
+ * against the bare photo only — the grain all but disappears at the bottom of
+ * the stage, where the scrim is .92 opaque. Both DS kits mount them flat
+ * (`ui_kits/roomscout-app/App.jsx:89`, `ui_kits/landing/Landing.jsx:17`), as
+ * does `guidelines/brand-background.html` panel 3. (The usage comment in
+ * `src/styles/tokens.css` §(d) shows the nested form and is wrong.)
+ *
+ * `position="absolute"` is the default: §2.3 has the layers as siblings inside
+ * the stage frame and §4.2 mounts this first inside `<StageFrame>`, whose §2.2
+ * phone mode is a 390×844 rounded 44px `overflow:hidden` box — a `fixed`
+ * backdrop would escape that clip and would not ride the frame's
+ * `transition:width .4s,height .4s,border-radius .4s`. `position="fixed"` is
+ * for a backdrop that must span the viewport behind a scrolling document, the
+ * landing page's `<div style="position:fixed;inset:0;z-index:0">` wrapper.
  *
  * Interaction and stacking follow §2.3 ("all three are non-interactive and sit
  * below every z-index used by content — content starts at `z-index:2`"):
  * the wrapper and the layers are `pointer-events-none`, so a bare
  * `<StageBackground />` used as a pure backdrop never swallows a click, and the
- * content column re-enables pointer events at `z-index:2`. The layers carry
- * `aria-hidden`, being decorative.
+ * content column re-enables pointer events at `z-index:2`. The column is only
+ * rendered when `children` actually produce a node, so
+ * `<StageBackground>{cond && <Stage/>}</StageBackground>` with a false `cond`
+ * stays a pure backdrop instead of laying an invisible click trap over the
+ * stage. The layers carry `aria-hidden`, being decorative.
+ *
+ * The content column does NOT scroll: per §2.6 the scrolling surface is the
+ * `<main>` inside the frame (`overflow:auto;overflow-x:hidden`), so the caller
+ * owns it. The column is a `min-h-0` flex column precisely so a child marked
+ * `flex-1 min-h-0 overflow-auto` can scroll inside it; content taller than the
+ * frame is otherwise clipped by the wrapper's `overflow-hidden` (`.rs-bg`
+ * needs it for the `inset:-2%` photo bleed). Use `contentClassName` to reach
+ * the column when the layout needs more than that.
  *
  * A plain `div` with forwardable HTML props (`id`, `style`, `aria-*`, `ref`),
  * so `AppShell` can address it directly.
@@ -49,37 +71,34 @@ const stageBackgroundVariants = cva(
   {
     variants: {
       position: {
-        /** Viewport backdrop — never moves between stages. The default. */
-        fixed: "fixed",
         /** Clipped to the nearest positioned ancestor (the stage frame). */
         absolute: "absolute",
+        /** Viewport backdrop behind a scrolling document (the landing page). */
+        fixed: "fixed",
       },
     },
     defaultVariants: {
-      position: "fixed",
+      position: "absolute",
     },
   }
 )
 
-interface StageBackgroundProps extends React.HTMLAttributes<HTMLDivElement> {
-  /** `fixed` (default) pins the stack to the viewport; `absolute` to the frame. */
-  position?: "fixed" | "absolute"
-  /** Classes for the `z-index:2` content column that holds `children`. */
-  contentClassName?: string
-  children?: React.ReactNode
-  style?: React.CSSProperties
-  /** React 19 ref-as-prop — the backdrop node itself. */
-  ref?: React.Ref<HTMLDivElement>
-}
+type StageBackgroundProps = React.ComponentProps<"div"> &
+  VariantProps<typeof stageBackgroundVariants> & {
+    /** Classes for the `z-index:2` content column that holds `children`. */
+    contentClassName?: string
+  }
 
 function StageBackground({
   className,
   contentClassName,
-  position = "fixed",
+  position = "absolute",
   children,
   ...props
 }: StageBackgroundProps) {
-  const hasContent = children !== undefined && children !== null
+  // `toArray` drops `null` / `undefined` / booleans, so a short-circuited
+  // child (`{cond && <Stage/>}`) renders no column at all.
+  const hasContent = React.Children.toArray(children).length > 0
 
   return (
     <div
@@ -88,14 +107,13 @@ function StageBackground({
       className={cn(stageBackgroundVariants({ position }), className)}
       {...props}
     >
-      <div className="rs-bg pointer-events-none" aria-hidden="true">
-        <div className="rs-grain" />
-      </div>
+      <div className="rs-bg pointer-events-none" aria-hidden="true" />
+      <div className="rs-grain" aria-hidden="true" />
       {hasContent ? (
         <div
           data-slot="stage-background-content"
           className={cn(
-            "pointer-events-auto relative z-[2] flex h-full flex-col",
+            "pointer-events-auto relative z-2 flex h-full min-h-0 flex-col",
             contentClassName
           )}
         >
@@ -106,9 +124,5 @@ function StageBackground({
   )
 }
 
-// `stageBackgroundVariants` is part of the shadcn public API (AppShell may need
-// the same classes on a wrapper it owns); the cva() call is not a plain
-// constant, so the react-refresh rule cannot see it as one.
-// eslint-disable-next-line react-refresh/only-export-components
-export { StageBackground, stageBackgroundVariants }
+export { StageBackground }
 export type { StageBackgroundProps }

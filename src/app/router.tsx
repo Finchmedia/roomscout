@@ -31,6 +31,7 @@ import {
 } from "../routes";
 import { AuthRoute } from "./AuthRoute";
 import { VoiceSessionProvider } from "../components/voice/VoiceSessionProvider";
+import { DesignGalleryPage } from "../ui/gallery/DesignGalleryPage";
 
 function RouteState({ children }: { children: ReactNode }) {
   return <div className="rs-route-state" role="status">{children}</div>;
@@ -76,6 +77,7 @@ function AppRoutes() {
       <Route element={<ExplorePage />} path="/explore" />
       <Route element={<SignalDetailPage />} path="/signals/:signalId" />
       <Route element={<MapPage />} path="/map" />
+      <Route element={<DesignGalleryPage />} path="/design" />
       <Route element={<AuthRoute />} path="/sign-in" />
       <Route element={<AuthRoute />} path="/sign-up" />
 

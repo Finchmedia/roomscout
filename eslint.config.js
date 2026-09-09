@@ -9,6 +9,9 @@ export default tseslint.config(
       "dist",
       "convex/_generated",
       "convex/components/**/_generated",
+      // Read-only mirror of the Claude Design prototype (spec, not app code):
+      // machine-generated bundles + JSX specs that are never built or shipped.
+      "design-system",
     ],
   },
   js.configs.recommended,
