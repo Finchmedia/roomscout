@@ -20,5 +20,10 @@ export const commonDe = {
   apply: "Übernehmen", // SCOUT_SCREENS.md §18.9 brief.save
   discard: "Verwerfen", // SETTINGS_SCREENS.md §17.5 discard.discard
   next: "Weiter", // SETTINGS_SCREENS.md §17.7 import.step1.next
-  backToScout: "Zurück zum Scout", // SCOUT_SCREENS.md §18.1 chrome.menu.backToScout / SETTINGS_SCREENS.md §17.1 settings.nav.back
 } as const;
+
+// NOT widened: „Zurück zum Scout“. COMPONENT_MAP.md §D14 assigns the sidebar back label two
+// per-surface keys on purpose (`settings.nav.back` „Zurück zum Scout“ vs `operator.nav.back`
+// „Zur App“), and Scout's profile menu has its own `scout.chrome.menu.backToScout`. A third
+// `common.*` alias would let the surfaces drift onto different keys and diverge in `en`.
+// DECISIONS.md item 17 widens `common.*` with generic action verbs, not navigation labels.

@@ -8,7 +8,17 @@
 // Strings are verbatim, including `’ · – — € ↓ ↗`. Never re-type them.
 // One shape edit vs. the doc: the doc lists `hero.cta.secondary` (leaf) and
 // `hero.cta.secondary.arrow` (child) at the same path, which a nested object cannot express —
-// the label ships as `hero.cta.secondary.label`, the arrow keeps `.arrow` (§6.2 rule 4).
+// the label ships as `hero.cta.secondary.label`, the arrow keeps `.arrow` (§6.2 rule 4: the
+// composed link „So funktioniert’s ↓“ keeps its parts named, cf. `operator.flags.preview.arrow`).
+//   ALIAS, mandatory for `en.ts`, the DE↔EN parity test and any doc-driven key checker:
+//   doc `hero.cta.secondary`  →  dictionary `hero.cta.secondary.label`.
+//   This is a third hand-edit beyond the two recorded in COMPONENT_MAP.md §6.1 (the SETTINGS /
+//   OPERATOR self-prefix strips); it is local to this surface and still needs recording there.
+// No key for the landing language toggle (DECISIONS.md items 18/51): its labels are
+// `common.language.toggleAria|shortDe|shortEn` — one control for header and profile menu
+// (REVIEW_COPY.md §7) — and the mobile-nav sheet's `header.nav.openAria|closeAria` are proposed in
+// REVIEW_COPY.md §8. Both blocks are still PROPOSED and absent from LANDING_SCREENS.md §3/§17.1,
+// so nothing is invented here; add the two `header.nav.*` keys once the maintainer accepts them.
 
 export const landingDe = {
   // §17.1 Header
@@ -165,6 +175,8 @@ export const landingDe = {
       panel: {
         label: "Eure Wünsche",
       },
+      // `updated` is static bento demo content, not a formatted relative time — §6.3 tokenises
+      // only `operator.sources.check.renewed`. en.ts writes its own phrase, it does not derive one.
       stamp: {
         idle: "Aktualisiert",
         updated: "Aktualisiert · gerade eben",
@@ -178,6 +190,9 @@ export const landingDe = {
         },
       },
     },
+    // `msg1.time` / `msg2.time` are static 24-hour demo strings, not `Intl`-formatted timestamps
+    // (§6.3 tokenises only `operator.sources.check.renewed`). en.ts must hand-write the 12-hour
+    // forms ("Today, 2:27 PM" / "Today, 2:28 PM") and never carry "14:27" over literally.
     followup: {
       title: "Bleibt an Antworten dran.",
       subtitle: "Ihr müsst nicht jedes Portal selbst prüfen.",

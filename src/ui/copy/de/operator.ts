@@ -50,6 +50,9 @@ export const operatorDe = {
     subtitle: "Provider, Quellen und wartende Aufgaben.",
     attention: {
       icon: "!",
+      // Hard-coded count, verbatim from §17.3: the prototype has exactly one incident task and
+      // §6.3 lists no Operator plural. If this is ever bound to a live count it needs a
+      // { one, other } pair authored through REVIEW_COPY.md — do not invent one here.
       text: "1 Aufgabe braucht Aufmerksamkeit",
       cta: "Ansehen",
     },
@@ -115,8 +118,23 @@ export const operatorDe = {
     },
     t2: {
       name: "Portal-Nachrichten lesen",
-      // §17.4 also lists `tasks.t2.detail.expired`, whose prototype value is an empty string.
-      // Omitted here (no source copy, and an empty value is not shippable) — see §14.3.
+      // §17.4 (doc L1441) also lists `tasks.t2.detail.expired`, whose value in the dictionary is
+      // the empty string, annotated "prototype ships an empty string — supply real copy, see §14.3".
+      // Omitted here: there is no source copy to port, and an empty value is not shippable.
+      // OPEN HOLE — §14.3 "Port requirement" option (a) and DECISIONS.md item 42 both decide that
+      // real expired-state copy MUST be authored (drafted from the Diagnose sheet's Ursache/
+      // Auswirkung lines, i.e. `diagSheet.text.cause` + `diagSheet.text.impact` below) and logged in
+      // docs/UI_PORT/REVIEW_COPY.md. Until it lands, the calm→incident sequence in §14.3 leaves the
+      // expanded Aufträge row rendering a ~24px blank detail stripe with a rule under it.
+      // A draft already sits in REVIEW_COPY.md under `operator.tasks.t2.detail.expired`, but every
+      // row there is status PROPOSED and that file states "no code imports this file" — so it must
+      // not be pulled in before the maintainer accepts it.
+      // PENDING SHAPE CHANGE (do both edits in ONE step when the copy is accepted): the doc's key
+      // space contains BOTH `tasks.t2.detail` and `tasks.t2.detail.expired`, which cannot coexist in
+      // a TS tree. `detail` below must then become `{ default, expired }` — mirroring `t3.detail` —
+      // which renames the already-shipped path `operator.tasks.t2.detail` to
+      // `operator.tasks.t2.detail.default` and invalidates any component/en.ts reference to the old
+      // path. Do NOT pre-create `detail.default` now: it is a key path the doc does not contain.
       detail: "Antworten im Portal werden über den verbundenen Demo-Zugang gelesen.",
     },
     t3: {
@@ -153,7 +171,12 @@ export const operatorDe = {
       demoRun: "Heute · Demo-Lauf",
       // Δ port: the doc dictionary shows the prototype literal 'Heute, {h}:{mm}'; § 17.5
       // 'Formatting rule' and COMPONENT_MAP § 6.3 both mandate this locale-formatted token
-      // instead: time = Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' }).
+      // instead: time = Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit',
+      // hour12: false }). `hour12: false` is NOT in the § 17.5 / § 6.3 option lists — it supersedes
+      // them: DECISIONS.md item 44 fixes 24-hour time in BOTH locales („Heute, 9:41“ / "Today,
+      // 9:41"), so the 12-hour "Today, 9:41 AM" example in those two tables is superseded and must
+      // not be copied into en.ts. `{time}` is the one port-introduced placeholder (§ 6.3); the raw
+      // {h}/{mm} pattern is kept verbatim in `host.now.format` below.
       renewed: "Heute, {time}",
       none: "—",
     },
@@ -228,6 +251,8 @@ export const operatorDe = {
         incident: "Ein abgelaufener Portal-Login ist kein Ausfall von Browserbase insgesamt.",
       },
       test: {
+        // Hard-coded count, verbatim from §17.7 — same forward-looking plural caveat as
+        // `overview.attention.text` above.
         incident: "1 Portalzugang braucht eine neue Anmeldung",
       },
     },

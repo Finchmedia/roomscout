@@ -6,9 +6,13 @@
 // Hand-edits applied per docs/UI_PORT/COMPONENT_MAP.md §6.1:
 //   rule 1 — §17.1's own leading `settings.` prefix is stripped (settings.nav.back, not settings.settings.nav.back).
 //   rule 3 — §17.12's `common.*` block is hoisted to the top level and lives in ./common.ts, not here.
-// Plurals per §6.3: `billing.usage.searches` and `knowledge.import.done` ship as { one, other }
-// objects (doc keys `…searchesOne/…searchesMany` and `…doneOne/…doneMany`; values verbatim).
-// `privacy.portals.sub` is singular-only in the source and stays a plain string — see openQuestions.
+// Plurals per COMPONENT_MAP.md §6.3, which names three of its four cases in this file:
+//   `billing.usage.searches` and `knowledge.import.done` ship as { one, other } objects
+//   (doc keys `…searchesOne/…searchesMany` and `…doneOne/…doneMany`; both values verbatim).
+//   `privacy.portals.sub` is singular-only in the prototype; §6.3 requires a plural form in the
+//   port, so it ships as { one, other } too — the `one` is the doc value, the `other` comes from
+//   docs/UI_PORT/REVIEW_COPY.md §10 and is PROPOSED (DECISIONS.md item 15), not yet approved.
+// One further hard-plural string is NOT converted — see the note at `knowledge.log.entry.imported`.
 
 export const settingsDe = {
   // §17.1 Navigation & shell (doc keys carry a leading `settings.` — stripped per COMPONENT_MAP §6.1 rule 1)
@@ -300,6 +304,11 @@ export const settingsDe = {
         confirmed: "Präferenz bestätigt: {text}",
         dismissed: "Annahme verworfen: {text}",
         undo: "Rückgängig: {text}",
+        // Hard plural: interpolates {n} but has no singular in §17.6, so n=1 renders
+        // "1 Angaben …". COMPONENT_MAP.md §6.3 does not list this key among its four plural
+        // cases and the doc supplies no `one` form, so it stays verbatim; a singular has to be
+        // authored through DECISIONS.md item 15 / REVIEW_COPY.md before it can become
+        // { one, other } like its dialog twin `knowledge.import.done`.
         imported: "{n} Angaben aus Beispiel-Kontext übernommen",
         rulesUpdated: "Handlungsspielraum aktualisiert",
       },
@@ -501,7 +510,15 @@ export const settingsDe = {
     },
     portals: {
       title: "Portalzugänge",
-      sub: "{n} verbundener Portalzugang, simuliert",
+      // §17.11 ships one singular-only string. COMPONENT_MAP.md §6.3 lists this key as one of the
+      // four plural cases and instructs: "give it a plural form in the port and note the change".
+      // `one` = SETTINGS_SCREENS.md §17.11 `privacy.portals.sub`, verbatim.
+      // `other` = docs/UI_PORT/REVIEW_COPY.md §10 (`settings.privacy.portals.sub.other`), status
+      //   PROPOSED per DECISIONS.md item 15 — awaiting maintainer sign-off, not a source string.
+      sub: {
+        one: "{n} verbundener Portalzugang, simuliert",
+        other: "{n} verbundene Portalzugänge, simuliert",
+      },
       cta: "Portalzugänge verwalten",
     },
     export: {

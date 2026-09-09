@@ -17,6 +17,24 @@
  *   discovery.ended · facts.ort · activity.found · activity.found2 ·
  *   clarification.yes · clarification.no · offer.prompt · review.accept ·
  *   data.knowledge.genre · data.knowledge.mates · data.knowledge.amps
+ *
+ * ── Deliberate port changes (§18 is otherwise reproduced byte-for-byte) ──────────────
+ * Seven places knowingly depart from a literal §18 transcription. Each is recorded at the
+ * key itself; the list is repeated here so a reviewer can find them without a diff:
+ *   1. `facts.budget.lower.*` / `facts.budget.compact.*` — ADDED. §6.2 rule 4: the two
+ *      `{budget}` consumers must not run German `.replace()` over a translated label.
+ *   2. `autopilot.approval.budget.fallback` — ADDED from SCOUT_STATE §20.12
+ *      (`scout.release.budget.fallback`); §18.10 has no key and `{budget}` would render raw.
+ *   3. `autopilot.brief.pill.compact` / `.budget.fallback` — REPLACE §18.10's pre-resolved
+ *      `autopilot.briefPill` literal. §6.2 rules 3+4; the pill has two values in the demo.
+ *   4. `deadEnd.option.budget.title` — number parametrised per DECISIONS item 27.
+ *   5. `data.summary.pattern` — REPLACED by per-case sentence templates per DECISIONS item 11.
+ *   6. `data.time.today` — `{h}`/`{mm}` → `{time}` per COMPONENT_MAP §6.3 + DECISIONS item 44.
+ *   7. `data.*` — every string the Settings surface also owns now names its `settings.*` twin
+ *      in a comment (DECISIONS item 16: "Record the mapping in the copy layer").
+ * Everything else in this file is verbatim. Four known copy defects are NOT silently fixed
+ * here because fixing them would author German — they are marked `⚠ REVIEW` at the key and
+ * routed through DECISIONS item 15 / REVIEW_COPY.md.
  */
 
 export const scoutDe = {
@@ -126,8 +144,15 @@ export const scoutDe = {
       transcript: "Mitschrift",
       end: "Gespräch beenden",
     },
+    // INTENTIONALLY DEAD, kept on purpose — not an oversight, do not "clean up" without a
+    // decision. `briefOpenInline` is hard-coded `false` (SCOUT_SCREENS §19.1) and the key has
+    // 0 references in the prototype template. It is shipped because §18.6 lists it and dropping
+    // a documented key silently would read as a missing extraction. It is the fourth carrier of
+    // "Euer Suchauftrag" (brief.title · autopilot.brief.title · offer.brief.title are the others),
+    // so `en.ts` and the parity test must carry an entry that can never appear on screen.
+    // Open question for the maintainer: drop this key, or wire the inline brief.
     inlineBrief: {
-      label: "Euer Suchauftrag", // dead binding, never rendered
+      label: "Euer Suchauftrag",
     },
   },
   // §18.7 `script` — the scripted dialogue (also the transcript content and the text-mode suggestions)
@@ -167,9 +192,30 @@ export const scoutDe = {
       text: "Stuttgart",
       umland: "Stuttgart & Umland",
     },
+    // `{budget}` means three different things in the three §18/§20 keys that interpolate it —
+    // a full label (`autopilot.approval.message`), a compact label (`autopilot.brief.pill.compact`)
+    // and a bare number (`candidates.budget.over`, `deadEnd.option.budget.title`). All three are
+    // verbatim, so the collision cannot be renamed away here; instead every resolved form is a
+    // key of its own below, and no caller may transform a value from this bag.
     budget: {
+      // §18.8 verbatim — the fact-card label.
       "400": "Bis 400 € / Monat",
       "350": "Bis 350 € / Monat",
+      // Δ port (ADDED). The prototype derives the two forms below with German string surgery on
+      // the label: `budget.replace('Bis','bis')` for the approval message (SCOUT_STATE.md:1026)
+      // and `.replace('Bis ','bis ').replace(' / Monat','')` for the brief pill
+      // (SCOUT_STATE.md:1273-1274). Both replacements are a no-op or a corruption in English
+      // ("Up to €350 / month"), so COMPONENT_MAP §6.2 rule 4 requires the parts to be named keys.
+      // The `350` forms are verbatim (SCOUT_STATE §20.12 / §20.11 fallbacks); the `400` forms are
+      // the same documented transformation applied to the verbatim §18.8 `400` label.
+      lower: {
+        "400": "bis 400 € / Monat",
+        "350": "bis 350 € / Monat",
+      },
+      compact: {
+        "400": "bis 400 €",
+        "350": "bis 350 €",
+      },
     },
     band: "Geteilter Raum · 4 Personen",
     zeit: {
@@ -198,6 +244,17 @@ export const scoutDe = {
     save: "Übernehmen",
     cancel: "Abbrechen",
     sheet: {
+      // Plural, resolved through `Intl.PluralRules` (COMPONENT_MAP §6.3, one of its four cases).
+      // The hard-coded numeral in `one` is NOT a transcription slip: §18.9 and COMPONENT_MAP
+      // §6.2's own worked example both spell it "1 Wunsch gemerkt". SCOUT_STATE §20.11 disagrees
+      // (`scout.sheet.title.one` = "{n} Wunsch gemerkt" / `.many` = "{n} Wünsche gemerkt") — two
+      // source docs, and §18 wins as the canonical copy dictionary. Consequences to know:
+      //   · `tp()` passes a `count` that the `one` branch ignores. Harmless for de/en, where
+      //     `Intl.PluralRules` puts only exactly 1 in `one`; wrong for a locale whose `one`
+      //     category also covers 21/31/… . Revisit if a third locale is ever added.
+      //   · The placeholder is `{count}` here and `{n}` in the structurally identical
+      //     `settings.knowledge.import.done`. Both names are verbatim and both are in §6.3's
+      //     declared 18-placeholder union, so neither file may unilaterally rename its own.
       count: {
         one: "1 Wunsch gemerkt",
         other: "{count} Wünsche gemerkt",
@@ -226,9 +283,26 @@ export const scoutDe = {
     },
     approval: {
       eyebrow: "Freigabe nötig",
+      // ⚠ The TRAILING SPACE is load-bearing and verbatim from §18.10 — the label and the
+      // recipient render on one line as `toLabel + to`. Do not trim it, and do not let a
+      // formatter or a translation tool eat it; every locale must reproduce it (EN: "To: ").
+      // SCOUT_STATE §20.12 gives the same key without the space (`scout.release.toLabel` =
+      // "An:"), so the two docs disagree — §18.10 wins as the canonical copy dictionary.
+      // Open question for the maintainer: move the gap into markup/CSS and store "An:" instead.
       toLabel: "An: ",
       to: "Anbieter · Raum in Stuttgart-West · roomscout.dev",
+      // Composed: {name} twice + {budget} (COMPONENT_MAP §6.2 rule 4). {budget} takes a
+      // `facts.budget.lower.*` value here (the full lowercase label), never a bare number —
+      // see the placeholder note on `facts.budget`.
       message: "Hallo, wir sind {name}, eine vierköpfige Band aus Stuttgart. Wir suchen einen geteilten Proberaum, {budget}, donnerstags ab 19 Uhr. Wichtig wäre, dass unser Schlagzeug im Raum bleiben kann. Ist der Raum in Stuttgart-West noch verfügbar? Viele Grüße, {name} (über RoomScout)",
+      // Δ port (ADDED). SCOUT_STATE §11 builds the approval message as
+      // `budget = facts.budget?.label ?? 'bis 350 € / Monat'` (SCOUT_STATE.md:1026). Without
+      // this key a band with no budget fact renders the raw `{budget}` token or an empty gap.
+      // Verbatim from SCOUT_STATE §20.12 `scout.release.budget.fallback`; §18.10 has no key
+      // for it, which is why it sits under the §18 `approval` block rather than a `release` one.
+      budget: {
+        fallback: "bis 350 € / Monat",
+      },
       contactOff: "Anschreiben ist in deinem Handlungsspielraum deaktiviert. Diese Nachricht geht nur mit deiner ausdrücklichen Freigabe raus.",
       release: "Nachricht freigeben",
       changeAutonomy: "Handlungsspielraum ändern",
@@ -238,9 +312,30 @@ export const scoutDe = {
       accessText: "Dein Portalzugang zu roomscout.dev braucht eine neue Anmeldung.",
       accessLink: "Zu den Zugängen",
     },
-    briefPill: "Stuttgart · bis 350 €", // = "Stuttgart · " + budget without "Bis "/" / Monat"
     brief: {
       title: "Euer Suchauftrag",
+      // Δ port (REPLACES §18.10's `autopilot.briefPill` = "Stuttgart · bis 350 €").
+      // That literal is a COMPUTED value in the source, not a fixed string: SCOUT_SCREENS.md:983
+      // and SCOUT_STATE.md:1273 both define it as
+      //   'Stuttgart · ' + (facts.budget?.label ?? 'bis 350 €')
+      //                      .replace('Bis ','bis ').replace(' / Monat','')
+      // and it demonstrably takes a second value inside the demo — after the dead-end budget
+      // compromise the same pill reads „Stuttgart · bis 400 €“ (SCOUT_SCREENS.md:983).
+      // Freezing it breaks COMPONENT_MAP §6.2 rule 3 (never a computed string) and rule 4
+      // (composed strings stay composed, with the parts named), and leaves `en.ts` no way to
+      // re-derive the budget half. Both keys are verbatim from SCOUT_STATE §20.11
+      // (`scout.brief.pill.compact` / `scout.brief.pill.budget.fallback`); they live under
+      // `autopilot` because §18.10 is where the pill is rendered.
+      // The city is hard-coded in the source and does NOT follow the `ort` fact — after the
+      // Umland compromise the pill still says „Stuttgart“ (SCOUT_STATE.md:1273-1275). Preserved
+      // deliberately; changing it is a product decision, not a copy one.
+      // {budget} takes a `facts.budget.compact.*` value here.
+      pill: {
+        compact: "Stuttgart · {budget}",
+        budget: {
+          fallback: "bis 350 €",
+        },
+      },
     },
     activity: {
       show: "Aktivität ansehen",
@@ -352,11 +447,17 @@ export const scoutDe = {
     },
     accept: {
       text: "Angebot annehmen",
+      // ⚠ REVIEW — same defect as `complete.subline`: the trailing sentence „In dieser Demo wird
+      // nichts versendet.“ is false in the real app, and the conditional „würde … zusagen“ with
+      // it. DECISIONS item 30 covers only the complete subline, so no replacement has been
+      // authored for this key or for `question.answer` below. Verbatim §18.14 until one is —
+      // authoring it goes through DECISIONS item 15 into REVIEW_COPY.md.
       disclaimer: "Mit deiner Bestätigung würde der Scout dem Anbieter verbindlich zusagen. In dieser Demo wird nichts versendet.",
     },
     question: {
       toggle: "Noch eine Frage klären",
       prepared: "Was passiert nach der Zusage?",
+      // ⚠ REVIEW — ends with the same false demo sentence; see `accept.disclaimer` above.
       answer: "Ich sage dem Anbieter verbindlich zu und schicke euch die Bestätigung mit allen Bedingungen. Ihr könnt ab dem 1. Oktober proben. In dieser Demo wird nichts versendet.",
       placeholder: "Frage an deinen Scout …",
       aria: "Frage an deinen Scout",
@@ -368,6 +469,17 @@ export const scoutDe = {
   // §18.15 `complete`
   complete: {
     headline: "Euer nächster Proberaum steht bereit.",
+    // ⚠ REVIEW — this line is FALSE in the real app, where the acceptance really is sent.
+    // DECISIONS item 30 [decided, maintainer review pending] replaces it; the approved German
+    // is already written down in REVIEW_COPY.md §5 (line 121), status PROPOSED:
+    //   „Deine Zusage ist unterwegs zum Anbieter. Ich schicke euch die Bestätigung, sobald sie
+    //    da ist.“ / "Your acceptance is on its way to the provider. I will send you the
+    //    confirmation as soon as it arrives."
+    // Not swapped in here because item 30 is the one Scout decision still gated on maintainer
+    // review and SCOUT_SCREENS §12 (line 1197) has not been updated — so the extraction stays
+    // faithful and the replacement stays one edit away. Ship the REVIEW_COPY line before this
+    // dictionary is used outside the demo. REVIEW_COPY.md also flags the headline above as
+    // overstating a sent acceptance (DATA_BINDING_PLAN §11 Q5, undecided — no copy proposed).
     subline: "Demo abgeschlossen — es wurde keine echte Zusage versendet.",
     summary: "{short} · {price} · {timeLower}", // z. B. "Stuttgart-West · 280 € / Monat · mittwochs 19–22 Uhr"
     restart: "Demo erneut ansehen",
@@ -380,7 +492,18 @@ export const scoutDe = {
     prompt: "Was wäre für euch denkbar? Ich passe den Suchauftrag nur an, wenn ihr es sagt.",
     option: {
       budget: {
-        title: "Budget bis 400 €",
+        // Δ port. §18.16 ships the frozen literal "Budget bis 400 €" and SCOUT_SCREENS.md:1229
+        // still says "keep the literal, or wire the dynamic value deliberately" — but
+        // DECISIONS item 27 has since decided [decided] to use the dynamic dead-end budget
+        // line, `deadBudget = 'Bis ' + (budgetNum + 50) + ' €'` (SCOUT_STATE.md:1369). The doc
+        // was never updated to match, so the two contradict each other.
+        // Resolution taken here: apply item 27 to the NUMBER only. `{budget}` is the bare
+        // next-step number (same meaning as in `candidates.budget.over`, € outside the token),
+        // so at the default budget this still renders "Budget bis 400 €" character for
+        // character. Item 27's literal `deadBudget` form („Bis 400 €“) is deliberately NOT
+        // adopted: dropping the word „Budget“ is a copy edit, and §18 is canonical for wording.
+        // Open question: confirm the wording, then correct SCOUT_SCREENS §13.
+        title: "Budget bis {budget} €",
         sub: "Erweitert die Suche in Stuttgart um weitere Räume.",
       },
       umland: {
@@ -411,6 +534,15 @@ export const scoutDe = {
     },
     budget: {
       ok: "Im Budget",
+      // `{budget}` here is a BARE NUMBER ("350"), with the € sign outside the token — not the
+      // full label that `autopilot.approval.message` puts in its identically named slot. See
+      // the placeholder note on `facts.budget`.
+      // Doc conflict, resolved in favour of §18: SCOUT_SCREENS §18.17 and REVIEW_COPY.md:107
+      // both name the placeholder `{budget}`, SCOUT_STATE §20.6 (line 1650) calls it
+      // `{budgetNum}`. `{budgetNum}` is not in COMPONENT_MAP §6.3's declared 18-placeholder
+      // union and `{budget}` is, so §18 is right and SCOUT_STATE §20.6 needs the correction.
+      // (This variant is computed but never rendered by the prototype; DECISIONS item 26 keeps
+      // it in the build, so it does need a real EN pair — REVIEW_COPY.md §4 has one PROPOSED.)
       over: "Über eurem Budget ({budget} €)",
     },
     cta: "Diesen Raum anfragen",
@@ -449,68 +581,132 @@ export const scoutDe = {
       note: "Am Budgetlimit, und das Schlagzeug kann nicht bleiben.",
     },
   },
-  // §18.19 Strings produced here but consumed by the Settings surface
+  // §18.19 Strings produced here but consumed by the Settings surface.
+  //
+  // ⚠ 21 of these 27 keys are the SAME STRING as a key the Settings surface also owns. That is
+  // faithful to the docs — §18.19 exists precisely because the Scout demo engine produces the
+  // values Settings renders — but it means `en.ts` translates each string twice and the parity
+  // test cannot catch a drift between the two copies. Per DECISIONS item 16 ("Canonical wording
+  // is the prototype/design-system wording where it exists … Record the mapping in the copy
+  // layer"), every duplicated key below names its `settings.*` twin. THE SCOUT KEY IS CANONICAL:
+  // it is the producer, Settings is the consumer. If one of a pair has to change, change this
+  // one first and carry the twin with it.
+  // Open question for the maintainer: collapse each pair by having the Settings surface read
+  // `scout.data.*` directly, which would delete ~21 keys from `settings.ts` and remove the drift
+  // risk entirely. Not done unilaterally — it is a cross-surface refactor, not an extraction fix.
   data: {
     name: {
-      default: "Herzbuben",
+      default: "Herzbuben", // = settings.sources.demo.roomscout.profile · = common.demoName
     },
     initials: {
-      default: "HB",
+      default: "HB", // Scout-only; no Settings twin.
     },
     session: {
-      held: "Gespräch pausiert · läuft weiter, wenn du zurückkehrst",
-      paused: "Suche pausiert",
-      running: "Scout ist unterwegs",
+      held: "Gespräch pausiert · läuft weiter, wenn du zurückkehrst", // = settings.session.held
+      paused: "Suche pausiert", // = settings.session.paused · = scout.chrome.badge.paused
+      running: "Scout ist unterwegs", // = settings.session.working · = scout.chrome.badge.running
     },
     usage: {
-      talk: "Noch nicht erfasst",
+      talk: "Noch nicht erfasst", // = settings.billing.usage.talkNone
     },
     export: {
-      hinweis: "Lokale Demo-Daten des Designprototyps",
+      hinweis: "Lokale Demo-Daten des Designprototyps", // = settings.privacy.export.note
     },
     knowledge: {
       origin: {
-        conversation: "Aus dem Gespräch · Teil eures Suchauftrags",
+        conversation: "Aus dem Gespräch · Teil eures Suchauftrags", // = settings.knowledge.demo.origin.fact
       },
       genre: {
-        text: "Hardrock und Alternative",
-        origin: "Demo-Bandprofil",
+        text: "Hardrock und Alternative", // = settings.knowledge.demo.k_genre.text
+        origin: "Demo-Bandprofil", // = settings.knowledge.demo.origin.bandprofile
       },
       mates: {
-        text: "Ähnliche Musikrichtung bei Mitnutzern wichtig",
-        origin: "Annahme deines Scouts",
+        text: "Ähnliche Musikrichtung bei Mitnutzern wichtig", // = settings.knowledge.demo.k_mates.text
+        origin: "Annahme deines Scouts", // = settings.knowledge.demo.origin.assumption
       },
       amps: {
-        text: "Verstärker bringt ihr selbst mit",
-        origin: "Aus dem Gespräch",
+        text: "Verstärker bringt ihr selbst mit", // = settings.knowledge.demo.k_amps.text
+        origin: "Aus dem Gespräch", // = settings.knowledge.demo.origin.conversation
       },
     },
     log: {
-      factCorrected: "Angabe korrigiert: {label}",
-      briefAdjusted: "Suchauftrag angepasst: {label}",
-      rulesUpdated: "Handlungsspielraum aktualisiert",
+      factCorrected: "Angabe korrigiert: {label}", // cf. settings.knowledge.log.entry.corrected ({text})
+      briefAdjusted: "Suchauftrag angepasst: {label}", // = scout.activity.briefAdjusted
+      rulesUpdated: "Handlungsspielraum aktualisiert", // = settings.autonomy.saved · = settings.knowledge.log.entry.rulesUpdated
+      // ⚠ REVIEW — hard plural. Interpolates a count but has no `one` form, so n=1 renders
+      // "1 Angaben aus Beispiel-Kontext übernommen". Left verbatim on purpose:
+      //   · §18.19 supplies no singular, and authoring „{count} Angabe aus Beispiel-Kontext
+      //     übernommen“ here would invent German copy — that goes through DECISIONS item 15
+      //     into REVIEW_COPY.md, not into an extraction.
+      //   · Its real twin, `settings.knowledge.log.entry.imported`, is the identical string and
+      //     is shipped with the identical defect and the identical note. Fixing one and not the
+      //     other would be worse than fixing neither. (The `{ one, other }` pair at
+      //     `settings.knowledge.import.done` — „{n} Angabe übernommen.“ — is a DIFFERENT string:
+      //     the import dialog's confirmation, not the change-log entry.)
+      //   · COMPONENT_MAP §6.3 lists four plural cases and does not name this one, so the source
+      //     doc is incomplete here too.
+      // Note also the placeholder split: `{count}` per SCOUT §18.19, `{n}` in the Settings twin
+      // per SETTINGS §17.6 / SCOUT_STATE §20.13. Both verbatim, both in §6.3's union.
       knowledgeImported: "{count} Angaben aus Beispiel-Kontext übernommen",
     },
+    // Δ port (REPLACES §18.19's `data.summary.pattern`).
+    // The doc value — "Ihr seid eine [vierköpfige ]Band[ aus {ort}]. …" — is NOTATION, not a
+    // string: the square brackets are §18.19's shorthand for the optional segments that
+    // SCOUT_STATE §5.3 concatenates at runtime (SCOUT_STATE.md:434). Passing it through
+    // `interpolate()` renders literal `[` and `]` to the user.
+    // DECISIONS item 11 [decided]: "Use per-case sentence templates in both dictionaries for
+    // summary()" — precisely because SCOUT_STATE §20.13's alternative, a bag of nine fragments
+    // with load-bearing leading/trailing spaces (`opener` = "Ihr seid eine ", `and` = " und "),
+    // cannot be translated into English (the doc says so itself at SCOUT_STATE.md:1884-1886).
+    // Each template below is one case of §5.3, spelled out; every word is verbatim from the
+    // §20.13 fragment it comes from, and the default case renders byte-for-byte identically to
+    // the sentence the doc prints at SCOUT_STATE.md:442 and to `settings.knowledge.summary.demo`.
+    // `{ort}` survives as this dictionary's only use of that placeholder (COMPONENT_MAP §6.3).
     summary: {
-      empty: "Ich weiß noch nichts über euch. Erzähl es mir beim nächsten Gespräch.",
-      pattern: "Ihr seid eine [vierköpfige ]Band[ aus {ort}]. Ihr sucht einen [geteilten ]Proberaum[ und möchtet euer Schlagzeug dort lassen].",
+      empty: "Ich weiß noch nichts über euch. Erzähl es mir beim nächsten Gespräch.", // §18.19 verbatim
+      // Sentence 1 — picked by (band fact says four?) × (ort fact present?).
+      band: {
+        fourFromOrt: "Ihr seid eine vierköpfige Band aus {ort}.",
+        four: "Ihr seid eine vierköpfige Band.",
+        fromOrt: "Ihr seid eine Band aus {ort}.",
+        plain: "Ihr seid eine Band.",
+      },
+      // Sentence 2 — omitted entirely when neither a band nor a drum-storage fact exists.
+      seeks: {
+        sharedAndStorage: "Ihr sucht einen geteilten Proberaum und möchtet euer Schlagzeug dort lassen.",
+        shared: "Ihr sucht einen geteilten Proberaum.",
+        roomAndStorage: "Ihr sucht einen Proberaum und möchtet euer Schlagzeug dort lassen.",
+        room: "Ihr sucht einen Proberaum.",
+        storage: "Ihr möchtet euer Schlagzeug dort lassen.",
+      },
     },
     source: {
       roomscout: {
-        name: "roomscout.dev",
-        desc: "Kontrolliertes Demo-Portal",
+        name: "roomscout.dev", // = settings.sources.demo.roomscout.name
+        desc: "Kontrolliertes Demo-Portal", // = settings.sources.demo.roomscout.desc
       },
       musiker: {
-        name: "Musiker in deiner Stadt",
-        desc: "Stuttgart · Öffentliche Anzeigen",
+        name: "Musiker in deiner Stadt", // = settings.sources.demo.musiker.name
+        desc: "Stuttgart · Öffentliche Anzeigen", // = settings.sources.demo.musiker.desc
       },
       bandnet: {
-        name: "Bandnet Hamburg",
-        desc: "Hamburg · Andere Region",
+        name: "Bandnet Hamburg", // = settings.sources.demo.bandnet.name
+        desc: "Hamburg · Andere Region", // = settings.sources.demo.bandnet.desc
       },
     },
     time: {
-      today: "Heute, {h}:{mm}",
+      // Δ port. §18.19 ships the prototype's hand-rolled clock, "Heute, {h}:{mm}" — two tokens,
+      // with the caller zero-padding `mm` itself. COMPONENT_MAP §6.3 replaces exactly this
+      // pattern with one token plus `Intl.DateTimeFormat`, because "Today, {h}:{mm}" cannot
+      // produce the English forms; DECISIONS item 44 then fixes `hour12: false` for both
+      // locales, so DE and EN share one formatter („Heute, 9:41“ / "Today, 9:41").
+      //   time = new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit",
+      //                                            hour12: false }).format(d)
+      // `{time}` is the one port-introduced placeholder of §6.3, and the same edit was already
+      // applied to `operator.sources.check.renewed`. Timestamps the Settings knowledge log
+      // renders come through here. (`operator.host.now.format` still carries the raw
+      // "{prefix}, {h}:{mm}" because §6.3 quotes that key verbatim — open question.)
+      today: "Heute, {time}",
     },
   },
 } as const;
