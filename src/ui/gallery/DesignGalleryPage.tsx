@@ -1,4 +1,5 @@
 import * as React from "react"
+import { Link } from "react-router-dom"
 
 import { cn } from "@/lib/utils"
 
@@ -56,7 +57,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Toaster, showToast } from "@/components/ui/sonner"
+import { showToast } from "@/components/ui/sonner"
 import { StatusDot } from "@/components/ui/status-dot"
 import { Stepper } from "@/components/ui/stepper"
 import { SummaryPill } from "@/components/ui/summary-pill"
@@ -123,6 +124,14 @@ const DEMO_FACTS_CHANGED: Fact[] = DEMO_FACTS.map((fact) =>
 )
 
 /** Settings shell navigation — `Settings.jsx:251-252`. */
+/** The ported surfaces, mounted as public demo routes in `src/app/router.tsx`. */
+const DEMO_ROUTES = [
+  { to: "/design/scout", label: "Scout" },
+  { to: "/design/settings", label: "Einstellungen" },
+  { to: "/design/operator", label: "Betreiberansicht" },
+  { to: "/design/landing", label: "Startseite" },
+] as const
+
 const PANEL_GROUPS = [
   {
     id: "scout",
@@ -278,6 +287,15 @@ function DesignGalleryPage() {
 
       <main className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:thin]">
         <div className="mx-auto flex w-full max-w-[var(--width-content)] flex-col gap-[var(--space-19)] px-[var(--space-16)] pt-[var(--space-11)] pb-[var(--space-19)]">
+          {/* Ported surfaces ---------------------------------------------- */}
+          <nav aria-label="Portierte Oberflächen" className="flex flex-wrap gap-[var(--space-4)]">
+            {DEMO_ROUTES.map((route) => (
+              <Button key={route.to} asChild variant="secondary" size="sm">
+                <Link to={route.to}>{route.label}</Link>
+              </Button>
+            ))}
+          </nav>
+
           {/* Sheet title ------------------------------------------------- */}
           <header className="flex flex-col gap-[var(--space-5)]">
             <Overline>Design-Galerie · Beispieldaten</Overline>
@@ -1231,8 +1249,6 @@ function DesignGalleryPage() {
           </footer>
         </div>
       </main>
-
-      <Toaster />
     </StageBackground>
   )
 }

@@ -32,6 +32,13 @@ import {
 import { AuthRoute } from "./AuthRoute";
 import { VoiceSessionProvider } from "../components/voice/VoiceSessionProvider";
 import { DesignGalleryPage } from "../ui/gallery/DesignGalleryPage";
+// The ported design-system surfaces. Public, demo-data only, no Convex — they
+// are the review surface for the UI port and are mounted under /design/*.
+// `LandingPage` is aliased because the legacy route module exports one too.
+import { LandingPage as DesignLandingPage } from "../ui/landing";
+import { DemoOperatorPage } from "../ui/operator";
+import { DemoScoutPage } from "../ui/scout";
+import { DemoSettingsPage } from "../ui/settings/DemoSettingsPage";
 
 function RouteState({ children }: { children: ReactNode }) {
   return <div className="rs-route-state" role="status">{children}</div>;
@@ -78,6 +85,10 @@ function AppRoutes() {
       <Route element={<SignalDetailPage />} path="/signals/:signalId" />
       <Route element={<MapPage />} path="/map" />
       <Route element={<DesignGalleryPage />} path="/design" />
+      <Route element={<DemoScoutPage />} path="/design/scout" />
+      <Route element={<DemoSettingsPage />} path="/design/settings" />
+      <Route element={<DemoOperatorPage />} path="/design/operator" />
+      <Route element={<DesignLandingPage />} path="/design/landing" />
       <Route element={<AuthRoute />} path="/sign-in" />
       <Route element={<AuthRoute />} path="/sign-up" />
 

@@ -118,24 +118,19 @@ export const operatorDe = {
     },
     t2: {
       name: "Portal-Nachrichten lesen",
-      // §17.4 (doc L1441) also lists `tasks.t2.detail.expired`, whose value in the dictionary is
-      // the empty string, annotated "prototype ships an empty string — supply real copy, see §14.3".
-      // Omitted here: there is no source copy to port, and an empty value is not shippable.
-      // OPEN HOLE — §14.3 "Port requirement" option (a) and DECISIONS.md item 42 both decide that
-      // real expired-state copy MUST be authored (drafted from the Diagnose sheet's Ursache/
-      // Auswirkung lines, i.e. `diagSheet.text.cause` + `diagSheet.text.impact` below) and logged in
-      // docs/UI_PORT/REVIEW_COPY.md. Until it lands, the calm→incident sequence in §14.3 leaves the
-      // expanded Aufträge row rendering a ~24px blank detail stripe with a rule under it.
-      // A draft already sits in REVIEW_COPY.md under `operator.tasks.t2.detail.expired`, but every
-      // row there is status PROPOSED and that file states "no code imports this file" — so it must
-      // not be pulled in before the maintainer accepts it.
-      // PENDING SHAPE CHANGE (do both edits in ONE step when the copy is accepted): the doc's key
-      // space contains BOTH `tasks.t2.detail` and `tasks.t2.detail.expired`, which cannot coexist in
-      // a TS tree. `detail` below must then become `{ default, expired }` — mirroring `t3.detail` —
-      // which renames the already-shipped path `operator.tasks.t2.detail` to
-      // `operator.tasks.t2.detail.default` and invalidates any component/en.ts reference to the old
-      // path. Do NOT pre-create `detail.default` now: it is a key path the doc does not contain.
-      detail: "Antworten im Portal werden über den verbundenen Demo-Zugang gelesen.",
+      // SHAPE CHANGE LANDED (DECISIONS.md "Deferred to the surface build" item 1; items 42, 73, 84):
+      // `detail` is now `{ default, expired }`, mirroring `t3.detail`, so the Aufträge row has real
+      // copy in the expired state instead of the prototype's empty string (§14.3's blank detail
+      // stripe). `expired` is the REVIEW_COPY.md §9 row, assembled verbatim from the Diagnose
+      // sheet's `diagSheet.text.cause` + `diagSheet.text.impact` below so the two surfaces cannot
+      // drift. The rename of the shipped path `operator.tasks.t2.detail` →
+      // `operator.tasks.t2.detail.default` landed in the same edit; `src/ui/operator/` is the only
+      // consumer, and `en.ts` does not exist yet.
+      detail: {
+        default: "Antworten im Portal werden über den verbundenen Demo-Zugang gelesen.",
+        expired:
+          "Die gespeicherte Anmeldung ist abgelaufen. Private Portalnachrichten können momentan nicht gelesen werden. Die Suche nach Anzeigen läuft weiter.",
+      },
     },
     t3: {
       name: "Anfrage vorbereiten",
