@@ -1,0 +1,47 @@
+:root{
+--space-1:4px;--space-2:6px;--space-3:8px;--space-4:10px;--space-5:12px;--space-6:14px;--space-7:16px;--space-8:18px;--space-9:20px;--space-10:22px;--space-11:24px;--space-12:26px;--space-13:28px;--space-14:30px;--space-15:34px;--space-16:36px;--space-17:40px;--space-18:44px;--space-19:48px;
+
+/* Radii */
+--radius-pill:999px;
+--radius-circle:50%;
+--radius-chip:8px;
+--radius-control:10px;
+--radius-control-lg:12px;
+--radius-card-sm:14px;
+--radius-card:16px;
+--radius-card-md:18px;
+--radius-card-lg:22px;
+--radius-card-xl:24px;
+--radius-card-2xl:26px;
+--radius-panel:28px;
+--radius-bubble:18px;
+--radius-bubble-tail:4px;
+
+/* Control sizes */
+--size-header:84px;
+--size-header-narrow:64px;
+--size-header-button:42px;
+--size-button-lg:60px;
+--size-button:56px;
+--size-button-md:50px;
+--size-button-sm:46px;
+--size-button-xs:44px;
+--size-button-2xs:36px;
+--size-voice-control:76px;
+--size-switch-w:56px;
+--size-switch-h:32px;
+--size-nav-item:50px;
+--size-composer:60px;
+--size-blob-welcome:168px;
+--size-blob-working:160px;
+--size-blob-brief:96px;
+--size-blob-small:58px;
+
+/* Layout widths */
+--width-card-narrow:380px;
+--width-card:720px;
+--width-card-wide:740px;
+--width-offer:1190px;
+--width-content:1380px;
+--width-settings-nav:296px;
+}

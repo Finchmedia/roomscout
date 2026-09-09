@@ -1,0 +1,43 @@
+:root{
+/* Glows & shadows */
+--shadow-accent-button:0 8px 32px rgba(255,105,38,.28);
+--shadow-accent-button-sm:0 8px 28px rgba(255,105,38,.25);
+--shadow-blob:0 0 34px 6px rgba(255,120,50,.35),0 0 110px 20px rgba(255,105,38,.18);
+--shadow-blob-sm:0 0 18px rgba(255,105,38,.4);
+--shadow-menu:0 20px 50px rgba(0,0,0,.45);
+--shadow-toast:0 16px 40px rgba(0,0,0,.4);
+--shadow-panel:0 30px 90px rgba(0,0,0,.35);
+--shadow-card-float:0 30px 80px rgba(0,0,0,.35);
+--shadow-hero:0 -10px 60px rgba(255,105,38,.12),0 40px 100px rgba(0,0,0,.5);
+--shadow-knob:0 1px 3px rgba(0,0,0,.3);
+
+/* Background stack: photo → protection gradient → grain overlay */
+--bg-image:url("../assets/bg.jpg");
+--bg-image-filter:saturate(.62) brightness(.5);
+--bg-gradient:linear-gradient(180deg,rgba(30,16,6,.28) 0%,rgba(12,9,7,.62) 45%,rgba(5,7,9,.92) 100%);
+--bg-grain:url("../assets/grain.svg");
+--bg-grain-opacity:.28;
+
+/* Scout blob */
+--blob-gradient:radial-gradient(circle at 42% 38%,#ffc39a 0%,#ff8a4e 28%,#ff6926 58%,#e9511a 100%); /* @kind color */
+--blob-shape:62% 38% 46% 54%/44% 58% 42% 56%; /* @kind radius */
+
+/* Motion */
+--ease-out-soft:cubic-bezier(.22,.8,.2,1); /* @kind other */
+--ease-out-snap:cubic-bezier(.3,.7,.2,1); /* @kind other */
+--duration-fast:.15s; /* @kind other */
+--duration-quick:.2s; /* @kind other */
+--duration-base:.3s; /* @kind other */
+--duration-slow:.5s; /* @kind other */
+--duration-slower:.6s; /* @kind other */
+--duration-morph:.9s; /* @kind other */
+--blob-breathe-duration:5.2s; /* @kind other */
+--blur-composer:blur(6px); /* @kind other */
+--blur-sheet:blur(10px); /* @kind other */
+}
+@keyframes rsBreathe{0%,100%{transform:scale(1) rotate(0deg);border-radius:62% 38% 46% 54%/44% 58% 42% 56%}50%{transform:scale(1.04) rotate(-4deg);border-radius:54% 46% 58% 42%/50% 44% 56% 50%}}
+@keyframes rsSpeak{0%,100%{transform:scale(1) rotate(0deg);border-radius:62% 38% 46% 54%/44% 58% 42% 56%}30%{transform:scale(1.07) rotate(4deg);border-radius:46% 54% 60% 40%/58% 40% 60% 42%}65%{transform:scale(.97) rotate(-3deg);border-radius:56% 44% 40% 60%/48% 62% 38% 52%}}
+@keyframes rsListen{0%,100%{transform:scale(1) rotate(0deg);border-radius:62% 38% 46% 54%/44% 58% 42% 56%}50%{transform:scale(1.02) rotate(8deg);border-radius:56% 44% 52% 48%/56% 46% 54% 44%}}
+@keyframes rsFadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes rsDot{0%,100%{opacity:.4}50%{opacity:1}}
+@media (prefers-reduced-motion: reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}

@@ -1,0 +1,10 @@
+html,body{margin:0;padding:0;background:var(--surface-page);color:var(--text-body);font-family:var(--font-sans);-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}
+a{color:var(--rs-ink)}a:hover{color:var(--rs-orange)}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,a:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px}
+input::placeholder,textarea::placeholder{color:var(--text-placeholder)}
+/* Full-page background stack used by every RoomScout screen */
+.rs-bg{position:absolute;inset:0;overflow:hidden;background:var(--surface-page)}
+.rs-bg::before{content:"";position:absolute;inset:-2%;background-image:var(--bg-image);background-size:cover;background-position:50% 30%;filter:var(--bg-image-filter);transform:scaleX(-1)}
+.rs-bg::after{content:"";position:absolute;inset:0;background:var(--bg-gradient)}
+.rs-grain{position:absolute;inset:0;opacity:var(--bg-grain-opacity);mix-blend-mode:overlay;background-image:var(--bg-grain);pointer-events:none}

@@ -1,0 +1,45 @@
+:root{
+--font-sans:'Geist',system-ui,-apple-system,sans-serif;
+--font-mono:ui-monospace,Menlo,monospace;
+--weight-light:300;
+--weight-regular:400;
+--weight-medium:500;
+--weight-semibold:600;
+
+/* Display headlines: light weight, tight tracking, one thought per screen */
+--text-display-size:clamp(38px,6vw,64px);
+--text-display-weight:300;
+--text-display-leading:1.08;
+--text-display-tracking:-.02em;
+--text-display-lg-size:clamp(42px,6.2vw,84px);  /* landing hero, weight 400, -.03em */
+--text-display-lg-tracking:-.03em;
+--text-headline-size:clamp(34px,4.6vw,52px);     /* in-flow h1 ("Eine kurze Rückfrage.") */
+--text-headline-leading:1.1;
+--text-utterance-size:clamp(28px,3.6vw,46px);    /* current spoken line */
+--text-utterance-leading:1.16;
+--text-utterance-tracking:-.015em;
+--text-page-title-size:44px;                     /* settings / operator h1, weight 500 */
+--text-page-title-weight:500;
+--text-card-title-size:clamp(24px,2.4vw,32px);
+--text-price-size:clamp(38px,3.8vw,52px);
+--text-lead-size:19px;
+--text-body-lg-size:17px;
+--text-body-size:16px;
+--text-body-sm-size:15px;
+--text-caption-size:14px;
+--text-caption-sm-size:13.5px;
+--text-micro-size:12.5px;
+--text-body-leading:1.5;
+--text-body-leading-relaxed:1.6;
+
+/* Overline: uppercase, wide tracking, muted or accent-light */
+--text-overline-size:12.5px;
+--text-overline-tracking:.14em;
+--text-overline-tracking-wide:.18em;
+--text-overline-weight:500;
+
+/* Wordmark: lowercase "roomscout", medium weight, slight positive tracking */
+--text-wordmark-size:20px;
+--text-wordmark-weight:500;
+--text-wordmark-tracking:.04em;
+}

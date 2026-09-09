@@ -19,3 +19,6 @@ test-results/
 
 # generated eval output (local paths, stack traces)
 artifacts/
+
+# design-system renders are large reference images; keep locally, not in git
+design-system/assets/renders/
