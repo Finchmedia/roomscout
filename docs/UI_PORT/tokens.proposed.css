@@ -1,0 +1,898 @@
+/* ==========================================================================
+   RoomScout — proposed design tokens
+   Derived 1:1 from the Claude Design prototype
+   "/Users/danielfinke/Documents/STARTUPS/ROOMSCOUT/Roomscout UI Interactive Prototype"
+   (Roomscout.dc.html · Settings.dc.html · Operator.dc.html · Landing v2.dc.html)
+
+   See ./TOKENS.md for the raw inventory, the justification per variable and the
+   list of inconsistencies (Part F) that these canonical values resolve.
+
+   Target: Tailwind v4 + shadcn/ui. Single DARK theme — the prototype has no
+   light variant. Values are kept as hex / rgba on purpose: the alpha in the
+   surface and border tokens is load-bearing (everything is glass over a photo).
+   Tailwind v4's `/opacity` modifier still works on them through color-mix().
+
+   Usage:
+     @import "tailwindcss";
+     @import "./tokens.proposed.css";
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1 · :root — the token layer
+   -------------------------------------------------------------------------- */
+
+:root {
+  color-scheme: dark;
+
+  /* ---- shadcn/ui core -------------------------------------------------- */
+  --background:            #0b0a09;                 /* html,body + stage ground   */
+  --foreground:            #f5ece2;                 /* default ink (124×)         */
+
+  --card:                  rgba(18, 14, 12, .72);   /* stage card / offer panel   */
+  --card-foreground:       #f5ece2;
+
+  --popover:               rgba(20, 15, 12, .96);   /* dropdown menus  (F4)       */
+  --popover-foreground:    #f5ece2;
+
+  --primary:               #ff6926;                 /* signal orange              */
+  --primary-foreground:    #ffffff;
+
+  --secondary:             rgba(255, 255, 255, .06);/* secondary / ghost control  */
+  --secondary-foreground:  #f5ece2;
+
+  --muted:                 rgba(255, 255, 255, .04);/* quiet panel (34×)          */
+  --muted-foreground:      #a89684;                 /* hint ink (113×)            */
+
+  --accent:                rgba(255, 255, 255, .10);/* hover surface (F25)        */
+  --accent-foreground:     #f5ece2;
+
+  --destructive:           #b8382a;
+  --destructive-foreground:#ffffff;
+
+  --border:                rgba(255, 220, 190, .10);/* hairline divider (F8)      */
+  --input:                 rgba(255, 200, 160, .16);/* form-control border (F9)   */
+  --ring:                  #ff6926;                 /* focus-visible outline      */
+
+  --radius:                0.75rem;                 /* 12px — see TOKENS.md §C2   */
+
+  /* ---- shadcn/ui sidebar (Settings + Operator, block "sidebar-13") ------ */
+  --sidebar:                      rgba(13, 10, 8, .80);   /* shell fill (F1)      */
+  --sidebar-foreground:           #f5ece2;
+  --sidebar-primary:              rgba(120, 58, 22, .45); /* active nav item      */
+  --sidebar-primary-foreground:   #f5ece2;
+  --sidebar-accent:               rgba(255, 255, 255, .06);/* nav hover           */
+  --sidebar-accent-foreground:    #f5ece2;
+  --sidebar-border:               rgba(255, 220, 190, .08);/* nav border-right    */
+  --sidebar-ring:                 #ff6926;
+
+  /* ---- shadcn/ui charts (seeded from the status palette) ---------------- */
+  --chart-1: #ff6926;
+  --chart-2: #e0a13a;
+  --chart-3: #4fbf7a;
+  --chart-4: #cbb9a8;
+  --chart-5: #b8382a;
+
+  /* ======================================================================
+     2 · --rs-* : everything the prototype needs beyond shadcn's schema
+     ====================================================================== */
+
+  /* ---- ink ramp -------------------------------------------------------- */
+  --rs-ink-strong:      #f8f0e7;   /* the giant Scout utterance only        */
+  --rs-ink:             #f5ece2;   /* = --foreground                        */
+  --rs-ink-2:           #e2d3c3;   /* secondary body, inactive nav icon     */
+  --rs-ink-3:           #d8c8b8;   /* quiet text buttons (Roomscout)        */
+  --rs-ink-muted:       #cbb9a8;   /* sub-headline 19px, secondary rows     */
+  --rs-ink-hint:        #a89684;   /* = --muted-foreground                  */
+  --rs-ink-placeholder: #9c8b7b;   /* ::placeholder                         */
+  --rs-ink-on-signal:   #ffffff;   /* ink on orange / red fills             */
+
+  /* ---- signal orange --------------------------------------------------- */
+  --rs-signal:          #ff6926;
+  --rs-signal-hover:    #ff7a3d;   /* :hover on filled primary only         */
+  --rs-signal-ink:      #ff8a4e;   /* orange TEXT / active nav icon         */
+  --rs-signal-ink-soft: #ffd9c4;   /* ink on --rs-signal-a12 chips          */
+  --rs-signal-ink-softer:#ffe0cf;  /* ink on --rs-signal-a14 buttons        */
+  --rs-signal-deep:     #e9511a;
+  --rs-signal-light:    #ffc39a;
+  --rs-signal-disabled: rgba(255, 105, 38, .40);
+
+  /* orange tint ladder — rgb(255,105,38) === #ff6926 */
+  --rs-signal-a12: rgba(255, 105, 38, .12);   /* chip fill                   */
+  --rs-signal-a14: rgba(255, 105, 38, .14);   /* outline-button fill         */
+  --rs-signal-a20: rgba(255, 105, 38, .20);   /* changed-field highlight     */
+  --rs-signal-a22: rgba(255, 105, 38, .22);   /* chip hover                  */
+  --rs-signal-a30: rgba(255, 105, 38, .30);   /* active filter pill          */
+  --rs-signal-a35: rgba(255, 105, 38, .35);   /* toggled channel / mobile    */
+
+  /* warm brown fills — rgb(120,58,22) */
+  --rs-warm-28: rgba(120, 58, 22, .28);       /* selected autonomy card      */
+  --rs-warm-45: rgba(120, 58, 22, .45);       /* = --sidebar-primary         */
+  --rs-warm-75: rgba(120, 58, 22, .75);       /* user chat bubble (F3)       */
+
+  /* ---- white-on-dark surface ladder ------------------------------------ */
+  --rs-surface-1: rgba(255, 255, 255, .03);   /* quietest inner card         */
+  --rs-surface-2: rgba(255, 255, 255, .04);   /* = --muted                   */
+  --rs-surface-3: rgba(255, 255, 255, .06);   /* = --secondary               */
+  --rs-surface-4: rgba(255, 255, 255, .08);   /* 42–44px icon buttons        */
+  --rs-hover-1:   rgba(255, 255, 255, .07);   /* menu-item hover             */
+  --rs-hover-2:   rgba(255, 255, 255, .10);   /* = --accent (default hover)  */
+  --rs-hover-3:   rgba(255, 255, 255, .12);
+  --rs-hover-4:   rgba(255, 255, 255, .14);   /* hover on --rs-surface-4     */
+  --rs-rule:      rgba(255, 255, 255, .12);   /* 1px vertical separators     */
+  --rs-hatch: repeating-linear-gradient(135deg,
+                rgba(255, 255, 255, .05) 0 10px,
+                rgba(255, 255, 255, .02) 10px 20px);
+
+  /* ---- warm-black glass ladder ----------------------------------------- */
+  --rs-pill:       rgba(20, 14, 10, .60);  /* search / side-note input pill  */
+  --rs-pill-2:     rgba(20, 14, 10, .55);
+  --rs-pill-3:     rgba(20, 14, 10, .50);
+  --rs-card:       rgba(18, 14, 12, .72);  /* = --card                       */
+  --rs-card-list:  rgba(18, 14, 12, .74);  /* transcript, card mode          */
+  --rs-card-flat:  rgba(18, 14, 12, .42);  /* transcript, list mode          */
+  --rs-sheet:      rgba(18, 14, 12, .92);  /* bottom sheet (+ blur 10px)     */
+  --rs-side-panel: rgba(14, 11, 9,  .94);  /* transcript drawer              */
+  --rs-toast:      rgba(24, 17, 13, .96);  /* toast / tooltip (F5)           */
+  --rs-dialog:     rgba(18, 14, 11, .98);  /* drawers + modals in the shells */
+  --rs-scrim:      rgba(6,  4,  3,  .55);  /* modal backdrop (F6)            */
+  --rs-shell:      rgba(13, 10, 8,  .80);  /* = --sidebar                    */
+  --rs-devbar:     rgba(10, 8,  7,  .88);
+  --rs-devbar-btn: rgba(10, 8,  7,  .80);
+  --rs-header-scrolled: rgba(11, 10, 9, .72); /* Landing sticky header       */
+
+  /* ---- borders (canonicalised — TOKENS.md §B4 / F2 / F8–F10) ----------- */
+  --rs-border-hair:         rgba(255, 220, 190, .08);  /* nav / chrome edges  */
+  --rs-border:              rgba(255, 220, 190, .10);  /* = --border          */
+  --rs-border-strong:       rgba(255, 220, 190, .28);  /* pill / select outline */
+  --rs-border-card:         rgba(255, 200, 160, .14);  /* default card border */
+  --rs-border-card-strong:  rgba(255, 200, 160, .16);  /* = --input           */
+  --rs-border-input-focus:  rgba(255, 200, 160, .25);
+  --rs-border-dashed:       rgba(255, 200, 160, .35);  /* 1px dashed empty    */
+  --rs-border-accent:       rgba(255, 140, 90,  .35);  /* active / selected   */
+  --rs-border-accent-strong:rgba(255, 140, 90,  .50);
+  --rs-underline:           rgba(255, 220, 190, .35);  /* text-decoration     */
+  --rs-mobile-frame-border: rgba(255, 220, 190, .20);
+
+  /* ---- status ---------------------------------------------------------- */
+  --rs-success:        #4fbf7a;
+  --rs-warning:        #e0a13a;                        /* = rgb(224,161,58)  */
+  --rs-warning-bg:     rgba(224, 161, 58, .10);
+  --rs-warning-border: rgba(224, 161, 58, .35);
+  --rs-warning-ink:    #1a1208;                        /* ink on amber badge */
+  --rs-danger:         #b8382a;                        /* = --destructive    */
+  --rs-danger-hover:   #c9463a;
+  --rs-danger-ink:     #ff8a6a;                        /* validation message */
+
+  /* status dots */
+  --rs-signal-dot: #ff6926;                            /* live / latest      */
+  --rs-dot-past:   rgba(255, 220, 190, .35);           /* earlier activity   */
+  --rs-dot-idle:   rgba(255, 255, 255, .30);           /* not enabled        */
+  --rs-dot-paused: #a89684;
+  /* five real dot sizes — see TOKENS.md §B7 / F16; there is no single canonical one */
+  --rs-dot-6:      6px;   /* Landing fact bullets                             */
+  --rs-dot-7:      7px;   /* Settings sidebar session dot, Landing live dot    */
+  --rs-dot-8:      8px;   /* Roomscout badge / warnings / activity, Operator env */
+  --rs-dot-9:      9px;   /* Settings + Operator status dots                   */
+  --rs-dot-radio: 12px;   /* inner dot of the 26px autonomy radio              */
+  --rs-dot-size:   var(--rs-dot-8);   /* default alias                         */
+
+  /* ---- chat bubbles ---------------------------------------------------- */
+  --rs-bubble-scout:        rgba(255, 255, 255, .06);
+  --rs-bubble-user:         rgba(120, 58, 22, .75);
+  --rs-bubble-user-border:  rgba(255, 140, 90, .35);
+  --rs-bubble-user-transcript: rgba(120, 58, 22, .60);  /* transcript list    */
+  /* the Scout corner is ONLY ever 14px 14px 14px 4px — `18px 18px 18px 4px`
+     does not exist anywhere in the prototype (TOKENS.md §B6). */
+  --rs-bubble-radius-scout: 14px 14px 14px 4px;      /* transcript, both uses */
+  --rs-bubble-radius-user:  14px 14px 4px 14px;      /* transcript            */
+  --rs-bubble-radius-user-stage: 18px 18px 4px 18px; /* stage + Landing       */
+  --rs-bubble-pad:       10px 14px;   /* transcript, both speakers            */
+  --rs-bubble-max-w:     88%;         /* transcript, both speakers            */
+  --rs-bubble-font:      15px;        /* transcript; line-height 1.45         */
+
+  /* ---- background stack (see §5 below for the recipe) ------------------- */
+  --rs-bg-image:     url("/assets/bg.jpg");
+  --rs-bg-position:  50% 30%;
+  --rs-bg-filter:    saturate(.62) brightness(.5);
+  --rs-bg-transform: scaleX(-1);
+  --rs-bg-inset:     -2%;                    /* Landing parallax: -6% -2%    */
+  --rs-bg-scrim: linear-gradient(180deg,
+                   rgba(30, 16, 6, .28)  0%,
+                   rgba(12,  9, 7, .62) 45%,
+                   rgba( 5,  7, 9, .92) 100%);
+  --rs-grain-opacity: .28;
+  --rs-grain-blend:   overlay;
+  --rs-grain-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .6 0'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23n)'/%3E%3C/svg%3E");
+  /* Landing-only extra layers */
+  --rs-vignette: radial-gradient(ellipse at 50% 50%,
+                   #1a120c 0%, #1a120c 42%, rgba(26, 18, 12, 0) 72%);
+  --rs-bottom-fade: linear-gradient(180deg,
+                   rgba(11, 10, 9, 0) 70%, rgba(11, 10, 9, .35) 100%);
+
+  /* ---- the Scout blob --------------------------------------------------- */
+  --rs-blob-1: #ffc39a;
+  --rs-blob-2: #ff8a4e;
+  --rs-blob-3: #ff6926;
+  --rs-blob-4: #e9511a;
+  --rs-blob-gradient: radial-gradient(circle at 42% 38%,
+                        var(--rs-blob-1) 0%,
+                        var(--rs-blob-2) 28%,
+                        var(--rs-blob-3) 58%,
+                        var(--rs-blob-4) 100%);
+  --rs-blob-radius: 62% 38% 46% 54% / 44% 58% 42% 56%;
+  /* four size tiers — the glow scales with the blob, it is not a per-file
+     divergence: Landing v2 uses the large glow on its cursor-following blob
+     (line 31) and the small one only on the 86px section blob (line 235).   */
+  --rs-blob-glow: 0 0 34px 6px rgba(255, 120, 50, .35),
+                  0 0 110px 20px rgba(255, 105, 38, .18);   /* ≥112px        */
+  --rs-blob-glow-sm: 0 0 30px 6px rgba(255, 120, 50, .35),
+                     0 0 90px 16px rgba(255, 105, 38, .18); /* 86px          */
+  --rs-blob-glow-chip: 0 0 18px rgba(255, 105, 38, .40);    /* 44px          */
+  --rs-blob-glow-hero: 0 0 60px 10px rgba(255, 105, 38, .35); /* 220px       */
+  /* the 44px chip and the 220px hero also use shorter gradients:            */
+  --rs-blob-gradient-chip: radial-gradient(circle at 42% 38%,
+                             var(--rs-blob-1), var(--rs-blob-3) 60%);
+  --rs-blob-gradient-hero: radial-gradient(circle at 42% 38%,
+                             var(--rs-blob-1), var(--rs-blob-3) 58%,
+                             var(--rs-blob-4));
+
+  /* ---- elevation -------------------------------------------------------- */
+  --rs-shadow-xs:    0 1px 3px rgba(0, 0, 0, .30);        /* toggle knob      */
+  --rs-shadow-md:    0 16px 40px rgba(0, 0, 0, .45);      /* toast, menu      */
+  --rs-shadow-lg:    0 20px 50px rgba(0, 0, 0, .45);      /* header dropdown  */
+  --rs-shadow-sheet: 0 -20px 60px rgba(0, 0, 0, .40);     /* bottom sheet     */
+  --rs-shadow-shell: 0 30px 90px rgba(0, 0, 0, .35);      /* Settings shell   */
+  --rs-shadow-modal: 0 30px 80px rgba(0, 0, 0, .50);
+  --rs-glow-primary: 0 8px 28px rgba(255, 105, 38, .25);  /* CTA              */
+  --rs-glow-mic:     0 6px 24px rgba(255, 105, 38, .30);
+  --rs-glow-dot:     0 0 8px rgba(255, 105, 38, .50);
+  --rs-blur-pill:    blur(6px);
+  --rs-blur-bar:     blur(8px);
+  --rs-blur-sheet:   blur(10px);
+  --rs-blur-header:  blur(12px);
+
+  /* ---- radii beyond shadcn's ladder ------------------------------------- */
+  --rs-radius-xs:    6px;
+  --rs-radius-14:    14px;   /* chat bubble / toast / notice                  */
+  --rs-radius-2xl:   18px;
+  --rs-radius-3xl:   22px;
+  --rs-radius-4xl:   26px;
+  --rs-radius-shell: 28px;   /* Settings + Operator shell                     */
+  --rs-radius-pill:  999px;
+  --rs-radius-mobile-frame: 44px;
+
+  /* ---- motion ----------------------------------------------------------- */
+  --rs-ease:       cubic-bezier(.22, .8, .2, 1);
+  --rs-ease-snap:  cubic-bezier(.3, .7, .2, 1);
+  --rs-dur-fast:   .2s;
+  --rs-dur-base:   .3s;
+  --rs-dur-slow:   .6s;
+  --rs-dur-stage:  .9s;
+
+  /* ---- layout ----------------------------------------------------------- */
+  --rs-sidebar-width:    296px;
+  --rs-shell-min-height: 560px;
+  --rs-header-h:         84px;   /* Roomscout (hdrH) + Operator page header   */
+  --rs-header-h-narrow:  64px;   /* Roomscout when narrow                     */
+  --rs-header-h-landing:          80px;  /* Landing v2, not scrolled          */
+  --rs-header-h-landing-scrolled: 64px;  /* Landing v2, scrollY > 40          */
+
+  /* breakpoints — JS state in the prototype, see TOKENS.md §0.1              */
+  --rs-bp-app:      959px;  /* matchMedia('(max-width: 959px)')  → `narrow`   */
+  --rs-bp-landing:  880px;  /* window.innerWidth < 880           → `narrow`   */
+
+  /* switch (Settings + Operator, identical)                                  */
+  --rs-switch-w:      56px;
+  --rs-switch-h:      32px;
+  --rs-switch-r:      16px;
+  --rs-switch-knob:   26px;
+  --rs-switch-inset:   3px;
+  --rs-switch-travel: 24px;
+  --rs-switch-on:  #ff6926;
+  --rs-switch-off: rgba(255, 255, 255, .14);
+  --rs-switch-knob-shadow: 0 1px 3px rgba(0, 0, 0, .3);
+
+  /* text-button underline                                                    */
+  --rs-underline-offset: 4px;
+  --rs-underline-accent: rgba(255, 140, 90, .60);  /* Landing accent link     */
+  --rs-gutter:           36px;
+  --rs-gutter-narrow:    18px;
+  --rs-control-h:        46px;   /* primary control, app-wide (F23)           */
+  --rs-control-h-sm:     44px;   /* round icon buttons, tabs, dialog buttons  */
+  --rs-control-h-xs:     40px;   /* compact control                           */
+  --rs-control-h-lg:     46px;   /* deprecated alias of --rs-control-h        */
+  --rs-content-max:      1380px; /* Roomscout shell host                      */
+  --rs-landing-max:      1400px;
+
+  /* ---- typography -------------------------------------------------------- */
+  --rs-font-sans: "Geist", system-ui, sans-serif;
+  --rs-font-mono: ui-monospace, Menlo, monospace;
+
+  --rs-text-display:   clamp(42px, 6.2vw, 84px);
+  --rs-text-h1:        clamp(36px, 5vw, 58px);
+  --rs-text-h1-page:   44px;   /* Settings / Operator page title              */
+  --rs-text-h2:        40px;
+  --rs-text-h3:        26px;
+  --rs-text-h4:        22px;
+  --rs-text-lead:      19px;
+  --rs-text-lg:        18px;
+  --rs-text-md:        17px;
+  --rs-text-base:      16px;
+  --rs-text-sm:        15px;   /* DEFAULT body / control label                */
+  --rs-text-sm-dense:  14.5px; /* Operator tables only (F19)                  */
+  --rs-text-xs:        14px;
+  --rs-text-2xs:       13.5px;
+  --rs-text-3xs:       13px;
+  --rs-text-eyebrow:   12.5px;
+  --rs-text-micro:     12px;
+  --rs-text-mono:      11.5px;
+
+  --rs-tracking-display: -.03em;
+  --rs-tracking-title:   -.02em;
+  --rs-tracking-tight:   -.01em;
+  --rs-tracking-mark:     .04em;  /* the `roomscout` wordmark                 */
+  --rs-tracking-eyebrow:  .14em;
+  --rs-tracking-eyebrow-wide: .18em;
+
+  --rs-leading-tight:   1.1;
+  --rs-leading-normal:  1.5;
+  --rs-leading-relaxed: 1.6;
+}
+
+/* --------------------------------------------------------------------------
+   3 · @theme inline — expose the tokens to Tailwind v4 utilities
+   -------------------------------------------------------------------------- */
+
+@theme inline {
+  /* shadcn contract */
+  --color-background:            var(--background);
+  --color-foreground:            var(--foreground);
+  --color-card:                  var(--card);
+  --color-card-foreground:       var(--card-foreground);
+  --color-popover:               var(--popover);
+  --color-popover-foreground:    var(--popover-foreground);
+  --color-primary:               var(--primary);
+  --color-primary-foreground:    var(--primary-foreground);
+  --color-secondary:             var(--secondary);
+  --color-secondary-foreground:  var(--secondary-foreground);
+  --color-muted:                 var(--muted);
+  --color-muted-foreground:      var(--muted-foreground);
+  --color-accent:                var(--accent);
+  --color-accent-foreground:     var(--accent-foreground);
+  --color-destructive:           var(--destructive);
+  --color-destructive-foreground:var(--destructive-foreground);
+  --color-border:                var(--border);
+  --color-input:                 var(--input);
+  --color-ring:                  var(--ring);
+
+  --color-sidebar:                    var(--sidebar);
+  --color-sidebar-foreground:         var(--sidebar-foreground);
+  --color-sidebar-primary:            var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent:             var(--sidebar-accent);
+  --color-sidebar-accent-foreground:  var(--sidebar-accent-foreground);
+  --color-sidebar-border:             var(--sidebar-border);
+  --color-sidebar-ring:               var(--sidebar-ring);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  /* RoomScout extras — usable as bg-rs-card, text-rs-ink-hint, border-rs-border-card … */
+  --color-rs-ink-strong:      var(--rs-ink-strong);
+  --color-rs-ink:             var(--rs-ink);
+  --color-rs-ink-2:           var(--rs-ink-2);
+  --color-rs-ink-3:           var(--rs-ink-3);
+  --color-rs-ink-muted:       var(--rs-ink-muted);
+  --color-rs-ink-hint:        var(--rs-ink-hint);
+  --color-rs-ink-placeholder: var(--rs-ink-placeholder);
+  --color-rs-ink-on-signal:   var(--rs-ink-on-signal);
+
+  --color-rs-signal:           var(--rs-signal);
+  --color-rs-signal-hover:     var(--rs-signal-hover);
+  --color-rs-signal-ink:       var(--rs-signal-ink);
+  --color-rs-signal-ink-soft:  var(--rs-signal-ink-soft);
+  --color-rs-signal-ink-softer:var(--rs-signal-ink-softer);
+  --color-rs-signal-deep:      var(--rs-signal-deep);
+  --color-rs-signal-light:     var(--rs-signal-light);
+  --color-rs-signal-disabled:  var(--rs-signal-disabled);
+  --color-rs-signal-a12:       var(--rs-signal-a12);
+  --color-rs-signal-a14:       var(--rs-signal-a14);
+  --color-rs-signal-a20:       var(--rs-signal-a20);
+  --color-rs-signal-a22:       var(--rs-signal-a22);
+  --color-rs-signal-a30:       var(--rs-signal-a30);
+  --color-rs-signal-a35:       var(--rs-signal-a35);
+  --color-rs-warm-28:          var(--rs-warm-28);
+  --color-rs-warm-45:          var(--rs-warm-45);
+  --color-rs-warm-75:          var(--rs-warm-75);
+
+  --color-rs-surface-1: var(--rs-surface-1);
+  --color-rs-surface-2: var(--rs-surface-2);
+  --color-rs-surface-3: var(--rs-surface-3);
+  --color-rs-surface-4: var(--rs-surface-4);
+  --color-rs-hover-1:   var(--rs-hover-1);
+  --color-rs-hover-2:   var(--rs-hover-2);
+  --color-rs-hover-3:   var(--rs-hover-3);
+  --color-rs-hover-4:   var(--rs-hover-4);
+  --color-rs-rule:      var(--rs-rule);
+
+  --color-rs-pill:       var(--rs-pill);
+  --color-rs-pill-2:     var(--rs-pill-2);
+  --color-rs-pill-3:     var(--rs-pill-3);
+  --color-rs-card:       var(--rs-card);
+  --color-rs-card-list:  var(--rs-card-list);
+  --color-rs-card-flat:  var(--rs-card-flat);
+  --color-rs-sheet:      var(--rs-sheet);
+  --color-rs-side-panel: var(--rs-side-panel);
+  --color-rs-toast:      var(--rs-toast);
+  --color-rs-dialog:     var(--rs-dialog);
+  --color-rs-scrim:      var(--rs-scrim);
+  --color-rs-shell:      var(--rs-shell);
+  --color-rs-devbar:     var(--rs-devbar);
+
+  --color-rs-border-hair:          var(--rs-border-hair);
+  --color-rs-border:               var(--rs-border);
+  --color-rs-border-strong:        var(--rs-border-strong);
+  --color-rs-border-card:          var(--rs-border-card);
+  --color-rs-border-card-strong:   var(--rs-border-card-strong);
+  --color-rs-border-input-focus:   var(--rs-border-input-focus);
+  --color-rs-border-dashed:        var(--rs-border-dashed);
+  --color-rs-border-accent:        var(--rs-border-accent);
+  --color-rs-border-accent-strong: var(--rs-border-accent-strong);
+
+  --color-rs-success:        var(--rs-success);
+  --color-rs-warning:        var(--rs-warning);
+  --color-rs-warning-bg:     var(--rs-warning-bg);
+  --color-rs-warning-border: var(--rs-warning-border);
+  --color-rs-warning-ink:    var(--rs-warning-ink);
+  --color-rs-danger:         var(--rs-danger);
+  --color-rs-danger-hover:   var(--rs-danger-hover);
+  --color-rs-danger-ink:     var(--rs-danger-ink);
+  --color-rs-signal-dot:     var(--rs-signal-dot);
+  --color-rs-dot-past:       var(--rs-dot-past);
+  --color-rs-dot-idle:       var(--rs-dot-idle);
+  --color-rs-bubble-scout:   var(--rs-bubble-scout);
+  --color-rs-bubble-user:    var(--rs-bubble-user);
+
+  /* fonts */
+  --font-sans: var(--rs-font-sans);
+  --font-mono: var(--rs-font-mono);
+
+  /* type scale — text-rs-sm, text-rs-eyebrow … */
+  --text-rs-display:  var(--rs-text-display);
+  --text-rs-h1:       var(--rs-text-h1);
+  --text-rs-h1-page:  var(--rs-text-h1-page);
+  --text-rs-h2:       var(--rs-text-h2);
+  --text-rs-h3:       var(--rs-text-h3);
+  --text-rs-h4:       var(--rs-text-h4);
+  --text-rs-lead:     var(--rs-text-lead);
+  --text-rs-lg:       var(--rs-text-lg);
+  --text-rs-md:       var(--rs-text-md);
+  --text-rs-base:     var(--rs-text-base);
+  --text-rs-sm:       var(--rs-text-sm);
+  --text-rs-dense:    var(--rs-text-sm-dense);
+  --text-rs-xs:       var(--rs-text-xs);
+  --text-rs-2xs:      var(--rs-text-2xs);
+  --text-rs-3xs:      var(--rs-text-3xs);
+  --text-rs-eyebrow:  var(--rs-text-eyebrow);
+  --text-rs-micro:    var(--rs-text-micro);
+  --text-rs-mono:     var(--rs-text-mono);
+
+  --tracking-rs-display: var(--rs-tracking-display);
+  --tracking-rs-title:   var(--rs-tracking-title);
+  --tracking-rs-tight:   var(--rs-tracking-tight);
+  --tracking-rs-mark:    var(--rs-tracking-mark);
+  --tracking-rs-eyebrow: var(--rs-tracking-eyebrow);
+
+  --leading-rs-tight:   var(--rs-leading-tight);
+  --leading-rs-normal:  var(--rs-leading-normal);
+  --leading-rs-relaxed: var(--rs-leading-relaxed);
+
+  /* radii — shadcn's derived ladder + RoomScout extras */
+  --radius-sm:  calc(var(--radius) - 4px);   /*  8px */
+  --radius-md:  calc(var(--radius) - 2px);   /* 10px */
+  --radius-lg:  var(--radius);               /* 12px */
+  --radius-xl:  calc(var(--radius) + 4px);   /* 16px */
+  --radius-rs-xs:    var(--rs-radius-xs);
+  --radius-rs-14:    var(--rs-radius-14);
+  --radius-rs-2xl:   var(--rs-radius-2xl);
+  --radius-rs-3xl:   var(--rs-radius-3xl);
+  --radius-rs-4xl:   var(--rs-radius-4xl);
+  --radius-rs-shell: var(--rs-radius-shell);
+
+  /* spacing — the 2px grid the prototype actually uses */
+  --spacing-rs-2:  2px;   --spacing-rs-4:  4px;   --spacing-rs-6:  6px;
+  --spacing-rs-8:  8px;   --spacing-rs-9:  9px;   --spacing-rs-10: 10px;
+  --spacing-rs-12: 12px;  --spacing-rs-14: 14px;  --spacing-rs-16: 16px;
+  --spacing-rs-18: 18px;  --spacing-rs-20: 20px;  --spacing-rs-22: 22px;
+  --spacing-rs-24: 24px;  --spacing-rs-26: 26px;  --spacing-rs-28: 28px;
+  --spacing-rs-30: 30px;  --spacing-rs-32: 32px;  --spacing-rs-34: 34px;
+  --spacing-rs-36: 36px;  --spacing-rs-40: 40px;
+
+  /* elevation */
+  --shadow-rs-xs:    var(--rs-shadow-xs);
+  --shadow-rs-md:    var(--rs-shadow-md);
+  --shadow-rs-lg:    var(--rs-shadow-lg);
+  --shadow-rs-sheet: var(--rs-shadow-sheet);
+  --shadow-rs-shell: var(--rs-shadow-shell);
+  --shadow-rs-modal: var(--rs-shadow-modal);
+  --shadow-rs-glow:  var(--rs-glow-primary);
+
+  /* motion */
+  --ease-rs:      var(--rs-ease);
+  --ease-rs-snap: var(--rs-ease-snap);
+
+  --animate-rs-fade-up: rs-fade-up .2s ease both;
+  --animate-rs-fade-up-slow: rs-fade-up-8 .3s ease both;
+  --animate-rs-dot:     rs-dot 2.4s ease-in-out infinite;
+  --animate-rs-breathe: rs-breathe 5.2s ease-in-out infinite;
+  --animate-rs-listen:  rs-listen 4.2s ease-in-out infinite;
+  --animate-rs-speak:   rs-speak 1.7s ease-in-out infinite;
+  --animate-rs-think:   rs-breathe 2.4s ease-in-out infinite;
+}
+
+/* --------------------------------------------------------------------------
+   4 · Keyframes — verbatim from the prototype
+       (stFade / opFade were byte-identical → merged into rs-fade-up;
+        rsFadeUp only differs in travel distance → rs-fade-up-8;
+        rsDot / lpDot were byte-identical → merged into rs-dot.  See §F15.)
+   -------------------------------------------------------------------------- */
+
+@keyframes rs-breathe {
+  0%, 100% { transform: scale(1) rotate(0deg);
+             border-radius: 62% 38% 46% 54% / 44% 58% 42% 56%; }
+  50%      { transform: scale(1.04) rotate(-4deg);
+             border-radius: 54% 46% 58% 42% / 50% 44% 56% 50%; }
+}
+
+@keyframes rs-speak {
+  0%, 100% { transform: scale(1) rotate(0deg);
+             border-radius: 62% 38% 46% 54% / 44% 58% 42% 56%; }
+  30%      { transform: scale(1.07) rotate(4deg);
+             border-radius: 46% 54% 60% 40% / 58% 40% 60% 42%; }
+  65%      { transform: scale(.97) rotate(-3deg);
+             border-radius: 56% 44% 40% 60% / 48% 62% 38% 52%; }
+}
+
+@keyframes rs-listen {
+  0%, 100% { transform: scale(1) rotate(0deg);
+             border-radius: 62% 38% 46% 54% / 44% 58% 42% 56%; }
+  50%      { transform: scale(1.02) rotate(8deg);
+             border-radius: 56% 44% 52% 48% / 56% 46% 54% 44%; }
+}
+
+/* stFade (Settings) / opFade (Operator) — identical */
+@keyframes rs-fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* rsFadeUp (Roomscout) — 8px travel */
+@keyframes rs-fade-up-8 {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* rsDot (Roomscout) / lpDot (Landing) — identical */
+@keyframes rs-dot {
+  0%, 100% { opacity: .4; }
+  50%      { opacity: 1; }
+}
+
+/* --------------------------------------------------------------------------
+   5 · Base layer — resets, focus ring, placeholder, reduced motion
+       (unified from the four per-file <style> blocks — see §F17 / §F18)
+   -------------------------------------------------------------------------- */
+
+@layer base {
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--background);
+  }
+
+  body {
+    font-family: var(--rs-font-sans);
+    font-size: var(--rs-text-sm);          /* 15px */
+    color: var(--foreground);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a { color: var(--foreground); }
+  a:hover { color: var(--rs-signal); }
+
+  button:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible,
+  a:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  input::placeholder,
+  textarea::placeholder { color: var(--rs-ink-placeholder); }
+
+  @media (prefers-reduced-motion: reduce) {
+    * {
+      animation-duration: .01ms !important;
+      transition-duration: .01ms !important;
+    }
+  }
+}
+
+/* --------------------------------------------------------------------------
+   6 · The background recipe
+       root → stage frame → photo → scrim → grain, all behind content at z-index 2.
+       Original: Roomscout.dc.html lines 27–31 / Landing v2.dc.html lines 23–28.
+       NOTE: Roomscout has FOUR elements here, not three. Between the fixed root
+       and the three layers sits <div data-stage="1"> — it repeats #0b0a09 and
+       carries the mobile phone-frame geometry plus its 0.4s transition.
+   -------------------------------------------------------------------------- */
+
+/* the outer, fixed root (Roomscout only; Landing's equivalent is a fixed,
+   pointer-events:none wrapper at z-index 0 holding just the three layers) */
+.rs-root {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--rs-font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* <div data-stage="1"> — the frame the `mobile` prop animates */
+.rs-stage {
+  position: absolute;
+  left: 0; top: 0; width: 100%; height: 100%;
+  transform: none;
+  border-radius: 0;
+  border: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--background);
+  transition: width .4s, height .4s, border-radius .4s;
+  color: var(--foreground);
+  font-family: var(--rs-font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+.rs-stage[data-mobile="true"] {
+  left: 50%; top: 50%;
+  width: 390px;
+  height: min(844px, calc(100% - 32px));
+  transform: translate(-50%, -50%);
+  border-radius: var(--rs-radius-mobile-frame);      /* 44px */
+  border: 1px solid rgba(255, 220, 190, .2);
+}
+
+/* layer 1 — the mirrored, desaturated, darkened photograph */
+.rs-stage::before {
+  content: "";
+  position: absolute;
+  inset: var(--rs-bg-inset);                /* -2%  (Landing: -6% -2%)        */
+  background-image: var(--rs-bg-image);
+  background-size: cover;
+  background-position: var(--rs-bg-position);
+  filter: var(--rs-bg-filter);
+  transform: var(--rs-bg-transform);
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* layer 2 — the warm-to-cold vertical scrim */
+.rs-stage::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--rs-bg-scrim);
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* layer 3 — the grain. Needs its own element: `opacity` + `mix-blend-mode`
+   cannot be combined on the pseudo-element that already carries the scrim. */
+.rs-grain {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: var(--rs-grain-opacity);          /* .28    */
+  mix-blend-mode: var(--rs-grain-blend);     /* overlay */
+  background-image: var(--rs-grain-image);   /* 220×220, repeats */
+}
+
+/* content sits above every background layer */
+.rs-stage > :not(.rs-grain) { position: relative; z-index: 2; }
+
+/* --------------------------------------------------------------------------
+   6b · The Landing hero preview card
+        The vignette and the bottom fade are NOT background layers. They are
+        absolutely-positioned overlays INSIDE this card, on top of
+        <img src="hero-preview.png">. Landing v2.dc.html:50–56.
+   -------------------------------------------------------------------------- */
+
+.rs-hero-perspective {
+  margin-top: 44px;
+  width: min(1120px, 100%);
+  perspective: 1600px;
+  perspective-origin: 50% 0%;
+}
+.rs-hero-card {
+  position: relative;
+  border-radius: 22px;
+  border: 1px solid rgba(255, 190, 140, .26);
+  overflow: hidden;
+  box-shadow: 0 -10px 60px rgba(255, 105, 38, .12),
+              0 40px 100px rgba(0, 0, 0, .5);
+  transform: rotateX(14deg) scale(.96);   /* JS eases to rotateX(0) scale(1) */
+  transform-origin: 50% 0%;
+  will-change: transform;
+}
+.rs-hero-card > img { display: block; width: 100%; height: auto; }
+
+/* masks the blob baked into the screenshot so the live blob can sit there */
+.rs-vignette {
+  position: absolute;
+  left: 37%; top: 12%; width: 26%; height: 30%;
+  background: var(--rs-vignette);
+  pointer-events: none;
+}
+.rs-bottom-fade {
+  position: absolute;
+  inset: 0;
+  background: var(--rs-bottom-fade);
+  pointer-events: none;
+}
+.rs-hero-badge {                            /* „Beispielansicht“ */
+  position: absolute; right: 18px; bottom: 14px;
+  font-size: 12px; color: var(--rs-ink-2);
+  padding: 5px 11px; border-radius: 999px;
+  border: 1px solid rgba(255, 220, 190, .22);
+  background: rgba(11, 10, 9, .55);
+}
+
+/* --------------------------------------------------------------------------
+   7 · The Scout blob
+   -------------------------------------------------------------------------- */
+
+.rs-blob {
+  background: var(--rs-blob-gradient);
+  border-radius: var(--rs-blob-radius);
+  box-shadow: var(--rs-blob-glow);
+  transition: box-shadow var(--rs-dur-slow);
+}
+.rs-blob[data-mode="idle"]      { animation: rs-breathe 5.2s ease-in-out infinite; }
+.rs-blob[data-mode="thinking"]  { animation: rs-breathe 2.4s ease-in-out infinite; }
+.rs-blob[data-mode="listening"] { animation: rs-listen  4.2s ease-in-out infinite; }
+.rs-blob[data-mode="speaking"]  { animation: rs-speak   1.7s ease-in-out infinite; }
+
+/* --------------------------------------------------------------------------
+   8 · Signature primitives (the patterns that repeat most often)
+   -------------------------------------------------------------------------- */
+
+/* uppercase section eyebrow — 36 occurrences */
+.rs-eyebrow {
+  font-size: var(--rs-text-eyebrow);          /* 12.5px */
+  letter-spacing: var(--rs-tracking-eyebrow); /* .14em  */
+  text-transform: uppercase;
+  color: var(--rs-ink-hint);
+}
+.rs-eyebrow--accent { color: var(--rs-signal-ink); font-weight: 500; }
+
+/* status dot */
+.rs-dot {
+  width: var(--rs-dot-size); height: var(--rs-dot-size);
+  border-radius: 50%;
+  background: var(--rs-dot-idle);
+  flex: none;
+}
+.rs-dot--live   { background: var(--rs-signal-dot); animation: rs-dot 2.4s ease-in-out infinite; }
+.rs-dot--ok     { background: var(--rs-success); }
+.rs-dot--warn   { background: var(--rs-warning); }
+.rs-dot--past   { background: var(--rs-dot-past); }
+.rs-dot--paused { background: var(--rs-dot-paused); animation: none; }
+/* five real sizes — see TOKENS.md §B7. Default is 8px via --rs-dot-size. */
+.rs-dot--6  { width: var(--rs-dot-6);     height: var(--rs-dot-6); }
+.rs-dot--7  { width: var(--rs-dot-7);     height: var(--rs-dot-7); }
+.rs-dot--9  { width: var(--rs-dot-9);     height: var(--rs-dot-9); }
+.rs-dot--radio { width: var(--rs-dot-radio); height: var(--rs-dot-radio); }
+
+/* the switch (Settings + Operator, byte-identical, 6 instances).
+   26px is the KNOB; the track is 56x32 r16. ON = #ff6926, OFF = white .14. */
+.rs-switch {
+  width: var(--rs-switch-w);
+  height: var(--rs-switch-h);
+  border-radius: var(--rs-switch-r);
+  border: 0; padding: 0;
+  background: var(--rs-switch-off);
+  position: relative; cursor: pointer;
+  transition: background .2s;
+  flex: none;
+}
+.rs-switch[aria-checked="true"] { background: var(--rs-switch-on); }
+.rs-switch > span {
+  position: absolute;
+  top: var(--rs-switch-inset);
+  left: var(--rs-switch-inset);
+  width: var(--rs-switch-knob);
+  height: var(--rs-switch-knob);
+  border-radius: 50%;
+  background: #fff;
+  transform: none;
+  transition: transform .2s;
+  box-shadow: var(--rs-switch-knob-shadow);
+}
+.rs-switch[aria-checked="true"] > span { transform: translateX(var(--rs-switch-travel)); }
+
+/* the autonomy radio (Settings, 2 instances) */
+.rs-radio {
+  width: 26px; height: 26px; border-radius: 50%;
+  border: 2px solid var(--rs-dot-past);       /* rgba(255,220,190,.35) */
+  display: flex; align-items: center; justify-content: center;
+  flex: none;
+}
+.rs-radio[data-selected="true"] { border-color: var(--rs-signal); }
+.rs-radio > span {
+  width: var(--rs-dot-radio); height: var(--rs-dot-radio);
+  border-radius: 50%; background: transparent;
+}
+.rs-radio[data-selected="true"] > span { background: var(--rs-signal); }
+
+/* the mic control — 60px narrow / 76px wide; OFF is a resting fill,
+   NOT the hover token that shares its value. */
+.rs-mic {
+  width: 76px; height: 76px; border-radius: 50%;
+  background: rgba(255, 255, 255, .07);
+  border: 1px solid rgba(255, 220, 190, .16);
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .3s;
+  box-shadow: none;
+}
+.rs-mic[data-on="true"] {
+  background: var(--rs-signal);
+  border-color: var(--rs-signal);
+  box-shadow: var(--rs-glow-mic);
+}
+@media (max-width: 959px) { .rs-mic { width: 60px; height: 60px; } }
+
+/* the search / side-note input pill */
+.rs-input-pill {
+  height: 60px;
+  padding: 0 8px 0 18px;
+  border-radius: var(--rs-radius-pill);
+  background: var(--rs-pill);
+  border: 1px solid var(--rs-border-card-strong);
+  backdrop-filter: var(--rs-blur-pill);
+  display: flex; align-items: center; gap: 8px;
+}
+
+/* underlined text button — 20 uses, always with offset 4px */
+.rs-link-button {
+  border: 0; background: none; font: inherit; cursor: pointer;
+  color: var(--rs-ink-3);
+  text-decoration: underline;
+  text-underline-offset: var(--rs-underline-offset);
+  text-decoration-color: var(--rs-underline);
+}
+.rs-link-button--accent { text-decoration-color: var(--rs-underline-accent); }
+
+/* photo placeholder — the hatch plus its (verbatim) copy
+   „Foto folgt vom Anbieter“. 13px in the offer card, 12.5px in the
+   candidate card. Monospace is deliberate here, it is not dev chrome. */
+.rs-photo-placeholder {
+  background: var(--rs-hatch);
+  display: flex; align-items: center; justify-content: center;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 13px;
+  color: var(--rs-ink-hint);
+}
+.rs-photo-placeholder--sm { font-size: 12.5px; height: 150px; }
+.rs-hatch { background: var(--rs-hatch); }
