@@ -23,6 +23,10 @@ import {
   CONTROLLED_AGENTMAIL_WEBHOOK_EVENTS,
   CONTROLLED_AGENTMAIL_WEBHOOK_URL,
   parseAgentMailWebhookPage,
+  parseAgentMailWebhook,
+  sameAgentMailWebhookConfiguration,
+  accountWebhookConfig,
+  summarizeAccountWebhookCoverage,
   planScopedWebhookBootstrap,
   resolveScopedWebhookSigningSecret,
   signingSecretFromCreateResponse,
@@ -163,6 +167,65 @@ export const listAccessibleInboxes = internalAction({
   },
 });
 
+/** Secret-free, read-only coverage diagnostic for the deployment-wide webhook. */
+export const diagnoseAccountWebhookCoverage = internalAction({
+  args: {},
+  returns: v.object({
+    capability: v.literal("account_webhook_management"),
+    callbackUrl: v.string(),
+    accessibleInboxCount: v.number(),
+    inboxListHasMore: v.boolean(),
+    exactAccountWebhookCount: v.number(),
+    driftCount: v.number(),
+    collisionCount: v.number(),
+    coverage: v.union(v.literal("account_wide"), v.literal("pod_wide"), v.literal("missing"), v.literal("invalid")),
+    podCoverageVerifiedByInboxProof: v.boolean(),
+    signingSecretState: v.union(v.literal("missing"), v.literal("configured_unverified"), v.literal("verified_match"), v.literal("mismatch")),
+  }),
+  handler: async (ctx) => {
+    const config = accountWebhookConfig(envValue("CONVEX_SITE_URL") ?? "");
+    const [inboxPage, webhookPage] = await Promise.all([
+      componentClient().listInboxes(ctx, { limit: 100 }),
+      agentmailWebhookRequest("/webhooks?limit=100", { method: "GET" }),
+    ]);
+    const inboxResult = normalizeAgentMailInboxPage(inboxPage);
+    const parsed = parseAgentMailWebhookPage(webhookPage);
+    if (parsed.hasMore) throw new Error("AGENTMAIL_ACCOUNT_WEBHOOK_LIST_TRUNCATED");
+    const summary = summarizeAccountWebhookCoverage(parsed.webhooks, config);
+    const exactAccountWebhookCount = summary.exact.length;
+    const driftCount = summary.driftCount;
+    const collisionCount = summary.collisionCount;
+    const coverage: "account_wide" | "pod_wide" | "missing" | "invalid" =
+      summary.duplicateClientId || driftCount > 0 || collisionCount > 0 ? "invalid"
+        : exactAccountWebhookCount === 1
+          ? summary.exact[0]!.podIds.length === 1 ? "pod_wide" : "account_wide"
+          : "missing";
+    const exactHook = summary.exact[0];
+    let providerSecret = exactHook?.secret;
+    if (exactHook && !providerSecret) {
+      const detail = parseAgentMailWebhook(await agentmailWebhookRequest(
+        `/webhooks/${encodeURIComponent(exactHook.webhookId)}`,
+        { method: "GET" },
+      ));
+      if (detail && sameAgentMailWebhookConfiguration(exactHook, detail)) {
+        providerSecret = detail.secret;
+      }
+    }
+    const configuredSecret = envValue("AGENTMAIL_WEBHOOK_SECRET")?.trim();
+    const signingSecretState = !configuredSecret ? "missing" as const
+      : !providerSecret ? "configured_unverified" as const
+      : providerSecret.trim() === configuredSecret ? "verified_match" as const : "mismatch" as const;
+    return {
+      capability: "account_webhook_management" as const,
+      callbackUrl: config.url,
+      accessibleInboxCount: inboxResult.inboxes.length,
+      inboxListHasMore: inboxResult.nextPageToken !== undefined,
+      exactAccountWebhookCount, driftCount, collisionCount, coverage, signingSecretState,
+      podCoverageVerifiedByInboxProof: false,
+    };
+  },
+});
+
 /**
  * Create or reuse the one controlled production webhook. The only return
  * value is the signing secret so callers can pipe it directly into Convex
@@ -287,6 +350,23 @@ export const enqueueApprovedSend = internalMutation({
       attempt: 0,
     });
     return { outboundId, reused };
+  },
+});
+
+export const enqueueClaimedReply = internalMutation({
+  args: { ownerId: v.id("users"), executionId: v.id("actionExecutions") },
+  returns: v.object({ outboundId: v.string(), reused: v.boolean() }),
+  handler: async (ctx, args) => {
+    const execution = await ctx.db.get(args.executionId);
+    const request = execution ? await ctx.db.get(execution.requestId) : null;
+    if (!execution || execution.ownerId !== args.ownerId || !request || request.ownerId !== args.ownerId || !["claimed", "running"].includes(execution.status) || request.status !== "executing" || request.payload.kind !== "email_message" || !request.payload.mailThreadId || !request.payload.parentMessageId) throw new Error("Claimed AgentMail reply is no longer valid.");
+    if (execution.providerActionId) return { outboundId: execution.providerActionId, reused: true };
+    const thread = await ctx.db.get(request.payload.mailThreadId);
+    const mailbox = thread?.mailboxId ? await ctx.db.get(thread.mailboxId) : null;
+    if (!thread || thread.ownerId !== args.ownerId || !mailbox || mailbox.ownerId !== args.ownerId || mailbox.status !== "active" || !mailbox.providerInboxId) throw new Error("AgentMail reply mailbox is no longer active.");
+    const outboundId = await componentClient().replyToMessage(ctx, mailbox.providerInboxId, request.payload.parentMessageId, { to: [request.payload.recipientEmail], subject: request.payload.subject, text: request.payload.body, replyAll: false, labels: ["roomscout", "provider-reply"] });
+    await ctx.db.patch(execution._id, { status: "running", providerActionId: outboundId, updatedAt: Date.now() });
+    return { outboundId, reused: false };
   },
 });
 

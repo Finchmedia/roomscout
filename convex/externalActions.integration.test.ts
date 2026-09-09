@@ -3,25 +3,39 @@ import { convexTest } from "convex-test";
 import { expect, it } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
+import { actionPayloadHash } from "./integrations/contentHash";
+import { messageSafetyContext } from "./lib/messageSafety";
+import type { Id } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
 
 const modules = import.meta.glob("./**/*.ts");
+
+async function seedSemanticClearance(ctx: MutationCtx, requestId: Id<"actionRequests">) {
+  const request = (await ctx.db.get(requestId))!;
+  const input = (await messageSafetyContext(ctx, request))!;
+  await ctx.db.insert("messageSafetyAssessments", { requestId, ownerId: request.ownerId, snapshotHash: input.snapshotHash, contentHash: request.contentHash, contentVersion: 1,
+    assessment: { classification: "non_binding", explanation: "Fixture assessment", personalDataScopes: [], proposedMonthlyPriceEur: null, unsupportedClaims: [] },
+    model: "model-double", version: "final-message-v1", createdAt: Date.now() });
+}
 
 async function seedStandingClaimFixture(t: ReturnType<typeof convexTest>) {
   return await t.run(async (ctx) => {
     const now = Date.now();
     const ownerId = await ctx.db.insert("users", { username: "owner", role: "musician", createdAt: now, lastSeenAt: now });
     const needId = await ctx.db.insert("savedNeeds", { ownerId, title: "Room", city: "Hamburg", districts: [], arrangement: ["shared"], schedule: [], requirements: [], status: "active", createdAt: now, updatedAt: now });
-    const platformId = await ctx.db.insert("sourcePlatforms", { slug: "bandnet", name: "Bandnet", canonicalDomain: "bandnet.hamburg", kind: "community", status: "active", firstSeenAt: now, lastObservedAt: now, createdAt: now, updatedAt: now });
-    const policyId = await ctx.db.insert("sourceFlowPolicies", { platformId, scopeKey: "bandnet:contact", flow: "contact", version: 1, status: "approved", decision: "allowed", maxAutomationLevel: "approved_execute", userConnectionRequired: false, humanPresenceRequired: false, accountCreationAllowed: false, externalApprovalRequired: true, robotsDecision: "allowed", termsDecision: "allowed", evidenceUrls: ["https://bandnet.hamburg/nutzungsbedingungen"], createdAt: now, updatedAt: now });
+    const platformId = await ctx.db.insert("sourcePlatforms", { slug: "bandnet", name: "Bandnet", canonicalDomain: "roomscout.dev", kind: "community", status: "active", firstSeenAt: now, lastObservedAt: now, createdAt: now, updatedAt: now });
+    const policyId = await ctx.db.insert("sourceFlowPolicies", { platformId, scopeKey: "bandnet:contact", flow: "contact", version: 1, status: "approved", decision: "allowed", maxAutomationLevel: "approved_execute", userConnectionRequired: false, humanPresenceRequired: false, accountCreationAllowed: false, externalApprovalRequired: true, robotsDecision: "allowed", termsDecision: "allowed", evidenceUrls: ["https://roomscout.dev/nutzungsbedingungen"], createdAt: now, updatedAt: now });
     const bindingId = await ctx.db.insert("sourceAdapterBindings", { platformId, scopeKey: "bandnet:contact", flow: "contact", adapterKey: "bandnet_contact_v1", adapterVersion: 1, status: "active", executor: "firecrawl", config: { kind: "firecrawl", extractionProfileKey: "bandnet_contact_v1", monitorDriven: false }, configFingerprint: "binding-hash", policyVersionId: policyId, createdAt: now, updatedAt: now });
     const mandateId = await ctx.db.insert("searchMandates", { ownerId, savedNeedId: needId, version: 1, mode: "outreach_autopilot", status: "active", platformIds: [platformId], allowedActionTypes: ["submit_webform"], allowedPersonalData: [], maxContactsPerDay: 1, maxBrowserMinutesPerDay: 30, expiresAt: now + 86_400_000, stopOnComplaint: true, stopWhenSuitableRoomConfirmed: true, commitmentBoundary: "non_binding_outreach_only", contentHash: "mandate-hash", activatedAt: now, createdAt: now, updatedAt: now });
-    const payload = { kind: "contact_form" as const, targetUrl: "https://bandnet.hamburg/kontakt/42", fields: [{ name: "message", value: "Is the room still available?", sensitivity: "normal" as const }] };
-    const createRequest = async (contentHash: string) => {
+    const payload = { kind: "contact_form" as const, targetUrl: "https://roomscout.dev/kontakt/42", fields: [{ name: "message", value: "Is the room still available?", sensitivity: "normal" as const }] };
+    const createRequest = async () => {
+      const contentHash = await actionPayloadHash(payload);
       const requestId = await ctx.db.insert("actionRequests", { ownerId, savedNeedId: needId, mandateId, platformId, adapterBindingId: bindingId, policyVersionId: policyId, automationMode: "standing_mandate" as const, requestedActionType: "submit_webform" as const, personalDataScopes: [], payload, contentVersion: 1, contentHash, status: "approved" as const, expiresAt: now + 86_400_000, createdAt: now, updatedAt: now });
       await ctx.db.insert("actionApprovals", { requestId, ownerId, contentVersion: 1, contentHash, payloadSnapshot: payload, policyVersionId: policyId, decision: "authorized_by_mandate", mandateId, mandateVersion: 1, mandateHash: "mandate-hash", decidedAt: now });
+      await seedSemanticClearance(ctx, requestId);
       return requestId;
     };
-    return { ownerId, firstRequestId: await createRequest("first-hash") };
+    return { ownerId, firstRequestId: await createRequest() };
   });
 }
 
@@ -62,6 +76,20 @@ it("binds an exact approval to the owner, version, hash, and payload", async () 
   });
   expect((await owner.query(api.externalActions.listMine, { limit: 5 }))[0]?.status).toBe("approved");
   expect(await other.query(api.externalActions.listMine, { limit: 5 })).toEqual([]);
+});
+
+it("rejects a partially specified email reply route", async () => {
+  const t = convexTest(schema, modules);
+  const { userId, needId } = await t.run(async (ctx) => {
+    const now = Date.now();
+    const userId = await ctx.db.insert("users", { username: "reply-owner", role: "musician", createdAt: now, lastSeenAt: now });
+    const needId = await ctx.db.insert("savedNeeds", { ownerId: userId, title: "Room", city: "Berlin", districts: [], arrangement: ["shared"], schedule: [], requirements: [], status: "active", createdAt: now, updatedAt: now });
+    return { userId, needId };
+  });
+  await expect(t.withIdentity({ subject: userId }).mutation(api.externalActions.createDraft, {
+    savedNeedId: needId, automationMode: "exact_once", requestedActionType: "send_email", personalDataScopes: [],
+    payload: { kind: "email_message", recipientName: "Provider", recipientEmail: "provider@example.com", subject: "Re: room", body: "Is Tuesday still possible?", parentMessageId: "provider-message" },
+  })).rejects.toThrow("INVALID_EMAIL_REPLY_ROUTE");
 });
 
 it("will not turn exact approval into an arbitrary Firecrawl form destination", async () => {
@@ -163,7 +191,7 @@ it("resumes one idempotent mandate request without charging its contact slot twi
     if (firstRequest === null || !firstRequest.savedNeedId || !firstRequest.mandateId || !firstRequest.platformId || !firstRequest.adapterBindingId || !firstRequest.policyVersionId) {
       throw new Error("Standing-action fixture is incomplete");
     }
-    const contentHash = "second-hash";
+    const contentHash = await actionPayloadHash(firstRequest.payload);
     const requestId = await ctx.db.insert("actionRequests", {
       ownerId: fixture.ownerId,
       savedNeedId: firstRequest.savedNeedId,
@@ -195,6 +223,7 @@ it("resumes one idempotent mandate request without charging its contact slot twi
       mandateHash: "mandate-hash",
       decidedAt: now,
     });
+    await seedSemanticClearance(ctx, requestId);
     return requestId;
   });
 

@@ -1,8 +1,15 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { ScoutConversation } from "./ScoutConversation";
 
 describe("ScoutConversation", () => {
+  it("keeps a failed message editable instead of clearing the user's draft", async () => {
+    render(<ScoutConversation messages={[]} onSend={async () => false} />);
+    const input = screen.getByRole("textbox", { name: "Message your Room Scout" });
+    fireEvent.change(input, { target: { value: "We can rehearse on Wednesday." } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(input).toHaveValue("We can rehearse on Wednesday."));
+  });
   it("renders the Scout's double-asterisk emphasis without exposing markup", () => {
     render(
       <ScoutConversation

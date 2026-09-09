@@ -9,8 +9,11 @@ const verificationLabels: Record<MarketSignal["verification"], string> = {
 
 export function SignalBadge({ signal }: { signal: MarketSignal }) {
   return (
-    <span className={`type t-${signal.side}`}>
-      {signal.side === "supply" ? "Supply" : "Demand"} · {verificationLabels[signal.verification]}
+    <span className="badges">
+      <span className={`type t-${signal.side}`}>
+        {signal.side === "supply" ? "Supply" : "Demand"} · {verificationLabels[signal.verification]}
+      </span>
+      {signal.isDemo === true ? <span className="type">Controlled demo</span> : null}
     </span>
   );
 }

@@ -14,6 +14,8 @@ export type SignalFact = {
 
 export type MarketSignal = {
   id: string;
+  /** Server-derived marker for the controlled roomscout.dev demonstration source. */
+  isDemo?: boolean;
   side: SignalSide;
   verification: VerificationState;
   freshness: FreshnessState;

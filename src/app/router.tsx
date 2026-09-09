@@ -5,6 +5,7 @@ import {
   BrowserRouter,
   Link,
   Navigate,
+  Outlet,
   Route,
   Routes,
   useLocation,
@@ -29,6 +30,7 @@ import {
   SignalDetailPage,
 } from "../routes";
 import { AuthRoute } from "./AuthRoute";
+import { VoiceSessionProvider } from "../components/voice/VoiceSessionProvider";
 
 function RouteState({ children }: { children: ReactNode }) {
   return <div className="rs-route-state" role="status">{children}</div>;
@@ -77,12 +79,16 @@ function AppRoutes() {
       <Route element={<AuthRoute />} path="/sign-in" />
       <Route element={<AuthRoute />} path="/sign-up" />
 
-      <Route element={<RequireAuth><ScoutPage /></RequireAuth>} path="/app/scout" />
-      <Route element={<RequireAuth><AppExplorePage /></RequireAuth>} path="/app/explore" />
-      <Route element={<RequireAuth><MySearchPage /></RequireAuth>} path="/app/search" />
-      <Route element={<RequireAuth><MusicianInboxPage /></RequireAuth>} path="/app/inbox" />
-      <Route element={<RequireAuth><ProfilePage /></RequireAuth>} path="/app/profile" />
-      <Route element={<RequireAuth><BrowserRunPage /></RequireAuth>} path="/app/runs/:runId" />
+      <Route element={<RequireAuth><VoiceSessionProvider><Outlet /></VoiceSessionProvider></RequireAuth>}>
+        <Route element={<ScoutPage />} path="/app/scout" />
+        <Route element={<AppExplorePage />} path="/app/explore" />
+        <Route element={<MapPage workspace />} path="/app/map" />
+        <Route element={<MySearchPage />} path="/app/search" />
+        <Route element={<MusicianInboxPage />} path="/app/inbox" />
+        <Route element={<ProfilePage />} path="/app/profile" />
+        <Route element={<ProfilePage />} path="/app/settings/:section?" />
+        <Route element={<BrowserRunPage />} path="/app/runs/:runId" />
+      </Route>
 
       <Route element={<RequireAuth><RequireOperator><OpsOverviewPage /></RequireOperator></RequireAuth>} path="/ops" />
       <Route element={<RequireAuth><RequireOperator><OpsSignalsPage /></RequireOperator></RequireAuth>} path="/ops/signals" />

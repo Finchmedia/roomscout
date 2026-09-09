@@ -1,0 +1,7 @@
+.overview { display: grid; gap: 26px; }
+.metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; overflow: hidden; border: 1px solid rgba(255,220,190,.1); border-radius: 16px; background: rgba(255,220,190,.1); }
+.metrics > :global(*) { min-height: 118px; border: 0; border-radius: 0; background: rgba(20,15,12,.88); box-shadow: none; }
+.columns { gap: 1px; overflow: hidden; border: 1px solid rgba(255,220,190,.1); border-radius: 16px; background: rgba(255,220,190,.1); }
+.columns > :global(*) { margin: 0; border: 0; border-radius: 0; background: rgba(20,15,12,.84); box-shadow: none; }
+@media (max-width: 1050px) { .metrics { grid-template-columns: repeat(3, minmax(0,1fr)); } }
+@media (max-width: 720px) { .metrics { grid-template-columns: repeat(2, minmax(0,1fr)); } .columns { display: grid; grid-template-columns: 1fr; } }

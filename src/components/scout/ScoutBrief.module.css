@@ -1,0 +1,74 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: min(100%, 30rem);
+}
+.toggle {
+  min-height: 2.75rem;
+  padding: 0.65rem 1rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 210, 180, 0.2);
+  background: rgba(17, 12, 9, 0.56);
+  color: #ead9ca;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  font: inherit;
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+}
+.toggle:hover {
+  color: #fff;
+  border-color: rgba(255, 210, 180, 0.36);
+}
+.toggle svg:last-child {
+  transition: transform 0.2s;
+}
+.chevronOpen {
+  transform: rotate(180deg);
+}
+.card {
+  width: 100%;
+  margin-top: 0.65rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid rgba(255, 210, 180, 0.15);
+  border-radius: 1rem;
+  background: rgba(17, 12, 9, 0.76);
+  backdrop-filter: blur(16px);
+  color: #f7eee7;
+}
+.eyebrow {
+  display: block;
+  margin-bottom: 0.55rem;
+  color: #ad9b8c;
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.card dl {
+  margin: 0;
+}
+.card dl div {
+  display: grid;
+  grid-template-columns: 6.5rem 1fr;
+  gap: 0.8rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.card dl div:last-child {
+  border: 0;
+}
+.card dt {
+  color: #ad9b8c;
+  font-size: 0.8rem;
+}
+.card dd {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+.card p {
+  margin: 0;
+  color: #cbb9aa;
+}

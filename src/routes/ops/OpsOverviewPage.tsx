@@ -5,8 +5,10 @@ import { Link } from "react-router-dom";
 import { api } from "../../../convex/_generated/api";
 import { WorkspaceShell } from "../../components/navigation/WorkspaceShell";
 import { ProviderReadinessPanel } from "../../components/ops/ProviderReadinessPanel";
-import { EmptyState, LedgerCard, PageHeader } from "../../components/ui/LedgerCard";
+import { OpsPageHeader } from "../../components/ops/OpsPageHeader";
+import { EmptyState, LedgerCard } from "../../components/ui/LedgerCard";
 import { formatAge, toneForStatus, titleCase } from "./opsFormat";
+import styles from "./OpsOverviewPage.module.css";
 
 export function OpsOverviewPage() {
   const overview = useQuery(api.ops.overview);
@@ -56,7 +58,7 @@ export function OpsOverviewPage() {
   if (overview === undefined) {
     return (
       <WorkspaceShell mode="ops">
-        <PageHeader title="Operations overview" />
+        <OpsPageHeader title="Operations overview" />
         <EmptyState body="Reading the live Convex operations state." title="Loading operations…" />
       </WorkspaceShell>
     );
@@ -87,11 +89,12 @@ export function OpsOverviewPage() {
 
   return (
     <WorkspaceShell mode="ops">
-      <PageHeader
+      <div className={styles.overview}>
+      <OpsPageHeader
         meta={<span className="rs-page-meta"><span className="chip">Live Convex data</span><span className="mono live"><span className="dot dot-pulse" />Reactive</span></span>}
         title="Operations overview"
       />
-      <div className="metrics rs-metrics-grid">
+      <div className={`metrics rs-metrics-grid ${styles.metrics}`}>
         {metrics.map((metric) => (
           <LedgerCard className={`metric${metric.tone ? ` ${metric.tone}` : ""}`} key={metric.label}>
             <div className="k">{metric.label}</div>
@@ -99,7 +102,7 @@ export function OpsOverviewPage() {
           </LedgerCard>
         ))}
       </div>
-      <div className="cols rs-ops-overview__columns">
+      <div className={`cols rs-ops-overview__columns ${styles.columns}`}>
         <LedgerCard header={<><span className="type">Work queues</span><span className="mono">Counts capped at {overview.boundedSample}</span></>}>
           <div className="rs-queue-list">
             {queues.map((item) => (
@@ -133,6 +136,7 @@ export function OpsOverviewPage() {
         onRefresh={refreshProviderReadiness}
         readiness={providerReadiness}
       />
+      </div>
     </WorkspaceShell>
   );
 }

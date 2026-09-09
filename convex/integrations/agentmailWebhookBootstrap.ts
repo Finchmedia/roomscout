@@ -13,13 +13,32 @@ export const CONTROLLED_AGENTMAIL_WEBHOOK_EVENTS = [
   "message.complained",
 ] as const;
 
-type AgentMailWebhook = {
+export type AgentMailWebhook = {
   webhookId: string;
   url: string;
   secret?: string;
   enabled: boolean;
   eventTypes: string[];
   clientId?: string;
+  inboxIds: string[];
+  podIds: string[];
+};
+
+export type AccountWebhookConfig = {
+  url: string;
+  clientId: string;
+  eventTypes: readonly string[];
+};
+
+export type AccountWebhookPlan =
+  | { kind: "create"; exactCount: 0; driftCount: number; collisionCount: number }
+  | { kind: "reuse"; exactCount: 1; driftCount: 0; collisionCount: 0; webhook: AgentMailWebhook };
+
+export type AccountWebhookCoverage = {
+  exact: AgentMailWebhook[];
+  driftCount: number;
+  collisionCount: number;
+  duplicateClientId: boolean;
 };
 
 export type ScopedWebhookBootstrapPlan =
@@ -54,7 +73,29 @@ function parseWebhook(value: unknown): AgentMailWebhook | null {
         )
       : [],
     clientId: stringValue(record, "client_id"),
+    inboxIds: Array.isArray(record.inbox_ids)
+      ? record.inbox_ids.filter((id): id is string => typeof id === "string")
+      : [],
+    podIds: Array.isArray(record.pod_ids)
+      ? record.pod_ids.filter((id): id is string => typeof id === "string")
+      : [],
   };
+}
+
+export function parseAgentMailWebhook(value: unknown): AgentMailWebhook | null {
+  return parseWebhook(value);
+}
+
+export function sameAgentMailWebhookConfiguration(
+  left: AgentMailWebhook,
+  right: AgentMailWebhook,
+): boolean {
+  const sameStrings = (a: string[], b: string[]) =>
+    [...new Set(a)].sort().join("\n") === [...new Set(b)].sort().join("\n");
+  return left.webhookId === right.webhookId && left.url === right.url &&
+    left.clientId === right.clientId && left.enabled === right.enabled &&
+    sameStrings(left.eventTypes, right.eventTypes) &&
+    sameStrings(left.inboxIds, right.inboxIds) && sameStrings(left.podIds, right.podIds);
 }
 
 export function parseAgentMailWebhookPage(value: unknown): {
@@ -70,6 +111,53 @@ export function parseAgentMailWebhookPage(value: unknown): {
   return {
     webhooks,
     hasMore: Boolean(stringValue(record ?? {}, "next_page_token")),
+  };
+}
+
+/** Build one deployment-bound account endpoint configuration. The provider may
+ * materialize the key's scope as a single pod filter; live inbox proof must
+ * establish that newly created personal inboxes belong to that pod. */
+export function accountWebhookConfig(siteUrl: string): AccountWebhookConfig {
+  const url = new URL(siteUrl);
+  if (url.protocol !== "https:" || !url.hostname.endsWith(".convex.site") || url.pathname !== "/" || url.search || url.hash) {
+    throw new Error("AGENTMAIL_ACCOUNT_WEBHOOK_SITE_URL_INVALID");
+  }
+  return {
+    url: `${url.origin}/api/webhooks/agentmail`,
+    clientId: `roomscout-agentmail-${url.hostname.replace(/[^a-z0-9-]/gi, "-")}-v1`,
+    eventTypes: CONTROLLED_AGENTMAIL_WEBHOOK_EVENTS,
+  };
+}
+
+function sameConfiguredEvents(actual: string[], expectedEvents: readonly string[]) {
+  return [...new Set(actual)].sort().join("\n") === [...expectedEvents].sort().join("\n");
+}
+
+export function planAccountWebhookBootstrap(
+  webhooks: AgentMailWebhook[],
+  config: AccountWebhookConfig,
+): AccountWebhookPlan {
+  const coverage = summarizeAccountWebhookCoverage(webhooks, config);
+  if (coverage.duplicateClientId) throw new Error("AGENTMAIL_ACCOUNT_WEBHOOK_DUPLICATE_CLIENT_ID");
+  if (coverage.driftCount) throw new Error("AGENTMAIL_ACCOUNT_WEBHOOK_CONFIG_MISMATCH");
+  if (coverage.collisionCount) throw new Error("AGENTMAIL_ACCOUNT_WEBHOOK_URL_ALREADY_CLAIMED");
+  if (coverage.exact[0]) return { kind: "reuse", exactCount: 1, driftCount: 0, collisionCount: 0, webhook: coverage.exact[0] };
+  return { kind: "create", exactCount: 0, driftCount: 0, collisionCount: 0 };
+}
+
+export function summarizeAccountWebhookCoverage(
+  webhooks: AgentMailWebhook[],
+  config: AccountWebhookConfig,
+): AccountWebhookCoverage {
+  const byClientId = webhooks.filter((hook) => hook.clientId === config.clientId);
+  const exact = byClientId.filter((candidate) => candidate.url === config.url && candidate.enabled &&
+    sameConfiguredEvents(candidate.eventTypes, config.eventTypes) &&
+    candidate.inboxIds.length === 0 && candidate.podIds.length <= 1);
+  return {
+    exact,
+    driftCount: byClientId.length - exact.length,
+    collisionCount: webhooks.filter((hook) => hook.url === config.url && hook.clientId !== config.clientId).length,
+    duplicateClientId: byClientId.length > 1,
   };
 }
 

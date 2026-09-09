@@ -3,6 +3,7 @@ import type { MarketSignal, SavedSearch, SearchField } from "../mocks/demoData";
 
 type PublicSignal = {
   _id: Id<"signals">;
+  isDemo?: boolean;
   side: "supply" | "demand";
   title: string;
   city: string;
@@ -62,6 +63,7 @@ export function publicSignalToMarketSignal(
 
   return {
     id: signal._id,
+    isDemo: signal.isDemo === true,
     side: signal.side,
     verification: signal.verification === "verified"
       ? "source_verified"

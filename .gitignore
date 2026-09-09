@@ -16,3 +16,6 @@ test-results/
 *.mp4
 *.webm
 *.mov
+
+# generated eval output (local paths, stack traces)
+artifacts/

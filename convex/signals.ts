@@ -5,7 +5,7 @@ import { query, type QueryCtx } from "./_generated/server";
 const signalSide = v.union(v.literal("supply"), v.literal("demand"));
 const signalStatus = v.union(v.literal("published"), v.literal("stale"));
 
-const signalProjectionValidator = v.object({
+export const signalProjectionValidator = v.object({
   _id: v.id("signals"),
   side: signalSide,
   title: v.string(),
@@ -34,6 +34,7 @@ const signalProjectionValidator = v.object({
   firstSeenAt: v.number(),
   lastSeenAt: v.number(),
   publishedAt: v.optional(v.number()),
+  isDemo: v.optional(v.boolean()),
 });
 
 const evidenceProjectionValidator = v.object({
@@ -45,7 +46,7 @@ const evidenceProjectionValidator = v.object({
   observedAt: v.number(),
 });
 
-function projectSignal(signal: Doc<"signals">) {
+export function projectSignal(signal: Doc<"signals">) {
   if (signal.status !== "published" && signal.status !== "stale") {
     throw new Error("A non-public signal reached the public projection");
   }
@@ -67,6 +68,7 @@ function projectSignal(signal: Doc<"signals">) {
     firstSeenAt: signal.firstSeenAt,
     lastSeenAt: signal.lastSeenAt,
     publishedAt: signal.publishedAt,
+    isDemo: signal.isDemo,
   };
 }
 

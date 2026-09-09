@@ -1,6 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireUserId } from "./integrations/authz";
+import { opportunityMatchIsCurrent } from "./lib/matchValidity";
 
 const statusValidator = v.union(
   v.literal("new"), v.literal("reviewing"), v.literal("saved"),
@@ -35,7 +36,13 @@ export const listMine = query({
       : args.status
         ? await ctx.db.query("opportunities").withIndex("by_owner_and_status_and_updated_at", (q) => q.eq("ownerId", ownerId).eq("status", args.status!)).order("desc").take(limit)
         : await ctx.db.query("opportunities").withIndex("by_owner_and_status_and_updated_at", (q) => q.eq("ownerId", ownerId)).order("desc").take(limit);
-    return rows.filter((row) => row.ownerId === ownerId).map((row) => ({
+    const visible = [];
+    for (const row of rows) {
+      if (row.ownerId !== ownerId || (args.savedNeedId && row.savedNeedId !== args.savedNeedId)) continue;
+      if (row.signalId && ["new", "reviewing", "saved"].includes(row.status) && !await opportunityMatchIsCurrent(ctx, row)) continue;
+      visible.push(row);
+    }
+    return visible.map((row) => ({
       _id: row._id,
       savedNeedId: row.savedNeedId,
       mandateId: row.mandateId,
@@ -61,6 +68,9 @@ export const updateStatus = mutation({
     const ownerId = await requireUserId(ctx);
     const row = await ctx.db.get(args.opportunityId);
     if (row === null || row.ownerId !== ownerId) throw new ConvexError({ code: "OPPORTUNITY_NOT_FOUND" });
+    if (row.signalId && ["new", "reviewing", "saved"].includes(args.status) && !await opportunityMatchIsCurrent(ctx, row)) {
+      throw new ConvexError({ code: "OPPORTUNITY_NO_LONGER_MATCHES" });
+    }
     await ctx.db.patch(row._id, { status: args.status, updatedAt: Date.now() });
     return null;
   },

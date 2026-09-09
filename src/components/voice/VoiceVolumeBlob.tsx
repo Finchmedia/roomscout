@@ -6,6 +6,16 @@ type VoiceVolumeBlobProps = {
   volume: number;
   active?: boolean;
   label?: string;
+  state?:
+    | "idle"
+    | "requesting_microphone"
+    | "connecting"
+    | "creating_session"
+    | "listening"
+    | "thinking"
+    | "speaking"
+    | "disconnected"
+    | "error";
 };
 
 type VolumeStyle = CSSProperties & { "--volume": number };
@@ -14,6 +24,7 @@ export function VoiceVolumeBlob({
   volume,
   active = true,
   label = "Voice activity",
+  state = "idle",
 }: VoiceVolumeBlobProps) {
   const normalizedVolume = Math.max(0, Math.min(1, volume));
   const style: VolumeStyle = { "--volume": normalizedVolume };
@@ -22,7 +33,7 @@ export function VoiceVolumeBlob({
   return (
     <div
       aria-label={label}
-      className={`${styles.stage} ${active ? "" : styles.paused}`}
+      className={`${styles.stage} ${active ? "" : styles.paused} ${styles[state]}`}
       role="img"
       style={style}
     >
@@ -31,8 +42,20 @@ export function VoiceVolumeBlob({
       <svg aria-hidden="true" className={styles.blob} viewBox="0 0 200 200">
         <defs>
           <filter height="150%" id={filterId} width="150%" x="-25%" y="-25%">
-            <feTurbulence baseFrequency="0.011" numOctaves="2" result="noise" seed="8" type="fractalNoise" />
-            <feDisplacementMap in="SourceGraphic" in2="noise" scale={9 + normalizedVolume * 24} xChannelSelector="R" yChannelSelector="B" />
+            <feTurbulence
+              baseFrequency="0.011"
+              numOctaves="2"
+              result="noise"
+              seed="8"
+              type="fractalNoise"
+            />
+            <feDisplacementMap
+              in="SourceGraphic"
+              in2="noise"
+              scale={9 + normalizedVolume * 24}
+              xChannelSelector="R"
+              yChannelSelector="B"
+            />
           </filter>
         </defs>
         <path

@@ -165,7 +165,7 @@ async function seedScoutWebform(t: ReturnType<typeof convexTest>) {
   });
 }
 
-it("lets the Scout execute reviewed non-binding webform outreach through Autopilot", async () => {
+it("holds legacy real-source Autopilot drafts instead of sending fictional demo outreach", async () => {
   const t = convexTest(schema, modules);
   const fixture = await seedScoutWebform(t);
   const result = await t.mutation(internal.externalActions.createContactFormFromScout, {
@@ -177,7 +177,7 @@ it("lets the Scout execute reviewed non-binding webform outreach through Autopil
     body: "Hello, is the room still available for a four-piece band?",
   });
 
-  expect(result).toMatchObject({ status: "approved", authorizedByAutopilot: true });
+  expect(result).toMatchObject({ status: "awaiting_approval", authorizedByAutopilot: false });
   const state = await t.run(async (ctx) => ({
     request: await ctx.db.get(result.requestId),
     approval: await ctx.db.query("actionApprovals").withIndex("by_request_and_content_version", (q) =>
@@ -187,12 +187,10 @@ it("lets the Scout execute reviewed non-binding webform outreach through Autopil
   expect(state.request).toMatchObject({
     mandateId: fixture.mandateId,
     automationMode: "standing_mandate",
-    status: "approved",
+    status: "awaiting_approval",
+    error: "CONTROLLED_DEMO_ONLY",
   });
-  expect(state.approval).toMatchObject({
-    decision: "authorized_by_mandate",
-    mandateId: fixture.mandateId,
-  });
+  expect(state.approval).toBeNull();
 });
 
 it("falls back to human review when Scout prose contains a binding commitment", async () => {

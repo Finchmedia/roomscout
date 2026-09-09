@@ -1,6 +1,6 @@
-import { LoaderCircle, Send } from "lucide-react";
+import { LoaderCircle, Mic, Send } from "lucide-react";
 import { useId, useState, type FormEvent, type ReactNode } from "react";
-import { LedgerCard } from "../ui/LedgerCard";
+import styles from "./ScoutConversation.module.css";
 
 export type ScoutConversationMessage = {
   id: string;
@@ -11,7 +11,8 @@ export type ScoutConversationMessage = {
 type ScoutConversationProps = {
   messages: ScoutConversationMessage[];
   starters?: string[];
-  onSend: (message: string) => Promise<void> | void;
+  onSend: (message: string) => Promise<void | boolean> | void | boolean;
+  onVoice?: () => void;
   busy?: boolean;
   error?: string;
   compact?: boolean;
@@ -21,66 +22,111 @@ function renderScoutFormatting(body: string): ReactNode[] {
   const parts: ReactNode[] = [];
   const boldPattern = /\*\*([^*\n]+)\*\*/g;
   let cursor = 0;
-
   for (const match of body.matchAll(boldPattern)) {
     const start = match.index;
     if (start > cursor) parts.push(body.slice(cursor, start));
     parts.push(<strong key={`${start}:${match[1]}`}>{match[1]}</strong>);
     cursor = start + match[0].length;
   }
-
   if (cursor < body.length) parts.push(body.slice(cursor));
   return parts;
 }
 
-export function ScoutConversation({ messages, starters = [], onSend, busy = false, error, compact = false }: ScoutConversationProps) {
+export function ScoutConversation({
+  messages,
+  starters = [],
+  onSend,
+  onVoice,
+  busy = false,
+  error,
+  compact = false,
+}: ScoutConversationProps) {
   const inputId = useId();
   const [draft, setDraft] = useState("");
-
   async function send(message: string) {
-    if (busy) return;
-    await onSend(message);
+    if (busy) return false;
+    return await onSend(message);
   }
-
   async function submit(event: FormEvent) {
     event.preventDefault();
-    const trimmed = draft.trim();
-    if (!trimmed) return;
-    setDraft("");
-    await send(trimmed);
+    const message = draft.trim();
+    if (!message || busy) return;
+    if ((await send(message)) !== false) setDraft("");
   }
-
   return (
-    <LedgerCard
-      className={`chat rs-scout-conversation${compact ? " rs-scout-conversation--compact" : ""}`}
-      header={
-        <>
-          <span className="type t-scout">Scout conversation</span>
-          <span className="mono">Nothing becomes active without your confirmation</span>
-        </>
-      }
+    <section
+      aria-label="Scout conversation"
+      className={`${styles.conversation}${compact ? ` ${styles.compact}` : ""}`}
     >
-      <div aria-live="polite" className="msgs">
+      <div aria-live="polite" className={styles.messages}>
         {messages.map((message) => (
-          <div className={`msg m-${message.author}`} key={message.id}>
+          <div
+            className={`${styles.message} ${styles[message.author]}`}
+            key={message.id}
+          >
             {message.author === "user"
               ? message.body
               : renderScoutFormatting(message.body)}
           </div>
         ))}
-        {busy ? <div className="msg m-scout rs-scout-thinking"><LoaderCircle aria-hidden="true" className="rs-spin" size={14} />Scout is thinking…</div> : null}
+        {busy ? (
+          <div
+            className={`${styles.message} ${styles.scout} ${styles.thinking}`}
+          >
+            <LoaderCircle aria-hidden="true" size={15} />
+            Scout is thinking…
+          </div>
+        ) : null}
       </div>
       {starters.length ? (
-        <div aria-label="Conversation starters" className="starters">
-          {starters.map((starter) => <button className="starter" disabled={busy} key={starter} onClick={() => send(starter)} type="button">{starter}</button>)}
+        <div aria-label="Conversation starters" className={styles.starters}>
+          {starters.map((starter) => (
+            <button
+              disabled={busy}
+              key={starter}
+              onClick={() => void send(starter)}
+              type="button"
+            >
+              {starter}
+            </button>
+          ))}
         </div>
       ) : null}
-      <form className="composer" onSubmit={submit}>
-        <label className="sr-only" htmlFor={inputId}>Message your Room Scout</label>
-        <input className="input" disabled={busy} id={inputId} onChange={(event) => setDraft(event.target.value)} placeholder="Tell your Scout what matters…" value={draft} />
-        <button aria-label="Send message" className="btn btn-p" disabled={busy || !draft.trim()} type="submit"><Send aria-hidden="true" size={15} />Send</button>
+      <form className={styles.composer} onSubmit={submit}>
+        <label className="sr-only" htmlFor={inputId}>
+          Message your Room Scout
+        </label>
+        <input
+          disabled={busy}
+          id={inputId}
+          onChange={(event) => setDraft(event.target.value)}
+          placeholder="Tell Scout what matters…"
+          value={draft}
+        />
+        {onVoice ? (
+          <button
+            aria-label="Talk to Scout"
+            className={styles.voice}
+            onClick={onVoice}
+            type="button"
+          >
+            <Mic aria-hidden="true" size={18} />
+          </button>
+        ) : null}
+        <button
+          aria-label="Send message"
+          className={styles.send}
+          disabled={busy || !draft.trim()}
+          type="submit"
+        >
+          <Send aria-hidden="true" size={18} />
+        </button>
       </form>
-      {error ? <p className="err" role="alert">{error}</p> : null}
-    </LedgerCard>
+      {error ? (
+        <p className={styles.error} role="alert">
+          {error}
+        </p>
+      ) : null}
+    </section>
   );
 }

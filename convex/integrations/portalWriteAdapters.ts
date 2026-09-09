@@ -345,6 +345,7 @@ export async function runDeterministicPortalWrite(input: {
   allowedDomains: readonly string[];
   allowedPaths: readonly string[];
   humanPresenceRequired: boolean;
+  beforeSubmit?: () => Promise<void>;
 }): Promise<PortalWriteResult> {
   assertAllowedPortalWriteLocation({
     url: await input.page.url(),
@@ -377,6 +378,9 @@ export async function runDeterministicPortalWrite(input: {
   }
 
   const submit = await requireUniqueVisible(input.page, input.workflow.submitSelector);
+  // Authorization can change while the browser is navigating or filling fields.
+  // A rejected recheck occurs before the click, not in the ambiguous-write catch.
+  await input.beforeSubmit?.();
   try {
     // This is the single provider-side write. Once attempted, this execution is
     // never retried automatically unless the adapter exposes positive evidence

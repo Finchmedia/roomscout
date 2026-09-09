@@ -74,6 +74,17 @@ const allowedDomains = ["portal.example"];
 const allowedPaths = ["/roomscout-fixture/messages", "/roomscout-fixture/listings"];
 
 describe("reviewed portal write adapters", () => {
+  it("does not click if the final authorization recheck rejects after filling", async () => {
+    const workflow = resolvePortalWriteWorkflow({ adapterKey: "roomscout-dev-v1", adapterVersion: 1, workflowKey: "roomscout-dev.platform-message.v1", actionType: "send_platform_dm" });
+    const { page, locators } = fakePage({ url: "https://roomscout.dev/listings/room-1" });
+    await expect(runDeterministicPortalWrite({
+      page: page as never, workflow, payload: { kind: "platform_message", targetPath: "/listings/room-1", recipients: ["Listing owner"], body: "Available?" },
+      allowedDomains: ["roomscout.dev"], allowedPaths: ["/listings", "/inbox"], humanPresenceRequired: false,
+      beforeSubmit: async () => { throw new Error("MANDATE_CHANGED"); },
+    })).rejects.toThrow("MANDATE_CHANGED");
+    expect(locators.get('[data-roomscout-write="body"]')?.fill).toHaveBeenCalledWith("Available?");
+    expect(locators.get('[data-roomscout-write="send"]')?.click).not.toHaveBeenCalled();
+  });
   it("fails closed for a database-selected adapter tuple absent from code", () => {
     expect(() =>
       resolvePortalWriteWorkflow({

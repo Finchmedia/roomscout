@@ -284,7 +284,7 @@ export function MarketGlobe({
         <header className={styles.panelHeader}><h2>Signals in view</h2><span className={styles.count}>{visibleSignals.length} visible</span></header>
         {selectedSignal ? (
           <div className={styles.detail}>
-            <div className={styles.detailTop}><div><span className={styles.side}>{selectedSignal.side}</span><h3>{selectedSignal.title}</h3></div><button aria-label="Close signal detail" className={styles.closeButton} onClick={resetOverview} type="button"><X aria-hidden="true" size={15} /></button></div>
+            <div className={styles.detailTop}><div><span className={styles.side}>{selectedSignal.side}</span>{selectedSignal.isDemo === true ? <span className={styles.pill}>Controlled demo</span> : null}<h3>{selectedSignal.title}</h3></div><button aria-label="Close signal detail" className={styles.closeButton} onClick={resetOverview} type="button"><X aria-hidden="true" size={15} /></button></div>
             <p>{selectedSignal.summary ?? `${selectedSignal.locationLabel} · ${selectedSignal.source}`}</p>
             <div className={styles.detailMeta}><span className={styles.pill}>{selectedSignal.locationLabel}</span>{selectedSignal.priceLabel ? <span className={styles.pill}>{selectedSignal.priceLabel}</span> : null}<span className={styles.pill}>{selectedSignal.freshnessLabel}</span></div>
             {selectedSignal.fitLabel ? <p>{selectedSignal.fitLabel}</p> : null}
@@ -294,7 +294,7 @@ export function MarketGlobe({
         <div className={styles.list}>
           {visibleSignals.length === 0 ? <p className={styles.empty}>No geocoded signals in this view. Zoom out to widen the market window.</p> : visibleSignals.map((signal) => (
             <button className={`${styles.card}${signal.id === selectedId ? ` ${styles.cardSelected}` : ""}`} key={signal.id} onClick={() => selectSignal(signal)} type="button">
-              <span className={styles.cardTop}><span className={styles.side}>{signal.side}</span><span className={styles.freshness}>{signal.freshnessLabel}</span></span>
+              <span className={styles.cardTop}><span className={styles.side}>{signal.side}{signal.isDemo === true ? " · Controlled demo" : ""}</span><span className={styles.freshness}>{signal.freshnessLabel}</span></span>
               <h3>{signal.title}</h3>
               <p>{signal.locationLabel}{signal.priceLabel ? ` · ${signal.priceLabel}` : ""}</p>
             </button>

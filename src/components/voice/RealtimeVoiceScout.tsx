@@ -1,93 +1,266 @@
-import { CircleStop, Mic, MicOff, PhoneOff, Send, Sparkles, Volume2 } from "lucide-react";
-import { useState } from "react";
+import {
+  CircleStop,
+  Keyboard,
+  Mic,
+  MicOff,
+  PhoneOff,
+  RotateCcw,
+  Send,
+  X,
+} from "lucide-react";
+import { useMemo, useState } from "react";
 import type { FormEvent } from "react";
-import { useRealtimeVoiceScout } from "../../hooks/useRealtimeVoiceScout";
-import type { UseRealtimeVoiceScoutOptions, VoiceScoutStatus } from "../../hooks/useRealtimeVoiceScout";
+import type { VoiceScoutStatus } from "../../hooks/useRealtimeVoiceScout";
+import type { ScoutFact } from "../../features/scout/viewModel";
+import { ScoutFactList } from "../scout/ScoutFactList";
+import { useVoiceSession } from "./VoiceSessionContext";
 import { VoiceVolumeBlob } from "./VoiceVolumeBlob";
 import styles from "./RealtimeVoiceScout.module.css";
 
-const statusCopy: Record<VoiceScoutStatus, { label: string; description: string }> = {
-  idle: { label: "Ready", description: "Start when you want to describe your search out loud." },
-  requesting_microphone: { label: "Microphone", description: "Waiting for microphone permission…" },
-  connecting: { label: "Connecting", description: "Opening the encrypted WebRTC session…" },
-  creating_session: { label: "Securing session", description: "Convex is opening the private Realtime session…" },
-  listening: { label: "Listening", description: "Talk naturally. Your Scout will turn the conversation into a search." },
-  thinking: { label: "Thinking", description: "Your Scout is structuring what it heard." },
-  speaking: { label: "Scout speaking", description: "Interrupt at any time by speaking or pressing stop." },
-  disconnected: { label: "Ended", description: "The voice session has ended. Start a new one whenever you are ready." },
-  error: { label: "Needs attention", description: "The voice session could not continue." },
+const statusCopy: Record<VoiceScoutStatus, string> = {
+  idle: "Bereit, wenn du es bist",
+  requesting_microphone: "Warte auf Mikrofonfreigabe …",
+  connecting: "Verbinde …",
+  creating_session: "Gespräch wird vorbereitet …",
+  listening: "Ich höre zu",
+  thinking: "Ich denke kurz nach",
+  speaking: "Dein Scout spricht",
+  disconnected: "Gespräch beendet",
+  error: "Verbindung unterbrochen",
 };
 
-export type RealtimeVoiceScoutProps = UseRealtimeVoiceScoutOptions & {
+export type RealtimeVoiceScoutProps = {
   title?: string;
   className?: string;
+  facts?: ScoutFact[];
+  onEnd?: () => void;
 };
 
-export function RealtimeVoiceScout({
-  title = "Talk to your Room Scout",
-  className = "",
-  ...options
-}: RealtimeVoiceScoutProps) {
-  const voice = useRealtimeVoiceScout(options);
+export function RealtimeVoiceScout(props: RealtimeVoiceScoutProps) {
+  const {
+    title = "Erzähl mir, was ihr sucht.",
+    className = "",
+    facts = [],
+    onEnd,
+  } = props;
+  const voice = useVoiceSession();
   const [draft, setDraft] = useState("");
-  const status = statusCopy[voice.status];
-  const busy = ["requesting_microphone", "connecting", "creating_session"].includes(voice.status);
-  const active = voice.connected || ["listening", "thinking", "speaking"].includes(voice.status);
+  const [transcriptOpen, setTranscriptOpen] = useState(false);
+  const [composerOpen, setComposerOpen] = useState(false);
+  const busy = [
+    "requesting_microphone",
+    "connecting",
+    "creating_session",
+  ].includes(voice.status);
+  const active =
+    voice.connected ||
+    ["listening", "thinking", "speaking"].includes(voice.status);
+  const latest = useMemo(
+    () => [...voice.transcript].reverse().find((item) => item.text.trim()),
+    [voice.transcript],
+  );
+  const caption =
+    latest?.text ||
+    (active ? "Sag einfach, was bei eurem Proberaum wichtig ist." : title);
+  const speaker = latest
+    ? latest.role === "user"
+      ? "Du"
+      : "Dein Scout"
+    : null;
 
   function submit(event: FormEvent) {
     event.preventDefault();
     if (voice.sendText(draft)) setDraft("");
   }
 
-  return (
-    <section aria-label="Realtime Room Scout" className={`${styles.panel}${className ? ` ${className}` : ""}`}>
-      <div className={styles.presence}>
-        <p className={styles.eyebrow}><Sparkles aria-hidden="true" size={12} /> OpenAI Realtime · WebRTC</p>
-        <VoiceVolumeBlob active={active && !voice.muted} label={`${status.label} audio activity`} volume={voice.volume} />
-        <div><h2>{title}</h2><p className={styles.description}>{voice.error ?? status.description}</p></div>
-        <div aria-live="polite" className={styles.status}>
-          <span aria-hidden="true" className={`${styles.statusDot}${active ? ` ${styles.statusDotLive}` : ""}`} />
-          {status.label}{voice.muted ? " · muted" : ""}
-        </div>
-        <div className={styles.controls}>
-          {!active ? (
-            <button className={`${styles.button} ${styles.buttonPrimary}`} disabled={busy} onClick={() => void voice.connect()} type="button">
-              <Mic aria-hidden="true" size={16} />{busy ? "Connecting…" : "Start voice Scout"}
-            </button>
-          ) : (
-            <>
-              <button className={styles.button} onClick={() => voice.setMuted(!voice.muted)} type="button">
-                {voice.muted ? <MicOff aria-hidden="true" size={16} /> : <Mic aria-hidden="true" size={16} />}{voice.muted ? "Unmute" : "Mute"}
-              </button>
-              {voice.status === "speaking" ? <button className={styles.button} onClick={voice.interrupt} type="button"><CircleStop aria-hidden="true" size={16} />Interrupt</button> : null}
-              <button className={`${styles.button} ${styles.buttonDanger}`} onClick={voice.disconnect} type="button"><PhoneOff aria-hidden="true" size={16} />End</button>
-            </>
-          )}
-        </div>
-      </div>
+  function end() {
+    voice.disconnect();
+    onEnd?.();
+  }
 
-      <div className={styles.conversation}>
-        <header className={styles.conversationHeader}>
-          <h3>Live conversation</h3>
-          <div aria-label="Scout response modality" className={styles.segmented} role="group">
-            <button aria-pressed={voice.modality === "voice"} className={voice.modality === "voice" ? styles.selected : undefined} onClick={() => voice.setModality("voice")} type="button"><Volume2 aria-hidden="true" size={13} /> Voice</button>
-            <button aria-pressed={voice.modality === "text"} className={voice.modality === "text" ? styles.selected : undefined} onClick={() => voice.setModality("text")} type="button">Text</button>
-          </div>
-        </header>
-        <div aria-live="polite" className={styles.transcript}>
-          {voice.transcript.length === 0 ? <p className={styles.empty}>The transcript appears here after the session starts. Audio remains part of the private Scout session.</p> : voice.transcript.map((item) => (
-            <div className={`${styles.message}${item.role === "user" ? ` ${styles.messageUser}` : ""}${item.final ? "" : ` ${styles.messageStreaming}`}`} key={item.id}>
-              <span className={styles.messageMeta}>{item.role === "user" ? "You" : "Room Scout"}</span>
-              {item.text}
-            </div>
-          ))}
+  return (
+    <section
+      aria-label="Gespräch mit deinem Room Scout"
+      className={`${styles.stage}${facts.length ? ` ${styles.withFacts}` : ""}${className ? ` ${className}` : ""}`}
+    >
+      <div className={styles.center}>
+        <VoiceVolumeBlob
+          active={active && !voice.muted}
+          label="Sprachaktivität"
+          state={voice.status}
+          volume={voice.volume}
+        />
+        <div aria-atomic="true" aria-live="polite" className={styles.caption}>
+          {speaker ? <span>{speaker}</span> : null}
+          <p>{caption}</p>
         </div>
-        <form className={styles.composer} onSubmit={submit}>
-          <label className="sr-only" htmlFor="realtime-voice-text">Type to the active Scout session</label>
-          <input className={styles.input} disabled={!active} id="realtime-voice-text" onChange={(event) => setDraft(event.target.value)} placeholder={active ? "Type instead of speaking…" : "Start the session to type…"} value={draft} />
-          <button aria-label="Send text to Scout" className={`${styles.button} ${styles.buttonPrimary}`} disabled={!active || !draft.trim()} type="submit"><Send aria-hidden="true" size={15} /></button>
-        </form>
+        <div
+          aria-live="polite"
+          className={`${styles.connection} ${voice.error ? styles.connectionError : ""}`}
+        >
+          <i aria-hidden="true" />
+          {voice.error ?? statusCopy[voice.status]}
+          {voice.muted ? " · Mikro aus" : ""}
+        </div>
+        <div
+          aria-label="Gesprächssteuerung"
+          className={styles.controls}
+          role="group"
+        >
+          {!active && !busy ? (
+            <button
+              aria-label={
+                voice.status === "error" || voice.status === "disconnected"
+                  ? "Gespräch erneut starten"
+                  : "Gespräch starten"
+              }
+              className={styles.primaryControl}
+              onClick={() => void voice.connect()}
+              type="button"
+            >
+              {voice.status === "error" || voice.status === "disconnected" ? (
+                <RotateCcw />
+              ) : (
+                <Mic />
+              )}
+            </button>
+          ) : null}
+          {busy ? (
+            <button
+              aria-label="Verbindungsaufbau abbrechen"
+              className={styles.endControl}
+              onClick={end}
+              type="button"
+            >
+              <X />
+            </button>
+          ) : null}
+          {active ? (
+            <>
+              <button
+                aria-label={
+                  voice.muted ? "Mikrofon einschalten" : "Mikrofon ausschalten"
+                }
+                aria-pressed={voice.muted}
+                onClick={() => voice.setMuted(!voice.muted)}
+                type="button"
+              >
+                {voice.muted ? <MicOff /> : <Mic />}
+              </button>
+              {voice.status === "speaking" ? (
+                <button
+                  aria-label="Scout unterbrechen"
+                  onClick={voice.interrupt}
+                  type="button"
+                >
+                  <CircleStop />
+                </button>
+              ) : null}
+              <button
+                aria-label="Gespräch beenden"
+                className={styles.endControl}
+                onClick={end}
+                type="button"
+              >
+                <PhoneOff />
+              </button>
+            </>
+          ) : null}
+          <button
+            aria-label={
+              transcriptOpen ? "Mitschrift schließen" : "Mitschrift öffnen"
+            }
+            aria-pressed={transcriptOpen}
+            onClick={() => setTranscriptOpen((open) => !open)}
+            type="button"
+          >
+            <span className={styles.transcriptIcon}>≡</span>
+          </button>
+          <button
+            aria-label={
+              composerOpen ? "Texteingabe schließen" : "Per Text schreiben"
+            }
+            aria-pressed={composerOpen}
+            onClick={() => setComposerOpen((open) => !open)}
+            type="button"
+          >
+            <Keyboard />
+          </button>
+        </div>
+        {composerOpen ? (
+          <form className={styles.composer} onSubmit={submit}>
+            <label className="sr-only" htmlFor="realtime-voice-text">
+              Nachricht an deinen Scout
+            </label>
+            <input
+              autoFocus
+              disabled={!active}
+              id="realtime-voice-text"
+              onChange={(event) => setDraft(event.target.value)}
+              placeholder={
+                active ? "Schreib deinem Scout …" : "Starte zuerst das Gespräch"
+              }
+              value={draft}
+            />
+            <button
+              aria-label="Nachricht senden"
+              disabled={!active || !draft.trim()}
+              type="submit"
+            >
+              <Send />
+            </button>
+          </form>
+        ) : null}
+        {active ? (
+          <button
+            className={styles.modeSwitch}
+            onClick={() =>
+              voice.setModality(voice.modality === "voice" ? "text" : "voice")
+            }
+            type="button"
+          >
+            {voice.modality === "voice"
+              ? "Antworten als Text"
+              : "Antworten mit Stimme"}
+          </button>
+        ) : null}
       </div>
+      {facts.length ? (
+        <aside className={styles.facts}>
+          <ScoutFactList facts={facts} heading="Eure Wünsche" />
+        </aside>
+      ) : null}
+      {transcriptOpen ? (
+        <aside aria-label="Mitschrift" className={styles.drawer}>
+          <header>
+            <h3>Mitschrift</h3>
+            <button
+              aria-label="Mitschrift schließen"
+              onClick={() => setTranscriptOpen(false)}
+              type="button"
+            >
+              <X />
+            </button>
+          </header>
+          <div>
+            {voice.transcript.some((item) => item.text.trim()) ? (
+              voice.transcript
+                .filter((item) => item.text.trim())
+                .map((item) => (
+                  <p
+                    className={item.role === "user" ? styles.userLine : ""}
+                    key={item.id}
+                  >
+                    <small>{item.role === "user" ? "Du" : "Dein Scout"}</small>
+                    {item.text}
+                  </p>
+                ))
+            ) : (
+              <em>Noch keine Äußerungen.</em>
+            )}
+          </div>
+        </aside>
+      ) : null}
     </section>
   );
 }

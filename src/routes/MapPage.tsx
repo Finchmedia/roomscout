@@ -4,6 +4,7 @@ import { api } from "../../convex/_generated/api";
 import type { MapMarketSignal } from "../components/map";
 import { CoverageTrustNotice } from "../components/coverage/CoverageTrustNotice";
 import { PublicHeader } from "../components/navigation/PublicHeader";
+import { WorkspaceShell } from "../components/navigation/WorkspaceShell";
 import { PageHeader } from "../components/ui/LedgerCard";
 import { SelectField } from "../components/ui/SelectField";
 
@@ -22,7 +23,7 @@ function freshnessLabel(lastSeenAt: number, stale = false) {
   return `Checked ${Math.floor(hours / 24)} d ago`;
 }
 
-export function MapPage() {
+export function MapPage({ workspace = false }: { workspace?: boolean }) {
   const areas = useQuery(api.map.listAreas);
   const [city, setCity] = useState("");
   const [side, setSide] = useState<SideFilter>("all");
@@ -46,6 +47,7 @@ export function MapPage() {
     if (city && pins) {
       return pins.map((pin) => ({
         id: pin.signalId,
+        isDemo: "isDemo" in pin && pin.isDemo === true,
         title: pin.title,
         coordinates: [pin.longitude, pin.latitude],
         side: pin.side,
@@ -72,10 +74,8 @@ export function MapPage() {
     ...(areas ?? []).map((area) => ({ value: area.city, label: area.city })),
   ];
 
-  return (
-    <>
-      <PublicHeader />
-      <main className="wrap rs-explore">
+  const content = (
+      <section className="wrap rs-explore">
         <PageHeader
           eyebrow="Observed public coverage"
           meta={<span className="mono">{mapSignals.length} positioned {city ? "signals" : "markets"}</span>}
@@ -108,7 +108,7 @@ export function MapPage() {
             />
           </Suspense>
         )}
-      </main>
-    </>
+      </section>
   );
+  return workspace ? <WorkspaceShell mode="musician">{content}</WorkspaceShell> : <><PublicHeader /><main>{content}</main></>;
 }

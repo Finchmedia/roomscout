@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
-import { internal } from "./_generated/api";
 import { requireUserId } from "./integrations/authz";
+import { refreshNeedMatching, setNeedStatus } from "./lib/needLifecycle";
 
 const arrangementValidator = v.union(
   v.literal("permanent"),
@@ -40,6 +40,8 @@ const needValidator = v.object({
   status: statusValidator,
   createdAt: v.number(),
   updatedAt: v.number(),
+  matchingRevision: v.optional(v.number()),
+  matchingRunId: v.optional(v.string()),
 });
 
 function requiredText(value: string, field: string): string {
@@ -228,12 +230,7 @@ export const update = mutation({
       ...(args.facets !== undefined ? { facets: args.facets } : {}),
       updatedAt: Date.now(),
     });
-    if (need.status === "active") {
-      await ctx.scheduler.runAfter(0, internal.matches.recomputeNeed, {
-        ownerId,
-        savedNeedId: need._id,
-      });
-    }
+    await refreshNeedMatching(ctx, need);
     return null;
   },
 });
@@ -247,19 +244,7 @@ export const setStatus = mutation({
     if (need === null || need.ownerId !== ownerId) {
       throw new ConvexError({ code: "NEED_NOT_FOUND" });
     }
-    if (need.status === "archived" && args.status !== "archived") {
-      throw new ConvexError({ code: "NEED_ARCHIVED" });
-    }
-    if (args.status === "active" && need.city.trim().length === 0) {
-      throw new ConvexError({ code: "INCOMPLETE_NEED" });
-    }
-    await ctx.db.patch(need._id, { status: args.status, updatedAt: Date.now() });
-    if (args.status === "active") {
-      await ctx.scheduler.runAfter(0, internal.matches.recomputeNeed, {
-        ownerId,
-        savedNeedId: need._id,
-      });
-    }
+    await setNeedStatus(ctx, need, args.status);
     return null;
   },
 });
@@ -297,6 +282,7 @@ export const updateFromScout = internalMutation({
     if (need === null || need.ownerId !== args.ownerId || need.status === "archived") {
       throw new ConvexError({ code: "NEED_NOT_FOUND" });
     }
+    if (need.status === "active" && args.city !== undefined && !args.city.trim()) throw new ConvexError({ code: "INCOMPLETE_NEED" });
     await ctx.db.patch(need._id, {
       ...(args.title !== undefined
         ? { title: requiredText(args.title, "title") }
@@ -333,12 +319,7 @@ export const updateFromScout = internalMutation({
       ...(args.facets !== undefined ? { facets: args.facets } : {}),
       updatedAt: Date.now(),
     });
-    if (need.status === "active") {
-      await ctx.scheduler.runAfter(0, internal.matches.recomputeNeed, {
-        ownerId: args.ownerId,
-        savedNeedId: need._id,
-      });
-    }
+    await refreshNeedMatching(ctx, need);
     return null;
   },
 });

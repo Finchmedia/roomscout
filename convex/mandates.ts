@@ -3,6 +3,7 @@ import { internal } from "./_generated/api";
 import { contentHash } from "./integrations/contentHash";
 import { requireUserId } from "./integrations/authz";
 import { mutation, query } from "./_generated/server";
+import { setNeedStatus } from "./lib/needLifecycle";
 
 const modeValidator = v.union(
   v.literal("guided"),
@@ -176,6 +177,7 @@ export const enableDefaultAutopilot = mutation({
     if (need === null || need.ownerId !== ownerId || need.status === "archived") {
       throw new ConvexError({ code: "NEED_NOT_FOUND" });
     }
+    if (!need.city.trim()) throw new ConvexError({ code: "INCOMPLETE_NEED" });
 
     const now = Date.now();
     const active = await ctx.db
@@ -190,13 +192,7 @@ export const enableDefaultAutopilot = mutation({
       active.commitmentBoundary === "non_binding_outreach_only" &&
       active.expiresAt > now
     ) {
-      if (need.status !== "active") {
-        await ctx.db.patch(need._id, { status: "active", updatedAt: now });
-      }
-      await ctx.scheduler.runAfter(0, internal.mandateOrchestrator.runForOwner, {
-        ownerId,
-        limit: 3,
-      });
+      await setNeedStatus(ctx, need, "active");
       return { mandateId: active._id, contentHash: active.contentHash, created: false };
     }
 
@@ -267,9 +263,7 @@ export const enableDefaultAutopilot = mutation({
     if (active !== null) {
       await ctx.db.patch(active._id, { status: "superseded", stoppedAt: now, updatedAt: now });
     }
-    if (need.status !== "active") {
-      await ctx.db.patch(need._id, { status: "active", updatedAt: now });
-    }
+    await setNeedStatus(ctx, need, "active");
     await ctx.db.insert("auditEvents", {
       eventKey: `mandate:${mandateId}:default_autopilot:${version}`,
       actorType: "user",
@@ -280,10 +274,9 @@ export const enableDefaultAutopilot = mutation({
       summary: "Activated default RoomScout Autopilot for non-binding search work",
       occurredAt: now,
     });
-    await ctx.scheduler.runAfter(0, internal.mandateOrchestrator.runForOwner, {
-      ownerId,
-      limit: 3,
-    });
+    if (need.status === "active") {
+      await ctx.scheduler.runAfter(0, internal.matches.recomputeNeed, { ownerId, savedNeedId: need._id });
+    }
     return { mandateId, contentHash: hash, created: true };
   },
 });

@@ -1,5 +1,4 @@
 import { v } from "convex/values";
-import { z } from "zod";
 import { internal } from "./_generated/api";
 import {
   internalAction,
@@ -8,9 +7,7 @@ import {
   mutation,
   query,
 } from "./_generated/server";
-import { generateRoomScoutObject } from "./ai";
 import { requireUser } from "./integrations/auth";
-import { delimitUntrustedData } from "./lib/privacy";
 
 const threadValidator = v.object({
   _id: v.id("mailThreads"),
@@ -194,7 +191,27 @@ export const storeInboundMessage = internalMutation({
         createdAt: Date.now(),
       }),
     ]);
+    await ctx.runMutation(internal.providerConversations.enqueueMailReply, { messageId });
     return messageId;
+  },
+});
+
+export const recordOutboundActionReply = internalMutation({
+  args: { ownerId: v.id("users"), executionId: v.id("actionExecutions"), outboundId: v.string(), providerThreadId: v.string(), providerMessageId: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const execution = await ctx.db.get(args.executionId);
+    const request = execution ? await ctx.db.get(execution.requestId) : null;
+    if (!execution || execution.ownerId !== args.ownerId || execution.providerActionId !== args.outboundId || !request || request.ownerId !== args.ownerId || request.payload.kind !== "email_message" || !request.payload.mailThreadId) return false;
+    const thread = await ctx.db.get(request.payload.mailThreadId);
+    const mailbox = thread?.mailboxId ? await ctx.db.get(thread.mailboxId) : null;
+    if (!thread || thread.ownerId !== args.ownerId || thread.providerThreadId !== args.providerThreadId || !mailbox || mailbox.ownerId !== args.ownerId || !mailbox.emailAddress) return false;
+    const existing = await ctx.db.query("mailMessages").withIndex("by_provider_message_id", (q) => q.eq("providerMessageId", args.providerMessageId)).unique();
+    if (existing) return existing.threadId === thread._id && existing.direction === "outbound" && existing.body === request.payload.body;
+    const now = Date.now();
+    await ctx.db.insert("mailMessages", { threadId: thread._id, providerMessageId: args.providerMessageId.slice(0, 500), direction: "outbound", from: mailbox.emailAddress, to: [request.payload.recipientEmail], subject: request.payload.subject, body: request.payload.body, deliveryStatus: "sent", providerEventAt: now, receivedAt: now });
+    await ctx.db.patch(thread._id, { status: "awaiting_reply", lastMessageAt: now, lastDeliveryStatus: "sent", lastError: undefined });
+    return true;
   },
 });
 
@@ -557,39 +574,8 @@ export const applyParsedReply = internalMutation({
       parsedSummary: args.summary.slice(0, 1_000),
       parsedFacts: args.facts.slice(0, 20).map((fact) => fact.slice(0, 500)),
     });
-    if (args.opportunitySignal !== "none") {
-      const thread = await ctx.db.get(message.threadId);
-      if (thread !== null) {
-        const draft = await ctx.db.get(thread.draftId);
-        if (draft !== null && draft.ownerId === thread.ownerId) {
-          const fingerprint = `agentmail-reply:${message._id}`;
-          const existing = await ctx.db
-            .query("opportunities")
-            .withIndex("by_saved_need_and_fingerprint", (q) =>
-              q.eq("savedNeedId", draft.savedNeedId).eq("fingerprint", fingerprint),
-            )
-            .unique();
-          const now = Date.now();
-          if (existing === null) {
-            await ctx.db.insert("opportunities", {
-              ownerId: thread.ownerId,
-              savedNeedId: draft.savedNeedId,
-              kind: "supply_match",
-              status: "new",
-              signalId: draft.signalId,
-              score: args.opportunitySignal === "strong" ? 0.9 : 0.65,
-              reasons: [args.summary.slice(0, 500)],
-              uncertainties: args.uncertainties.slice(0, 20).map((item) => item.slice(0, 500)),
-              fingerprint,
-              firstSeenAt: now,
-              lastSeenAt: now,
-              createdAt: now,
-              updatedAt: now,
-            });
-          }
-        }
-      }
-    }
+    // Compatibility for in-flight old parser calls: annotate only. New offer
+    // state comes exclusively from the shared Agent's evidence-backed tool.
     return null;
   },
 });
@@ -598,34 +584,9 @@ export const parseInboundReply = internalAction({
   args: { messageId: v.id("mailMessages") },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const message = await ctx.runQuery(internal.inbox.getMessageForParsing, {
-      messageId: args.messageId,
-    });
-    if (message === null) {
-      return null;
-    }
-
-    const output = await generateRoomScoutObject({
-      schema: z.object({
-        summary: z.string().max(1_000),
-        facts: z.array(z.string().max(500)).max(20),
-        opportunitySignal: z.enum(["none", "possible", "strong"]),
-        uncertainties: z.array(z.string().max(500)).max(20),
-      }),
-      instructions:
-        "Extract only explicit facts from this rehearsal-room email reply. Keep uncertainty explicit, never infer availability, price, or commitments that are not stated.",
-      prompt: delimitUntrustedData(
-        "agentmail_reply",
-        `Subject: ${message.subject}\n\n${message.body.slice(0, 12_000)}`,
-      ),
-    });
-    await ctx.runMutation(internal.inbox.applyParsedReply, {
-      messageId: args.messageId,
-      summary: output.summary,
-      facts: output.facts,
-      opportunitySignal: output.opportunitySignal,
-      uncertainties: output.uncertainties,
-    });
+    // Compatibility entry point for already-scheduled legacy jobs. Dedup is
+    // shared with the transactional receipt hook; there is no second AI parser.
+    await ctx.runMutation(internal.providerConversations.enqueueMailReply, args);
     return null;
   },
 });

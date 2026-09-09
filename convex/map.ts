@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
+import { DEMO_PROVENANCE_MIGRATION_NAME } from "./lib/demoProvenance";
 import {
   internalAction,
   internalMutation,
@@ -114,6 +115,26 @@ export const storeGeocode = internalMutation({
   },
 });
 
+export const rebuildAllAreasPage = internalMutation({
+  args: { cursor: v.union(v.string(), v.null()), phase: v.optional(v.union(v.literal("areas"), v.literal("coordinations"))) },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const migration = await ctx.db.query("migrationRuns").withIndex("by_name", (q) => q.eq("name", DEMO_PROVENANCE_MIGRATION_NAME)).unique();
+    if (!migration || migration.status !== "completed") return null;
+    const phase = args.phase ?? "areas";
+    const page = phase === "areas"
+      ? await ctx.db.query("marketAreas").paginate({ cursor: args.cursor, numItems: 50 })
+      : await ctx.db.query("marketAreaRebuilds").paginate({ cursor: args.cursor, numItems: 50 });
+    for (const row of page.page) await ctx.scheduler.runAfter(0, internal.map.rebuildArea, { city: row.city });
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.map.rebuildAllAreasPage, { cursor: page.continueCursor, phase });
+    } else if (phase === "areas") {
+      await ctx.scheduler.runAfter(0, internal.map.rebuildAllAreasPage, { cursor: null, phase: "coordinations" });
+    }
+    return null;
+  },
+});
+
 export const geocodeSignal = internalAction({
   args: { signalId: v.id("signals") },
   returns: v.null(),
@@ -176,28 +197,88 @@ export const rebuildArea = internalMutation({
   args: { city: v.string() },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const signals = [];
-    for (const status of ["published", "stale"] as const) {
-      signals.push(...await ctx.db.query("signals").withIndex("by_city_and_status", (q) => q.eq("city", args.city).eq("status", status)).take(500));
-    }
-    const positioned = signals.filter((signal) => signal.latitude !== undefined && signal.longitude !== undefined);
-    if (positioned.length === 0) return null;
     const cityKey = queryKey(args.city);
-    const existing = await ctx.db.query("marketAreas").withIndex("by_city_key", (q) => q.eq("cityKey", cityKey)).unique();
-    const values = {
-      city: args.city,
-      countryCode: "DE",
-      latitude: positioned.reduce((sum, signal) => sum + signal.latitude!, 0) / positioned.length,
-      longitude: positioned.reduce((sum, signal) => sum + signal.longitude!, 0) / positioned.length,
-      supplyCount: signals.filter((signal) => signal.side === "supply").length,
-      demandCount: signals.filter((signal) => signal.side === "demand").length,
-      verifiedCount: signals.filter((signal) => signal.verification === "verified").length,
-      freshCount: signals.filter((signal) => signal.status === "published").length,
-      lastSignalAt: Math.max(...signals.map((signal) => signal.lastSeenAt)),
-      updatedAt: Date.now(),
-    };
+    const startedAt = Date.now();
+    const current = await ctx.db.query("marketAreaRebuilds").withIndex("by_city_key", (q) => q.eq("cityKey", cityKey)).unique();
+    const generation = (current?.generation ?? 0) + 1;
+    const values = { cityKey, city: args.city, generation, updatedAt: startedAt };
+    if (current) await ctx.db.patch(current._id, values);
+    else await ctx.db.insert("marketAreaRebuilds", values);
+    const migration = await ctx.db.query("migrationRuns").withIndex("by_name", (q) => q.eq("name", DEMO_PROVENANCE_MIGRATION_NAME)).unique();
+    if (migration?.status === "running") return null;
+    await ctx.scheduler.runAfter(0, internal.map.rebuildAreaPage, {
+      city: args.city, cityKey, generation, startedAt, status: "published", cursor: null,
+      supplyCount: 0, demandCount: 0, verifiedCount: 0, freshCount: 0,
+      latitudeSum: 0, longitudeSum: 0, positionedCount: 0, lastSignalAt: 0,
+    });
+    return null;
+  },
+});
+
+const rebuildAccumulatorArgs = {
+  city: v.string(), cityKey: v.string(), generation: v.number(), startedAt: v.number(),
+  status: v.union(v.literal("published"), v.literal("stale")),
+  cursor: v.union(v.string(), v.null()),
+  supplyCount: v.number(), demandCount: v.number(), verifiedCount: v.number(), freshCount: v.number(),
+  latitudeSum: v.number(), longitudeSum: v.number(), positionedCount: v.number(), lastSignalAt: v.number(),
+};
+
+export const rebuildAreaPage = internalMutation({
+  args: rebuildAccumulatorArgs,
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const coordination = await ctx.db.query("marketAreaRebuilds").withIndex("by_city_key", (q) => q.eq("cityKey", args.cityKey)).unique();
+    if (!coordination || coordination.generation !== args.generation || coordination.city !== args.city || coordination.updatedAt !== args.startedAt) return null;
+    const migration = await ctx.db.query("migrationRuns").withIndex("by_name", (q) => q.eq("name", DEMO_PROVENANCE_MIGRATION_NAME)).unique();
+    if (migration?.status === "running" || (migration?.status === "completed" && args.startedAt < migration.startedAt)) return null;
+    const page = await ctx.db.query("signals").withIndex("by_city_and_is_demo_and_status", (q) =>
+      q.eq("city", args.city).eq("isDemo", false).eq("status", args.status),
+    ).paginate({ cursor: args.cursor, numItems: 200 });
+    let supplyCount = args.supplyCount;
+    let demandCount = args.demandCount;
+    let verifiedCount = args.verifiedCount;
+    let freshCount = args.freshCount;
+    let latitudeSum = args.latitudeSum;
+    let longitudeSum = args.longitudeSum;
+    let positionedCount = args.positionedCount;
+    let lastSignalAt = args.lastSignalAt;
+    for (const signal of page.page) {
+      if (signal.side === "supply") supplyCount += 1;
+      else demandCount += 1;
+      if (signal.verification === "verified") verifiedCount += 1;
+      if (signal.status === "published") freshCount += 1;
+      lastSignalAt = Math.max(lastSignalAt, signal.lastSeenAt);
+      if (signal.latitude !== undefined && signal.longitude !== undefined) {
+        latitudeSum += signal.latitude;
+        longitudeSum += signal.longitude;
+        positionedCount += 1;
+      }
+    }
+    const next = { city: args.city, cityKey: args.cityKey, generation: args.generation, startedAt: args.startedAt,
+      supplyCount, demandCount, verifiedCount, freshCount, latitudeSum, longitudeSum, positionedCount, lastSignalAt };
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.map.rebuildAreaPage, { ...next, status: args.status, cursor: page.continueCursor });
+      return null;
+    }
+    if (args.status === "published") {
+      await ctx.scheduler.runAfter(0, internal.map.rebuildAreaPage, { ...next, status: "stale", cursor: null });
+      return null;
+    }
+    const latest = await ctx.db.query("marketAreaRebuilds").withIndex("by_city_key", (q) => q.eq("cityKey", args.cityKey)).unique();
+    if (!latest || latest.generation !== args.generation) return null;
+    const existing = await ctx.db.query("marketAreas").withIndex("by_city_key", (q) => q.eq("cityKey", args.cityKey)).unique();
+    if (positionedCount === 0) {
+      if (existing) await ctx.db.patch(existing._id, {
+        supplyCount, demandCount, verifiedCount, freshCount,
+        lastSignalAt: lastSignalAt || undefined, updatedAt: Date.now(),
+      });
+      return null;
+    }
+    const values = { city: args.city, countryCode: "DE", latitude: latitudeSum / positionedCount,
+      longitude: longitudeSum / positionedCount, supplyCount, demandCount, verifiedCount, freshCount,
+      lastSignalAt: lastSignalAt || undefined, updatedAt: Date.now() };
     if (existing) await ctx.db.patch(existing._id, values);
-    else await ctx.db.insert("marketAreas", { ...values, cityKey });
+    else await ctx.db.insert("marketAreas", { ...values, cityKey: args.cityKey });
     return null;
   },
 });
@@ -223,7 +304,7 @@ export const listPins = query({
     limit: v.optional(v.number()),
   },
   returns: v.array(v.object({
-    signalId: v.id("signals"), side: v.union(v.literal("supply"), v.literal("demand")), title: v.string(), city: v.string(), district: v.optional(v.string()), latitude: v.number(), longitude: v.number(), precision, status: v.union(v.literal("published"), v.literal("stale")), verification: v.union(v.literal("observed"), v.literal("verified"), v.literal("conflicting")), arrangement: v.union(v.literal("permanent"), v.literal("shared"), v.literal("hourly"), v.literal("unknown")), lastSeenAt: v.number(), sourceUrl: v.optional(v.string()),
+    signalId: v.id("signals"), side: v.union(v.literal("supply"), v.literal("demand")), title: v.string(), city: v.string(), district: v.optional(v.string()), latitude: v.number(), longitude: v.number(), precision, status: v.union(v.literal("published"), v.literal("stale")), verification: v.union(v.literal("observed"), v.literal("verified"), v.literal("conflicting")), arrangement: v.union(v.literal("permanent"), v.literal("shared"), v.literal("hourly"), v.literal("unknown")), lastSeenAt: v.number(), sourceUrl: v.optional(v.string()), isDemo: v.optional(v.boolean()),
   })),
   handler: async (ctx, args) => {
     const limit = Math.max(1, Math.min(300, Math.floor(args.limit ?? 200)));
@@ -239,7 +320,7 @@ export const listPins = query({
       if (args.arrangement && signal.arrangement !== args.arrangement) continue;
       if (args.verifiedOnly && signal.verification !== "verified") continue;
       const evidence = await ctx.db.query("signalEvidence").withIndex("by_signal", (q) => q.eq("signalId", signal._id)).order("desc").first();
-      result.push({ signalId: signal._id, side: signal.side, title: signal.title, city: signal.city, district: signal.district, latitude: signal.latitude, longitude: signal.longitude, precision: signal.locationPrecision ?? "unknown" as const, status: signal.status as "published" | "stale", verification: signal.verification, arrangement: signal.arrangement, lastSeenAt: signal.lastSeenAt, sourceUrl: evidence?.sourceUrl });
+      result.push({ signalId: signal._id, side: signal.side, title: signal.title, city: signal.city, district: signal.district, latitude: signal.latitude, longitude: signal.longitude, precision: signal.locationPrecision ?? "unknown" as const, status: signal.status as "published" | "stale", verification: signal.verification, arrangement: signal.arrangement, lastSeenAt: signal.lastSeenAt, sourceUrl: evidence?.sourceUrl, isDemo: signal.isDemo });
       if (result.length >= limit) break;
     }
     return result;

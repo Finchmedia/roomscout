@@ -1,0 +1,137 @@
+.frame {
+  min-height: calc(100vh - 80px);
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
+  margin: -24px -48px -80px;
+  overflow: clip;
+}
+
+.nav {
+  padding: 42px 24px;
+  border-right: 1px solid rgba(255, 220, 190, 0.1);
+  background: rgba(14, 10, 8, 0.38);
+}
+
+.nav h2 {
+  margin: 0 12px 30px;
+  font-size: 17px;
+  font-weight: 540;
+  color: #f5ece2;
+}
+.group {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 26px;
+}
+.groupLabel {
+  margin: 0 12px 8px;
+  color: #8f8073;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 43px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: #cbb9a8;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.link:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.035);
+}
+.active {
+  color: #fff;
+  background: rgba(120, 58, 22, 0.34);
+  border-color: rgba(255, 140, 90, 0.22);
+}
+.active svg {
+  color: #ff8a4e;
+}
+.content {
+  box-sizing: border-box;
+  width: min(100%, 1040px);
+  min-width: 0;
+  padding: 62px clamp(28px, 6vw, 78px) 80px;
+}
+.header {
+  margin-bottom: 30px;
+}
+.header h1 {
+  margin: 0;
+  color: #f5ece2;
+  font-size: clamp(34px, 4vw, 45px);
+  font-weight: 500;
+  letter-spacing: -0.035em;
+}
+.header p {
+  max-width: 680px;
+  margin: 10px 0 0;
+  color: #bba998;
+  font-size: 16px;
+  line-height: 1.55;
+}
+.plainCard {
+  padding: 22px 0;
+  border-top: 1px solid rgba(255, 220, 190, 0.1);
+  border-bottom: 1px solid rgba(255, 220, 190, 0.1);
+}
+.plainCard h2 {
+  margin: 0 0 8px;
+  color: #f5ece2;
+  font-size: 19px;
+  font-weight: 520;
+}
+.plainCard p {
+  margin: 0;
+  color: #bba998;
+  line-height: 1.65;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+@media (max-width: 800px) {
+  .frame {
+    display: block;
+    min-height: calc(100vh - 64px);
+    margin: -16px -24px -80px;
+    overflow: visible;
+  }
+  .nav {
+    padding: 18px;
+    border-right: 0;
+    border-bottom: 1px solid rgba(255, 220, 190, 0.1);
+  }
+  .nav h2,
+  .groupLabel {
+    display: none;
+  }
+  .group {
+    display: flex;
+    gap: 7px;
+    margin: 0 0 7px;
+    overflow-x: auto;
+  }
+  .link {
+    width: auto;
+    flex: 0 0 auto;
+    min-height: 38px;
+  }
+  .content {
+    padding: 34px 20px 70px;
+  }
+}

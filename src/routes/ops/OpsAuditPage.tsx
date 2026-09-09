@@ -3,7 +3,8 @@ import { useState } from "react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { WorkspaceShell } from "../../components/navigation/WorkspaceShell";
-import { EmptyState, LedgerCard, PageHeader } from "../../components/ui/LedgerCard";
+import { OpsPageHeader } from "../../components/ops/OpsPageHeader";
+import { EmptyState, LedgerCard } from "../../components/ui/LedgerCard";
 import { formatAge, toneForStatus, titleCase } from "./opsFormat";
 
 export function OpsAuditPage() {
@@ -18,7 +19,7 @@ export function OpsAuditPage() {
 
   return (
     <WorkspaceShell mode="ops">
-      <PageHeader
+      <OpsPageHeader
         meta={<span className="rs-page-meta"><span className="chip">Live safeguards</span><span className="mono">No raw mail or audio</span></span>}
         title="Audit log"
       />

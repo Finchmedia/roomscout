@@ -4,7 +4,8 @@ import { useState } from "react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { WorkspaceShell } from "../../components/navigation/WorkspaceShell";
-import { EmptyState, LedgerCard, PageHeader } from "../../components/ui/LedgerCard";
+import { OpsPageHeader } from "../../components/ops/OpsPageHeader";
+import { EmptyState, LedgerCard } from "../../components/ui/LedgerCard";
 import { Table, TableBody, TableCell, TableRow } from "../../components/ui/table";
 import { formatAge, toneForStatus, titleCase } from "./opsFormat";
 
@@ -49,7 +50,7 @@ export function OpsInboxPage() {
 
   return (
     <WorkspaceShell mode="ops">
-      <PageHeader
+      <OpsPageHeader
         meta={<span className="rs-page-meta"><span className="chip">Real channel state</span><span className="mono">Mail aggregate · own portal test accounts</span></span>}
         title="Inbox routing"
       />

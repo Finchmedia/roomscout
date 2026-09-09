@@ -184,17 +184,22 @@ export const processInboundMessage = internalAction({
             receivedAt,
           })
         : null;
+      if (mailboxMessageId !== null) {
+        await ctx.runMutation(internal.portalNotifications.consumeOwnedMailboxHint, {
+          ownerId: mailbox.ownerId,
+          providerMessageId: args.providerMessageId,
+          from,
+          to,
+          subject,
+          body,
+        });
+      }
       await ctx.runMutation(internal.agentmail.completeWebhookEvent, {
         providerEventId: args.providerEventId,
         status: messageId === null && mailboxMessageId === null ? "ignored" : "processed",
         error: undefined,
       });
-      if (messageId !== null) {
-        // Parsing can annotate the reply, but no action in this flow sends a reply.
-        await ctx.scheduler.runAfter(0, internal.inbox.parseInboundReply, {
-          messageId,
-        });
-      }
+      // Known-thread receipt atomically enqueues the shared Scout assessment.
     } catch (error) {
       await ctx.runMutation(internal.agentmail.completeWebhookEvent, {
         providerEventId: args.providerEventId,
@@ -318,6 +323,46 @@ export const sendApprovedDraft = internalAction({
         error: safeError(error, "AgentMail send failed"),
       });
     }
+    return null;
+  },
+});
+
+export const executeApprovedReply = internalAction({
+  args: { ownerId: v.id("users"), requestId: v.id("actionRequests") }, returns: v.null(),
+  handler: async (ctx, args) => {
+    await roomScoutRateLimiter.limit(ctx, "agentMailUser", { key: args.ownerId, throws: true });
+    await roomScoutRateLimiter.limit(ctx, "agentMailGlobal", { throws: true });
+    const claim = await ctx.runMutation(internal.externalActions.claimForExecutor, { ...args, executor: "agentmail" });
+    if (claim.executionStatus !== "claimed" || claim.alreadyClaimed) return null;
+    try {
+      const queued = await ctx.runMutation(internal.agentmailComponent.enqueueClaimedReply, { ownerId: args.ownerId, executionId: claim.executionId });
+      await ctx.scheduler.runAfter(1_000, internal.agentmail.reconcileApprovedReply, { ...args, executionId: claim.executionId, outboundId: queued.outboundId, attempt: 0 });
+    } catch (error) {
+      await ctx.runMutation(internal.externalActions.finishExecution, { ownerId: args.ownerId, executionId: claim.executionId, status: "failed", error: safeError(error, "AgentMail reply failed") });
+    }
+    return null;
+  },
+});
+
+export const reconcileApprovedReply = internalAction({
+  args: { ownerId: v.id("users"), requestId: v.id("actionRequests"), executionId: v.id("actionExecutions"), outboundId: v.string(), attempt: v.number() }, returns: v.null(),
+  handler: async (ctx, args) => {
+    const status = await ctx.runQuery(internal.agentmailComponent.getOutboundStatus, { outboundId: args.outboundId });
+    if (!status) return null;
+    if (status.status === "pending") {
+      if (args.attempt >= 120) await ctx.runMutation(internal.externalActions.finishExecution, { ownerId: args.ownerId, executionId: args.executionId, status: "unknown", error: "AgentMail reply did not finish within 30 minutes." });
+      else await ctx.scheduler.runAfter(Math.min(15_000, 1_000 * 2 ** Math.min(4, args.attempt)), internal.agentmail.reconcileApprovedReply, { ...args, attempt: args.attempt + 1 });
+      return null;
+    }
+    if (["failed", "bounced", "rejected", "complained"].includes(status.status)) {
+      await ctx.runMutation(internal.externalActions.finishExecution, { ownerId: args.ownerId, executionId: args.executionId, status: "failed", error: status.errorMessage ?? undefined });
+      return null;
+    }
+    if (!status.threadId || !status.agentmailMessageId || !await ctx.runMutation(internal.inbox.recordOutboundActionReply, { ownerId: args.ownerId, executionId: args.executionId, outboundId: args.outboundId, providerThreadId: status.threadId, providerMessageId: status.agentmailMessageId })) {
+      await ctx.runMutation(internal.externalActions.finishExecution, { ownerId: args.ownerId, executionId: args.executionId, status: "unknown", error: "AGENTMAIL_REPLY_RECEIPT_MISMATCH" });
+      return null;
+    }
+    await ctx.runMutation(internal.externalActions.finishExecution, { ownerId: args.ownerId, executionId: args.executionId, status: "succeeded", providerThreadId: status.threadId, providerMessageId: status.agentmailMessageId });
     return null;
   },
 });

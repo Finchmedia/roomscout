@@ -12,6 +12,7 @@ import { generateRoomScoutObject } from "./ai";
 import { stableFingerprint } from "./integrations/fingerprints";
 import { redactContactData } from "./integrations/piiRedaction";
 import { delimitUntrustedData } from "./lib/privacy";
+import { DEMO_PROVENANCE_MIGRATION_NAME, isControlledDemoOrigin } from "./lib/demoProvenance";
 import {
   compareForCorroboration,
   verificationFromEvidence,
@@ -54,6 +55,7 @@ async function findCrossSourceSignal(
   ctx: MutationCtx,
   snapshot: CorroborationSnapshot,
   sourceId: Id<"sources">,
+  isDemo: boolean,
   excludeSignalId?: Id<"signals">,
 ): Promise<{ signalId: Id<"signals">; relation: "corroborated" | "conflicting" } | null> {
   const candidates = await ctx.db
@@ -65,6 +67,7 @@ async function findCrossSourceSignal(
   let best: { signalId: Id<"signals">; relation: "corroborated" | "conflicting"; score: number } | null = null;
   for (const candidate of candidates) {
     if (candidate._id === excludeSignalId) continue;
+    if (candidate.isDemo !== isDemo) continue;
     const evidence = await ctx.db
       .query("signalEvidence")
       .withIndex("by_signal", (q) => q.eq("signalId", candidate._id))
@@ -97,7 +100,10 @@ async function refreshSignalVerification(
     priceEur: item.priceEur,
     pricePeriod: item.pricePeriod,
   })));
-  await ctx.db.patch(signalId, result);
+  await ctx.db.patch(signalId, signal.isDemo === true
+    ? { ...result, verification: "observed" }
+    : result);
+  await ctx.scheduler.runAfter(0, internal.map.rebuildArea, { city: signal.city });
 }
 
 async function countPendingDetailsForTarget(
@@ -325,6 +331,7 @@ export const upsertNormalizedSignal = internalMutation({
     }
 
     const now = Date.now();
+    const isDemo = isControlledDemoOrigin(args.sourceUrl);
     const snapshot: CorroborationSnapshot = {
       side: source.side === "both" ? "supply" : source.side,
       title: args.title,
@@ -358,6 +365,7 @@ export const upsertNormalizedSignal = internalMutation({
           status: "published",
           lastSeenAt: now,
           publishedAt: signal.publishedAt ?? now,
+          isDemo: signal.isDemo === true || isDemo,
         });
         await ctx.db.patch(existingEvidence._id, {
           sourceUrl: args.sourceUrl,
@@ -368,7 +376,7 @@ export const upsertNormalizedSignal = internalMutation({
         });
       }
     } else {
-      const corroborated = await findCrossSourceSignal(ctx, snapshot, source._id);
+      const corroborated = await findCrossSourceSignal(ctx, snapshot, source._id, isDemo);
       signalId = corroborated?.signalId ?? await ctx.db.insert("signals", {
           side: snapshot.side,
           title: args.title,
@@ -386,6 +394,7 @@ export const upsertNormalizedSignal = internalMutation({
           firstSeenAt: now,
           lastSeenAt: now,
           publishedAt: now,
+          isDemo,
         });
       if (corroborated) await ctx.db.patch(signalId, { status: "published", lastSeenAt: now });
       await ctx.db.insert("signalEvidence", {
@@ -695,6 +704,7 @@ export const upsertSourceEntries = internalMutation({
     const observedCanonicalUrls = new Set<string>();
 
     for (const entry of args.entries.slice(0, 100)) {
+      const isDemo = isControlledDemoOrigin(entry.canonicalUrl);
       observedCanonicalUrls.add(entry.canonicalUrl);
       const existing = await ctx.db
         .query("sourceEntries")
@@ -793,18 +803,22 @@ export const upsertSourceEntries = internalMutation({
         unknowns: entry.unknowns,
         status: "published" as const,
         lastSeenAt: now,
+        isDemo,
       };
       const snapshot = signalSnapshot({ ...signalPatch });
       if (signalId) {
         const signal = await ctx.db.get(signalId);
         if (signal) {
-          await ctx.db.patch(signal._id, signalPatch);
+          await ctx.db.patch(signal._id, {
+            ...signalPatch,
+            isDemo: signal.isDemo === true || isDemo,
+          });
         } else {
           signalId = undefined;
         }
       }
       if (!signalId) {
-        const corroborated = await findCrossSourceSignal(ctx, snapshot, source._id);
+        const corroborated = await findCrossSourceSignal(ctx, snapshot, source._id, isDemo);
         if (corroborated) {
           signalId = corroborated.signalId;
           await ctx.db.patch(signalId, { status: "published", lastSeenAt: now });
@@ -885,7 +899,12 @@ export const upsertSourceEntries = internalMutation({
             const independentlyFresh = evidence.some((item) =>
               item.sourceId !== previous.sourceId && item.observedAt >= now - 45 * 24 * 60 * 60 * 1_000,
             );
-            if (!independentlyFresh) await ctx.db.patch(previous.signalId, { status: "stale" });
+            if (!independentlyFresh) {
+              const staleSignal = await ctx.db.get(previous.signalId);
+              await ctx.db.patch(previous.signalId, { status: "stale" });
+              await ctx.scheduler.runAfter(0, internal.matches.retireSignalMatches, { signalId: previous.signalId, cursor: null });
+              if (staleSignal) await ctx.scheduler.runAfter(0, internal.map.rebuildArea, { city: staleSignal.city });
+            }
           }
         }
       }
@@ -1061,7 +1080,10 @@ export const observeMonitorPage = internalMutation({
           updatedAt: now,
         });
         if (stale && entry.signalId) {
+          const staleSignal = await ctx.db.get(entry.signalId);
           await ctx.db.patch(entry.signalId, { status: "stale" });
+          await ctx.scheduler.runAfter(0, internal.matches.retireSignalMatches, { signalId: entry.signalId, cursor: null });
+          if (staleSignal) await ctx.scheduler.runAfter(0, internal.map.rebuildArea, { city: staleSignal.city });
         }
       }
       affected = entries.length;
@@ -1243,6 +1265,7 @@ export const completeDetailNormalization = internalMutation({
       return false;
     }
     const now = Date.now();
+    const isDemo = isControlledDemoOrigin(entry.canonicalUrl);
     let signalId = entry.signalId;
     const previousSignalId = signalId;
     const signalPatch = {
@@ -1261,6 +1284,7 @@ export const completeDetailNormalization = internalMutation({
       facets: args.facets,
       status: "published" as const,
       lastSeenAt: now,
+      isDemo,
     };
     const snapshot = signalSnapshot(signalPatch);
     const currentEvidence = signalId
@@ -1269,7 +1293,7 @@ export const completeDetailNormalization = internalMutation({
     const alreadyCrossSource = currentEvidence.some((evidence) => evidence.sourceId !== entry.sourceId);
     const corroborated = alreadyCrossSource
       ? null
-      : await findCrossSourceSignal(ctx, snapshot, entry.sourceId, signalId);
+      : await findCrossSourceSignal(ctx, snapshot, entry.sourceId, isDemo, signalId);
     if (corroborated) {
       signalId = corroborated.signalId;
       await ctx.db.patch(signalId, corroborated.relation === "corroborated"
@@ -1278,7 +1302,10 @@ export const completeDetailNormalization = internalMutation({
     } else if (signalId) {
       const signal = await ctx.db.get(signalId);
       if (signal) {
-        await ctx.db.patch(signal._id, signalPatch);
+        await ctx.db.patch(signal._id, {
+          ...signalPatch,
+          isDemo: signal.isDemo === true || isDemo,
+        });
       } else {
         signalId = undefined;
       }
@@ -1294,7 +1321,10 @@ export const completeDetailNormalization = internalMutation({
       });
     }
     if (previousSignalId && previousSignalId !== signalId) {
+      const previousSignal = await ctx.db.get(previousSignalId);
       await ctx.db.patch(previousSignalId, { status: "stale", sourceCount: 0, verification: "observed" });
+      await ctx.scheduler.runAfter(0, internal.matches.retireSignalMatches, { signalId: previousSignalId, cursor: null });
+      if (previousSignal) await ctx.scheduler.runAfter(0, internal.map.rebuildArea, { city: previousSignal.city });
     }
     const evidenceFingerprint = stableFingerprint(
       `source-entry\n${entry.sourceTargetId}\n${entry.canonicalUrl}`,
@@ -1529,8 +1559,63 @@ export const markStaleSignals = internalMutation({
       )
       .take(limit);
     await Promise.all(
-      signals.map((signal) => ctx.db.patch(signal._id, { status: "stale" })),
+      signals.map(async (signal) => {
+        await ctx.db.patch(signal._id, { status: "stale" });
+        await ctx.scheduler.runAfter(0, internal.matches.retireSignalMatches, { signalId: signal._id, cursor: null });
+        await ctx.scheduler.runAfter(0, internal.map.rebuildArea, { city: signal.city });
+      }),
     );
     return signals.length;
+  },
+});
+
+/** Paginated compatibility migration; exact roomscout.dev evidence wins conservatively. */
+export const backfillDemoProvenance = internalMutation({
+  args: { cursor: v.union(v.string(), v.null()), migrationRunId: v.optional(v.id("migrationRuns")) },
+  returns: v.object({ processed: v.number(), demo: v.number(), isDone: v.boolean() }),
+  handler: async (ctx, args) => {
+    let migrationRunId = args.migrationRunId;
+    if (!migrationRunId) {
+      const existing = await ctx.db.query("migrationRuns").withIndex("by_name", (q) => q.eq("name", DEMO_PROVENANCE_MIGRATION_NAME)).unique();
+      if (existing?.status === "completed") return { processed: 0, demo: 0, isDone: true };
+      const now = Date.now();
+      migrationRunId = existing?._id ?? await ctx.db.insert("migrationRuns", {
+        name: DEMO_PROVENANCE_MIGRATION_NAME, status: "running", processed: 0, startedAt: now, updatedAt: now,
+      });
+      if (existing) await ctx.db.patch(existing._id, { status: "running", cursor: undefined, error: undefined, completedAt: undefined, updatedAt: now });
+    }
+    const page = await ctx.db.query("signals").paginate({ cursor: args.cursor, numItems: 50 });
+    let processed = 0;
+    let demo = 0;
+    for (const signal of page.page) {
+      if (signal.isDemo !== undefined) continue;
+      const [sourceEntry, evidence] = await Promise.all([
+        signal.sourceEntryId ? ctx.db.get(signal.sourceEntryId) : null,
+        ctx.db.query("signalEvidence").withIndex("by_signal", (q) => q.eq("signalId", signal._id)).take(100),
+      ]);
+      const isDemo = Boolean(
+        sourceEntry && isControlledDemoOrigin(sourceEntry.canonicalUrl),
+      ) || evidence.some((item) => isControlledDemoOrigin(item.sourceUrl));
+      await ctx.db.patch(signal._id, {
+        isDemo,
+        ...(isDemo ? { verification: "observed" as const } : {}),
+      });
+      processed += 1;
+      if (isDemo) demo += 1;
+    }
+    const run = await ctx.db.get(migrationRunId);
+    if (run) await ctx.db.patch(run._id, {
+      cursor: page.isDone ? undefined : page.continueCursor,
+      processed: run.processed + processed,
+      status: page.isDone ? "completed" : "running",
+      completedAt: page.isDone ? Date.now() : undefined,
+      updatedAt: Date.now(),
+    });
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.ingestion.backfillDemoProvenance, { cursor: page.continueCursor, migrationRunId });
+    } else {
+      await ctx.scheduler.runAfter(0, internal.map.rebuildAllAreasPage, { cursor: null });
+    }
+    return { processed, demo, isDone: page.isDone };
   },
 });

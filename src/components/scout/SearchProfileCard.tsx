@@ -36,8 +36,12 @@ export function SearchProfileCard({
       className="rs-search-profile"
       header={
         <>
-          <span className="type t-scout">{search.status === "draft" ? "Draft search" : "Your search"}</span>
-          <span className="mono">{search.status === "draft" ? "Not active yet" : search.status}</span>
+          <span className="type t-scout">
+            {search.status === "draft" ? "Draft search" : "Your search"}
+          </span>
+          <span className="mono">
+            {search.status === "draft" ? "Not active yet" : search.status}
+          </span>
         </>
       }
     >
@@ -48,9 +52,16 @@ export function SearchProfileCard({
             <dt className="k">{field.label}</dt>
             <dd className="v">
               {field.value}
-              <span className={`chip${field.source === "you" ? " you" : ""}`}>{field.source === "you" ? "You" : "Scout"}</span>
+              <span className={`chip${field.source === "you" ? " you" : ""}`}>
+                {field.source === "you" ? "You" : "Scout"}
+              </span>
               {onEdit ? (
-                <button aria-label={`Edit ${field.label}`} className="edit" onClick={() => onEdit(field)} type="button">
+                <button
+                  aria-label={`Edit ${field.label}`}
+                  className="edit"
+                  onClick={() => onEdit(field)}
+                  type="button"
+                >
                   <Pencil aria-hidden="true" size={12} />
                 </button>
               ) : null}
@@ -60,12 +71,26 @@ export function SearchProfileCard({
       </dl>
       {search.status === "draft" ? (
         <div className="rs-search-confirmation">
-          <div aria-label={`${complete} of ${total} high-value fields set`} className="meter">
-            {Array.from({ length: total }, (_, index) => <i className={index < complete ? "on" : undefined} key={index} />)}
+          <div
+            aria-label={`${complete} of ${total} high-value fields set`}
+            className="meter"
+          >
+            {Array.from({ length: total }, (_, index) => (
+              <i className={index < complete ? "on" : undefined} key={index} />
+            ))}
           </div>
-          <p className="mono">{complete} of {total} high-value fields set</p>
+          <p className="mono">
+            {complete} of {total} high-value fields set
+          </p>
           {confirmationHint ? <p className="hint">{confirmationHint}</p> : null}
-          <button className="btn btn-p" disabled={!canConfirm || confirming} onClick={onConfirm} type="button">{confirming ? "Starting…" : confirmationLabel}</button>
+          <button
+            className="btn btn-p"
+            disabled={!canConfirm || confirming}
+            onClick={onConfirm}
+            type="button"
+          >
+            {confirming ? "Starting…" : confirmationLabel}
+          </button>
         </div>
       ) : null}
     </LedgerCard>

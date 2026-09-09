@@ -11,6 +11,7 @@ type SearchSourcesPanelProps = {
   disclosure?: string;
   onScopeChange?: (sourceId: string, included: boolean) => void;
   onConnect?: (sourceId: string) => void;
+  workingSourceId?: string;
 };
 
 const statusLabels: Record<SearchSourceCoverage["status"], string> = {
@@ -21,7 +22,7 @@ const statusLabels: Record<SearchSourceCoverage["status"], string> = {
   unavailable: "Unavailable",
 };
 
-export function SearchSourcesPanel({ city, sources, indexedSignalCount, indexedSourceCount, disclosure, onScopeChange, onConnect }: SearchSourcesPanelProps) {
+export function SearchSourcesPanel({ city, sources, indexedSignalCount, indexedSourceCount, disclosure, onScopeChange, onConnect, workingSourceId }: SearchSourcesPanelProps) {
   const watching = sources.filter((source) => source.status === "watching").length;
   const gaps = sources.filter((source) => source.status !== "watching").length;
 
@@ -62,12 +63,12 @@ export function SearchSourcesPanel({ city, sources, indexedSignalCount, indexedS
               <button
                 aria-pressed={source.included}
                 className={`btn btn-sm ${source.included ? "btn-s" : "btn-g"}`}
-                disabled={!onScopeChange || source.status === "unavailable"}
+                disabled={!onScopeChange || source.status === "unavailable" || workingSourceId === source.id}
                 onClick={() => onScopeChange?.(source.id, !source.included)}
                 type="button"
               >
                 {source.status === "unavailable" ? <ShieldAlert aria-hidden="true" size={13} /> : null}
-                {source.included ? "Included" : "Excluded"}
+                {workingSourceId === source.id ? "Saving…" : source.included ? "Included" : "Excluded"}
               </button>
             </div>
           </div>

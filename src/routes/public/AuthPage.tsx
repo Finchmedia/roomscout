@@ -60,7 +60,8 @@ export function AuthPage({ initialMode, onAuthenticate, error, pending = false }
     <>
       <PublicHeader />
       <main className="center rs-auth-page">
-        <LedgerCard className="authcard" header={<><span className="type t-scout">{isSignUp ? "Create account" : "Sign in"}</span><span className="mono">Convex Auth v2</span></>}>
+        <LedgerCard className="authcard" header={<span className="type t-scout">Dein persönlicher RoomScout</span>}>
+          <div className="rs-auth-intro"><h1>{isSignUp ? "Euer nächster Raum beginnt hier." : "Schön, dass du wieder da bist."}</h1><p>{isSignUp ? "Ein Gespräch. Ein Suchauftrag. Dein Scout bleibt dran." : "Deine Suche und eure Gespräche warten auf dich."}</p></div>
           <div className="ctx"><Bookmark aria-hidden="true" size={15} /><span>Your current search can continue after authentication.</span></div>
           <form onSubmit={submit}>
             <div className="field"><label className="flabel" htmlFor={usernameId}>Username</label><input autoComplete="username" className="input" id={usernameId} onChange={(event) => setUsername(event.target.value)} placeholder="e.g. vierteltakt" value={username} /></div>

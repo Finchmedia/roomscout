@@ -2,17 +2,17 @@
 
 - **Project:** RoomScout
 - **Event:** Convex All Gas Hackathon
-- **What it does:** Continuously indexes public rehearsal-room supply and demand, gives musicians a context-aware text/voice Scout, and keeps external actions approval-gated.
+- **What it does:** Indexes public rehearsal-room supply and demand and gives musicians a context-aware text/voice Scout with revocable non-binding Autopilot mandates and explicit approval for commitments.
 - **Live app:** https://fleet-jackal-83.eu-west-1.convex.site
 - **Repo:** https://github.com/Finchmedia/roomscout
 - **Frontend:** Convex static hosting
 - **Convex deployment:** https://fleet-jackal-83.eu-west-1.convex.cloud
-- **Components:** @convex-dev/agent, @convex-dev/auth, @convex-dev/rate-limiter, @convex-dev/static-hosting, @agentmail/convex, firecrawlRoomScout (vendored local extension of @firecrawl/firecrawl-convex)
+- **Components:** @convex-dev/agent, @convex-dev/auth, @convex-dev/rate-limiter, @convex-dev/static-hosting, @convex-dev/workpool
 - **Convex features:** schema, tables, indexes, vector search, queries, mutations, actions, HTTP actions, crons, scheduled functions, realtime queries, paginated queries
 - **Auth:** Convex Auth
 - **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-realtime-2.1`
 - **Started:** 2026-08-26T13:55:26Z
-- **Last updated:** 2026-09-02T09:25:34Z
+- **Last updated:** 2026-09-09T01:26:35Z
 
 ## Log
 
@@ -90,3 +90,47 @@ replay produced zero new entries, all third-party sources remained paused, and
 the monitor was paused again afterward. No message or browser action occurred
 (`convex/controlledSourceProof.ts`,
 `convex/controlledSourceProofActions.ts`, `docs/BUILD_LOG.md`).
+
+### 2026-09-02 - bafc29e
+Made non-binding Autopilot the simple search default, moved detailed mandate
+controls into Advanced, and replaced the logo with a wordmark. Added portal
+signup authentication checks and thread-aware browser message handling, with
+authorization regressions. This records implemented paths, not a complete live
+provider round trip (`convex/mandates.ts`, `convex/browserbasePortal.ts`, `src/`).
+
+### 2026-09-08 - working tree
+Fixed activation, paginated matching, and stale-result/first-contact guards.
+Added shared Convex Agent turns, private versioned offers, controlled-portal
+replies and exact receipt-based offer acceptance. Workpools coordinate semantic
+checks and coalesced portal reads; email hints cannot authorize arbitrary browsing.
+Duplicate browser claims return in-progress before launch (`convex/portalInboxSync.ts`,
+`convex/offerAcceptance.ts`, `convex/browserbasePortal.ts`). Development backend is
+deployed; its pod-wide AgentMail webhook has a verified signing secret. Two labelled
+Development test actors now have distinct real personal inboxes; concurrent calls
+and a repeated run reused them without duplicates. New-inbox event coverage and
+the full mail/browser round trip remain open. Local checkpoint: 397 tests,
+TypeScript, lint/build and five browser smokes passed (one intentional skip).
+Two six-case native Gateway runs each passed five cases: tightening the per-person
+price rule fixed that failure; a targeted repeat identified the extras failure as
+an ungrounded price quote. Evalite's framework smoke and isolated fifteen-case
+catalogue pass tests, but the real Agent evaluation is unfinished.
+Browserbase launch is now proven: externalizing Stagehand preserves its required
+extension asset, and `proxies: false` fixes a provider HTTP 402 caused by the prior
+no-proxy array. A read-only signup probe then identified missing Stagehand v4
+context initialization; that fix is locally tested, not yet live-proven.
+The real-Agent Evalite spike now reaches Terra and records an offer assessment;
+its first-turn readiness criteria fail, so no benchmark pass is claimed.
+The controlled portal's run-scoped provider simulator
+shares the UI message/Resend path and passes 15 local portal tests, typechecks,
+lint and build; that portal change is not deployed yet.
+Production is unchanged. Details and remaining gates: `docs/BUILD_LOG.md`.
+
+### 2026-09-09 - working tree
+Ported the supplied interactive design into the real React app: voice-first Scout,
+live fact cards, brief review, settings, operator styling and a labelled landing
+story (`src/routes/musician/ScoutPage.tsx`, `src/components/landing/`). Existing
+Convex subscriptions and mandate/acceptance boundaries remain authoritative.
+Voice survives authenticated route changes; transcript ordering, cancellation and
+stale tool results have regression coverage. Local test/build and public-browser
+checks are recorded in `docs/UI_DESIGN_PORT_2026-09-09.md`; authenticated visual and
+live provider verification remain open. No deployment, commit or push occurred.

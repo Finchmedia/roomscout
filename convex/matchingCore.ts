@@ -1,9 +1,12 @@
+import type { MatchAssessment } from "./lib/matchAssessment";
+
 export type MatchNeed = {
   city: string;
   districts: string[];
   maxBudgetEur?: number;
   arrangement: Array<"permanent" | "shared" | "hourly">;
   requirements: string[];
+  schedule?: string[];
   openToSharing?: boolean;
   collaborationOpen?: boolean;
   genres?: string[];
@@ -21,6 +24,7 @@ export type MatchSignal = {
   summary: string;
   arrangement: "permanent" | "shared" | "hourly" | "unknown";
   priceEur?: number;
+  pricePeriod?: "hour" | "month" | "unknown";
   requirements: string[];
   genres?: string[];
   instruments?: string[];
@@ -58,14 +62,15 @@ function tokens(values: string[]): Set<string> {
 
 function overlap(left: string[], right: string[]): number {
   const leftTokens = tokens(left);
-  if (leftTokens.size === 0) return 1;
+  if (leftTokens.size === 0) return 0;
   const rightTokens = tokens(right);
   let hits = 0;
   for (const token of leftTokens) if (rightTokens.has(token)) hits += 1;
   return hits / leftTokens.size;
 }
 
-function sharingExplicit(signal: MatchSignal): boolean {
+function sharingExplicit(signal: MatchSignal, assessment?: MatchAssessment): boolean {
+  if (assessment?.sharing.open !== undefined && assessment.sharing.open !== null) return assessment.sharing.open;
   const facet = signal.facets?.some(
     (item) =>
       item.namespace === "collaboration" &&
@@ -73,10 +78,7 @@ function sharingExplicit(signal: MatchSignal): boolean {
       item.value === true &&
       item.confidence >= 0.6,
   );
-  if (facet) return true;
-  return /\b(open to shar(?:e|ing)|raum teilen|mitnutz(?:en|ung)|shared room)\b/i.test(
-    `${signal.title} ${signal.summary}`,
-  );
+  return facet === true;
 }
 
 function clamp(value: number): number {
@@ -95,6 +97,7 @@ export function scoreSignalMatch(
   need: MatchNeed,
   signal: MatchSignal,
   semanticSimilarity = 0,
+  assessment?: MatchAssessment,
 ): MatchScore {
   const kind = signal.side === "supply" ? "need_supply" : "demand_demand";
   const empty: MatchScore = {
@@ -124,9 +127,22 @@ export function scoreSignalMatch(
   }
   if (
     signal.side === "demand" &&
-    (!(need.openToSharing || need.collaborationOpen) || !sharingExplicit(signal))
+    (!(need.openToSharing || need.collaborationOpen) || !sharingExplicit(signal, assessment))
   ) {
     return empty;
+  }
+  if (assessment) {
+    const conflicts = assessment.requirements.filter((item) => item.verdict === "conflict").map((item) => item.explanation);
+    if ((need.schedule?.length ?? 0) > 0 && assessment.schedule.verdict === "conflict") conflicts.push(assessment.schedule.explanation);
+    if (signal.side === "supply" && need.maxBudgetEur !== undefined && assessment.monthlyPrice.minimumEur !== null &&
+      assessment.monthlyPrice.minimumEur > need.maxBudgetEur) conflicts.push("Monthly cost including stated extras exceeds the maximum budget");
+    if (conflicts.length) return { ...empty, reasons: conflicts };
+  }
+  // Needs currently express a monthly budget. Never compare an hourly or
+  // unspecified quote with that budget as if its units were interchangeable.
+  if (signal.side === "supply" && need.maxBudgetEur !== undefined && signal.priceEur !== undefined &&
+    signal.pricePeriod === "month" && signal.priceEur > need.maxBudgetEur) {
+    return { ...empty, reasons: ["Monthly price exceeds the maximum budget"] };
   }
 
   const reasons = [sameCityReason(need.city)];
@@ -135,17 +151,18 @@ export function scoreSignalMatch(
     uncertainties.push("Location is not precise enough to enforce the radius");
   }
   let points = 0.25;
+  let possible = 0.25;
 
-  if (need.districts.length === 0) {
-    points += 0.1;
-  } else if (signal.district && need.districts.some((item) => normalized(item) === normalized(signal.district!))) {
+  if (need.districts.length > 0) possible += 0.1;
+  if (need.districts.length > 0 && signal.district && need.districts.some((item) => normalized(item) === normalized(signal.district!))) {
     points += 0.1;
     reasons.push(`Preferred area: ${signal.district}`);
-  } else if (!signal.district) {
+  } else if (need.districts.length > 0 && !signal.district) {
     points += 0.05;
     uncertainties.push("District is not stated");
   }
 
+  possible += 0.15;
   if (signal.arrangement === "unknown") {
     points += 0.075;
     uncertainties.push("Arrangement is not stated");
@@ -154,33 +171,54 @@ export function scoreSignalMatch(
     reasons.push(`Compatible ${signal.arrangement} arrangement`);
   }
 
+  if (need.maxBudgetEur !== undefined) possible += 0.2;
   if (need.maxBudgetEur === undefined) {
+    // No budget constraint contributes neither weight nor a fabricated match reason.
+  } else if (signal.side === "supply" && assessment?.monthlyPrice.totalKnown && assessment.monthlyPrice.minimumEur !== null) {
     points += 0.2;
+    reasons.push("Stated total monthly cost is within budget");
   } else if (signal.priceEur === undefined) {
     points += 0.1;
     uncertainties.push("Price is not stated");
+  } else if (signal.pricePeriod !== "month" || signal.side === "demand") {
+    points += 0.1;
+    uncertainties.push("A comparable total monthly price has not been established");
   } else if (signal.priceEur <= need.maxBudgetEur) {
     points += 0.2;
-    reasons.push("Within the stated budget");
+    reasons.push("Stated base monthly price is within budget");
+    uncertainties.push("Total recurring cost, including any extras, needs confirmation");
   } else {
     uncertainties.push("Price is above the stated budget");
   }
 
-  const practicalOverlap = overlap(need.requirements, [
-    signal.title,
-    signal.summary,
-    ...signal.requirements,
-  ]);
+  // Free-form requirements need semantic interpretation; lexical overlap cannot
+  // distinguish "drums permitted" from "no drums". Pending interpretation stays unknown.
+  if (need.requirements.length > 0 || (need.schedule?.length ?? 0) > 0) {
+    possible += 0.2;
+    if (!assessment) {
+      points += 0.1;
+      uncertainties.push("Practical requirements and schedule need semantic verification");
+    } else {
+      const findings = [...assessment.requirements, ...((need.schedule?.length ?? 0) > 0 ? [assessment.schedule] : [])];
+      points += 0.2 * findings.reduce((total, item) => total + (item.verdict === "satisfied" ? 1 : 0.5), 0) / findings.length;
+      for (const item of findings) {
+        if (item.verdict === "satisfied") reasons.push(item.explanation);
+        else uncertainties.push(item.explanation);
+      }
+    }
+  }
   const musicOverlap = overlap(
     [...(need.genres ?? []), ...(need.instruments ?? [])],
-    [...(signal.genres ?? []), ...(signal.instruments ?? []), signal.summary],
+    [...(signal.genres ?? []), ...(signal.instruments ?? [])],
   );
-  points += 0.2 * practicalOverlap + 0.1 * musicOverlap;
-  if (practicalOverlap > 0.25) reasons.push("Practical requirements overlap");
+  if ((need.genres?.length ?? 0) + (need.instruments?.length ?? 0) > 0) {
+    possible += 0.1;
+    points += 0.1 * musicOverlap;
+  }
   if (musicOverlap > 0.25) reasons.push("Musical context overlaps");
   if (kind === "demand_demand") reasons.push("Both searches explicitly allow sharing");
 
-  const structuredScore = clamp(points);
+  const structuredScore = clamp(points / possible);
   const semanticScore = clamp(semanticSimilarity);
   const score = 0.7 * structuredScore + 0.3 * semanticScore;
   const threshold = kind === "need_supply" ? 0.55 : 0.7;

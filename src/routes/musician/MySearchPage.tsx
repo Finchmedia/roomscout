@@ -22,8 +22,11 @@ function activityTime(timestamp: number): string {
 export function MySearchPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const needs = useQuery(api.savedNeeds.listMine, { limit: 10 });
-  const matches = useQuery(api.matches.listMine, { limit: 30 });
-  const need = needs?.find((candidate) => candidate.status !== "archived");
+  const scoutContext = useQuery(api.scout.getMine);
+  const need = needs !== undefined && scoutContext !== undefined
+    ? needs.find((candidate) => candidate._id === scoutContext?.activeNeedId && candidate.status !== "archived") ?? needs.find((candidate) => candidate.status !== "archived")
+    : undefined;
+  const matches = useQuery(api.matches.listMine, need ? { savedNeedId: need._id, limit: 30 } : "skip");
   const indexedSignals = useQuery(api.signals.list, need?.city ? { city: need.city, limit: 50 } : "skip");
   const sourceCoverage = useQuery(api.searchSources.listForNeed, need ? { savedNeedId: need._id, limit: 100 } : "skip");
   const activeMandate = useQuery(api.mandates.getActiveMine, need ? { savedNeedId: need._id } : "skip");
@@ -124,7 +127,7 @@ export function MySearchPage() {
     }
   }
 
-  if (needs === undefined || matches === undefined) {
+  if (needs === undefined || scoutContext === undefined || (need && matches === undefined)) {
     return <WorkspaceShell mode="musician"><PageHeader title="My search" /><EmptyState body="RoomScout is loading your saved criteria and current matches." title="Loading your search…" /></WorkspaceShell>;
   }
 
@@ -133,7 +136,7 @@ export function MySearchPage() {
   }
 
   const search = savedNeedToSearch(need);
-  const needMatches = matches.filter((match) => match.savedNeedId === need._id && match.status !== "dismissed");
+  const needMatches = matches ?? [];
   const coverageSources = (sourceCoverage?.sources ?? []).map((source) => {
     const coverageStates = [source.supplyStatus, source.demandStatus].filter(Boolean);
     const side = source.supplyStatus && source.demandStatus ? "both" as const : source.supplyStatus ? "supply" as const : "demand" as const;

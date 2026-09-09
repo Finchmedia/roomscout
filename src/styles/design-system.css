@@ -1,0 +1,297 @@
+/* Shared visual foundation ported from the maintainer's Claude Design export.
+   Business state remains in Convex; no prototype runtime is shipped. */
+:root {
+  font-family: "Geist Variable", Geist, ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Geist Variable", Geist, ui-sans-serif, system-ui, sans-serif;
+  --signal: #ff6926;
+  --signal-hover: #ff834b;
+  --ink: #f5ece2;
+  --muted: #b8aea3;
+  --panel: rgb(22 20 18 / 78%);
+  --panel-strong: #1b1916;
+}
+body {
+  background: #0a100f url("/design/bg.jpg") center / cover fixed;
+}
+button,
+input,
+select,
+textarea {
+  font-family: var(--font-sans);
+}
+.rs-wordmark,
+.rs-consumer-wordmark {
+  font-weight: 500;
+  letter-spacing: 0.035em;
+}
+.rs-consumer-workspace {
+  min-height: 100dvh;
+}
+.rs-consumer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 28px 48px;
+  min-height: 96px;
+  position: relative;
+  z-index: 60;
+}
+.rs-consumer-wordmark {
+  color: var(--ink);
+  font-size: 24px;
+}
+.rs-consumer-wordmark:hover {
+  color: white;
+}
+.rs-consumer-main {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 24px 48px 80px;
+  min-width: 0;
+}
+.rs-consumer-workspace--scout .rs-consumer-main {
+  padding-top: 0;
+}
+.rs-account-menu {
+  position: relative;
+}
+.rs-account-menu > summary {
+  list-style: none;
+  width: 44px;
+  height: 44px;
+  border: 1px solid #726354;
+  background: rgb(20 18 16 / 45%);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 13px;
+}
+.rs-account-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.rs-account-menu > summary:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 4px;
+}
+.rs-account-menu__panel {
+  position: absolute;
+  top: 56px;
+  right: 0;
+  width: 280px;
+  padding: 12px;
+  border-radius: 20px;
+  background: #201d19;
+  border: 1px solid #675747;
+  box-shadow: 0 24px 80px #0008;
+  display: grid;
+  gap: 3px;
+}
+.rs-account-menu__identity {
+  display: grid;
+  gap: 6px;
+  padding: 12px 12px 16px;
+}
+.rs-account-menu__identity span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.rs-account-menu__panel a,
+.rs-account-menu__panel button {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 11px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  font-size: 14px;
+  cursor: pointer;
+}
+.rs-account-menu__panel :is(a, button):hover,
+.rs-account-menu__panel a.on {
+  background: #ffffff0c;
+  color: var(--signal);
+}
+.rs-account-menu__panel .cnt {
+  margin-left: auto;
+  color: var(--signal);
+}
+.rs-account-menu__panel hr {
+  width: 100%;
+}
+.rs-consumer-workspace .btn {
+  border-radius: 999px;
+  min-height: 42px;
+  font-weight: 500;
+}
+.rs-consumer-workspace .btn-sm {
+  min-height: 34px;
+}
+.rs-consumer-workspace :is(.card, .lcard, .ledger) {
+  border-radius: 22px;
+}
+.rs-consumer-workspace .input {
+  border-radius: 12px;
+}
+.rs-consumer-workspace h1 {
+  font-weight: 400;
+}
+.rs-consumer-workspace :is(.pagehead, .rs-page-header) h1 {
+  font-size: clamp(30px, 3.5vw, 48px);
+}
+.rs-workspace--ops {
+  background: rgb(8 10 9 / 32%);
+}
+.rs-workspace--ops .side {
+  background: rgb(14 14 12 / 68%);
+  border-right-color: #655849;
+  padding: 28px 20px;
+}
+.rs-workspace--ops .side .brand {
+  padding-bottom: 34px;
+}
+.rs-workspace--ops .nav a {
+  border-radius: 10px;
+  padding: 12px;
+}
+.rs-workspace--ops .nav a.on {
+  background: #ff692616;
+  color: #ff975f;
+}
+.rs-workspace--ops .main {
+  max-width: none;
+  padding-top: 42px;
+}
+.rs-workspace--ops :is(.pagehead, .rs-page-header) h1 {
+  font-weight: 400;
+}
+.rs-ongoing-call {
+  position: fixed;
+  z-index: 100;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 12px 10px 18px;
+  border: 1px solid #9d6846;
+  border-radius: 999px;
+  background: #211b16;
+  box-shadow: 0 12px 45px #0007;
+}
+.rs-ongoing-call a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.rs-ongoing-call__dot {
+  width: 7px;
+  height: 7px;
+  background: var(--signal);
+  border-radius: 50%;
+}
+.rs-ongoing-call button {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid #695645;
+  background: transparent;
+  color: white;
+  cursor: pointer;
+}
+.rs-ongoing-call button:last-child {
+  background: #832e25;
+}
+.rs-public-header {
+  background: transparent;
+  border-bottom: 0;
+  padding: 24px 48px;
+}
+.rs-public-header .btn {
+  border-radius: 999px;
+}
+.rs-auth-page {
+  min-height: calc(100dvh - 110px);
+  padding-top: 6vh;
+}
+.rs-auth-page .authcard {
+  border-radius: 26px;
+  background: rgb(24 20 17 / 82%);
+  border-color: #7e6149;
+  box-shadow: 0 28px 100px #0004;
+}
+.rs-auth-page .btn {
+  border-radius: 999px;
+}
+.rs-auth-page .input {
+  border-radius: 12px;
+}
+.rs-auth-page .ctx {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+}
+.rs-auth-intro {
+  padding: 10px 26px;
+}
+.rs-auth-intro h1 {
+  margin: 12px 0;
+  font-size: 34px;
+  line-height: 1.1;
+  font-weight: 400;
+  letter-spacing: -0.035em;
+}
+.rs-auth-intro p {
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.5;
+}
+.rs-consumer-workspace .rs-inbox {
+  border-radius: 22px;
+  overflow: hidden;
+  border-color: #625346;
+}
+.rs-consumer-workspace .rs-inbox .pane {
+  background: rgb(22 19 16 / 78%);
+}
+.rs-consumer-workspace .rs-inbox .titem {
+  border-radius: 14px;
+  margin: 6px;
+  width: calc(100% - 12px);
+}
+.rs-consumer-workspace .rs-inbox .mail {
+  border-radius: 18px;
+}
+.rs-consumer-workspace .rs-inbox-filterbar h1 {
+  font-size: 40px;
+}
+@media (max-width: 800px) {
+  .rs-consumer-header {
+    padding: 22px 24px;
+    min-height: 84px;
+  }
+  .rs-consumer-main {
+    padding: 16px 24px 80px;
+  }
+  .rs-public-header {
+    padding: 20px 24px;
+  }
+  .rs-ongoing-call {
+    max-width: calc(100vw - 24px);
+    bottom: 12px;
+    gap: 8px;
+  }
+  .rs-ongoing-call a {
+    white-space: normal;
+  }
+}

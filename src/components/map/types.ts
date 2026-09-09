@@ -2,6 +2,7 @@ export type MapCoordinates = [longitude: number, latitude: number];
 
 export type MapMarketSignal = {
   id: string;
+  isDemo?: boolean;
   title: string;
   coordinates: MapCoordinates;
   side: "supply" | "demand";

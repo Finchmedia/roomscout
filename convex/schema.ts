@@ -1,5 +1,8 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { matchAssessmentValidator } from "./lib/matchAssessment";
+import { providerAssessmentValidator } from "./lib/providerAssessment";
+import { messageSafetyValidator } from "./lib/messageSafety";
 
 const role = v.union(v.literal("musician"), v.literal("operator"));
 const signalSide = v.union(v.literal("supply"), v.literal("demand"));
@@ -129,6 +132,8 @@ const actionPayload = v.union(
     recipientEmail: v.string(),
     subject: v.string(),
     body: v.string(),
+    mailThreadId: v.optional(v.id("mailThreads")),
+    parentMessageId: v.optional(v.string()),
   }),
 );
 const mandateActionType = v.union(
@@ -156,11 +161,15 @@ export default defineSchema({
     username: v.string(),
     displayName: v.optional(v.string()),
     role,
+    controlledProofActorKey: v.optional(
+      v.union(v.literal("actor_a"), v.literal("actor_b")),
+    ),
     createdAt: v.number(),
     lastSeenAt: v.number(),
   })
     .index("by_username", ["username"])
-    .index("by_role", ["role"]),
+    .index("by_role", ["role"])
+    .index("by_controlled_proof_actor_key", ["controlledProofActorKey"]),
 
   sources: defineTable({
     platformId: v.optional(v.id("sourcePlatforms")),
@@ -392,8 +401,10 @@ export default defineSchema({
     longitude: v.optional(v.number()),
     locationPrecision: v.optional(locationPrecision),
     geocodeId: v.optional(v.id("geocodes")),
+    isDemo: v.optional(v.boolean()),
   })
     .index("by_city_and_status", ["city", "status"])
+    .index("by_city_and_is_demo_and_status", ["city", "isDemo", "status"])
     .index("by_side_and_city_and_status", ["side", "city", "status"])
     .index("by_status_and_last_seen_at", ["status", "lastSeenAt"]),
 
@@ -469,6 +480,14 @@ export default defineSchema({
     .index("by_source", ["sourceId"])
     .index("by_fingerprint", ["fingerprint"]),
 
+  matchAssessments: defineTable({
+    ownerId: v.id("users"), savedNeedId: v.id("savedNeeds"), signalId: v.id("signals"),
+    needRevision: v.number(), signalRevision: v.string(),
+    status: v.union(v.literal("ready"), v.literal("failed")),
+    assessment: v.optional(matchAssessmentValidator), model: v.string(), promptVersion: v.string(),
+    retryAfter: v.number(), updatedAt: v.number(),
+  }).index("by_need_and_signal", ["savedNeedId", "signalId"]),
+
   signalMatches: defineTable({
     ownerId: v.id("users"),
     savedNeedId: v.id("savedNeeds"),
@@ -487,11 +506,18 @@ export default defineSchema({
       v.literal("contacted"),
     ),
     fingerprint: v.string(),
+    eligible: v.optional(v.boolean()),
+    contactEligible: v.optional(v.boolean()),
+    needRevision: v.optional(v.number()),
+    signalRevision: v.optional(v.string()),
+    matchingRunId: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_owner_and_status_and_updated_at", ["ownerId", "status", "updatedAt"])
     .index("by_saved_need_and_signal", ["savedNeedId", "signalId"])
+    .index("by_owner_and_eligible_and_updated_at", ["ownerId", "eligible", "updatedAt"])
+    .index("by_need_revision_and_eligible_score", ["savedNeedId", "needRevision", "eligible", "score"])
     .index("by_signal", ["signalId"]),
 
   marketAreas: defineTable({
@@ -505,6 +531,13 @@ export default defineSchema({
     verifiedCount: v.number(),
     freshCount: v.number(),
     lastSignalAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  }).index("by_city_key", ["cityKey"]),
+
+  marketAreaRebuilds: defineTable({
+    cityKey: v.string(),
+    city: v.string(),
+    generation: v.number(),
     updatedAt: v.number(),
   }).index("by_city_key", ["cityKey"]),
 
@@ -551,6 +584,9 @@ export default defineSchema({
     instruments: v.optional(v.array(v.string())),
     collaborationOpen: v.optional(v.boolean()),
     facets: v.optional(v.array(flexibleFacet)),
+    matchingRevision: v.optional(v.number()),
+    matchingRunId: v.optional(v.string()),
+    acceptanceRequestId: v.optional(v.id("actionRequests")),
   })
     .index("by_owner", ["ownerId"])
     .index("by_owner_and_status", ["ownerId", "status"])
@@ -1329,6 +1365,12 @@ export default defineSchema({
     allowInboxPolling: v.boolean(),
     pollIntervalMinutes: v.number(),
     nextPollAt: v.optional(v.number()),
+    inboxSyncGeneration: v.optional(v.number()),
+    inboxSyncActiveGeneration: v.optional(v.number()),
+    inboxSyncDeadlineAt: v.optional(v.number()),
+    inboxSyncLastReceiptKey: v.optional(v.string()),
+    activeWriteExecutionId: v.optional(v.id("actionExecutions")),
+    activeWriteDeadlineAt: v.optional(v.number()),
     failureCount: v.number(),
     circuitOpenUntil: v.optional(v.number()),
     lastSuccessAt: v.optional(v.number()),
@@ -1500,6 +1542,7 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   })
+    .index("by_owner_and_status", ["ownerId", "status"])
     .index("by_owner_and_saved_need_and_status", [
       "ownerId",
       "savedNeedId",
@@ -1562,6 +1605,70 @@ export default defineSchema({
       "updatedAt",
     ]),
 
+  providerConversations: defineTable({
+    ownerId: v.id("users"),
+    conversationKey: v.string(),
+    savedNeedId: v.id("savedNeeds"),
+    signalId: v.id("signals"),
+    opportunityId: v.optional(v.id("opportunities")),
+    agentThreadId: v.string(),
+    mailThreadId: v.optional(v.id("mailThreads")),
+    platformThreadId: v.optional(v.id("platformThreads")),
+    revision: v.number(),
+    activeEventId: v.optional(v.id("providerTurns")),
+    currentOfferId: v.optional(v.id("offerRevisions")),
+    acceptanceRequestId: v.optional(v.id("actionRequests")),
+    acceptedOfferId: v.optional(v.id("offerRevisions")),
+    acceptedAt: v.optional(v.number()),
+    state: v.union(v.literal("waiting"), v.literal("thinking"), v.literal("needs_attention"), v.literal("offer_ready"), v.literal("closed")),
+    lastErrorCode: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_need_and_signal", ["savedNeedId", "signalId"])
+    .index("by_owner_and_key", ["ownerId", "conversationKey"])
+    .index("by_need_and_updated_at", ["savedNeedId", "updatedAt"])
+    .index("by_mail_thread", ["mailThreadId"])
+    .index("by_platform_thread", ["platformThreadId"])
+    .index("by_owner_and_updated_at", ["ownerId", "updatedAt"]),
+
+  providerTurns: defineTable({
+    conversationId: v.id("providerConversations"),
+    sourceKey: v.string(),
+    kind: v.union(v.literal("opportunity"), v.literal("mail_reply"), v.literal("portal_reply")),
+    mailMessageId: v.optional(v.id("mailMessages")),
+    platformMessageId: v.optional(v.id("platformMessages")),
+    revision: v.number(),
+    promptMessageId: v.optional(v.string()),
+    status: v.union(v.literal("pending"), v.literal("processing"), v.literal("completed"), v.literal("superseded"), v.literal("failed")),
+    offerId: v.optional(v.id("offerRevisions")),
+    errorCode: v.optional(v.string()),
+    createdAt: v.number(),
+    completedAt: v.optional(v.number()),
+  })
+    .index("by_conversation_and_source", ["conversationId", "sourceKey"])
+    .index("by_conversation_and_status_and_revision", ["conversationId", "status", "revision"]),
+
+  offerRevisions: defineTable({
+    ownerId: v.id("users"),
+    savedNeedId: v.id("savedNeeds"),
+    conversationId: v.id("providerConversations"),
+    eventId: v.id("providerTurns"),
+    revision: v.number(),
+    needRevision: v.number(),
+    signalRevision: v.string(),
+    assessment: providerAssessmentValidator,
+    ready: v.boolean(),
+    blockers: v.array(v.string()),
+    contentHash: v.string(),
+    model: v.string(),
+    promptVersion: v.string(),
+    schemaVersion: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_conversation_and_revision", ["conversationId", "revision"])
+    .index("by_owner_and_created_at", ["ownerId", "createdAt"]),
+
   handoffs: defineTable({
     ownerId: v.id("users"),
     savedNeedId: v.id("savedNeeds"),
@@ -1600,7 +1707,16 @@ export default defineSchema({
 
   actionRequests: defineTable({
     ownerId: v.id("users"),
+    providerConversationId: v.optional(v.id("providerConversations")),
+    providerOfferId: v.optional(v.id("offerRevisions")),
+    providerActionKind: v.optional(v.literal("acceptance")),
+    providerOfferHash: v.optional(v.string()),
+    reviewContextHash: v.optional(v.string()),
+    reviewDestinationHash: v.optional(v.string()),
     savedNeedId: v.optional(v.id("savedNeeds")),
+    matchingNeedRevision: v.optional(v.number()),
+    matchingSignalId: v.optional(v.id("signals")),
+    matchingSignalRevision: v.optional(v.string()),
     mandateId: v.optional(v.id("searchMandates")),
     opportunityId: v.optional(v.id("opportunities")),
     handoffId: v.optional(v.id("handoffs")),
@@ -1639,8 +1755,15 @@ export default defineSchema({
     .index("by_owner_and_status_and_updated_at", ["ownerId", "status", "updatedAt"])
     .index("by_status_and_updated_at", ["status", "updatedAt"])
     .index("by_opportunity", ["opportunityId"])
+    .index("by_provider_offer", ["providerOfferId"])
     .index("by_handoff", ["handoffId"])
     .index("by_execution_idempotency_key", ["executionIdempotencyKey"]),
+
+  messageSafetyAssessments: defineTable({
+    requestId: v.id("actionRequests"), ownerId: v.id("users"),
+    snapshotHash: v.string(), contentHash: v.string(), contentVersion: v.number(),
+    assessment: messageSafetyValidator, model: v.string(), version: v.string(), createdAt: v.number(),
+  }).index("by_request_and_snapshot", ["requestId", "snapshotHash"]),
 
   actionApprovals: defineTable({
     requestId: v.id("actionRequests"),
@@ -1648,6 +1771,10 @@ export default defineSchema({
     contentVersion: v.number(),
     contentHash: v.string(),
     payloadSnapshot: actionPayload,
+    providerOfferId: v.optional(v.id("offerRevisions")),
+    providerOfferHash: v.optional(v.string()),
+    reviewContextHash: v.optional(v.string()),
+    reviewDestinationHash: v.optional(v.string()),
     policyVersionId: v.optional(v.id("sourceFlowPolicies")),
     decision: v.union(
       v.literal("approved"),

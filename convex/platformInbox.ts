@@ -1,6 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { internalMutation, internalQuery, query } from "./_generated/server";
 import { requireUserId } from "./integrations/authz";
+import { internal } from "./_generated/api";
 
 const directionValidator = v.union(
   v.literal("inbound"),
@@ -339,7 +340,7 @@ export const upsertReadOnlyBatch = internalMutation({
           )
           .unique();
         if (existing !== null) continue;
-        await ctx.db.insert("platformMessages", {
+        const messageId = await ctx.db.insert("platformMessages", {
           connectionId: connection._id,
           ownerId: args.ownerId,
           threadId: thread._id,
@@ -350,6 +351,9 @@ export const upsertReadOnlyBatch = internalMutation({
           sentAt: inputMessage.sentAt,
           createdAt: now,
         });
+        if (inputMessage.direction === "inbound") {
+          await ctx.runMutation(internal.providerConversations.enqueuePlatformReply, { messageId });
+        }
         messagesCreated += 1;
       }
     }

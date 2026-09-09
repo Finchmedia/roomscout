@@ -2,7 +2,7 @@
 import agentmailTest from "@agentmail/convex/test";
 import workpoolTest from "@convex-dev/workpool/test";
 import { convexTest } from "convex-test";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { internal } from "./_generated/api";
 import schema from "./schema";
 
@@ -17,7 +17,10 @@ function registerAgentMail(t: ReturnType<typeof convexTest>) {
   workpoolTest.register(t, "agentmail/callbackPool");
 }
 
+beforeEach(() => vi.useFakeTimers());
 afterEach(() => {
+  vi.clearAllTimers();
+  vi.useRealTimers();
   vi.unstubAllEnvs();
 });
 

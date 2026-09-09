@@ -8,6 +8,12 @@ specification. Run `/hackathon` after meaningful progress; use
 
 ## Working mode
 
+For the current delivery block, use GPT Astra for orchestration, architecture,
+integration and final review. Delegate bounded implementation and test tasks to
+GPT-5.6-Sol subagents where independent work is available. Give each agent clear
+file ownership and acceptance criteria; avoid duplicating the same investigation
+across agents. Model selection does not create separate account usage quotas.
+
 The product is still in exploration. Do not turn conversational ideas into
 requirements, schemas, milestones, or documentation unless the user explicitly
 says to lock them in or asks for a file update.

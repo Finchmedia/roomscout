@@ -1,8 +1,14 @@
 import { ConvexError, v } from "convex/values";
+import { opportunityMatchIsCurrent, signalMatchRevision } from "./lib/matchValidity";
 import { internal } from "./_generated/api";
-import type { Doc } from "./_generated/dataModel";
-import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
-import { contentHash, normalizeEmail, normalizeText } from "./integrations/contentHash";
+import type { Doc, Id } from "./_generated/dataModel";
+import { internalMutation, internalQuery, mutation, query, type MutationCtx } from "./_generated/server";
+import { currentMessageSafety, messageSafetyContext, permitsAutonomy } from "./lib/messageSafety";
+import { assertAcceptanceCurrent } from "./lib/offerAcceptance";
+import { resolveControlledPortal } from "./lib/providerPortal";
+import { setNeedStatus } from "./lib/needLifecycle";
+import { scoutWorkpool } from "./workpools";
+import { actionPayloadHash, canonicalJson, normalizeEmail, normalizeText } from "./integrations/contentHash";
 import { requireUserId } from "./integrations/authz";
 import {
   authorizeFromMandate,
@@ -16,6 +22,7 @@ const actionTypeValidator = v.union(
   v.literal("create_portal_account"), v.literal("publish_listing"),
   v.literal("share_contact_details"), v.literal("propose_visit_time"),
 );
+const BROWSER_WRITE_LOCK_MS = 8 * 60_000;
 const personalDataValidator = v.union(
   v.literal("band_name"), v.literal("member_first_names"), v.literal("reply_email"),
   v.literal("phone"), v.literal("precise_location"), v.literal("availability"),
@@ -25,7 +32,7 @@ const payloadValidator = v.union(
   v.object({ kind: v.literal("platform_message"), threadId: v.optional(v.id("platformThreads")), targetPath: v.optional(v.string()), recipients: v.array(v.string()), senderLabel: v.optional(v.string()), subject: v.optional(v.string()), body: v.string() }),
   v.object({ kind: v.literal("contact_form"), targetUrl: v.string(), fields: v.array(v.object({ name: v.string(), label: v.optional(v.string()), value: v.string(), sensitivity: v.union(v.literal("normal"), v.literal("personal"), v.literal("sensitive")) })) }),
   v.object({ kind: v.literal("portal_account_operation"), connectionId: v.id("portalConnections"), operation: v.union(v.literal("connect"), v.literal("reauth"), v.literal("disconnect")), accountLabel: v.optional(v.string()) }),
-  v.object({ kind: v.literal("email_message"), recipientName: v.string(), recipientEmail: v.string(), subject: v.string(), body: v.string() }),
+  v.object({ kind: v.literal("email_message"), recipientName: v.string(), recipientEmail: v.string(), subject: v.string(), body: v.string(), mailThreadId: v.optional(v.id("mailThreads")), parentMessageId: v.optional(v.string()) }),
 );
 const statusValidator = v.union(
   v.literal("drafted"), v.literal("awaiting_approval"), v.literal("approved"),
@@ -38,7 +45,8 @@ const executorValidator = v.union(
   v.literal("agentmail"),
 );
 
-function actionFlow(actionType: Doc<"actionRequests">["requestedActionType"]): "contact" | "listing" | "auth" {
+function actionFlow(actionType: Doc<"actionRequests">["requestedActionType"], payload?: Doc<"actionRequests">["payload"]): "contact" | "reply" | "listing" | "auth" {
+  if (payload?.kind === "email_message" && payload.mailThreadId) return "reply";
   if (actionType === "publish_listing") return "listing";
   if (actionType === "create_portal_account") return "auth";
   return "contact";
@@ -46,6 +54,7 @@ function actionFlow(actionType: Doc<"actionRequests">["requestedActionType"]): "
 
 function cleanPayload(payload: Doc<"actionRequests">["payload"]): Doc<"actionRequests">["payload"] {
   if (payload.kind === "email_message") {
+    if ((payload.mailThreadId === undefined) !== (payload.parentMessageId === undefined)) throw new ConvexError({ code: "INVALID_EMAIL_REPLY_ROUTE" });
     const email = normalizeEmail(payload.recipientEmail);
     const subject = normalizeText(payload.subject).slice(0, 200);
     const body = normalizeText(payload.body).slice(0, 20_000);
@@ -101,7 +110,7 @@ function hostMatchesPlatform(targetUrl: string, canonicalDomain: string): boolea
 }
 
 async function payloadHash(payload: Doc<"actionRequests">["payload"]): Promise<string> {
-  return await contentHash([JSON.stringify(payload)]);
+  return await actionPayloadHash(payload);
 }
 
 function actionPublic(
@@ -165,10 +174,13 @@ export const createDraft = mutation({
   returns: v.id("actionRequests"),
   handler: async (ctx, args) => {
     const ownerId = await requireUserId(ctx);
-    if (args.savedNeedId) { const need = await ctx.db.get(args.savedNeedId); if (need?.ownerId !== ownerId) throw new ConvexError({ code: "NEED_NOT_FOUND" }); }
+    const need = args.savedNeedId ? await ctx.db.get(args.savedNeedId) : null;
+    if (args.savedNeedId && need?.ownerId !== ownerId) throw new ConvexError({ code: "NEED_NOT_FOUND" });
     if (args.connectionId) { const connection = await ctx.db.get(args.connectionId); if (connection?.ownerId !== ownerId) throw new ConvexError({ code: "CONNECTION_NOT_FOUND" }); }
     if (args.mandateId) { const mandate = await ctx.db.get(args.mandateId); if (mandate?.ownerId !== ownerId) throw new ConvexError({ code: "MANDATE_NOT_FOUND" }); }
-    if (args.opportunityId) { const opportunity = await ctx.db.get(args.opportunityId); if (opportunity?.ownerId !== ownerId) throw new ConvexError({ code: "OPPORTUNITY_NOT_FOUND" }); }
+    const opportunity = args.opportunityId ? await ctx.db.get(args.opportunityId) : null;
+    if (args.opportunityId && (opportunity?.ownerId !== ownerId || opportunity.savedNeedId !== args.savedNeedId)) throw new ConvexError({ code: "OPPORTUNITY_NOT_FOUND" });
+    const signal = opportunity?.signalId ? await ctx.db.get(opportunity.signalId) : null;
     if (args.handoffId) { const handoff = await ctx.db.get(args.handoffId); if (handoff?.ownerId !== ownerId) throw new ConvexError({ code: "HANDOFF_NOT_FOUND" }); }
     const clean = cleanPayload(args.payload);
     assertActionPayloadMatch(args.requestedActionType, clean);
@@ -191,6 +203,9 @@ export const createDraft = mutation({
     const now = Date.now();
     const requestId = await ctx.db.insert("actionRequests", {
       ownerId, ...args, payload: clean,
+      matchingNeedRevision: need ? need.matchingRevision ?? 0 : undefined,
+      matchingSignalId: signal?._id,
+      matchingSignalRevision: signal ? await signalMatchRevision(signal) : undefined,
       personalDataScopes: [...new Set(args.personalDataScopes)],
       contentVersion: 1, contentHash: await payloadHash(clean), status: "drafted",
       createdAt: now, updatedAt: now,
@@ -225,7 +240,7 @@ export const createContactFormFromScout = internalMutation({
   },
   returns: v.object({
     requestId: v.id("actionRequests"),
-    status: v.union(v.literal("approved"), v.literal("awaiting_approval")),
+    status: statusValidator,
     authorizedByAutopilot: v.boolean(),
   }),
   handler: async (ctx, args) => {
@@ -341,6 +356,9 @@ export const createContactFormFromScout = internalMutation({
     const requestId = await ctx.db.insert("actionRequests", {
       ownerId: args.ownerId,
       savedNeedId: need._id,
+      matchingNeedRevision: need.matchingRevision ?? 0,
+      matchingSignalId: signal._id,
+      matchingSignalRevision: await signalMatchRevision(signal),
       mandateId: authorizedByAutopilot ? mandate?._id : undefined,
       platformId: source.platformId,
       adapterBindingId: binding._id,
@@ -356,44 +374,46 @@ export const createContactFormFromScout = internalMutation({
       createdAt: now,
       updatedAt: now,
     });
-    if (authorizedByAutopilot && mandate) {
-      await ctx.db.insert("actionApprovals", {
-        requestId,
-        ownerId: args.ownerId,
-        contentVersion: 1,
-        contentHash: hash,
-        payloadSnapshot: payload,
-        policyVersionId: policy._id,
-        decision: "authorized_by_mandate",
-        mandateId: mandate._id,
-        mandateVersion: mandate.version,
-        mandateHash: mandate.contentHash,
-        decidedAt: now,
-      });
-      await ctx.db.insert("auditEvents", { eventKey: `action:${requestId}:scout_autopilot:1`, actorType: "system", actorUserId: args.ownerId, entityKey: `action:${requestId}`, eventType: "action.scout_authorized_by_mandate", actionRequestId: requestId, policyId: policy._id, afterHash: hash, occurredAt: now });
-      await ctx.scheduler.runAfter(0, internal.firecrawlInteract.executeApprovedWorker, {
-        ownerId: args.ownerId,
-        requestId,
-      });
-    } else {
-      await ctx.db.insert("auditEvents", { eventKey: `action:${requestId}:approval_requested:1`, actorType: "system", actorUserId: args.ownerId, entityKey: `action:${requestId}`, eventType: "action.scout_drafted_webform", actionRequestId: requestId, policyId: policy._id, afterHash: hash, occurredAt: now });
+    if (authorizedByAutopilot) {
+      await ctx.db.patch(requestId, { status: "drafted" });
+      const result = await submitRequest(ctx, args.ownerId, requestId);
+      return { requestId, status: result.status, authorizedByAutopilot: result.authorizedByMandate };
     }
-    return {
-      requestId,
-      status: authorizedByAutopilot ? "approved" as const : "awaiting_approval" as const,
-      authorizedByAutopilot,
-    };
+    await ctx.db.insert("auditEvents", { eventKey: `action:${requestId}:approval_requested:1`, actorType: "system", actorUserId: args.ownerId, entityKey: `action:${requestId}`, eventType: "action.scout_drafted_webform", actionRequestId: requestId, policyId: policy._id, afterHash: hash, occurredAt: now });
+    return { requestId, status: "awaiting_approval" as const, authorizedByAutopilot: false };
   },
 });
 
+const submitResult = v.object({ status: statusValidator, authorizedByMandate: v.boolean(), reasons: v.array(v.string()) });
 export const submit = mutation({
   args: { requestId: v.id("actionRequests") },
-  returns: v.object({ status: statusValidator, authorizedByMandate: v.boolean(), reasons: v.array(v.string()) }),
-  handler: async (ctx, args) => {
-    const ownerId = await requireUserId(ctx);
+  returns: submitResult,
+  handler: async (ctx, args) => submitRequest(ctx, await requireUserId(ctx), args.requestId),
+});
+
+export const submitChecked = internalMutation({
+  args: { ownerId: v.id("users"), requestId: v.id("actionRequests") }, returns: submitResult,
+  handler: async (ctx, args) => submitRequest(ctx, args.ownerId, args.requestId),
+});
+
+async function submitRequest(ctx: MutationCtx, ownerId: Id<"users">, requestId: Id<"actionRequests">): Promise<{
+  status: Doc<"actionRequests">["status"]; authorizedByMandate: boolean; reasons: string[];
+}> {
+    const args = { requestId };
     const request = await ctx.db.get(args.requestId);
     if (request === null || request.ownerId !== ownerId) throw new ConvexError({ code: "ACTION_NOT_FOUND" });
+    if (["queued", "approved", "executing", "executed"].includes(request.status)) {
+      const approval = await ctx.db.query("actionApprovals")
+        .withIndex("by_request_and_content_version", (q) => q.eq("requestId", request._id).eq("contentVersion", request.contentVersion))
+        .unique();
+      return {
+        status: request.status,
+        authorizedByMandate: request.status !== "queued" && approval?.decision === "authorized_by_mandate" && approval.ownerId === ownerId && approval.contentHash === request.contentHash,
+        reasons: [],
+      };
+    }
     if (request.status !== "drafted") throw new ConvexError({ code: "INVALID_ACTION_STATE" });
+    if (request.providerActionKind === "acceptance") throw new ConvexError({ code: "ACCEPTANCE_REVIEW_REQUIRED" });
     if (request.automationMode !== "standing_mandate" || !request.mandateId) {
       const now = Date.now();
       await ctx.db.patch(request._id, { status: "awaiting_approval", updatedAt: now });
@@ -404,6 +424,28 @@ export const submit = mutation({
     if (mandate === null || mandate.ownerId !== ownerId || mandate.savedNeedId !== request.savedNeedId || mandate.status !== "active") {
       await ctx.db.patch(request._id, { status: "awaiting_approval", updatedAt: Date.now() });
       return { status: "awaiting_approval" as const, authorizedByMandate: false, reasons: ["The selected standing mandate is not valid for this search."] };
+    }
+    const platform = request.platformId ? await ctx.db.get(request.platformId) : null;
+    const isOwnedMailReply = request.payload.kind === "email_message" && request.payload.mailThreadId !== undefined && request.payload.parentMessageId !== undefined;
+    if (request.payload.kind !== "portal_account_operation" && !isOwnedMailReply && platform?.canonicalDomain !== "roomscout.dev") {
+      await ctx.db.patch(request._id, { status: "awaiting_approval", error: "CONTROLLED_DEMO_ONLY", updatedAt: Date.now() });
+      return { status: "awaiting_approval", authorizedByMandate: false, reasons: ["Autonomous demo communication is restricted to roomscout.dev."] };
+    }
+    const semantic = request.payload.kind === "portal_account_operation" ? null : await currentMessageSafety(ctx, request);
+    if (request.payload.kind !== "portal_account_operation" && !semantic) {
+      if (!await messageSafetyContext(ctx, request)) {
+        await ctx.db.patch(request._id, { status: "expired", error: "MESSAGE_CONTEXT_CHANGED", updatedAt: Date.now() });
+        return { status: "expired", authorizedByMandate: false, reasons: ["The search or provider conversation changed."] };
+      }
+      await ctx.db.patch(request._id, { status: "queued", updatedAt: Date.now() });
+      await scoutWorkpool.enqueueAction(ctx, internal.messageSafety.assessAndAuthorize, { requestId: request._id }, {
+        onComplete: internal.messageSafety.assessmentCompleted, context: { requestId: request._id, contentVersion: request.contentVersion },
+      });
+      return { status: "queued", authorizedByMandate: false, reasons: ["Scout is checking the final message before authorization."] };
+    }
+    if (semantic && !permitsAutonomy(semantic.assessment)) {
+      await ctx.db.patch(request._id, { status: "awaiting_approval", error: "MESSAGE_REQUIRES_REVIEW", updatedAt: Date.now() });
+      return { status: "awaiting_approval", authorizedByMandate: false, reasons: [semantic.assessment.explanation] };
     }
     const policy = request.policyVersionId ? await ctx.db.get(request.policyVersionId) : null;
     const connection = request.connectionId ? await ctx.db.get(request.connectionId) : null;
@@ -435,16 +477,16 @@ export const submit = mutation({
       stoppedAt: mandate.stoppedAt,
     }, {
       now: Date.now(), actionType: request.requestedActionType,
-      platformId: request.platformId, personalData: request.personalDataScopes as PersonalDataScope[],
+      platformId: request.platformId, personalData: [...new Set([...request.personalDataScopes, ...(semantic?.assessment.personalDataScopes ?? [])])] as PersonalDataScope[],
       contactsAlreadyAttemptedToday: countUniqueAttemptedRequests(executions),
       browserMinutesUsedToday,
-      proposedMonthlyPriceEur: request.proposedMonthlyPriceEur,
+      proposedMonthlyPriceEur: semantic?.assessment.proposedMonthlyPriceEur ?? request.proposedMonthlyPriceEur,
       policyDecision: policy?.decision ?? "unknown",
       policyAutomationLevel: policy?.maxAutomationLevel ?? "disabled",
       connectionActive: connection?.ownerId === ownerId && connection.status === "active",
       complaintRecorded: mailThreads.some((thread) => thread.lastDeliveryStatus === "complained"),
       suitableRoomConfirmed: converted.length > 0,
-      bindingCommitment: containsBindingCommitment(request.payload),
+      bindingCommitment: semantic ? semantic.assessment.classification !== "non_binding" : containsBindingCommitment(request.payload),
     });
     if (!decision.authorized) {
       await ctx.db.patch(request._id, { status: "awaiting_approval", updatedAt: Date.now() });
@@ -461,8 +503,7 @@ export const submit = mutation({
     await ctx.db.patch(request._id, { status: "approved", updatedAt: now });
     await ctx.db.insert("auditEvents", { eventKey: `action:${request._id}:mandate_authorized:${request.contentVersion}`, actorType: "system", actorUserId: ownerId, entityKey: `action:${request._id}`, eventType: "action.authorized_by_mandate", actionRequestId: request._id, policyId: request.policyVersionId, afterHash: request.contentHash, occurredAt: now });
     return { status: "approved" as const, authorizedByMandate: true, reasons: [] };
-  },
-});
+}
 
 export const decide = mutation({
   args: { requestId: v.id("actionRequests"), decision: v.union(v.literal("approved"), v.literal("rejected")), expectedContentVersion: v.number(), expectedContentHash: v.string(), expectedPayload: payloadValidator },
@@ -472,8 +513,9 @@ export const decide = mutation({
     const request = await ctx.db.get(args.requestId);
     if (request === null || request.ownerId !== ownerId) throw new ConvexError({ code: "ACTION_NOT_FOUND" });
     if (request.status !== "awaiting_approval") throw new ConvexError({ code: "INVALID_ACTION_STATE" });
+    if (request.providerActionKind === "acceptance" && args.decision === "approved") throw new ConvexError({ code: "ACCEPTANCE_REVIEW_REQUIRED" });
     const expected = cleanPayload(args.expectedPayload);
-    if (request.contentVersion !== args.expectedContentVersion || request.contentHash !== args.expectedContentHash || await payloadHash(expected) !== request.contentHash || JSON.stringify(expected) !== JSON.stringify(request.payload)) {
+    if (request.contentVersion !== args.expectedContentVersion || request.contentHash !== args.expectedContentHash || await payloadHash(expected) !== request.contentHash || canonicalJson(expected) !== canonicalJson(request.payload)) {
       throw new ConvexError({ code: "ACTION_CONTENT_CHANGED" });
     }
     const now = Date.now();
@@ -491,7 +533,7 @@ export const getApprovedContactForm = internalQuery({
     const request = await ctx.db.get(args.requestId);
     if (request === null || request.ownerId !== args.ownerId || request.status !== "approved" || request.payload.kind !== "contact_form" || !request.platformId || !request.policyVersionId) return null;
     const approval = await ctx.db.query("actionApprovals").withIndex("by_request_and_content_version", (q) => q.eq("requestId", request._id).eq("contentVersion", request.contentVersion)).unique();
-    if (approval === null || approval.contentHash !== request.contentHash || JSON.stringify(approval.payloadSnapshot) !== JSON.stringify(request.payload)) return null;
+    if (approval === null || approval.contentHash !== request.contentHash || canonicalJson(approval.payloadSnapshot) !== canonicalJson(request.payload)) return null;
     const [platform, policy] = await Promise.all([ctx.db.get(request.platformId), ctx.db.get(request.policyVersionId)]);
     if (platform === null || policy === null || policy.platformId !== platform._id || policy.flow !== "contact" || policy.status !== "approved" || policy.decision !== "allowed" || (policy.maxAutomationLevel !== "prepare_only" && policy.maxAutomationLevel !== "approved_execute") || !hostMatchesPlatform(request.payload.targetUrl, platform.canonicalDomain)) return null;
     return { targetUrl: request.payload.targetUrl, fields: request.payload.fields };
@@ -513,6 +555,21 @@ export const markPreparing = internalMutation({
     const executionId = await ctx.db.insert("actionExecutions", { requestId: request._id, ownerId: args.ownerId, approvalId: approval._id, platformId: request.platformId, connectionId: request.connectionId, adapterBindingId: request.adapterBindingId, status: "running", idempotencyKey, providerActionId: args.providerActionId, startedAt: now, createdAt: now, updatedAt: now });
     await ctx.db.patch(request._id, { status: "executing", executionIdempotencyKey: idempotencyKey, updatedAt: now });
     return executionId;
+  },
+});
+
+export const recordBrowserSessionBusy = internalMutation({
+  args: { ownerId: v.id("users"), requestId: v.id("actionRequests") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const request = await ctx.db.get(args.requestId);
+    if (request?.ownerId === args.ownerId && request.status === "approved") {
+      const now = Date.now();
+      await ctx.db.patch(request._id, { error: "BROWSER_SESSION_BUSY", updatedAt: now });
+      await ctx.db.insert("notifications", { ownerId: args.ownerId, kind: "system", title: "Portal action is waiting",
+        body: "The controlled portal is busy with another session. Nothing was sent; try again after that session finishes.", createdAt: now });
+    }
+    return null;
   },
 });
 
@@ -654,6 +711,53 @@ export const claimForExecutor = internalMutation({
     if (request.expiresAt !== undefined && request.expiresAt <= Date.now()) {
       throw new ConvexError({ code: "ACTION_EXPIRED" });
     }
+    if (request.providerConversationId && !await messageSafetyContext(ctx, request)) {
+      throw new ConvexError({ code: "PROVIDER_CONVERSATION_CHANGED" });
+    }
+    if (request.payload.kind === "email_message" && request.payload.mailThreadId && request.payload.parentMessageId) {
+      const thread = await ctx.db.get(request.payload.mailThreadId);
+      const conversation = request.providerConversationId ? await ctx.db.get(request.providerConversationId) : null;
+      const mailbox = thread?.mailboxId ? await ctx.db.get(thread.mailboxId) : null;
+      const messages = thread ? await ctx.db.query("mailMessages").withIndex("by_thread_and_received_at", (q) => q.eq("threadId", thread._id)).order("desc").take(20) : [];
+      const parent = messages.find((message) => message.direction === "inbound");
+      if (!thread || thread.ownerId !== args.ownerId || conversation?.mailThreadId !== thread._id || !mailbox || mailbox.ownerId !== args.ownerId || mailbox.status !== "active" ||
+        !parent || parent.providerMessageId !== request.payload.parentMessageId || normalizeEmail(parent.from) !== request.payload.recipientEmail) {
+        throw new ConvexError({ code: "EMAIL_REPLY_CONTEXT_CHANGED" });
+      }
+    }
+    if (request.savedNeedId) {
+      const need = await ctx.db.get(request.savedNeedId);
+      const otherAcceptance = need?.acceptanceRequestId && need.acceptanceRequestId !== request._id
+        ? await ctx.db.get(need.acceptanceRequestId) : null;
+      if (otherAcceptance && ["approved", "executing", "executed"].includes(otherAcceptance.status)) {
+        throw new ConvexError({ code: "ANOTHER_ACCEPTANCE_IN_PROGRESS" });
+      }
+    }
+    const startsConversation = request.payload.kind === "contact_form" || (request.payload.kind === "email_message" && !request.payload.mailThreadId) ||
+      (request.payload.kind === "platform_message" && !request.payload.threadId);
+    if (startsConversation && request.savedNeedId) {
+      const need = await ctx.db.get(request.savedNeedId);
+      if (!need || need.ownerId !== args.ownerId || need.status !== "active" ||
+        (need.matchingRevision ?? 0) !== (request.matchingNeedRevision ?? 0)) {
+        throw new ConvexError({ code: "ACTION_SEARCH_CHANGED" });
+      }
+    }
+    if (startsConversation && request.matchingSignalId) {
+      const signal = await ctx.db.get(request.matchingSignalId);
+      if (!signal || signal.status !== "published" || request.matchingSignalRevision !== await signalMatchRevision(signal)) {
+        throw new ConvexError({ code: "ACTION_SIGNAL_CHANGED" });
+      }
+    }
+    if (request.opportunityId && startsConversation) {
+      const opportunity = await ctx.db.get(request.opportunityId);
+      if (!opportunity || opportunity.ownerId !== args.ownerId || !await opportunityMatchIsCurrent(ctx, opportunity, true)) {
+        throw new ConvexError({ code: "OPPORTUNITY_NO_LONGER_MATCHES" });
+      }
+      const signal = opportunity.signalId ? await ctx.db.get(opportunity.signalId) : null;
+      if (!signal || request.matchingSignalRevision !== await signalMatchRevision(signal)) {
+        throw new ConvexError({ code: "ACTION_SIGNAL_CHANGED" });
+      }
+    }
     const [approval, platform, policy, binding, connection] = await Promise.all([
       ctx.db.query("actionApprovals").withIndex("by_request_and_content_version", (q) =>
         q.eq("requestId", request._id).eq("contentVersion", request.contentVersion),
@@ -663,12 +767,13 @@ export const claimForExecutor = internalMutation({
       ctx.db.get(request.adapterBindingId),
       request.connectionId ? ctx.db.get(request.connectionId) : Promise.resolve(null),
     ]);
-    const flow = actionFlow(request.requestedActionType);
+    const flow = actionFlow(request.requestedActionType, request.payload);
     if (
       approval === null ||
+      approval.ownerId !== args.ownerId ||
       approval.decision === "rejected" ||
       approval.contentHash !== request.contentHash ||
-      JSON.stringify(approval.payloadSnapshot) !== JSON.stringify(request.payload) ||
+      canonicalJson(approval.payloadSnapshot) !== canonicalJson(request.payload) ||
       platform === null ||
       policy === null ||
       binding === null ||
@@ -699,7 +804,28 @@ export const claimForExecutor = internalMutation({
       throw new ConvexError({ code: "PORTAL_CONNECTION_NOT_ACTIVE" });
     }
 
+    if (request.providerActionKind === "acceptance") {
+      const current = await assertAcceptanceCurrent(ctx, request);
+      const target = await resolveControlledPortal(ctx, current.conversation, current.signal, Date.now());
+      if (approval.decision !== "approved" || approval.providerOfferId !== request.providerOfferId ||
+        approval.providerOfferHash !== request.providerOfferHash || approval.reviewContextHash !== request.reviewContextHash ||
+        approval.reviewDestinationHash !== request.reviewDestinationHash ||
+        args.executor !== "browserbase" || !target || target.connection._id !== request.connectionId ||
+        target.thread?._id !== (request.payload.kind === "platform_message" ? request.payload.threadId : undefined) ||
+        target.binding._id !== request.adapterBindingId || target.policy._id !== request.policyVersionId) {
+        throw new ConvexError({ code: "ACCEPTANCE_APPROVAL_MISMATCH" });
+      }
+    }
+
     if (approval.decision === "authorized_by_mandate") {
+      const isOwnedMailReply = request.payload.kind === "email_message" && request.payload.mailThreadId !== undefined && request.payload.parentMessageId !== undefined;
+      if (request.payload.kind !== "portal_account_operation" && !isOwnedMailReply && platform.canonicalDomain !== "roomscout.dev") {
+        throw new ConvexError({ code: "CONTROLLED_DEMO_ONLY" });
+      }
+      const semantic = request.payload.kind === "portal_account_operation" ? null : await currentMessageSafety(ctx, request);
+      if (request.payload.kind !== "portal_account_operation" && (!semantic || !permitsAutonomy(semantic.assessment))) {
+        throw new ConvexError({ code: "FINAL_MESSAGE_NOT_CLEARED" });
+      }
       if (!approval.mandateId || approval.mandateVersion === undefined || !approval.mandateHash) {
         throw new ConvexError({ code: "MANDATE_SNAPSHOT_MISSING" });
       }
@@ -751,7 +877,7 @@ export const claimForExecutor = internalMutation({
         now: Date.now(),
         actionType: request.requestedActionType,
         platformId: request.platformId,
-        personalData: request.personalDataScopes as PersonalDataScope[],
+        personalData: [...new Set([...request.personalDataScopes, ...(semantic?.assessment.personalDataScopes ?? [])])] as PersonalDataScope[],
         // Re-claiming or resuming the same idempotent request must not consume
         // another contact slot. Other requests still count, including failed
         // attempts, because they may already have reached the recipient.
@@ -759,13 +885,13 @@ export const claimForExecutor = internalMutation({
           executions.filter((execution) => execution.requestId !== request._id),
         ),
         browserMinutesUsedToday: browserMinutes,
-        proposedMonthlyPriceEur: request.proposedMonthlyPriceEur,
+        proposedMonthlyPriceEur: semantic?.assessment.proposedMonthlyPriceEur ?? request.proposedMonthlyPriceEur,
         policyDecision: policy.decision,
         policyAutomationLevel: policy.maxAutomationLevel,
         connectionActive: args.executor !== "browserbase" || connection?.status === "active",
         complaintRecorded: complainedThreads.some((thread) => thread.lastDeliveryStatus === "complained"),
         suitableRoomConfirmed: converted.length > 0,
-        bindingCommitment: containsBindingCommitment(request.payload),
+        bindingCommitment: semantic ? semantic.assessment.classification !== "non_binding" : containsBindingCommitment(request.payload),
       });
       if (!authorization.authorized) {
         throw new ConvexError({ code: "MANDATE_NO_LONGER_AUTHORIZES", reasons: authorization.reasons });
@@ -794,6 +920,21 @@ export const claimForExecutor = internalMutation({
       };
     }
     const now = Date.now();
+    if (args.executor === "browserbase") {
+      if (connection === null) throw new ConvexError({ code: "PORTAL_CONNECTION_NOT_ACTIVE" });
+      if (connection.inboxSyncActiveGeneration !== undefined && (connection.inboxSyncDeadlineAt ?? 0) > now) {
+        throw new ConvexError({ code: "BROWSER_SESSION_BUSY" });
+      }
+      if (connection.activeWriteExecutionId && (connection.activeWriteDeadlineAt ?? 0) > now) {
+        throw new ConvexError({ code: "BROWSER_SESSION_BUSY" });
+      }
+      const connectionRuns = await ctx.db.query("browserRuns").withIndex("by_connection", (q) =>
+        q.eq("connectionId", connection._id),
+      ).order("desc").take(20);
+      if (connectionRuns.some((run) => ["queued", "running", "human_required"].includes(run.status))) {
+        throw new ConvexError({ code: "BROWSER_SESSION_BUSY" });
+      }
+    }
     const executionId = await ctx.db.insert("actionExecutions", {
       requestId: request._id,
       ownerId: args.ownerId,
@@ -807,6 +948,10 @@ export const claimForExecutor = internalMutation({
       createdAt: now,
       updatedAt: now,
     });
+    if (args.executor === "browserbase" && connection !== null) {
+      await ctx.db.patch(connection._id, { activeWriteExecutionId: executionId,
+        activeWriteDeadlineAt: now + BROWSER_WRITE_LOCK_MS, updatedAt: now });
+    }
     await ctx.db.patch(request._id, {
       status: "executing",
       executionIdempotencyKey: idempotencyKey,
@@ -933,6 +1078,21 @@ export const finishExecution = internalMutation({
     if (execution.status === "succeeded" || execution.status === "failed") return null;
     const request = await ctx.db.get(execution.requestId);
     if (request === null || request.ownerId !== args.ownerId) throw new ConvexError({ code: "ACTION_NOT_FOUND" });
+    if (args.status === "succeeded" && request.providerActionKind === "acceptance") {
+      const receipt = request.connectionId && args.providerMessageId ? await ctx.db.query("platformMessages")
+        .withIndex("by_connection_and_provider_message_id", (q) => q.eq("connectionId", request.connectionId!).eq("providerMessageId", args.providerMessageId!)).unique() : null;
+      const thread = receipt ? await ctx.db.get(receipt.threadId) : null;
+      if (!receipt || receipt.ownerId !== args.ownerId || receipt.direction !== "outbound" ||
+        request.payload.kind !== "platform_message" || receipt.threadId !== request.payload.threadId ||
+        receipt.bodyText !== request.payload.body || thread?.providerThreadId !== args.providerThreadId) {
+        throw new ConvexError({ code: "ACCEPTANCE_RECEIPT_REQUIRED" });
+      }
+    }
+    if (args.status === "succeeded" && request.payload.kind === "email_message" && request.payload.mailThreadId) {
+      const receipt = args.providerMessageId ? await ctx.db.query("mailMessages").withIndex("by_provider_message_id", (q) => q.eq("providerMessageId", args.providerMessageId!)).unique() : null;
+      const thread = await ctx.db.get(request.payload.mailThreadId);
+      if (!receipt || receipt.threadId !== thread?._id || receipt.direction !== "outbound" || receipt.body !== request.payload.body || thread.providerThreadId !== args.providerThreadId) throw new ConvexError({ code: "EMAIL_REPLY_RECEIPT_REQUIRED" });
+    }
     const now = Date.now();
     await ctx.db.patch(execution._id, {
       status: args.status,
@@ -950,8 +1110,29 @@ export const finishExecution = internalMutation({
     if (args.status === "succeeded" && request.opportunityId) {
       const opportunity = await ctx.db.get(request.opportunityId);
       if (opportunity?.ownerId === args.ownerId && opportunity.status !== "converted" && opportunity.status !== "dismissed") {
-        await ctx.db.patch(opportunity._id, { status: "contacted", mandateId: request.mandateId, updatedAt: now });
+        await ctx.db.patch(opportunity._id, { status: request.providerActionKind === "acceptance" ? "converted" : "contacted", mandateId: request.mandateId, updatedAt: now });
       }
+    }
+    if (args.status === "succeeded" && request.providerActionKind === "acceptance" && request.providerConversationId && request.providerOfferId && request.savedNeedId) {
+      const conversation = await ctx.db.get(request.providerConversationId);
+      const need = await ctx.db.get(request.savedNeedId);
+      if (conversation?.ownerId === args.ownerId && need?.ownerId === args.ownerId) {
+        await ctx.db.patch(conversation._id, { acceptedOfferId: request.providerOfferId, acceptedAt: now, state: "closed", updatedAt: now });
+        if (need.status === "active") await setNeedStatus(ctx, need, "paused");
+        const mandate = await ctx.db.query("searchMandates").withIndex("by_owner_and_saved_need_and_status", (q) =>
+          q.eq("ownerId", args.ownerId).eq("savedNeedId", need._id).eq("status", "active")).unique();
+        if (mandate) await ctx.db.patch(mandate._id, { stoppedAt: now, updatedAt: now });
+        await ctx.db.insert("notifications", { ownerId: args.ownerId, kind: "system", title: "Offer acceptance sent",
+          body: "Your approved confirmation was sent in the controlled portal. Your search is paused. No payment or contract signature was performed.", createdAt: now });
+      }
+    }
+    if (args.status === "succeeded" && request.providerActionKind !== "acceptance" && request.providerConversationId && request.connectionId && args.providerThreadId) {
+      const thread = await ctx.db.query("platformThreads").withIndex("by_connection_and_provider_thread_id", (q) =>
+        q.eq("connectionId", request.connectionId!).eq("providerThreadId", args.providerThreadId!),
+      ).unique();
+      if (thread) await ctx.runMutation(internal.providerConversations.attachPlatformThread, {
+        conversationId: request.providerConversationId, requestId: request._id, threadId: thread._id,
+      });
     }
     await ctx.db.insert("auditEvents", {
       eventKey: `action:${request._id}:finished:${execution.idempotencyKey}`,

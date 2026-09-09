@@ -618,3 +618,379 @@ check `running` after its only page result had been delivered and fully
 processed; re-enabling the monitor briefly did not change that provider status,
 so it was returned to `paused`. This is retained as a provider-state follow-up,
 not reported as a completed-check event.
+
+## 2026-09-08 — Reconciled Autopilot history and matching lifecycle
+
+Backfilled the unlogged `bafc29e` checkpoint from September 2: the musician flow
+now starts with a revocable non-binding Autopilot mandate, advanced controls are
+collapsed, and the brand uses a wordmark. Browserbase registration verifies the
+authenticated inbox contract before marking a connection active; portal writes
+carry the existing provider thread identifier. These are implemented paths with
+regression coverage, not evidence of a complete live signup/send/reply loop.
+The main app continues to mount the official AgentMail Component and the locally
+extended Firecrawl Component; the hackathon header follows the skill's narrower
+`@convex-dev/*` component listing convention.
+
+Started the next delivery block with tests that reproduced stale matches after
+search edits, late asynchronous writes and candidate cutoff errors. Activation
+now shares the saved-need lifecycle across Guided and Autopilot and schedules
+matching before orchestration. Matching processes bounded pages rather than a
+fixed candidate prefix, retires obsolete opportunities without deleting history,
+and checks the saved-need revision plus a digest of the actual signal content.
+Queries and first-contact execution reject obsolete matches immediately. Cached
+embeddings contribute ranking without making their availability a prerequisite
+for exact-constraint matching. A known over-budget monthly supply quote is now
+a hard exclusion; unknown or non-comparable prices remain explicit uncertainty.
+Free-text equipment overlap no longer claims that a mentioned instrument is
+allowed. Added a native structured-output assessment through the existing
+Convex AI Gateway adapter for requirements, schedule, supported monthly cost
+including extras, and explicit sharing intent. Application validation rejects
+invented evidence quotes and incomplete requirement coverage. These checks
+establish grounding and shape, not infallible semantic understanding: real-model
+quality remains to be measured in the planned evaluation milestone.
+
+Assessments are privately cached by search revision, signal-content revision,
+model and prompt version. Failed assessments retain visible uncertainty and
+hold automatic first contact rather than silently treating unknown conditions
+as satisfied. Each matching page permits at most two concurrent assessment
+calls; the cross-user Workpool concurrency layer remains pending. Cached
+embeddings cannot overrule hard equipment, schedule or price conflicts.
+Prepared first contacts also retain their own search/signal snapshots, so an
+old draft cannot inherit the validity of a newly recomputed match.
+
+Scout now renders the same owner-scoped, current-need match projection as My
+Search rather than all city listings. Dismissals persist, paused searches have
+honest empty states, and an explicitly rate-limited Refresh matches control
+allows legacy searches or temporarily failed assessments to be recomputed.
+The schema additions are optional for existing records. Legacy match rows are
+not marked valid by a synthetic backfill: they need an actual recomputation
+during the later controlled Development rollout.
+
+Final local verification: 270 tests across 54 files, TypeScript, ESLint and the
+Vite production build passed. Existing browser smoke flows passed five tests
+with one intentional desktop skip for a mobile-only navigation test. The new
+authenticated Scout UI and semantic boundaries were tested with isolated data
+and model doubles; these are not live agent evaluations. Convex code generation
+refreshed bindings, but no deployment, provider crawl, inbox provisioning or
+outgoing message was performed. The approved complete scope is tracked in
+`docs/AUTOPILOT_DELIVERY_PLAN.md`; private motivations and private drafts are not
+part of public project artifacts.
+
+## 2026-09-08 — Shared Scout turns and private provider offers
+
+Extracted the existing Convex Agent invocation into one runtime shared by the
+musician chat, matched opportunities and provider updates. The same Gateway model,
+case cards, durable musician facts and compressed memory remain in use. A failed
+semantic-memory lookup no longer aborts a turn that still has structured memory.
+Only musician turns receive memory-write and search-edit tools. Provider threads
+get read-only musician context and a structured assessment tool; their statements
+cannot redefine the musician's preferences. Recent private provider progress is
+available to the musician's Scout without mixing different providers' histories.
+
+Known-thread AgentMail receipts now enqueue interpretation transactionally with
+message storage. Bound portal-thread receipts use the same entry path. Separate
+provider threads remain separate even when they relate to the same indexed room.
+Assessments preserve evidence quotes, recurring cost, flexible additional terms,
+constraint verdicts, unresolved questions, contradictions and a proposed next
+step. Private immutable offer revisions are tied to the conversation, search and
+listing-content revisions. New incoming messages invalidate the previous offer
+immediately; late AI results cannot restore its eligibility. Public listing data
+and musician memory are not rewritten from a private reply. The old email parser
+entry point is retained for in-flight-job compatibility, but now forwards to the
+shared Agent; its legacy completion hook no longer fabricates scored opportunities.
+
+Mounted the official Workpool component for provider interpretation with two
+concurrent jobs and up to three attempts with exponential backoff. Each provider
+conversation allows one active turn. Receipt deduplication and reuse of the
+persisted Agent prompt avoid duplicate incoming events and prompt entries.
+The pool retries interpretation only, not external writes. This does not yet
+provide the separate browser pool or global matching-normalization concurrency.
+
+Removed the deterministic Bandnet outreach generator from mandate orchestration.
+Controlled opportunities now enter the actual Scout instead of immediately
+creating an approved text template. Automatic opportunity handling is restricted
+to the exact first-party portal origin; real third-party listings remain a
+research/indexing path in this delivery block. The orchestration pages active
+mandates and opportunities, with separate internal function executions for their
+paginated reads. No inference in this milestone grants approval or sends mail.
+
+The existing Inbox displays the private assessment, known terms, unresolved
+conditions, evidence and explicitly unsent reply proposal. An outdated assessment
+is labelled as requiring reassessment rather than shown as a ready offer. Exact
+offer acceptance and automatic execution of the proposed non-binding reply are
+still to be connected through the action ledger and semantic final-text gate.
+Portal notification triggering, thread binding after sends, live mailbox/portal
+proofs, broader read-only source research and the Evalite harness remain pending.
+
+Verification: 290 tests across 57 files, TypeScript, ESLint and the Vite production
+build passed. Five existing public-browser smoke tests passed with one intentional
+mobile-only-test skip on desktop. New tests exercise quote validation, unknown and
+conditional constraints, numeric budget conflicts, receipt deduplication, stale
+results, owner isolation, provider-thread isolation and Inbox rendering. One test
+runs the registered Workpool through the real Convex Agent tool loop and its
+completion callback, replacing only the language model with a test double. That
+proves application wiring, not real-model quality. Bindings were regenerated;
+no deployment, real message, inbox creation or provider crawl occurred.
+
+## 2026-09-08 — Controlled replies, final-message checks and receipt binding
+
+Connected the Scout's proposed non-binding reply to the existing action ledger.
+The server resolves the exact controlled listing or private portal thread and
+uses its reviewed messaging adapter. Public listing sources and authenticated
+messaging sources can be separate registry records for the same platform; the
+connection is selected from the messaging binding rather than assumed to belong
+to the public index. One offer revision creates at most one reply request.
+Missing connections remain an explicit attention state, not a claimed send.
+
+The final outgoing message now receives an independent native structured-output
+assessment through the existing Convex AI Gateway adapter. The check evaluates
+non-binding versus binding meaning, uncertainty, disclosures, unsupported claims
+and proposed price in the current search, musician-memory and provider context.
+Its persisted result is bound to the exact payload, content version and context
+snapshot. Workpool retries interpretation, not browser writes. A failed or unsafe
+assessment holds the message; there is no silent regex fallback to authorization.
+Semantic classification is still a model judgement, not a guarantee. Real-model
+quality and adversarial behavior remain part of the planned evaluations.
+
+Deterministic owner, policy, mandate, limit and revision checks still decide
+whether execution is allowed. They run again immediately before the reviewed
+browser adapter clicks Send. Changes to the search, provider conversation,
+musician memory or message invalidate the previous semantic clearance. Payload
+hashes now use canonical JSON because Convex serialization can reorder object
+keys; equivalent stored objects no longer fail approval checks accidentally.
+Repeated submission reports the persisted approval decision rather than
+labelling an exact human approval as autonomous just because Autopilot is selected.
+
+A provider-confirmed portal receipt binds the resulting thread to the private
+Scout conversation. A bounded, deduplicated backfill also handles an incoming
+reply that arrived before this binding. Persistence failures after a possible
+submit keep an unknown outcome instead of blindly resending. The Inbox shows
+checking, authorized, delivery-checking and sent states from the action ledger;
+an Agent-generated proposal alone is never displayed as sent.
+
+Verification: 312 tests across 58 files, TypeScript, ESLint and the Vite production
+build passed. Five public Playwright smokes passed with one intentional desktop
+skip for the mobile-only navigation test. Added coverage includes initial and
+reply destinations, distinct source records, owner isolation, semantic holds,
+detected disclosures, stale context, idempotency, pre-click cancellation and the
+early-receipt binding race. Tests use model and provider doubles; the existing
+real Agent/Workpool test still exercises component wiring, not live model quality.
+No deployment, inbox provisioning, real message or provider crawl occurred.
+Exact offer acceptance, automatic signup/notification recovery, direct-mail reply
+dispatch, live portal proofs and Evalite remain open in the delivery plan.
+
+## 2026-09-08 — Exact offer acceptance and Development rollout
+
+Added a musician-facing review of the exact current offer, sender, destination,
+subject and acceptance text. Approval snapshots include the offer revision,
+payload version/hash, current search/memory context and the controlled portal
+thread and participants. Changed conditions or an in-progress provider turn make
+the review unavailable. Generic action approval cannot bypass this acceptance
+path; the browser executor revalidates the snapshot immediately before sending.
+
+Confirmation is based on a persisted outbound portal message whose thread and
+body match the approved payload. Only that receipt closes the provider
+conversation, pauses the search and stops the active mandate. Pending approval
+or execution is not displayed as delivery. The controlled message does not
+perform payment or contract signing. Competing acceptance requests for the same
+search are held while one is approved or executing.
+
+Expired or changed pre-send reviews can be prepared again under the same request
+with a new content version, preserving prior approval history. A cancelled or
+failed request with a running, unknown or provider-started execution cannot be
+reset this way. Reviewing actual browser cancellation paths exposed this case.
+A repeated browser worker now returns in-progress before connecting or clicking;
+recovery must inspect a receipt rather than submit the message again.
+
+Verification: 355 tests across 60 files passed, including exact acceptance,
+changed recipients/thread identifiers, competing offers, missing receipts,
+cross-owner access, safe review renewal and ambiguous cancellation cases.
+TypeScript, ESLint and production build passed. Five public Playwright smoke
+tests passed; the mobile-only navigation test remains intentionally skipped on
+desktop. These tests use isolated model/provider doubles, not live conversations.
+
+Deployed the backend to the Development deployment and installed the registered
+Scout Workpool and its batch worker. Deployment metadata confirms the three
+acceptance APIs. Production and its hosted frontend were not changed; no inbox
+was created and no real message or new crawl was initiated for this milestone.
+The real mailbox/browser round trip, semantic model quality checks, direct-mail
+reply dispatch and full evaluations remain open. This is an implementation and
+Development deployment checkpoint, not completion of the demo goal.
+
+## 2026-09-08 — Notification coordination, live model checks and Evalite foundation
+
+Unmatched AgentMail messages can now request a controlled portal inbox read only
+after matching the owned mailbox, reviewed connection, exact notification format
+and allowed origin. The email URL is not forwarded to a browser; the worker opens
+the fixed reviewed inbox. Browser Workpool coalesces replayed and concurrent hints,
+checks ownership/policy/session state again when running, and paginates due polls.
+Read/write session claims are coordinated transactionally. Bounded retries apply
+to pre-claim busy sessions and safe reads, never ambiguous sends. Even a duplicate
+worker arriving before the first provider session is attached returns in-progress.
+
+Deployed the backend to Development, including the browser Workpool. A management
+API call created one deterministic AgentMail webhook. Its creation response was
+smaller than expected, so the first local attempt failed after remote creation.
+Read-only reconciliation found that hook; a retry reused it rather than creating
+another. The provider materialized a pod filter, so coverage is **pod-wide**, not
+account-wide. Its signing secret was recovered from an exact configuration-matched
+detail response and transferred directly into Development environment settings.
+Both local and deployed read-only diagnostics confirm one hook, no configuration
+drift/collisions and a matching secret. No personal inbox was created at this
+checkpoint; coverage of two newly created inboxes still needs a real event proof.
+
+Ran six fixed synthetic matching cases through native structured outputs on the
+Convex Gateway with `openai/gpt-5.6-terra`. Version `constraints-v1` passed five:
+the per-person case incorrectly returned the unit price as a monthly band-cost
+lower bound. Version `constraints-v2` explicitly forbids such conversion without
+band size or monthly hours. It fixed that case, but the repeat still passed only
+five because the mandatory-extras case failed generation or strict grounding
+validation. The current probe does not distinguish those stages yet. Validation
+was not weakened and no regex substitute was added. These bounded checks are
+evidence of both progress and remaining model variability, not an overall quality
+score. No application records were written by the probes.
+
+Installed Evalite 0.19.0 as development tooling without upgrading AI SDK 7 or the
+Agent component. Its isolated framework smoke passes; fifteen scenario identifiers,
+five critical-case repetitions and strict result contracts are scaffolded. The
+real Convex Agent/simulator/judge backend is not yet connected. Evalite's built-in
+AI SDK provider tracing targets an older provider interface, so the runner uses
+manual action-boundary traces rather than replacing the production Gateway.
+Dependency audit reports one high and two moderate transitive development-tool
+advisories. The runner uses in-memory storage and run-once mode; no Evalite server
+is exposed. This limits exposure but does not resolve those advisories.
+
+Local checkpoint: 381 tests across 63 files, frontend and explicit Convex
+TypeScript checks, ESLint, build and evaluation-tooling typecheck passed. Five
+public browser smokes passed with one intentional desktop skip. The subsequent
+pre-session replay regression and Convex typecheck passed separately. Production
+and hosted frontends were not changed. No new crawl, browser session or message
+was initiated for this checkpoint; the webhook creation above was a real provider
+configuration write. Two-inbox provisioning, registration/notification round trips,
+direct-mail reply dispatch and the actual agent evaluations remain open.
+
+## 2026-09-08 — Two real personal inboxes provisioned
+
+Created exactly two labelled, backend-owned Development test actors; existing
+users were not repurposed and no public-auth signup is claimed. The bounded proof
+calls the normal `mailboxes.ensureForOwner` path twice concurrently for each
+actor. Both received distinct local mailbox records and distinct real AgentMail
+inboxes. A second complete invocation reported two reused inboxes and no errors.
+The read-only provider diagnostic now sees two accessible inboxes and the same
+single pod-wide webhook with a verified signing secret. No messages or portal
+registrations were initiated in this proof; live signed-event coverage remains
+unproven. Only two of the initial five permitted live-test inboxes were consumed.
+
+The public registration API now shares its actual Browserbase/OTP/mailbox logic
+with a Development-only proof entry that resolves a fixed test actor server-side.
+Foreign connections, unreviewed sources and non-Development execution are rejected
+before provider calls. It is ready for the next controlled registration step,
+not evidence that registration already succeeded.
+
+The fifteen server-side evaluation scenarios now match the Evalite runner IDs.
+The five repeated critical cases cover price changes, acceptance pressure,
+deposit requests, prompt injection and changed requirements/revoked authority.
+Typed test-controller events, not provider text, perform user-side changes.
+Hidden provider truth, Scout-visible input and judge rubrics are separated; these
+are catalogue/contract tests, not an executed real-Agent benchmark.
+
+Latest full local gate: 397 tests across 65 files plus frontend/Convex TypeScript,
+ESLint, build and evaluation-tooling typecheck passed. Development deployment
+succeeded after coordinated integration. One earlier push attempt encountered a
+subagent's unfinished module and failed typecheck; it was not a successful rollout.
+Subsequent pushes wait for an explicit shared-worktree write pause. The targeted
+Gateway extras case reproduced `UNGROUNDED_MONTHLY_PRICE`, so the remaining failure
+is a non-verbatim evidence quote rather than rejected native structured outputs.
+The validator remains strict. No Production deployment, commit or push occurred.
+
+## 2026-09-08 — Registration diagnosis and controlled provider simulator
+
+Prepared the two Development actors' connections through the shared reviewed
+connection helpers. The first real registration attempt failed before attaching
+a provider browser session. Stage-specific diagnostics and one controlled retry
+narrowed this to browser launch: Browserbase context creation succeeds, but the
+registration browser does not start. No signup page submission or verification
+email is proven. Diagnostics expose fixed codes rather than provider payloads.
+The updated backend passed explicit Convex TypeScript checks and deployed to
+Development. Investigation continues without repeating account registrations.
+
+The separate portal now has a local, internal-only provider-simulation controller.
+Each short-lived run owns a clearly labelled synthetic listing and an exact
+expected test participant. Replies use the same message-storage helper and Resend
+notification schedule as the authenticated UI. Replayed requests are idempotent,
+changed payloads are rejected, and a run is limited to eight replies. Closing a
+run hides its own listing without deleting history. Other listings/participants
+cannot be targeted. All 15 portal tests, explicit backend/frontend TypeScript,
+ESLint and Next.js build passed. This portal code is not deployed or live-proven.
+
+For fast evaluations, selected local in-memory `convex-test` isolation with the
+real Scout/domain functions and a Development-only fixed-model Gateway bridge.
+This avoids synthetic data in deployed tables; simulator/judge and complete
+scenario scores remain implementation work. Real mail/browser proofs are still
+separate. A later targeted extras-model retry passed without a prompt change;
+the earlier grounding failure therefore remains evidence of variability, not a
+resolved bug. No Production/static frontend deployment, commit or push occurred.
+
+## 2026-09-08 — Browserbase launch and real-Agent evaluation diagnostics
+
+Traced three distinct integration failures rather than treating them as missing
+credentials. Convex's bundled Stagehand package lacked its extension ZIP; declaring
+Stagehand as a Node external package preserves that asset. Session creation then
+returned HTTP 402 because the previous `[{ type: "none" }]` proxy configuration
+was treated as requiring the paid proxy capability. With `proxies: false`, both
+the direct SDK session probe and the normal Stagehand launcher succeeded in
+Development. The probes release their own sessions and contexts.
+
+A subsequent controlled registration attempt failed after attaching the browser,
+before the page could be accessed. A separate fixed-URL, read-only signup probe
+identified Stagehand v4's required `Stagehand.create({ browser })` initialization.
+All launch/reconnect paths now initialize the DOM driver and explicitly reject
+implicit Stagehand model inference; text interpretation remains on the existing
+Convex Gateway. Twelve focused tests pass; this last initialization change still
+needs its live proof. No additional signup submission is claimed.
+
+The first real Evalite bridge invocation rejected the SDK's string-valued system
+message at our input validator. After fixing that contract and sanitizing CLI
+errors, two one-turn happy-path spikes reached the real Terra-backed Agent and
+persisted an offer assessment locally. Both reported no observed external-action
+violation but did not reach offer readiness: constraints and availability still
+needed confirmation. The displayed aggregate score is not a completion metric;
+the simulator/Judge and full multi-round scenarios remain unfinished. Synthetic
+state stays in local convex-test, not the deployed application database.
+
+## 2026-09-09 — Interactive design port onto the live-data frontend
+
+Rebuilt the maintainer's Claude Design export as React application components,
+with three Sol implementation agents and main-agent integration/review. Shared
+Geist typography, the supplied grain artwork, orange organic presence and compact
+navigation replace the dense default consumer shell. The landing now combines a
+SaaS hero with the scroll-driven conversation, progressive/correctable facts,
+a shared fact-card-to-brief transition, a branching illustrative decision, bento
+sections and FAQ. A rejected weekday does not lead to an incompatible offer.
+Reduced-motion users receive a readable linear sequence.
+
+The authenticated Scout is voice-first, with opt-in chat/transcript, a real saved
+search projection, collapsible context and explicit brief review before Autopilot
+activation. Matches, questions, drafts and offers use existing Convex data and
+exact acceptance controls. Flexible facets remain visible. Settings link real
+source toggles, portal identities, mandate controls and memory operations. Billing,
+notification preferences and account export/deletion have no newly invented
+backend: their limitations are explicit. Operator tools keep their real queries
+and permissions under the new card/table treatment. Existing Inbox/search/map
+functions remain available rather than being replaced with prototype fixtures.
+
+Integration review caught and fixed route-param settings navigation, wrong-search
+selection when multiple needs exist, source-toggle error handling and voice
+unmounting when visiting the map. Voice now lives above authenticated routes.
+One response continuation follows a completed function-call batch; speech slots
+preserve transcript order. Startup cancellation, allocated-session cleanup and
+late tool results are generation/session/channel-scoped. Raw provider bodies and
+request identifiers are not shown in the voice/Scout error UI.
+
+Local verification: all 476 tests across 83 files passed, including the final
+draft-retention regression; TypeScript, ESLint and the production build passed.
+The landing, fact progression, centered brief, both decision branches and real
+login redirect were inspected in the browser. Authenticated visual inspection
+and live microphone/provider checks remain pending a signed-in browser session.
+No external outreach, new provider account, backend/static deployment, commit or
+push was performed. Implementation map: `docs/UI_DESIGN_PORT_2026-09-09.md`.

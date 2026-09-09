@@ -1,4 +1,5 @@
 import agent from "@convex-dev/agent/convex.config";
+import workpool from "@convex-dev/workpool/convex.config";
 import auth from "@convex-dev/auth/core/convex.config.js";
 import password from "@convex-dev/auth/providers/password/convex.config.js";
 import username from "@convex-dev/auth/username/convex.config.js";
@@ -32,6 +33,8 @@ app.use(auth, {
 app.use(username);
 app.use(password);
 app.use(agent);
+app.use(workpool, { name: "scoutWorkpool" });
+app.use(workpool, { name: "browserWorkpool" });
 app.use(rateLimiter);
 app.use(staticHosting);
 app.use(agentmail, {

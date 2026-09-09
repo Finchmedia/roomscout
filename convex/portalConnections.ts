@@ -15,6 +15,7 @@ import {
   PORTAL_RUN_TTLS_MS,
   normalizeHostname,
 } from "./integrations/portalSafety";
+import { PORTAL_WRITE_TTL_MS } from "./integrations/portalWriteAdapters";
 
 const connectionStatusValidator = v.union(
   v.literal("draft"),
@@ -254,42 +255,49 @@ export const getRunMine = query({
   },
 });
 
+export async function requestConnectionForOwner(
+  ctx: MutationCtx,
+  input: { ownerId: Id<"users">; sourceId: Id<"sources">; label: string },
+): Promise<Id<"portalConnections">> {
+  const source = await ctx.db.get(input.sourceId);
+  if (
+    source === null ||
+    (source.accessMode !== "public" && source.accessMode !== "authenticated")
+  ) {
+    throw new ConvexError({ code: "BROWSER_SOURCE_NOT_ELIGIBLE" });
+  }
+  const domain = normalizeHostname(source.baseUrl);
+  const existing = await ctx.db
+    .query("portalConnections")
+    .withIndex("by_owner_and_source", (q) =>
+      q.eq("ownerId", input.ownerId).eq("sourceId", source._id),
+    )
+    .unique();
+  if (existing !== null) return existing._id;
+  const now = Date.now();
+  return await ctx.db.insert("portalConnections", {
+    ownerId: input.ownerId,
+    sourceId: source._id,
+    label: cleanLabel(input.label),
+    status: "draft",
+    policyDecision: "pending",
+    allowReadOnlyRecon: false,
+    allowInboxPolling: false,
+    allowedDomains: [domain],
+    allowedPaths: [],
+    pollIntervalMinutes: 60,
+    failureCount: 0,
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
 export const requestConnection = mutation({
   args: { sourceId: v.id("sources"), label: v.string() },
   returns: v.id("portalConnections"),
   handler: async (ctx, args) => {
     const ownerId = await requireUserId(ctx);
-    const source = await ctx.db.get(args.sourceId);
-    if (
-      source === null ||
-      (source.accessMode !== "public" && source.accessMode !== "authenticated")
-    ) {
-      throw new ConvexError({ code: "BROWSER_SOURCE_NOT_ELIGIBLE" });
-    }
-    const domain = normalizeHostname(source.baseUrl);
-    const existing = await ctx.db
-      .query("portalConnections")
-      .withIndex("by_owner_and_source", (q) =>
-        q.eq("ownerId", ownerId).eq("sourceId", source._id),
-      )
-      .unique();
-    if (existing !== null) return existing._id;
-    const now = Date.now();
-    return await ctx.db.insert("portalConnections", {
-      ownerId,
-      sourceId: source._id,
-      label: cleanLabel(args.label),
-      status: "draft",
-      policyDecision: "pending",
-      allowReadOnlyRecon: false,
-      allowInboxPolling: false,
-      allowedDomains: [domain],
-      allowedPaths: [],
-      pollIntervalMinutes: 60,
-      failureCount: 0,
-      createdAt: now,
-      updatedAt: now,
-    });
+    return await requestConnectionForOwner(ctx, { ownerId, ...args });
   },
 });
 
@@ -383,52 +391,83 @@ export const reviewConnection = mutation({
   },
 });
 
+export type ControlledConnectionApproval = "prepared" | "reused_active" | "reauth_required";
+
+export async function approveControlledDemoConnectionCore(
+  ctx: MutationCtx,
+  connectionId: Id<"portalConnections">,
+  options: { preserveEstablishedState?: boolean } = {},
+): Promise<ControlledConnectionApproval> {
+  const connection = await ctx.db.get(connectionId);
+  if (connection === null) {
+    throw new ConvexError({ code: "CONNECTION_NOT_FOUND" });
+  }
+  const source = await ctx.db.get(connection.sourceId);
+  let sourceUrl: URL | undefined;
+  try {
+    sourceUrl = source ? new URL(source.baseUrl) : undefined;
+  } catch {
+    sourceUrl = undefined;
+  }
+  if (
+    source === null ||
+    source.slug !== "roomscout-dev-connected" ||
+    source.accessMode !== "authenticated" ||
+    source.automationReview !== "approved" ||
+    source.adapterKey !== "roomscout-dev-v1" ||
+    sourceUrl?.protocol !== "https:" ||
+    sourceUrl.hostname !== "roomscout.dev" ||
+    sourceUrl.port !== "" ||
+    (sourceUrl.pathname !== "/" && sourceUrl.pathname !== "")
+  ) {
+    throw new ConvexError({ code: "CONTROLLED_DEMO_SOURCE_REQUIRED" });
+  }
+  const domain = normalizeHostname(source.baseUrl);
+  const exactScope =
+    connection.platformId === source.platformId &&
+    connection.policyDecision === "allowed" &&
+    connection.allowReadOnlyRecon === false &&
+    connection.allowInboxPolling === true &&
+    connection.allowedDomains.length === 1 &&
+    connection.allowedDomains[0] === domain &&
+    connection.allowedPaths.join("\n") === ["/", "/sign-up", "/sign-in", "/listings", "/inbox"].join("\n") &&
+    connection.inboxPath === "/inbox" &&
+    connection.adapterKey === "roomscout-dev-v1" &&
+    connection.pollIntervalMinutes === 60;
+  if (options.preserveEstablishedState && exactScope && connection.status === "active") return "reused_active";
+  if (options.preserveEstablishedState && exactScope && connection.status === "reauth_required") return "reauth_required";
+  if (options.preserveEstablishedState && exactScope && connection.status === "needs_auth") return "prepared";
+  if (
+    options.preserveEstablishedState &&
+    (connection.status === "active" || connection.status === "reauth_required")
+  ) {
+    throw new ConvexError({ code: "CONTROLLED_DEMO_CONNECTION_DRIFT" });
+  }
+  const now = Date.now();
+  await ctx.db.patch(connection._id, {
+    platformId: source.platformId,
+    status: "needs_auth",
+    policyDecision: "allowed",
+    allowReadOnlyRecon: false,
+    allowInboxPolling: true,
+    allowedDomains: [domain],
+    allowedPaths: ["/", "/sign-up", "/sign-in", "/listings", "/inbox"],
+    inboxPath: "/inbox",
+    adapterKey: "roomscout-dev-v1",
+    pollIntervalMinutes: 60,
+    lastErrorCode: undefined,
+    circuitOpenUntil: undefined,
+    updatedAt: now,
+  });
+  return "prepared";
+}
+
 export const approveControlledDemoConnection = mutation({
   args: { connectionId: v.id("portalConnections") },
   returns: v.null(),
   handler: async (ctx, args) => {
     await requireOperatorId(ctx);
-    const connection = await ctx.db.get(args.connectionId);
-    if (connection === null) {
-      throw new ConvexError({ code: "CONNECTION_NOT_FOUND" });
-    }
-    const source = await ctx.db.get(connection.sourceId);
-    let sourceUrl: URL | undefined;
-    try {
-      sourceUrl = source ? new URL(source.baseUrl) : undefined;
-    } catch {
-      sourceUrl = undefined;
-    }
-    if (
-      source === null ||
-      source.slug !== "roomscout-dev-connected" ||
-      source.accessMode !== "authenticated" ||
-      source.automationReview !== "approved" ||
-      source.adapterKey !== "roomscout-dev-v1" ||
-      sourceUrl?.protocol !== "https:" ||
-      sourceUrl.hostname !== "roomscout.dev" ||
-      sourceUrl.port !== "" ||
-      (sourceUrl.pathname !== "/" && sourceUrl.pathname !== "")
-    ) {
-      throw new ConvexError({ code: "CONTROLLED_DEMO_SOURCE_REQUIRED" });
-    }
-    const domain = normalizeHostname(source.baseUrl);
-    const now = Date.now();
-    await ctx.db.patch(connection._id, {
-      platformId: source.platformId,
-      status: "needs_auth",
-      policyDecision: "allowed",
-      allowReadOnlyRecon: false,
-      allowInboxPolling: true,
-      allowedDomains: [domain],
-      allowedPaths: ["/", "/sign-up", "/sign-in", "/listings", "/inbox"],
-      inboxPath: "/inbox",
-      adapterKey: "roomscout-dev-v1",
-      pollIntervalMinutes: 60,
-      lastErrorCode: undefined,
-      circuitOpenUntil: undefined,
-      updatedAt: now,
-    });
+    await approveControlledDemoConnectionCore(ctx, args.connectionId);
     return null;
   },
 });
@@ -501,7 +540,16 @@ export const reserveRun = internalMutation({
     if (connection.circuitOpenUntil && connection.circuitOpenUntil > now) {
       throw new ConvexError({ code: "PORTAL_CIRCUIT_OPEN" });
     }
+    if (connection.activeWriteExecutionId && (connection.activeWriteDeadlineAt ?? 0) > now) {
+      throw new ConvexError({ code: "BROWSER_SESSION_BUSY" });
+    }
     await expireStaleRuns(ctx, now);
+    const connectionRuns = await ctx.db.query("browserRuns").withIndex("by_connection", (q) =>
+      q.eq("connectionId", connection._id),
+    ).order("desc").take(20);
+    if (connectionRuns.some((run) => ["queued", "running", "human_required"].includes(run.status))) {
+      throw new ConvexError({ code: "BROWSER_SESSION_BUSY" });
+    }
     for (const status of ["queued", "running", "human_required"] as const) {
       const active = await ctx.db
         .query("browserRuns")
@@ -526,6 +574,41 @@ export const reserveRun = internalMutation({
       createdAt: now,
     });
     return runId;
+  },
+});
+
+export const claimWriteSession = internalMutation({
+  args: { ownerId: v.id("users"), connectionId: v.id("portalConnections"), executionId: v.id("actionExecutions") },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const [connection, execution, context] = await Promise.all([
+      ctx.db.get(args.connectionId),
+      ctx.db.get(args.executionId),
+      ctx.db.query("browserContexts").withIndex("by_connection", (q) => q.eq("connectionId", args.connectionId)).order("desc").first(),
+    ]);
+    if (!connection || connection.ownerId !== args.ownerId || connection.status !== "active" || connection.policyDecision !== "allowed" ||
+      !execution || execution.ownerId !== args.ownerId || execution.connectionId !== connection._id || execution.status !== "claimed") return false;
+    if (connection.inboxSyncActiveGeneration !== undefined && (connection.inboxSyncDeadlineAt ?? 0) > now) return false;
+    if (context?.activeRunId) {
+      const activeRun = await ctx.db.get(context.activeRunId);
+      if (activeRun && ["queued", "running", "human_required"].includes(activeRun.status)) return false;
+    }
+    if (connection.activeWriteExecutionId && connection.activeWriteExecutionId !== execution._id && (connection.activeWriteDeadlineAt ?? 0) > now) return false;
+    await ctx.db.patch(connection._id, { activeWriteExecutionId: execution._id, activeWriteDeadlineAt: now + PORTAL_WRITE_TTL_MS, updatedAt: now });
+    return true;
+  },
+});
+
+export const releaseWriteSession = internalMutation({
+  args: { ownerId: v.id("users"), connectionId: v.id("portalConnections"), executionId: v.id("actionExecutions") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const connection = await ctx.db.get(args.connectionId);
+    if (connection?.ownerId === args.ownerId && connection.activeWriteExecutionId === args.executionId) {
+      await ctx.db.patch(connection._id, { activeWriteExecutionId: undefined, activeWriteDeadlineAt: undefined, updatedAt: Date.now() });
+    }
+    return null;
   },
 });
 
@@ -793,6 +876,10 @@ export const finishRun = internalMutation({
         failureCount >= PORTAL_CIRCUIT_FAILURES
           ? now + PORTAL_CIRCUIT_COOLDOWN_MS
           : undefined;
+      const failureBackoffMs = Math.min(
+        connection.pollIntervalMinutes * 60_000,
+        5 * 60_000 * 2 ** Math.min(Math.max(failureCount - 1, 0), 4),
+      );
       await ctx.db.patch(connection._id, {
         status:
           args.contextReady
@@ -807,7 +894,9 @@ export const finishRun = internalMutation({
         nextPollAt:
           args.status === "completed" && connection.allowInboxPolling
             ? now + connection.pollIntervalMinutes * 60_000
-            : undefined,
+            : args.status === "failed" && connection.allowInboxPolling && !args.reauthRequired
+              ? circuitOpenUntil ?? now + failureBackoffMs
+              : undefined,
         updatedAt: now,
       });
     }
@@ -866,22 +955,24 @@ export const getContextForOwner = internalQuery({
 });
 
 export const listDueInboxSyncs = internalQuery({
-  args: { now: v.number(), limit: v.number() },
-  returns: v.array(
-    v.object({
+  args: { now: v.number(), cursor: v.union(v.string(), v.null()), limit: v.number() },
+  returns: v.object({
+    rows: v.array(v.object({
       ownerId: v.id("users"),
       connectionId: v.id("portalConnections"),
-    }),
-  ),
+    })),
+    continueCursor: v.string(),
+    isDone: v.boolean(),
+  }),
   handler: async (ctx, args) => {
-    const limit = Math.max(1, Math.min(5, Math.floor(args.limit)));
-    const connections = await ctx.db
+    const limit = Math.max(1, Math.min(50, Math.floor(args.limit)));
+    const page = await ctx.db
       .query("portalConnections")
       .withIndex("by_status_and_next_poll_at", (q) =>
         q.eq("status", "active").lte("nextPollAt", args.now),
       )
-      .take(limit);
-    return connections
+      .paginate({ cursor: args.cursor, numItems: limit });
+    const rows = page.page
       .filter(
         (connection) =>
           connection.policyDecision === "allowed" &&
@@ -889,6 +980,7 @@ export const listDueInboxSyncs = internalQuery({
           (!connection.circuitOpenUntil || connection.circuitOpenUntil <= args.now),
       )
       .map((connection) => ({ ownerId: connection.ownerId, connectionId: connection._id }));
+    return { rows, continueCursor: page.continueCursor, isDone: page.isDone };
   },
 });
 

@@ -1,7 +1,8 @@
 "use node";
 
 import { Browserbase } from "@browserbasehq/sdk";
-import { browserbase, type Page, type StagehandBrowser } from "@browserbasehq/stagehand";
+import type { SessionCreateParams } from "@browserbasehq/sdk/resources/sessions/sessions";
+import { browserbase, Stagehand, type Page, type StagehandBrowser } from "@browserbasehq/stagehand";
 import { ConvexError, v } from "convex/values";
 import { z } from "zod";
 import { internal } from "./_generated/api";
@@ -24,7 +25,6 @@ import {
 import {
   PORTAL_WRITE_TTL_MS,
   buildPortalWriteUrl,
-  inspectPortalWriteSuccess,
   resolvePortalWriteWorkflow,
   runDeterministicPortalWrite,
   type PortalHumanBlocker,
@@ -100,6 +100,129 @@ type AgentRegistrationResult = {
   runId: Id<"browserRuns">;
   status: "waiting_verification" | "human_required" | "completed";
 };
+
+type RegistrationStartStage = "context_create" | "browser_launch" | "session_validation";
+const CONTROLLED_PROOF_CONFIRMATION = "RUN_CONTROLLED_PERSONAL_INBOX_PROOF_DEVELOPMENT" as const;
+
+const registrationProviderErrorNames: Readonly<Record<string, string>> = {
+  BadRequestError: "BAD_REQUEST",
+  AuthenticationError: "AUTHENTICATION",
+  PermissionDeniedError: "PERMISSION_DENIED",
+  NotFoundError: "NOT_FOUND",
+  ConflictError: "CONFLICT",
+  UnprocessableEntityError: "UNPROCESSABLE_ENTITY",
+  RateLimitError: "RATE_LIMIT",
+  InternalServerError: "INTERNAL_SERVER",
+  APIConnectionError: "CONNECTION",
+  APIConnectionTimeoutError: "CONNECTION_TIMEOUT",
+  BrowserbaseSessionError: "SESSION",
+  StagehandRuntimeIncompatibleError: "RUNTIME_INCOMPATIBLE",
+};
+
+const registrationProviderStatuses: Readonly<Record<number, string>> = {
+  400: "HTTP_400",
+  401: "HTTP_401",
+  403: "HTTP_403",
+  404: "HTTP_404",
+  409: "HTTP_409",
+  422: "HTTP_422",
+  429: "HTTP_429",
+  500: "HTTP_500",
+  502: "HTTP_502",
+  503: "HTTP_503",
+  504: "HTTP_504",
+};
+
+/** Fixed-code diagnostics only; never includes provider messages or response bodies. */
+export function registrationStartFailureCode(
+  stage: RegistrationStartStage,
+  error: unknown,
+): string {
+  const prefix = `AGENT_REGISTRATION_${stage.toUpperCase()}`;
+  if (error && typeof error === "object") {
+    const candidate = error as { name?: unknown; status?: unknown };
+    const name = typeof candidate.name === "string"
+      ? registrationProviderErrorNames[candidate.name]
+      : undefined;
+    const status = typeof candidate.status === "number"
+      ? registrationProviderStatuses[candidate.status]
+      : undefined;
+    if (name && status) return `${prefix}_${name}_${status}`;
+    if (name) return `${prefix}_${name}`;
+    if (status) return `${prefix}_${status}`;
+  }
+  return `${prefix}_FAILED`;
+}
+
+type RegistrationLaunchDiagnostic = {
+  errorCode: string;
+  errorName?: string;
+  errorStatus?: string;
+  causeName?: string;
+  causeStatus?: string;
+  ownErrorKeys: string[];
+};
+
+const diagnosticErrorKeys = new Set(["cause", "code", "errors", "name", "status"]);
+
+function safeErrorName(value: unknown): string | undefined {
+  return typeof value === "string" && /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(value)
+    ? value
+    : undefined;
+}
+
+function safeErrorStatus(value: unknown): string | undefined {
+  return typeof value === "number" ? registrationProviderStatuses[value] : undefined;
+}
+
+function fixedLaunchErrorCode(error: unknown): string {
+  if (!(error instanceof Error)) return "LAUNCH_UNKNOWN_FAILURE";
+  if (error.message === "Failed to upload the Stagehand extension to Browserbase") {
+    return "STAGEHAND_EXTENSION_UPLOAD_FAILED";
+  }
+  if (error.message === "Failed to create a Browserbase session") {
+    return "BROWSERBASE_SESSION_CREATE_FAILED";
+  }
+  if (error.message === "Browserbase extension upload returned an empty extension ID") {
+    return "STAGEHAND_EXTENSION_ID_MISSING";
+  }
+  if (error.message === "Browserbase session creation returned an empty session ID") {
+    return "BROWSERBASE_SESSION_ID_MISSING";
+  }
+  if (error.message === "Browserbase session creation returned an empty connection URL") {
+    return "BROWSERBASE_CONNECTION_URL_MISSING";
+  }
+  if (error.message.startsWith("Stagehand initialization timed out after ")) {
+    return "STAGEHAND_INITIALIZATION_TIMEOUT";
+  }
+  if (error.message === "Browser connection failed and browser cleanup also failed") {
+    return "STAGEHAND_CONNECTION_AND_CLEANUP_FAILED";
+  }
+  if (error.name === "StagehandRuntimeIncompatibleError") {
+    return "STAGEHAND_RUNTIME_INCOMPATIBLE";
+  }
+  return "LAUNCH_UNKNOWN_FAILURE";
+}
+
+/** Strictly structural diagnostics for the fixed synthetic Development probe. */
+export function registrationLaunchDiagnostic(error: unknown): RegistrationLaunchDiagnostic {
+  const candidate = error && typeof error === "object"
+    ? error as { name?: unknown; status?: unknown; cause?: unknown }
+    : {};
+  const cause = candidate.cause && typeof candidate.cause === "object"
+    ? candidate.cause as { name?: unknown; status?: unknown }
+    : {};
+  return {
+    errorCode: fixedLaunchErrorCode(error),
+    ...(safeErrorName(candidate.name) ? { errorName: safeErrorName(candidate.name) } : {}),
+    ...(safeErrorStatus(candidate.status) ? { errorStatus: safeErrorStatus(candidate.status) } : {}),
+    ...(safeErrorName(cause.name) ? { causeName: safeErrorName(cause.name) } : {}),
+    ...(safeErrorStatus(cause.status) ? { causeStatus: safeErrorStatus(cause.status) } : {}),
+    ownErrorKeys: error && typeof error === "object"
+      ? Object.getOwnPropertyNames(error).filter((key) => diagnosticErrorKeys.has(key)).sort()
+      : [],
+  };
+}
 
 const ONBOARDING_POLL_MS = 5_000;
 const ONBOARDING_MAX_POLLS = 60;
@@ -232,12 +355,12 @@ async function launchReadOnlyBrowser(input: {
   providerContextId?: string;
   timeoutMs: number;
 }): Promise<StagehandBrowser> {
-  return await browserbase.launch({
+  return await initializePortalBrowser(await browserbase.launch({
     apiKey: input.apiKey,
     api_timeout: Math.max(60, Math.ceil(input.timeoutMs / 1_000)),
     keepAlive: false,
     region: "eu-central-1",
-    proxies: [{ type: "none" }],
+    proxies: false,
     browserSettings: {
       allowedDomains: input.allowedDomains,
       solveCaptchas: false,
@@ -248,7 +371,7 @@ async function launchReadOnlyBrowser(input: {
         : undefined,
     },
     userMetadata: { product: "roomscout", mode: "read_only" },
-  });
+  }), input.apiKey);
 }
 
 async function launchWriteBrowser(input: {
@@ -256,12 +379,12 @@ async function launchWriteBrowser(input: {
   allowedDomains: string[];
   providerContextId?: string;
 }): Promise<StagehandBrowser> {
-  return await browserbase.launch({
+  return await initializePortalBrowser(await browserbase.launch({
     apiKey: input.apiKey,
     api_timeout: Math.ceil(PORTAL_WRITE_TTL_MS / 1_000),
     keepAlive: true,
     region: "eu-central-1",
-    proxies: [{ type: "none" }],
+    proxies: false,
     browserSettings: {
       allowedDomains: input.allowedDomains,
       solveCaptchas: false,
@@ -272,7 +395,7 @@ async function launchWriteBrowser(input: {
         : undefined,
     },
     userMetadata: { product: "roomscout", mode: "approved_write" },
-  });
+  }), input.apiKey);
 }
 
 async function launchRegistrationBrowser(input: {
@@ -280,12 +403,32 @@ async function launchRegistrationBrowser(input: {
   allowedDomains: string[];
   providerContextId: string;
 }): Promise<StagehandBrowser> {
-  return await browserbase.launch({
+  return await initializePortalBrowser(await browserbase.launch({
     apiKey: input.apiKey,
+    ...registrationSessionOptions(input),
+  }), input.apiKey);
+}
+
+/** Stagehand v4 attaches the DOM context separately from launching/connecting.
+ * These adapters use deterministic browser primitives only; all interpretation
+ * stays on RoomScout's explicit Convex Gateway path. */
+export async function initializePortalBrowser(browser: StagehandBrowser, apiKey: string): Promise<StagehandBrowser> {
+  try {
+    await Stagehand.create({ browser, model: { generate: async () => { throw new Error("PORTAL_IMPLICIT_MODEL_CALL_DISABLED"); } } });
+    return browser;
+  } catch (error) {
+    await browser.close().catch(() => undefined);
+    await releaseProviderSession(createBrowserbaseClient(apiKey), browser.sessionId);
+    throw error;
+  }
+}
+
+export function registrationSessionOptions(input: { allowedDomains: string[]; providerContextId: string }): SessionCreateParams {
+  return {
     api_timeout: Math.ceil(PORTAL_RUN_TTLS_MS.authenticate / 1_000),
     keepAlive: true,
     region: "eu-central-1",
-    proxies: [{ type: "none" }],
+    proxies: false,
     browserSettings: {
       allowedDomains: input.allowedDomains,
       solveCaptchas: false,
@@ -294,7 +437,7 @@ async function launchRegistrationBrowser(input: {
       context: { id: input.providerContextId, persist: true },
     },
     userMetadata: { product: "roomscout", mode: "agent_registration" },
-  });
+  };
 }
 
 async function firstVisibleLocator(page: Page, selectors: readonly string[]) {
@@ -397,7 +540,7 @@ async function fillVerificationCode(page: Page, code: string): Promise<boolean> 
   return false;
 }
 
-async function detectRegistrationHumanBlocker(
+export async function detectRegistrationHumanBlocker(
   page: Page,
 ): Promise<"captcha" | "terms" | "payment" | null> {
   return await page.evaluate(() => {
@@ -567,7 +710,7 @@ export const startAuthentication = action({
         api_timeout: Math.ceil(PORTAL_RUN_TTLS_MS.authenticate / 1_000),
         keepAlive: true,
         region: "eu-central-1",
-        proxies: [{ type: "none" }],
+        proxies: false,
         browserSettings: {
           allowedDomains: connection.allowedDomains,
           solveCaptchas: false,
@@ -611,12 +754,12 @@ export const startAuthentication = action({
  * injects only the extracted code. The random password is never persisted.
  * Unknown portals and CAPTCHA/terms screens always hand control to the user.
  */
-export const startAgentRegistration = action({
-  args: { connectionId: v.id("portalConnections") },
-  returns: agentRegistrationResultValidator,
-  handler: async (ctx, args): Promise<AgentRegistrationResult> => {
-    const ownerId = await requireActionUserId(ctx);
-    const connection = await getWorkerConnection(ctx, ownerId, args.connectionId);
+export async function startAgentRegistrationForOwner(
+  ctx: ActionCtx,
+  ownerId: Id<"users">,
+  connectionId: Id<"portalConnections">,
+): Promise<AgentRegistrationResult> {
+    const connection = await getWorkerConnection(ctx, ownerId, connectionId);
     if (!isControlledAgentRegistrationConnection(connection)) {
       throw new ConvexError({ code: "AGENT_REGISTRATION_NOT_REVIEWED" });
     }
@@ -649,6 +792,7 @@ export const startAgentRegistration = action({
     let providerContextId = connection.providerContextId;
     let createdContext = false;
     let browser: StagehandBrowser | undefined;
+    let startStage: RegistrationStartStage | null = providerContextId ? "browser_launch" : "context_create";
     try {
       if (!providerContextId) {
         const context = await client.contexts.create({
@@ -657,11 +801,13 @@ export const startAgentRegistration = action({
         providerContextId = context.id;
         createdContext = true;
       }
+      startStage = "browser_launch";
       browser = await launchRegistrationBrowser({
         apiKey,
         allowedDomains: connection.allowedDomains,
         providerContextId,
       });
+      startStage = "session_validation";
       if (!browser.sessionId) throw new Error("PROVIDER_SESSION_MISSING");
       await ctx.runMutation(internal.portalConnections.attachProviderRun, {
         runId,
@@ -670,6 +816,7 @@ export const startAgentRegistration = action({
         providerContextId,
         humanRequired: false,
       });
+      startStage = null;
       await ctx.runMutation(internal.portalConnections.markAgentOnboardingState, {
         ownerId,
         runId,
@@ -795,9 +942,107 @@ export const startAgentRegistration = action({
       await ctx.runMutation(internal.portalConnections.finishRun, {
         runId,
         status: "failed",
-        errorCode: sanitizeProviderError(error),
+        errorCode: startStage
+          ? registrationStartFailureCode(startStage, error)
+          : sanitizeProviderError(error),
       });
-      throw new ConvexError({ code: sanitizeProviderError(error) });
+      throw new ConvexError({
+        code: startStage
+          ? registrationStartFailureCode(startStage, error)
+          : sanitizeProviderError(error),
+      });
+    }
+}
+
+export const startAgentRegistration = action({
+  args: { connectionId: v.id("portalConnections") },
+  returns: agentRegistrationResultValidator,
+  handler: async (ctx, args): Promise<AgentRegistrationResult> => {
+    const ownerId = await requireActionUserId(ctx);
+    return await startAgentRegistrationForOwner(ctx, ownerId, args.connectionId);
+  },
+});
+
+export const startControlledProofAgentRegistration = internalAction({
+  args: {
+    actorKey: v.union(v.literal("actor_a"), v.literal("actor_b")),
+    connectionId: v.id("portalConnections"),
+  },
+  returns: agentRegistrationResultValidator,
+  handler: async (ctx, args): Promise<AgentRegistrationResult> => {
+    const actors = await ctx.runQuery(
+      internal.controlledPersonalInboxProof.resolveActors,
+      { confirmation: "RUN_CONTROLLED_PERSONAL_INBOX_PROOF_DEVELOPMENT" },
+    );
+    const actor = actors.find((candidate) => candidate.key === args.actorKey);
+    if (!actor) throw new ConvexError({ code: "CONTROLLED_PROOF_ACTOR_NOT_FOUND" });
+    return await startAgentRegistrationForOwner(ctx, actor.ownerId, args.connectionId);
+  },
+});
+
+const registrationLaunchDiagnosticValidator = v.object({
+  errorCode: v.string(),
+  errorName: v.optional(v.string()),
+  errorStatus: v.optional(v.string()),
+  causeName: v.optional(v.string()),
+  causeStatus: v.optional(v.string()),
+  ownErrorKeys: v.array(v.string()),
+});
+
+/** Development-only provider health check. It never navigates or creates an account. */
+export const probeControlledRegistrationLaunch = internalAction({
+  args: { confirmation: v.literal(CONTROLLED_PROOF_CONFIRMATION) },
+  returns: v.union(
+    v.object({ status: v.literal("ready") }),
+    v.object({ status: v.literal("failed"), stage: v.union(v.literal("context_create"), v.literal("browser_launch"), v.literal("session_validation")), diagnostic: registrationLaunchDiagnosticValidator }),
+  ),
+  handler: async (ctx, args) => {
+    // Reuse the proof module's exact deployment guard; no caller-supplied owner
+    // or environment selector can widen this action's scope.
+    await ctx.runQuery(internal.controlledPersonalInboxProof.resolveActors, {
+      confirmation: args.confirmation,
+    });
+    const apiKey = browserbaseApiKey();
+    const client = createBrowserbaseClient(apiKey);
+    let contextId: string | undefined;
+    let browser: StagehandBrowser | undefined;
+    let stage: RegistrationStartStage = "context_create";
+    try {
+      const context = await client.contexts.create({
+        name: `roomscout-registration-health-${Date.now()}`,
+      });
+      contextId = context.id;
+      stage = "browser_launch";
+      browser = await launchRegistrationBrowser({
+        apiKey,
+        allowedDomains: ["roomscout.dev"],
+        providerContextId: contextId,
+      });
+      stage = "session_validation";
+      if (!browser.sessionId) throw new Error("PROVIDER_SESSION_MISSING");
+      return { status: "ready" as const };
+    } catch (error) {
+      return {
+        status: "failed" as const,
+        stage,
+        diagnostic: registrationLaunchDiagnostic(error),
+      };
+    } finally {
+      if (browser) {
+        try {
+          await browser.close();
+        } catch {
+          // The explicit provider release below remains the cleanup boundary.
+        }
+        await releaseProviderSession(client, browser.sessionId);
+      }
+      if (contextId) {
+        try {
+          await client.contexts.delete(contextId);
+        } catch {
+          // Never replace the safe health result with provider cleanup details.
+        }
+      }
     }
   },
 });
@@ -915,10 +1160,10 @@ export const continueAgentRegistration = internalAction({
 
     let browser: StagehandBrowser | undefined;
     try {
-      browser = await browserbase.connect({
+      browser = await initializePortalBrowser(await browserbase.connect({
         apiKey: browserbaseApiKey(),
         sessionId: run.providerSessionId,
-      });
+      }), browserbaseApiKey());
       const pages = await browser.context.pages();
       const page = pages[0] ?? (await browser.context.newPage());
       assertFinalDomain(await page.url(), connection.allowedDomains);
@@ -1309,7 +1554,27 @@ export const syncInboxNow = action({
   }),
   handler: async (ctx, args) => {
     const ownerId = await requireActionUserId(ctx);
-    return await syncInboxForOwner(ctx, ownerId, args.connectionId);
+    const generation = await ctx.runMutation(internal.portalInboxSync.beginManualSync, { ownerId, connectionId: args.connectionId });
+    if (generation === null) throw new ConvexError({ code: "INBOX_SYNC_ALREADY_ACTIVE" });
+    let failed = true;
+    try {
+      const result = await syncInboxForOwner(ctx, ownerId, args.connectionId);
+      failed = false;
+      return result;
+    } finally {
+      await ctx.runMutation(internal.portalInboxSync.finishManualSync, { ownerId, connectionId: args.connectionId, generation, failed });
+    }
+  },
+});
+
+export const syncInboxCoordinatedWorker = internalAction({
+  args: { ownerId: v.id("users"), connectionId: v.id("portalConnections"), generation: v.number() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const claimed = await ctx.runMutation(internal.portalInboxSync.claimWorker, args);
+    if (!claimed) return null;
+    await syncInboxForOwner(ctx, args.ownerId, args.connectionId);
+    return null;
   },
 });
 
@@ -1320,27 +1585,27 @@ export const syncInboxWorker = internalAction({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    try {
-      await syncInboxForOwner(ctx, args.ownerId, args.connectionId);
-    } catch {
-      // The run record contains only a sanitized error code for operator review.
-    }
+    // Compatibility entry for jobs scheduled before the coordinator existed.
+    // It does not touch Browserbase directly and is subject to the same
+    // ownership, policy, auth-session, generation and coalescing gates.
+    await ctx.runMutation(internal.portalInboxSync.requestSync, { ...args, reason: "poll" });
     return null;
   },
 });
 
 export const scheduleDueInboxSync = internalAction({
-  args: {},
+  args: { cursor: v.optional(v.string()) },
   returns: v.null(),
-  handler: async (ctx) => {
+  handler: async (ctx, args) => {
     const due = await ctx.runQuery(internal.portalConnections.listDueInboxSyncs, {
       now: Date.now(),
-      limit: 1,
+      cursor: args.cursor ?? null,
+      limit: 50,
     });
-    const next = due[0];
-    if (next) {
-      await ctx.scheduler.runAfter(0, internal.browserbasePortal.syncInboxWorker, next);
+    for (const next of due.rows) {
+      await ctx.runMutation(internal.portalInboxSync.requestSync, { ...next, reason: "poll" });
     }
+    if (!due.isDone) await ctx.scheduler.runAfter(0, internal.browserbasePortal.scheduleDueInboxSync, { cursor: due.continueCursor });
     return null;
   },
 });
@@ -1406,6 +1671,20 @@ async function executeApprovedWriteForOwner(
     };
   }
   if (
+    claim.executionStatus === "running" ||
+    (claim.alreadyClaimed && claim.executionStatus === "claimed")
+  ) {
+    // A replay never owns the provider call, including the narrow window before
+    // the first worker has attached its session id. Reconnecting or launching a
+    // second session can duplicate a write. Human-blocked sessions are completed
+    // through completeApprovedWriteHumanStep.
+    return {
+      executionId: claim.executionId,
+      status: "in_progress",
+      alreadyCompleted: false,
+    };
+  }
+  if (
     claim.requestedActionType !== "send_platform_dm" &&
     claim.requestedActionType !== "publish_listing"
   ) {
@@ -1436,19 +1715,11 @@ async function executeApprovedWriteForOwner(
     throw new ConvexError({ code: "BROWSERBASE_ADAPTER_REQUIRED" });
   }
 
-  if (claim.alreadyClaimed && claim.executionStatus === "claimed") {
-    // Another invocation owns the newly claimed provider call. It may not have
-    // attached its session id yet; never race it by launching a second session.
-    return {
-      executionId: claim.executionId,
-      status: "in_progress",
-      alreadyCompleted: false,
-    };
-  }
-
   let browser: StagehandBrowser | undefined;
   let providerSessionId: string | undefined;
   let keepSessionForHuman = false;
+  let submissionMayHaveOccurred = false;
+  let writeSessionClaimed = false;
   try {
     const connection = await getWorkerConnection(ctx, ownerId, claim.connectionId);
     if (
@@ -1494,101 +1765,30 @@ async function executeApprovedWriteForOwner(
       payload: claim.payload,
     });
 
-    if (claim.executionStatus === "running") {
-      const execution = await ctx.runQuery(
-        internal.externalActions.getBrowserExecutionForOwner,
-        { ownerId, executionId: claim.executionId },
-      );
-      if (execution === null) {
-        return {
-          executionId: claim.executionId,
-          status: "in_progress",
-          alreadyCompleted: false,
-        };
-      }
-      if (execution.startedAt + PORTAL_WRITE_TTL_MS <= Date.now()) {
-        await finishBrowserExecution(ctx, {
-          ownerId,
-          executionId: claim.executionId,
-          status: "failed",
-          error: "PORTAL_WRITE_SESSION_EXPIRED",
-        });
-        throw new Error("PORTAL_WRITE_SESSION_EXPIRED");
-      }
-      providerSessionId = execution.providerSessionId;
-      browser = await browserbase.connect({
-        apiKey,
-        sessionId: execution.providerSessionId,
-      });
-    } else {
-      await applyWriteLimits(ctx, ownerId, connection.connectionId);
-      browser = await launchWriteBrowser({
-        apiKey,
-        allowedDomains: connection.allowedDomains,
-        providerContextId: connection.providerContextId,
-      });
-      if (!browser.sessionId) throw new Error("PROVIDER_SESSION_MISSING");
-      providerSessionId = browser.sessionId;
-      await ctx.runMutation(internal.externalActions.attachProviderExecution, {
-        ownerId,
-        executionId: claim.executionId,
-        providerActionId: providerSessionId,
-      });
-    }
+    await applyWriteLimits(ctx, ownerId, connection.connectionId);
+    writeSessionClaimed = await ctx.runMutation(internal.portalConnections.claimWriteSession, {
+      ownerId,
+      connectionId: connection.connectionId,
+      executionId: claim.executionId,
+    });
+    if (!writeSessionClaimed) throw new Error("BROWSER_CONTEXT_BUSY");
+    browser = await launchWriteBrowser({
+      apiKey,
+      allowedDomains: connection.allowedDomains,
+      providerContextId: connection.providerContextId,
+    });
+    if (!browser.sessionId) throw new Error("PROVIDER_SESSION_MISSING");
+    providerSessionId = browser.sessionId;
+    await ctx.runMutation(internal.externalActions.attachProviderExecution, {
+      ownerId,
+      executionId: claim.executionId,
+      providerActionId: providerSessionId,
+    });
 
     const pages = await browser.context.pages();
     const page = pages[0] ?? (await browser.context.newPage());
-    if (claim.executionStatus !== "running") {
-      await page.goto(targetUrl);
-      await page.waitForLoadState("domcontentloaded", 20_000);
-    } else {
-      try {
-        const alreadySucceeded = await inspectPortalWriteSuccess({
-          page,
-          workflow,
-          allowedDomains: connection.allowedDomains,
-          allowedPaths: connection.allowedPaths,
-        });
-        if (alreadySucceeded) {
-          const providerThreadId =
-            alreadySucceeded.providerThreadId ?? existingThread?.providerThreadId;
-          if (
-            claim.requestedActionType === "send_platform_dm" &&
-            alreadySucceeded.providerMessageId
-          ) {
-            await ctx.runMutation(internal.platformInbox.recordOutboundWrite, {
-              ownerId,
-              connectionId: connection.connectionId,
-              threadId: claim.payload.threadId,
-              providerThreadId,
-              providerMessageId: alreadySucceeded.providerMessageId,
-              participants:
-                claim.payload.recipients.length > 0
-                  ? claim.payload.recipients
-                  : (existingThread?.participants ?? []),
-              subject: claim.payload.subject,
-              bodyText: claim.payload.body,
-              sentAt: Date.now(),
-            });
-          }
-          await finishBrowserExecution(ctx, {
-            ownerId,
-            executionId: claim.executionId,
-            status: "succeeded",
-            providerThreadId,
-            providerMessageId: alreadySucceeded.providerMessageId,
-          });
-          return {
-            executionId: claim.executionId,
-            status: "succeeded",
-            alreadyCompleted: true,
-          };
-        }
-      } catch {
-        // The current page may still be the reviewed compose path. The normal
-        // workflow below performs the strict pre-submit path and blocker checks.
-      }
-    }
+    await page.goto(targetUrl);
+    await page.waitForLoadState("domcontentloaded", 20_000);
 
     const result = await runDeterministicPortalWrite({
       page,
@@ -1598,6 +1798,10 @@ async function executeApprovedWriteForOwner(
       allowedDomains: connection.allowedDomains,
       allowedPaths: connection.allowedPaths,
       humanPresenceRequired: claim.humanPresenceRequired,
+      beforeSubmit: async () => {
+        await ctx.runMutation(internal.externalActions.claimForExecutor, { ownerId, requestId, executor: "browserbase" });
+        submissionMayHaveOccurred = true;
+      },
     });
     if (result.outcome === "human_required") {
       keepSessionForHuman = true;
@@ -1656,7 +1860,7 @@ async function executeApprovedWriteForOwner(
     await finishBrowserExecution(ctx, {
       ownerId,
       executionId: claim.executionId,
-      status: "failed",
+      status: submissionMayHaveOccurred ? "unknown" : "failed",
       error: errorCode,
     });
     throw new ConvexError({ code: errorCode });
@@ -1670,6 +1874,13 @@ async function executeApprovedWriteForOwner(
         }
       }
       await releaseProviderSession(client, providerSessionId);
+      if (writeSessionClaimed && claim.connectionId) {
+        await ctx.runMutation(internal.portalConnections.releaseWriteSession, {
+          ownerId,
+          connectionId: claim.connectionId,
+          executionId: claim.executionId,
+        });
+      }
     }
   }
 }
@@ -1687,10 +1898,26 @@ export const executeApprovedWriteWorker = internalAction({
   args: {
     ownerId: v.id("users"),
     requestId: v.id("actionRequests"),
+    busyAttempt: v.optional(v.number()),
   },
   returns: writeResultValidator,
-  handler: async (ctx, args): Promise<ApprovedWriteResult> =>
-    await executeApprovedWriteForOwner(ctx, args.ownerId, args.requestId),
+  handler: async (ctx, args): Promise<ApprovedWriteResult> => {
+    try {
+      return await executeApprovedWriteForOwner(ctx, args.ownerId, args.requestId);
+    } catch (error) {
+      const busy = error instanceof ConvexError && typeof error.data === "object" && error.data !== null &&
+        "code" in error.data && error.data.code === "BROWSER_SESSION_BUSY";
+      if (!busy) throw error;
+      const attempt = Math.max(0, Math.floor(args.busyAttempt ?? 0));
+      if (attempt < 5) {
+        await ctx.scheduler.runAfter(Math.min(60_000, 2_000 * 2 ** attempt), internal.browserbasePortal.executeApprovedWriteWorker,
+          { ownerId: args.ownerId, requestId: args.requestId, busyAttempt: attempt + 1 });
+      } else {
+        await ctx.runMutation(internal.externalActions.recordBrowserSessionBusy, { ownerId: args.ownerId, requestId: args.requestId });
+      }
+      throw error;
+    }
+  },
 });
 
 export const getApprovedWriteLiveView = action({
@@ -1741,6 +1968,9 @@ export const stopApprovedWrite = action({
       status: "failed",
       error: "USER_STOPPED_BROWSER_WRITE",
     });
+    if (execution.connectionId) await ctx.runMutation(internal.portalConnections.releaseWriteSession, {
+      ownerId, connectionId: execution.connectionId, executionId: args.executionId,
+    });
     return null;
   },
 });
@@ -1772,6 +2002,9 @@ export const completeApprovedWriteHumanStep = action({
       requestId: args.requestId,
       executionId: args.executionId,
       submitted: args.submitted,
+    });
+    if (execution.connectionId) await ctx.runMutation(internal.portalConnections.releaseWriteSession, {
+      ownerId, connectionId: execution.connectionId, executionId: args.executionId,
     });
     return null;
   },

@@ -3,7 +3,8 @@ import { useQuery } from "convex/react";
 import { useState } from "react";
 import { api } from "../../../convex/_generated/api";
 import { WorkspaceShell } from "../../components/navigation/WorkspaceShell";
-import { EmptyState, LedgerCard, PageHeader } from "../../components/ui/LedgerCard";
+import { OpsPageHeader } from "../../components/ops/OpsPageHeader";
+import { EmptyState, LedgerCard } from "../../components/ui/LedgerCard";
 import { Table, TableBody, TableCell, TableRow } from "../../components/ui/table";
 import { formatAge, toneForStatus, titleCase } from "./opsFormat";
 
@@ -21,7 +22,7 @@ export function OpsOutreachPage() {
 
   return (
     <WorkspaceShell mode="ops">
-      <PageHeader
+      <OpsPageHeader
         meta={<span className="rs-page-meta"><span className="chip">Live approval ledger</span><span className="mono">Operators cannot approve for users</span></span>}
         title="Outreach control"
       />

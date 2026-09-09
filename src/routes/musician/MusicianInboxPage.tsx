@@ -13,6 +13,7 @@ import {
 import { MailboxVerificationPanel } from "../../components/actions/MailboxVerificationPanel";
 import { WorkspaceShell } from "../../components/navigation/WorkspaceShell";
 import { OpportunityHandoff } from "../../components/opportunities/OpportunityHandoff";
+import { ProviderOfferPanel } from "../../components/opportunities/ProviderOfferPanel";
 import { EmptyState } from "../../components/ui/LedgerCard";
 import { Table, TableBody, TableCell, TableRow } from "../../components/ui/table";
 import { formatMessageTime } from "../../data/convexAdapters";
@@ -36,6 +37,7 @@ function opportunityTitle(kind: "supply_match" | "demand_collaboration" | "sourc
 export function MusicianInboxPage() {
   const threads = useQuery(api.communications.listThreadsMine, { limit: 50 });
   const mailbox = useQuery(api.mailboxes.getMine);
+  const providerConversations = useQuery(api.providerConversations.listMine, { limit: 50 });
   const opportunityRows = useQuery(api.opportunities.listMine, { limit: 20 });
   const actionRows = useQuery(api.externalActions.listMine, { limit: 30 });
   const mailboxMessages = useQuery(api.inbox.listMailboxMessagesMine, { limit: 10 });
@@ -239,18 +241,22 @@ export function MusicianInboxPage() {
   }
 
   const selectedLoading = effectiveThread?.channel === "email" ? emailSelected === undefined : effectiveThread?.channel === "platform" ? platformSelected === undefined : effectiveThread?.channel === "webform" ? actionRows === undefined : false;
+  const providerConversation = providerConversations?.find((conversation) =>
+    effectiveThread?.channel === "email" ? conversation.mailThreadId === effectiveThread.id
+      : effectiveThread?.channel === "platform" ? conversation.platformThreadId === effectiveThread.id : false,
+  );
 
   return (
     <WorkspaceShell mode="musician">
       <div className="rs-inbox-filterbar">
-        <div><h1>Inbox</h1><p>Real email and connected-platform conversations tied to your account.</p></div>
+        <div><h1>Nachrichten</h1><p>Alle Gespräche zu eurer Suche. Dein Scout bleibt für euch dran.</p></div>
         <div aria-label="Inbox channel" className="fchips" role="tablist">
           {(["all", "needs_action", "email", "webform", "platform_dm"] as const).map((filter) => <button aria-selected={channelFilter === filter} className={`fchip${channelFilter === filter ? " on" : ""}`} key={filter} onClick={() => { setChannelFilter(filter); setSelectedThread(undefined); }} role="tab" type="button">{filter.replaceAll("_", " ")}</button>)}
         </div>
       </div>
       <div className="threepane rs-inbox">
         <section className="pane rs-inbox__threads">
-          <header className="phead"><h2>Conversations</h2><span className="mono">Unified index, separate channels</span></header>
+          <header className="phead"><h2>Gespräche</h2><span className="mono">{visibleThreads.length || ""}</span></header>
           {threads === undefined || actionRows === undefined ? <p className="rs-inbox__hint">Loading your communication threads…</p> : null}
           {visibleThreads.map((thread) => {
             const active = effectiveThread?.channel === thread.channel && effectiveThread.id === thread.threadId;
@@ -262,7 +268,7 @@ export function MusicianInboxPage() {
               </button>
             );
           })}
-          {threads && actionRows && visibleThreads.length === 0 ? <p className="rs-inbox__hint">No real {channelFilter.replaceAll("_", " ")} threads exist. RoomScout does not display sample conversations in productive flows.</p> : null}
+          {threads && actionRows && visibleThreads.length === 0 ? <p className="rs-inbox__hint">Hier ist es noch ruhig. Sobald ein Gespräch beginnt, erscheint es hier.</p> : null}
         </section>
 
         <section className="pane rs-inbox__conversation">
@@ -297,16 +303,17 @@ export function MusicianInboxPage() {
               </div>
               <div className="cactions">{webformSelected.status === "awaiting_approval" ? <button className="btn btn-p" onClick={() => setSelectedActionId(webformSelected._id)} type="button">Review exact form</button> : null}<Link className="btn btn-s" to="/app/scout?mode=outreach_drafting"><Bot aria-hidden="true" size={14} />Ask Scout</Link></div>
             </>
-          ) : <div className="convo"><EmptyState body="Select a real email, web-form action, or connected-platform thread to inspect it." title="No conversation selected" /></div>}
+          ) : <div className="convo"><EmptyState body="Wähle links ein Gespräch. Hier findest du den Verlauf und neue Antworten." title="Platz für gute Nachrichten." /></div>}
         </section>
 
         <aside className="pane ctx rs-inbox__context">
+          {providerConversation ? <ProviderOfferPanel conversation={providerConversation} /> : null}
           <section><h2>Scout mailbox</h2><strong>{mailbox?.emailAddress ?? (mailbox?.status === "provisioning" ? "Provisioning…" : "Created on first outreach")}</strong><span className="mono rs-brand-accent">{mailbox?.status ?? "Not provisioned"}</span></section>
-          <section><h2>Selected channel</h2><Table className="facts"><TableBody><TableRow><TableCell>Type</TableCell><TableCell>{effectiveThread ? channelLabels[effectiveThread.channel] : "—"}</TableCell></TableRow><TableRow><TableCell>Storage</TableCell><TableCell>{effectiveThread?.channel === "platform" ? "Platform thread" : effectiveThread?.channel === "email" ? "AgentMail thread" : effectiveThread?.channel === "webform" ? "External action ledger" : "—"}</TableCell></TableRow></TableBody></Table></section>
-          <section><h2>Autopilot boundary</h2><p>RoomScout handles non-binding messages and follow-ups. Agreements, bookings, contracts, and money always come back to you.</p></section>
+          <section><h2>Du hast das letzte Wort.</h2><p>Dein Scout kümmert sich um unverbindliche Gespräche. Zusagen, Buchungen und Zahlungen bleiben bei dir.</p></section>
           <details className="rs-inbox-advanced">
             <summary>Advanced activity</summary>
             <div>
+              <section><h2>Selected channel</h2><Table className="facts"><TableBody><TableRow><TableCell>Type</TableCell><TableCell>{effectiveThread ? channelLabels[effectiveThread.channel] : "—"}</TableCell></TableRow><TableRow><TableCell>Storage</TableCell><TableCell>{effectiveThread?.channel === "platform" ? "Platform thread" : effectiveThread?.channel === "email" ? "AgentMail thread" : effectiveThread?.channel === "webform" ? "External action ledger" : "—"}</TableCell></TableRow></TableBody></Table></section>
               <section>
                 <h2>Account &amp; verification mail</h2>
                 {mailboxError ? <p className="rs-form-error" role="alert">{mailboxError}</p> : null}

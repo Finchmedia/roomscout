@@ -1,0 +1,121 @@
+.rs-workspace--ops .rs-workspace__main {
+  background-image: radial-gradient(
+    circle at 92% 4%,
+    rgba(255, 105, 38, 0.07),
+    transparent 31%
+  );
+}
+
+.rs-workspace--ops .stack {
+  gap: 18px;
+}
+.rs-workspace--ops .lcard {
+  border-color: rgba(255, 220, 190, 0.11);
+  border-radius: 15px;
+  background: rgba(20, 15, 12, 0.68);
+  box-shadow: none;
+}
+.rs-workspace--ops .lcard > header {
+  border-bottom-color: rgba(255, 220, 190, 0.09);
+  background: rgba(255, 255, 255, 0.018);
+}
+.rs-workspace--ops .rs-review-table-wrap {
+  overflow: auto;
+  border: 1px solid rgba(255, 220, 190, 0.1);
+  border-radius: 15px;
+  background: rgba(15, 11, 9, 0.56);
+}
+.rs-workspace--ops .rs-review-table-wrap .lcard {
+  border: 0;
+  border-radius: 0;
+}
+.rs-workspace--ops .rs-review-table {
+  min-width: 720px;
+}
+.rs-workspace--ops .rs-review-table th {
+  height: 44px;
+  color: #918173;
+  background: rgba(255, 255, 255, 0.018);
+  font-size: 10px;
+  font-weight: 560;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+.rs-workspace--ops .rs-review-table td {
+  padding-top: 15px;
+  padding-bottom: 15px;
+  border-color: rgba(255, 220, 190, 0.075);
+}
+.rs-workspace--ops .rs-review-table tr:hover td {
+  background: rgba(255, 255, 255, 0.024);
+}
+.rs-workspace--ops .rs-ops-filters {
+  gap: 7px;
+  margin-bottom: 18px;
+  padding: 5px;
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid rgba(255, 220, 190, 0.09);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.2);
+}
+.rs-workspace--ops .rs-ops-filters .fchip {
+  flex: 0 0 auto;
+  border-color: transparent;
+}
+.rs-workspace--ops .rs-ops-filters .fchip.on {
+  border-color: rgba(255, 140, 90, 0.24);
+  background: rgba(120, 58, 22, 0.38);
+}
+.rs-workspace--ops .actionsrow {
+  row-gap: 8px;
+}
+.rs-workspace--ops .rs-outreach-layout,
+.rs-workspace--ops .rs-ops-inbox-layout {
+  gap: 16px;
+}
+.rs-workspace--ops .rs-queue-list {
+  gap: 0;
+}
+.rs-workspace--ops .rs-queue-list .qrow {
+  min-height: 66px;
+  padding: 13px 14px;
+  border-bottom: 1px solid rgba(255, 220, 190, 0.075);
+  border-radius: 0;
+}
+.rs-workspace--ops .rs-queue-list .qrow:last-child {
+  border-bottom: 0;
+}
+.rs-workspace--ops .rs-queue-button:hover,
+.rs-workspace--ops .rs-queue-button.on {
+  background: rgba(120, 58, 22, 0.2);
+}
+.rs-workspace--ops .facts tr {
+  border-bottom-color: rgba(255, 220, 190, 0.075);
+}
+.rs-workspace--ops .facts td:first-child {
+  color: #918173;
+}
+.rs-workspace--ops .drawer {
+  border-left-color: rgba(255, 200, 160, 0.15);
+  background: rgba(18, 14, 11, 0.985);
+  box-shadow: -30px 0 80px rgba(0, 0, 0, 0.34);
+}
+.rs-workspace--ops .stream .ev {
+  border-bottom-color: rgba(255, 220, 190, 0.075);
+}
+.rs-workspace--ops .pill {
+  border-color: rgba(255, 220, 190, 0.13);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+@media (max-width: 720px) {
+  .rs-workspace--ops .rs-review-table-wrap {
+    margin-inline: -4px;
+    border-radius: 11px;
+  }
+  .rs-workspace--ops .drawer {
+    width: min(100%, 520px);
+  }
+}

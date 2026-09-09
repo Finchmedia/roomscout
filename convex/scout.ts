@@ -1,14 +1,14 @@
-import { Agent, createTool, listUIMessages } from "@convex-dev/agent";
+import { createTool, listUIMessages } from "@convex-dev/agent";
 import { paginationOptsValidator } from "convex/server";
 import { ConvexError, v } from "convex/values";
-import { stepCountIs } from "ai";
 import { z } from "zod";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { components, internal } from "./_generated/api";
 import { action, internalQuery, mutation, query } from "./_generated/server";
-import { roomScoutLanguageModel } from "./ai";
 import { requireActionUserId, requireUserId } from "./integrations/authz";
-import { buildScoutCaseCard, scoutBaseInstructions } from "./scoutCaseCards";
+import { buildScoutCaseCard } from "./scoutCaseCards";
+import { runScoutTurn, scoutAgent } from "./scoutRuntime";
+export { scoutAgent } from "./scoutRuntime";
 import { roomScoutRateLimiter } from "./rateLimits";
 
 const modeValidator = v.union(
@@ -16,13 +16,6 @@ const modeValidator = v.union(
   v.literal("signal_advisor"),
   v.literal("outreach_drafting"),
 );
-
-export const scoutAgent = new Agent(components.agent, {
-  name: "Room Scout",
-  languageModel: roomScoutLanguageModel,
-  instructions: scoutBaseInstructions,
-  stopWhen: stepCountIs(6),
-});
 
 const memoryToolSchema = z.object({
   subject: z.string().describe("The person, band, place, equipment item, or project this fact is about"),
@@ -280,20 +273,11 @@ export const sendMessage = action({
       throw new ConvexError({ code: "THREAD_NOT_FOUND" });
     }
 
-    const memoryContext: string = await ctx.runQuery(
-      internal.memory.getPromptContext,
-      { ownerId },
-    );
-    const relevantMemory: string = await ctx.runAction(
-      internal.memory.searchRelevant,
-      { ownerId, query: message },
-    );
-    const instructions: string = [
-      scoutBaseInstructions,
-      context.caseCard,
-      memoryContext,
-      relevantMemory,
-    ].filter(Boolean).join("\n\n");
+    const turn = {
+      ownerId, threadId: args.threadId, origin: "musician" as const,
+      savedNeedId: context.activeNeedId,
+      caseCard: context.caseCard, memoryQuery: message, prompt: message,
+    };
 
     const rememberFact = createTool({
       description:
@@ -341,15 +325,9 @@ export const sendMessage = action({
           return { updated: true };
         },
       });
-      const responseText: string = (await scoutAgent.generateText(
-        ctx,
-        { threadId: args.threadId, userId: ownerId },
-        {
-          prompt: message,
-          instructions,
-          tools: { updateSearchDraft, rememberFact },
-        },
-      )).text;
+      const responseText = (await runScoutTurn(ctx, {
+        ...turn, tools: { updateSearchDraft, rememberFact },
+      })).text;
       return { text: responseText };
     }
 
@@ -392,7 +370,7 @@ export const sendMessage = action({
           if (mailbox.status !== "active") {
             return { drafted: false, reason: "A personal RoomScout reply inbox is not ready." };
           }
-          const result: { requestId: Id<"actionRequests">; status: "approved" | "awaiting_approval"; authorizedByAutopilot: boolean } = await ctx.runMutation(
+          const result: { requestId: Id<"actionRequests">; status: Doc<"actionRequests">["status"]; authorizedByAutopilot: boolean } = await ctx.runMutation(
             internal.externalActions.createContactFormFromScout,
             {
               ownerId,
@@ -412,23 +390,13 @@ export const sendMessage = action({
           };
         },
       });
-      const responseText: string = (await scoutAgent.generateText(
-        ctx,
-        { threadId: args.threadId, userId: ownerId },
-        {
-          prompt: message,
-          instructions,
-          tools: { createOutreachDraft, createWebformDraft, rememberFact },
-        },
-      )).text;
+      const responseText = (await runScoutTurn(ctx, {
+        ...turn, tools: { createOutreachDraft, createWebformDraft, rememberFact },
+      })).text;
       return { text: responseText };
     }
 
-    const responseText: string = (await scoutAgent.generateText(
-      ctx,
-      { threadId: args.threadId, userId: ownerId },
-      { prompt: message, instructions, tools: { rememberFact } },
-    )).text;
+    const responseText = (await runScoutTurn(ctx, { ...turn, tools: { rememberFact } })).text;
     return { text: responseText };
   },
 });

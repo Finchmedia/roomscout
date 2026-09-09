@@ -8,6 +8,7 @@ import { components } from "./_generated/api";
 
 export const roomScoutRateLimiter = new RateLimiter(components.rateLimiter, {
   scoutMessage: { kind: "fixed window", rate: 10, period: MINUTE },
+  matchRefresh: { kind: "fixed window", rate: 2, period: MINUTE },
   contextImport: { kind: "fixed window", rate: 3, period: HOUR },
   voiceSession: { kind: "fixed window", rate: 3, period: HOUR },
   voiceTool: { kind: "fixed window", rate: 30, period: MINUTE },
@@ -22,4 +23,6 @@ export const roomScoutRateLimiter = new RateLimiter(components.rateLimiter, {
   portalSessionGlobal: { kind: "fixed window", rate: 20, period: DAY },
   sourceDiscoveryOperator: { kind: "fixed window", rate: 10, period: DAY },
   firecrawlInteractUser: { kind: "fixed window", rate: 10, period: DAY },
+  evaluationGatewayUser: { kind: "fixed window", rate: 60, period: MINUTE },
+  evaluationGatewayGlobal: { kind: "fixed window", rate: 120, period: MINUTE },
 });

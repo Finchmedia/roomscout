@@ -4,8 +4,9 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { WorkspaceShell } from "../../components/navigation/WorkspaceShell";
 import { PortalOperationsPanel } from "../../components/ops/PortalOperationsPanel";
+import { OpsPageHeader } from "../../components/ops/OpsPageHeader";
 import { SourceIntelligencePanel } from "../../components/ops/SourceIntelligencePanel";
-import { EmptyState, LedgerCard, PageHeader } from "../../components/ui/LedgerCard";
+import { EmptyState, LedgerCard } from "../../components/ui/LedgerCard";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 import { formatAge, formatDuration, toneForStatus, titleCase } from "./opsFormat";
 
@@ -35,7 +36,7 @@ export function OpsSourcesPage() {
 
   return (
     <WorkspaceShell mode="ops">
-      <PageHeader
+      <OpsPageHeader
         meta={<span className="rs-page-meta"><span className="chip">Live source graph</span><span className="mono">Discovery → policy → adapter → run</span></span>}
         title="Sources & portals"
       />

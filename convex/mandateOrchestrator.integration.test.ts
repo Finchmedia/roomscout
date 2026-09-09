@@ -1,10 +1,15 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import agentTest from "@convex-dev/agent/test";
+import workpoolTest from "@convex-dev/workpool/test";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
+import { signalMatchRevision } from "./lib/matchValidity";
 
 const modules = import.meta.glob("./**/*.ts");
+beforeEach(() => vi.useFakeTimers());
+afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 
 async function seedOrchestrationFixture(
   t: ReturnType<typeof convexTest>,
@@ -109,6 +114,12 @@ async function seedOrchestrationFixture(
       sourceEntryId: entryId,
     });
     await ctx.db.patch(entryId, { signalId });
+    await ctx.db.insert("signalMatches", {
+      ownerId, savedNeedId: needId, signalId, kind: "need_supply", eligible: true, contactEligible: true,
+      needRevision: 0, signalRevision: await signalMatchRevision((await ctx.db.get(signalId))!),
+      status: "new", score: 0.91, structuredScore: 0.91, semanticScore: 0.91,
+      reasons: ["same city"], uncertainties: [], fingerprint: "fixture-match", createdAt: now, updatedAt: now,
+    });
     await ctx.db.insert("signalContacts", {
       signalId,
       sourceEntryId: entryId,
@@ -215,11 +226,11 @@ async function seedOrchestrationFixture(
       createdAt: now,
       updatedAt: now,
     });
-    return { ownerId, needId, platformId, mandateId, opportunityId };
+    return { ownerId, needId, platformId, mandateId, opportunityId, signalId, entryId, sourceId, bindingId, policyId };
   });
 }
 
-it("orchestrates one exact Bandnet action idempotently from a standing mandate", async () => {
+it("does not send fictional demo outreach to a real Bandnet listing even with an old mandate", async () => {
   const t = convexTest(schema, modules);
   const fixture = await seedOrchestrationFixture(t);
   const first = await t.mutation(internal.mandateOrchestrator.runForOwner, {
@@ -230,7 +241,7 @@ it("orchestrates one exact Bandnet action idempotently from a standing mandate",
     ownerId: fixture.ownerId,
     limit: 5,
   });
-  expect(first).toMatchObject({ created: 1, scheduled: 1 });
+  expect(first).toMatchObject({ created: 0, scheduled: 0 });
   expect(second.created).toBe(0);
   const state = await t.run(async (ctx) => ({
     requests: await ctx.db
@@ -241,19 +252,30 @@ it("orchestrates one exact Bandnet action idempotently from a standing mandate",
       .collect(),
     approvals: await ctx.db.query("actionApprovals").collect(),
   }));
-  expect(state.requests).toHaveLength(1);
-  expect(state.requests[0]).toMatchObject({
-    mandateId: fixture.mandateId,
-    automationMode: "standing_mandate",
-    requestedActionType: "submit_webform",
-    status: "approved",
+  expect(state.requests).toHaveLength(0);
+  expect(state.approvals).toHaveLength(0);
+});
+
+it("queues one controlled opportunity into the shared Agent without pre-authorizing a message", async () => {
+  const t = convexTest(schema, modules);
+  agentTest.register(t); workpoolTest.register(t, "scoutWorkpool");
+  const f = await seedOrchestrationFixture(t);
+  await t.run(async (ctx) => {
+    await ctx.db.patch(f.platformId, { canonicalDomain: "roomscout.dev", slug: "roomscout-dev" });
+    await ctx.db.patch(f.sourceId, { baseUrl: "https://roomscout.dev/listings" });
+    await ctx.db.patch(f.entryId, { detailUrl: "https://roomscout.dev/listings/controlled" });
   });
-  expect(state.approvals).toHaveLength(1);
-  expect(state.approvals[0]).toMatchObject({
-    decision: "authorized_by_mandate",
-    mandateId: fixture.mandateId,
-    mandateHash: "mandate-hash",
-  });
+  expect(await t.mutation(internal.mandateOrchestrator.runForOwner, { ownerId: f.ownerId })).toMatchObject({ created: 1, scheduled: 1 });
+  expect(await t.mutation(internal.mandateOrchestrator.runForOwner, { ownerId: f.ownerId })).toMatchObject({ created: 0 });
+  const state = await t.run(async (ctx) => ({
+    turns: await ctx.db.query("providerTurns").collect(), actions: await ctx.db.query("actionRequests").collect(),
+    approvals: await ctx.db.query("actionApprovals").collect(), opportunity: await ctx.db.get(f.opportunityId),
+  }));
+  expect(state.turns).toHaveLength(1);
+  expect(state.turns[0]?.kind).toBe("opportunity");
+  expect(state.opportunity?.status).toBe("reviewing");
+  expect(state.actions).toEqual([]);
+  expect(state.approvals).toEqual([]);
 });
 
 it("does not orchestrate revoked or expired mandates", async () => {
@@ -281,6 +303,30 @@ it("does not orchestrate revoked or expired mandates", async () => {
   expect(
     await expiredTest.run(async (ctx) => (await ctx.db.get(expired.mandateId))?.status),
   ).toBe("expired");
+});
+
+it("cannot execute an already prepared first contact after the search changes", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedOrchestrationFixture(t);
+  const request = await t.run(async (ctx) => {
+    const requestId = await ctx.db.insert("actionRequests", {
+      ownerId: fixture.ownerId, savedNeedId: fixture.needId, matchingNeedRevision: 0,
+      platformId: fixture.platformId, policyVersionId: fixture.policyId, adapterBindingId: fixture.bindingId,
+      opportunityId: fixture.opportunityId, automationMode: "exact_once", requestedActionType: "submit_webform",
+      personalDataScopes: [], payload: { kind: "contact_form", targetUrl: "https://bandnet.hamburg/anzeige/42", fields: [] },
+      contentVersion: 1, contentHash: "old-request", status: "approved", createdAt: Date.now(), updatedAt: Date.now(),
+    });
+    await ctx.db.patch(fixture.needId, { matchingRevision: 1 });
+    // Even if the same listing becomes a fresh match again, the old message
+    // cannot inherit the new search's validity.
+    const match = await ctx.db.query("signalMatches").withIndex("by_saved_need_and_signal", (q) => q.eq("savedNeedId", fixture.needId)).first();
+    await ctx.db.patch(match!._id, { needRevision: 1 });
+    return await ctx.db.get(requestId);
+  });
+  await expect(t.mutation(internal.externalActions.claimForExecutor, {
+    ownerId: fixture.ownerId, requestId: request!._id, executor: "firecrawl",
+  })).rejects.toThrow("ACTION_SEARCH_CHANGED");
+  expect(await t.run(async (ctx) => ctx.db.query("actionExecutions").collect())).toEqual([]);
 });
 
 it("records a durable audit event when the owner uses the search kill switch", async () => {
