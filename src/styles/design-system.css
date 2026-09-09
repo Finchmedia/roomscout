@@ -1,17 +1,9 @@
 /* Shared visual foundation ported from the maintainer's Claude Design export.
-   Business state remains in Convex; no prototype runtime is shipped. */
-:root {
-  font-family: "Geist Variable", Geist, ui-sans-serif, system-ui, sans-serif;
-  --font-sans: "Geist Variable", Geist, ui-sans-serif, system-ui, sans-serif;
-  --signal: #ff6926;
-  --signal-hover: #ff834b;
-  --ink: #f5ece2;
-  --muted: #b8aea3;
-  --panel: rgb(22 20 18 / 78%);
-  --panel-strong: #1b1916;
-}
+   Business state remains in Convex; no prototype runtime is shipped.
+   Tokens (--font-sans, --signal*, --ink, --muted, --panel*) come from
+   ./tokens.css; this file only carries legacy class rules. */
 body {
-  background: #0a100f url("/design/bg.jpg") center / cover fixed;
+  background: var(--surface-page);
 }
 button,
 input,

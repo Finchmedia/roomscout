@@ -1,0 +1,597 @@
+/* =============================================================================
+   RoomScout — token layer (single source of truth)
+
+   Mirrors design-system/tokens/*.css. Sections:
+     (a) design-system tokens, verbatim
+     (b) shadcn/ui v4 variable contract, mapped onto DS tokens
+     (c) Tailwind v4 @theme inline — utilities generated from the tokens
+     (d) background stack classes (.rs-bg / .rs-grain)
+     (e) legacy aliases so the pre-port pages adopt the RoomScout palette
+
+   Rules for everything downstream: no raw hex/rgb in UI files, no ad-hoc
+   shadows or radii — use var(--rs-…) / var(--…) from here, or the Tailwind
+   utilities section (c) generates (bg-rs-surface-card, text-rs-ink-6,
+   border-rs-border-card, rounded-card, shadow-menu, ease-out-soft, …).
+
+   Two deliberate deviations from the DS files, both required by the port:
+     · --font-sans is the local @fontsource-variable/geist face, not the
+       Google-Fonts "Geist" of design-system/tokens/fonts.css (which is not
+       imported at all — src/main.tsx loads the font package).
+     · --bg-image / --bg-grain point at /design/* in public/, not at the DS's
+       relative ../assets/*.
+   ============================================================================= */
+
+
+/* =============================================================================
+   (a) DESIGN-SYSTEM TOKENS — verbatim from design-system/tokens/
+   ============================================================================= */
+
+/* --- design-system/tokens/colors.css ---------------------------------------- */
+:root{
+/* — Base palette (lifted verbatim from Roomscout.dc.html / Landing v2.dc.html / Settings.dc.html) — */
+--rs-black:#0b0a09;
+--rs-ink-bright:#f8f0e7;
+--rs-ink:#f5ece2;
+--rs-ink-2:#e2d3c3;
+--rs-ink-3:#d8c8b8;
+--rs-ink-4:#cbb9a8;
+--rs-ink-5:#b3a291;
+--rs-ink-6:#a89684;
+--rs-ink-7:#9c8b7b;
+--rs-ink-8:#8f7e6e;
+--rs-white:#ffffff;
+--rs-orange:#ff6926;
+--rs-orange-hover:#ff7a3d;
+--rs-orange-light:#ff8a4e;
+--rs-orange-deep:#e9511a;
+--rs-orange-pale:#ffc39a;
+--rs-orange-tint:#ffd9c4;
+--rs-orange-tint-2:#ffe0cf;
+--rs-rust:rgba(120,58,22,.75);
+--rs-rust-soft:rgba(120,58,22,.35);
+--rs-rust-faint:rgba(120,58,22,.22);
+--rs-red:#b8382a;
+--rs-red-hover:#c9463a;
+--rs-red-text:#ff8a6a;
+--rs-amber:#e0a13a;
+--rs-green:#4fbf7a;
+
+/* — Surfaces (dark, slightly translucent; sit on the grain background) — */
+--rs-surface-page:#0b0a09;
+--rs-surface-card:rgba(18,14,12,.72);
+--rs-surface-card-soft:rgba(18,14,12,.66);
+--rs-surface-card-faint:rgba(18,14,12,.6);
+--rs-surface-pill:rgba(20,14,10,.55);
+--rs-surface-composer:rgba(20,14,10,.6);
+--rs-surface-panel:rgba(13,10,8,.8);
+--rs-surface-menu:rgba(20,15,12,.96);
+--rs-surface-drawer:rgba(14,11,9,.94);
+--rs-surface-toast:rgba(24,17,13,.96);
+--rs-surface-hint:rgba(28,20,14,.92);
+--rs-surface-inset:rgba(0,0,0,.25);
+--rs-surface-subtle:rgba(255,255,255,.04);
+--rs-surface-subtle-2:rgba(255,255,255,.06);
+--rs-surface-hover:rgba(255,255,255,.1);
+--rs-surface-hover-soft:rgba(255,255,255,.07);
+--rs-surface-accent-tint:rgba(255,105,38,.16);
+--rs-surface-accent-tint-hover:rgba(255,105,38,.26);
+--rs-surface-accent-tint-soft:rgba(255,105,38,.12);
+--rs-surface-amber-tint:rgba(224,161,58,.12);
+
+/* — Borders (warm, very fine) — */
+--rs-border-card:rgba(255,200,160,.14);
+--rs-border-card-soft:rgba(255,200,160,.12);
+--rs-border-card-strong:rgba(255,200,160,.18);
+--rs-border-panel:rgba(255,190,140,.16);
+--rs-border-control:rgba(255,220,190,.22);
+--rs-border-control-strong:rgba(255,220,190,.3);
+--rs-border-divider:rgba(255,220,190,.1);
+--rs-border-divider-soft:rgba(255,220,190,.08);
+--rs-border-accent:rgba(255,140,90,.5);
+--rs-border-accent-soft:rgba(255,140,90,.35);
+--rs-border-accent-faint:rgba(255,140,90,.3);
+--rs-border-amber:rgba(224,161,58,.35);
+--rs-border-neutral:rgba(255,255,255,.1);
+
+/* — Semantic aliases — */
+--text-body:var(--rs-ink);
+--text-bright:var(--rs-ink-bright);
+--text-secondary:var(--rs-ink-2);
+--text-tertiary:var(--rs-ink-4);
+--text-muted:var(--rs-ink-6);
+--text-placeholder:var(--rs-ink-7);
+--text-on-accent:var(--rs-white);
+--text-accent:var(--rs-orange);
+--text-accent-light:var(--rs-orange-light);
+--text-on-accent-tint:var(--rs-orange-tint);
+--text-error:var(--rs-red-text);
+--accent:var(--rs-orange);
+--accent-hover:var(--rs-orange-hover);
+--danger:var(--rs-red);
+--danger-hover:var(--rs-red-hover);
+--warning:var(--rs-amber);
+--success:var(--rs-green);
+--surface-page:var(--rs-surface-page);
+--surface-card:var(--rs-surface-card);
+--surface-pill:var(--rs-surface-pill);
+--surface-user-bubble:var(--rs-rust);
+--border-card:var(--rs-border-card);
+--border-control:var(--rs-border-control);
+--border-divider:var(--rs-border-divider);
+--focus-ring:var(--rs-orange);
+}
+
+/* --- design-system/tokens/typography.css ------------------------------------
+   Verbatim except --font-sans: the DS loads "Geist" from Google Fonts
+   (tokens/fonts.css); this port ships the font locally via
+   @fontsource-variable/geist, imported once in src/main.tsx.
+   ---------------------------------------------------------------------------- */
+:root{
+--font-sans:'Geist Variable', Geist, system-ui, -apple-system, sans-serif;
+--font-mono:ui-monospace,Menlo,monospace;
+--weight-light:300;
+--weight-regular:400;
+--weight-medium:500;
+--weight-semibold:600;
+
+/* Display headlines: light weight, tight tracking, one thought per screen */
+--text-display-size:clamp(38px,6vw,64px);
+--text-display-weight:300;
+--text-display-leading:1.08;
+--text-display-tracking:-.02em;
+--text-display-lg-size:clamp(42px,6.2vw,84px);  /* landing hero, weight 400, -.03em */
+--text-display-lg-tracking:-.03em;
+--text-headline-size:clamp(34px,4.6vw,52px);     /* in-flow h1 ("Eine kurze Rückfrage.") */
+--text-headline-leading:1.1;
+--text-utterance-size:clamp(28px,3.6vw,46px);    /* current spoken line */
+--text-utterance-leading:1.16;
+--text-utterance-tracking:-.015em;
+--text-page-title-size:44px;                     /* settings / operator h1, weight 500 */
+--text-page-title-weight:500;
+--text-card-title-size:clamp(24px,2.4vw,32px);
+--text-price-size:clamp(38px,3.8vw,52px);
+--text-lead-size:19px;
+--text-body-lg-size:17px;
+--text-body-size:16px;
+--text-body-sm-size:15px;
+--text-caption-size:14px;
+--text-caption-sm-size:13.5px;
+--text-micro-size:12.5px;
+--text-body-leading:1.5;
+--text-body-leading-relaxed:1.6;
+
+/* Overline: uppercase, wide tracking, muted or accent-light */
+--text-overline-size:12.5px;
+--text-overline-tracking:.14em;
+--text-overline-tracking-wide:.18em;
+--text-overline-weight:500;
+
+/* Wordmark: lowercase "roomscout", medium weight, slight positive tracking */
+--text-wordmark-size:20px;
+--text-wordmark-weight:500;
+--text-wordmark-tracking:.04em;
+}
+
+/* --- design-system/tokens/spacing.css --------------------------------------- */
+:root{
+--space-1:4px;--space-2:6px;--space-3:8px;--space-4:10px;--space-5:12px;--space-6:14px;--space-7:16px;--space-8:18px;--space-9:20px;--space-10:22px;--space-11:24px;--space-12:26px;--space-13:28px;--space-14:30px;--space-15:34px;--space-16:36px;--space-17:40px;--space-18:44px;--space-19:48px;
+
+/* Radii */
+--radius-pill:999px;
+--radius-circle:50%;
+--radius-chip:8px;
+--radius-control:10px;
+--radius-control-lg:12px;
+--radius-card-sm:14px;
+--radius-card:16px;
+--radius-card-md:18px;
+--radius-card-lg:22px;
+--radius-card-xl:24px;
+--radius-card-2xl:26px;
+--radius-panel:28px;
+--radius-bubble:18px;
+--radius-bubble-tail:4px;
+
+/* Control sizes */
+--size-header:84px;
+--size-header-narrow:64px;
+--size-header-button:42px;
+--size-button-lg:60px;
+--size-button:56px;
+--size-button-md:50px;
+--size-button-sm:46px;
+--size-button-xs:44px;
+--size-button-2xs:36px;
+--size-voice-control:76px;
+--size-switch-w:56px;
+--size-switch-h:32px;
+--size-nav-item:50px;
+--size-composer:60px;
+--size-blob-welcome:168px;
+--size-blob-working:160px;
+--size-blob-brief:96px;
+--size-blob-small:58px;
+
+/* Layout widths */
+--width-card-narrow:380px;
+--width-card:720px;
+--width-card-wide:740px;
+--width-offer:1190px;
+--width-content:1380px;
+--width-settings-nav:296px;
+}
+
+/* --- design-system/tokens/effects.css ---------------------------------------
+   Verbatim except --bg-image / --bg-grain, which point at public/design/
+   instead of the DS's relative ../assets/.
+   ---------------------------------------------------------------------------- */
+:root{
+/* Glows & shadows */
+--shadow-accent-button:0 8px 32px rgba(255,105,38,.28);
+--shadow-accent-button-sm:0 8px 28px rgba(255,105,38,.25);
+--shadow-blob:0 0 34px 6px rgba(255,120,50,.35),0 0 110px 20px rgba(255,105,38,.18);
+--shadow-blob-sm:0 0 18px rgba(255,105,38,.4);
+--shadow-menu:0 20px 50px rgba(0,0,0,.45);
+--shadow-toast:0 16px 40px rgba(0,0,0,.4);
+--shadow-panel:0 30px 90px rgba(0,0,0,.35);
+--shadow-card-float:0 30px 80px rgba(0,0,0,.35);
+--shadow-hero:0 -10px 60px rgba(255,105,38,.12),0 40px 100px rgba(0,0,0,.5);
+--shadow-knob:0 1px 3px rgba(0,0,0,.3);
+
+/* Background stack: photo → protection gradient → grain overlay */
+--bg-image:url("/design/bg.jpg");
+--bg-image-filter:saturate(.62) brightness(.5);
+--bg-gradient:linear-gradient(180deg,rgba(30,16,6,.28) 0%,rgba(12,9,7,.62) 45%,rgba(5,7,9,.92) 100%);
+--bg-grain:url("/design/grain.svg");
+--bg-grain-opacity:.28;
+
+/* Scout blob */
+--blob-gradient:radial-gradient(circle at 42% 38%,#ffc39a 0%,#ff8a4e 28%,#ff6926 58%,#e9511a 100%); /* @kind color */
+--blob-shape:62% 38% 46% 54%/44% 58% 42% 56%; /* @kind radius */
+
+/* Motion */
+--ease-out-soft:cubic-bezier(.22,.8,.2,1); /* @kind other */
+--ease-out-snap:cubic-bezier(.3,.7,.2,1); /* @kind other */
+--duration-fast:.15s; /* @kind other */
+--duration-quick:.2s; /* @kind other */
+--duration-base:.3s; /* @kind other */
+--duration-slow:.5s; /* @kind other */
+--duration-slower:.6s; /* @kind other */
+--duration-morph:.9s; /* @kind other */
+--blob-breathe-duration:5.2s; /* @kind other */
+--blur-composer:blur(6px); /* @kind other */
+--blur-sheet:blur(10px); /* @kind other */
+}
+@keyframes rsBreathe{0%,100%{transform:scale(1) rotate(0deg);border-radius:62% 38% 46% 54%/44% 58% 42% 56%}50%{transform:scale(1.04) rotate(-4deg);border-radius:54% 46% 58% 42%/50% 44% 56% 50%}}
+@keyframes rsSpeak{0%,100%{transform:scale(1) rotate(0deg);border-radius:62% 38% 46% 54%/44% 58% 42% 56%}30%{transform:scale(1.07) rotate(4deg);border-radius:46% 54% 60% 40%/58% 40% 60% 42%}65%{transform:scale(.97) rotate(-3deg);border-radius:56% 44% 40% 60%/48% 62% 38% 52%}}
+@keyframes rsListen{0%,100%{transform:scale(1) rotate(0deg);border-radius:62% 38% 46% 54%/44% 58% 42% 56%}50%{transform:scale(1.02) rotate(8deg);border-radius:56% 44% 52% 48%/56% 46% 54% 44%}}
+@keyframes rsFadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes rsDot{0%,100%{opacity:.4}50%{opacity:1}}
+@media (prefers-reduced-motion: reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+
+
+/* =============================================================================
+   (b) SHADCN/UI v4 VARIABLE CONTRACT
+   Every shadcn variable resolves to a DS token, so an unmodified shadcn
+   primitive already renders in RoomScout's palette. Justification per line.
+   ============================================================================= */
+:root{
+  /* The only opaque ground in the system; the photo stack sits on top of it. */
+  --background: var(--rs-surface-page);
+  /* DS default ink (warm white, never neutral grey). */
+  --foreground: var(--text-body);
+
+  /* "A card floating on the photo" — translucent, so the grain stays visible. */
+  --card: var(--rs-surface-card);
+  --card-foreground: var(--text-body);
+
+  /* Menus/dropdowns are the one near-opaque surface (they must occlude). */
+  --popover: var(--rs-surface-menu);
+  --popover-foreground: var(--text-body);
+
+  /* The single brand accent; every filled CTA is orange on white. */
+  --primary: var(--rs-orange);
+  --primary-foreground: var(--text-on-accent);
+
+  /* shadcn "secondary" = the quiet filled control (icon buttons, inputs). */
+  --secondary: var(--rs-surface-subtle-2);
+  --secondary-foreground: var(--text-body);
+
+  /* shadcn "muted" = quiet panel fill; "muted-foreground" = caption ink.
+     NOTE: section (e) re-points --muted at the ink step for legacy pages, so
+     the Tailwind utility in (c) reads --rs-surface-subtle directly. */
+  --muted: var(--rs-surface-subtle);
+  --muted-foreground: var(--text-muted);
+
+  /* shadcn "accent" is the hover/active surface of menu + nav items, NOT the
+     brand colour — DS hover ladder lightens the background to white .10.
+     NOTE: this overrides the DS semantic alias --accent (= --rs-orange) from
+     section (a). Use --text-accent / --rs-orange for "the orange", never
+     --accent. (c) maps --color-accent to --rs-surface-hover directly. */
+  --accent: var(--rs-surface-hover);
+  --accent-foreground: var(--text-body);
+
+  /* Destructive = the end-call / stop red, always on white. */
+  --destructive: var(--rs-red);
+  --destructive-foreground: var(--text-on-accent);
+
+  /* Default 1px card hairline; DS card border. */
+  --border: var(--border-card);
+  /* shadcn uses --input for form-control borders — DS control border. */
+  --input: var(--border-control);
+  /* Verbatim DS focus ring: 2px solid orange, 2px offset. */
+  --ring: var(--focus-ring);
+
+  /* shadcn derives rounded-sm/md/lg/xl from --radius; 12px is the DS control
+     radius, which yields 8/10/12/16 — DS chip/control/control-lg/card. */
+  --radius: var(--radius-control-lg);
+
+  /* Settings + Operator shell (sidebar-13 pattern) is the DS panel glass. */
+  --sidebar: var(--rs-surface-panel);
+  --sidebar-foreground: var(--text-body);
+  /* Active nav row: warm rust wash, the DS's own "selected" fill. */
+  --sidebar-primary: var(--rs-rust-soft);
+  --sidebar-primary-foreground: var(--text-body);
+  /* Hover/active surface inside the nav — orange tint per the port brief. */
+  --sidebar-accent: var(--rs-surface-accent-tint);
+  --sidebar-accent-foreground: var(--text-body);
+  /* The nav column's only edge: the chrome hairline (.08), not the card one. */
+  --sidebar-border: var(--rs-border-divider-soft);
+  --sidebar-ring: var(--focus-ring);
+
+  /* No charts in the prototype — seed the five slots from the status palette
+     so anything charted later is on-brand: signal, warning, success, ink, danger. */
+  --chart-1: var(--rs-orange);
+  --chart-2: var(--rs-amber);
+  --chart-3: var(--rs-green);
+  --chart-4: var(--rs-ink-4);
+  --chart-5: var(--rs-red);
+}
+
+
+/* =============================================================================
+   (c) TAILWIND v4 THEME
+   Bridge first: Tailwind's --font-*, --radius-*, --shadow-*, --ease-* and
+   --duration-* namespaces collide with the DS token names above. Writing
+   `@theme inline { --radius-card: var(--radius-card) }` makes Tailwind emit a
+   self-referential `:root{--radius-card:var(--radius-card)}`, which is invalid
+   at computed-value time and destroys the token. The aliases below give the
+   theme a non-colliding name to point at, so the value stays single-sourced.
+   ============================================================================= */
+:root{
+  --rs-font-sans: var(--font-sans);
+  --rs-font-mono: var(--font-mono);
+
+  --rs-radius-pill: var(--radius-pill);
+  --rs-radius-circle: var(--radius-circle);
+  --rs-radius-chip: var(--radius-chip);
+  --rs-radius-control: var(--radius-control);
+  --rs-radius-control-lg: var(--radius-control-lg);
+  --rs-radius-card-sm: var(--radius-card-sm);
+  --rs-radius-card: var(--radius-card);
+  --rs-radius-card-md: var(--radius-card-md);
+  --rs-radius-card-lg: var(--radius-card-lg);
+  --rs-radius-card-xl: var(--radius-card-xl);
+  --rs-radius-card-2xl: var(--radius-card-2xl);
+  --rs-radius-panel: var(--radius-panel);
+  --rs-radius-bubble: var(--radius-bubble);
+  --rs-radius-bubble-tail: var(--radius-bubble-tail);
+
+  --rs-shadow-accent-button: var(--shadow-accent-button);
+  --rs-shadow-accent-button-sm: var(--shadow-accent-button-sm);
+  --rs-shadow-blob: var(--shadow-blob);
+  --rs-shadow-blob-sm: var(--shadow-blob-sm);
+  --rs-shadow-menu: var(--shadow-menu);
+  --rs-shadow-toast: var(--shadow-toast);
+  --rs-shadow-panel: var(--shadow-panel);
+  --rs-shadow-card-float: var(--shadow-card-float);
+  --rs-shadow-hero: var(--shadow-hero);
+  --rs-shadow-knob: var(--shadow-knob);
+
+  --rs-ease-out-soft: var(--ease-out-soft);
+  --rs-ease-out-snap: var(--ease-out-snap);
+
+  --rs-duration-fast: var(--duration-fast);
+  --rs-duration-quick: var(--duration-quick);
+  --rs-duration-base: var(--duration-base);
+  --rs-duration-slow: var(--duration-slow);
+  --rs-duration-slower: var(--duration-slower);
+  --rs-duration-morph: var(--duration-morph);
+}
+
+@theme inline {
+  /* --- shadcn colour contract --------------------------------------------- */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  /* --muted / --accent are also legacy alias names (see (b) and (e)); point the
+     utilities at the underlying DS tokens so bg-muted / bg-accent cannot be
+     hijacked by the legacy text-colour aliases. */
+  --color-muted: var(--rs-surface-subtle);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--rs-surface-hover);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  /* --- every DS colour as a utility: bg-rs-*, text-rs-*, border-rs-* ------- */
+  --color-rs-black: var(--rs-black);
+  --color-rs-ink-bright: var(--rs-ink-bright);
+  --color-rs-ink: var(--rs-ink);
+  --color-rs-ink-2: var(--rs-ink-2);
+  --color-rs-ink-3: var(--rs-ink-3);
+  --color-rs-ink-4: var(--rs-ink-4);
+  --color-rs-ink-5: var(--rs-ink-5);
+  --color-rs-ink-6: var(--rs-ink-6);
+  --color-rs-ink-7: var(--rs-ink-7);
+  --color-rs-ink-8: var(--rs-ink-8);
+  --color-rs-white: var(--rs-white);
+
+  --color-rs-orange: var(--rs-orange);
+  --color-rs-orange-hover: var(--rs-orange-hover);
+  --color-rs-orange-light: var(--rs-orange-light);
+  --color-rs-orange-deep: var(--rs-orange-deep);
+  --color-rs-orange-pale: var(--rs-orange-pale);
+  --color-rs-orange-tint: var(--rs-orange-tint);
+  --color-rs-orange-tint-2: var(--rs-orange-tint-2);
+  --color-rs-rust: var(--rs-rust);
+  --color-rs-rust-soft: var(--rs-rust-soft);
+  --color-rs-rust-faint: var(--rs-rust-faint);
+  --color-rs-red: var(--rs-red);
+  --color-rs-red-hover: var(--rs-red-hover);
+  --color-rs-red-text: var(--rs-red-text);
+  --color-rs-amber: var(--rs-amber);
+  --color-rs-green: var(--rs-green);
+
+  --color-rs-surface-page: var(--rs-surface-page);
+  --color-rs-surface-card: var(--rs-surface-card);
+  --color-rs-surface-card-soft: var(--rs-surface-card-soft);
+  --color-rs-surface-card-faint: var(--rs-surface-card-faint);
+  --color-rs-surface-pill: var(--rs-surface-pill);
+  --color-rs-surface-composer: var(--rs-surface-composer);
+  --color-rs-surface-panel: var(--rs-surface-panel);
+  --color-rs-surface-menu: var(--rs-surface-menu);
+  --color-rs-surface-drawer: var(--rs-surface-drawer);
+  --color-rs-surface-toast: var(--rs-surface-toast);
+  --color-rs-surface-hint: var(--rs-surface-hint);
+  --color-rs-surface-inset: var(--rs-surface-inset);
+  --color-rs-surface-subtle: var(--rs-surface-subtle);
+  --color-rs-surface-subtle-2: var(--rs-surface-subtle-2);
+  --color-rs-surface-hover: var(--rs-surface-hover);
+  --color-rs-surface-hover-soft: var(--rs-surface-hover-soft);
+  --color-rs-surface-accent-tint: var(--rs-surface-accent-tint);
+  --color-rs-surface-accent-tint-hover: var(--rs-surface-accent-tint-hover);
+  --color-rs-surface-accent-tint-soft: var(--rs-surface-accent-tint-soft);
+  --color-rs-surface-amber-tint: var(--rs-surface-amber-tint);
+
+  --color-rs-border-card: var(--rs-border-card);
+  --color-rs-border-card-soft: var(--rs-border-card-soft);
+  --color-rs-border-card-strong: var(--rs-border-card-strong);
+  --color-rs-border-panel: var(--rs-border-panel);
+  --color-rs-border-control: var(--rs-border-control);
+  --color-rs-border-control-strong: var(--rs-border-control-strong);
+  --color-rs-border-divider: var(--rs-border-divider);
+  --color-rs-border-divider-soft: var(--rs-border-divider-soft);
+  --color-rs-border-accent: var(--rs-border-accent);
+  --color-rs-border-accent-soft: var(--rs-border-accent-soft);
+  --color-rs-border-accent-faint: var(--rs-border-accent-faint);
+  --color-rs-border-amber: var(--rs-border-amber);
+  --color-rs-border-neutral: var(--rs-border-neutral);
+
+  /* --- fonts --------------------------------------------------------------- */
+  --font-sans: var(--rs-font-sans);
+  --font-mono: var(--rs-font-mono);
+
+  /* --- radii: rounded-pill, rounded-card, rounded-panel … ------------------- */
+  --radius-pill: var(--rs-radius-pill);
+  --radius-circle: var(--rs-radius-circle);
+  --radius-chip: var(--rs-radius-chip);
+  --radius-control: var(--rs-radius-control);
+  --radius-control-lg: var(--rs-radius-control-lg);
+  --radius-card-sm: var(--rs-radius-card-sm);
+  --radius-card: var(--rs-radius-card);
+  --radius-card-md: var(--rs-radius-card-md);
+  --radius-card-lg: var(--rs-radius-card-lg);
+  --radius-card-xl: var(--rs-radius-card-xl);
+  --radius-card-2xl: var(--rs-radius-card-2xl);
+  --radius-panel: var(--rs-radius-panel);
+  --radius-bubble: var(--rs-radius-bubble);
+  --radius-bubble-tail: var(--rs-radius-bubble-tail);
+  /* shadcn's own ladder, derived from --radius (12px) → 8/10/12/16px, so
+     unmodified shadcn primitives land on DS radii instead of Tailwind's. */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  /* --- shadows: shadow-menu, shadow-panel, shadow-accent-button … ---------- */
+  --shadow-accent-button: var(--rs-shadow-accent-button);
+  --shadow-accent-button-sm: var(--rs-shadow-accent-button-sm);
+  --shadow-blob: var(--rs-shadow-blob);
+  --shadow-blob-sm: var(--rs-shadow-blob-sm);
+  --shadow-menu: var(--rs-shadow-menu);
+  --shadow-toast: var(--rs-shadow-toast);
+  --shadow-panel: var(--rs-shadow-panel);
+  --shadow-card-float: var(--rs-shadow-card-float);
+  --shadow-hero: var(--rs-shadow-hero);
+  --shadow-knob: var(--rs-shadow-knob);
+
+  /* --- motion: ease-out-soft / ease-out-snap ------------------------------- */
+  --ease-out-soft: var(--rs-ease-out-soft);
+  --ease-out-snap: var(--rs-ease-out-snap);
+
+  /* Tailwind has no duration-* theme namespace; these are declared so the DS
+     scale is reachable from the theme, and stay usable as var(--duration-*). */
+  --duration-fast: var(--rs-duration-fast);
+  --duration-quick: var(--rs-duration-quick);
+  --duration-base: var(--rs-duration-base);
+  --duration-slow: var(--rs-duration-slow);
+  --duration-slower: var(--rs-duration-slower);
+  --duration-morph: var(--rs-duration-morph);
+
+  /* --- animations: animate-rs-breathe, animate-rs-speak … ------------------
+     Durations from design-system/components/core/scout-blob/ScoutBlob.jsx
+     (idle 5.2s / speaking 1.6s / listening 3.2s) and the DS status dot (2.4s). */
+  --animate-rs-breathe: rsBreathe var(--blob-breathe-duration) ease-in-out infinite;
+  --animate-rs-speak: rsSpeak 1.6s ease-in-out infinite;
+  --animate-rs-listen: rsListen 3.2s ease-in-out infinite;
+  --animate-rs-fade-up: rsFadeUp var(--duration-base) ease both;
+  --animate-rs-dot: rsDot 2.4s ease-in-out infinite;
+}
+
+
+/* =============================================================================
+   (d) BACKGROUND STACK — design-system/tokens/base.css, verbatim
+   Photo (mirrored, desaturated) → protection gradient → grain overlay.
+   Usage: <div class="rs-bg"><div class="rs-grain" /></div> behind the content.
+   ============================================================================= */
+.rs-bg{position:absolute;inset:0;overflow:hidden;background:var(--surface-page)}
+.rs-bg::before{content:"";position:absolute;inset:-2%;background-image:var(--bg-image);background-size:cover;background-position:50% 30%;filter:var(--bg-image-filter);transform:scaleX(-1)}
+.rs-bg::after{content:"";position:absolute;inset:0;background:var(--bg-gradient)}
+.rs-grain{position:absolute;inset:0;opacity:var(--bg-grain-opacity);mix-blend-mode:overlay;background-image:var(--bg-grain);pointer-events:none}
+
+
+/* =============================================================================
+   (e) LEGACY ALIASES
+   The pre-port pages (src/styles/app.css, design-system.css and everything
+   under src/components + src/routes) are written against these names. Pointing
+   them at DS tokens moves the old UI onto the RoomScout palette without
+   touching a single legacy rule. Delete this block once the old routes are gone.
+   ============================================================================= */
+:root{
+  --signal: var(--rs-orange);
+  --signal-hover: var(--rs-orange-hover);
+  --signal-soft: var(--rs-surface-accent-tint-soft);
+  --signal-border: var(--rs-border-accent-faint);
+  --ink: var(--rs-ink);
+  /* Legacy --muted is a TEXT colour. It intentionally shadows shadcn's --muted
+     surface from (b); the bg-muted utility is fed directly in (c). */
+  --muted: var(--rs-ink-6);
+  --panel: var(--rs-surface-card);
+  --panel-strong: var(--rs-surface-panel);
+}

@@ -22,6 +22,37 @@ export default tseslint.config(
     },
   },
   {
+    // Design-system layer: colours must come from src/styles/tokens.css, never
+    // from a literal in a component. Warns on hex and rgb()/rgba() in strings
+    // and template literals (className strings, inline styles, SVG fills).
+    files: ["src/components/ui/**/*.{ts,tsx}", "src/ui/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-syntax": [
+        "warn",
+        {
+          selector: "Literal[value=/#[0-9a-fA-F]{3,8}/]",
+          message:
+            "Raw color — use a design-system token (var(--rs-…) or a Tailwind token utility)",
+        },
+        {
+          selector: "TemplateElement[value.raw=/#[0-9a-fA-F]{3,8}/]",
+          message:
+            "Raw color — use a design-system token (var(--rs-…) or a Tailwind token utility)",
+        },
+        {
+          selector: "Literal[value=/rgba?\\(/]",
+          message:
+            "Raw color — use a design-system token (var(--rs-…) or a Tailwind token utility)",
+        },
+        {
+          selector: "TemplateElement[value.raw=/rgba?\\(/]",
+          message:
+            "Raw color — use a design-system token (var(--rs-…) or a Tailwind token utility)",
+        },
+      ],
+    },
+  },
+  {
     // The local Firecrawl component intentionally preserves upstream source
     // byte-for-byte where possible. Match upstream's lint posture instead of
     // rewriting its provider-envelope and callback types during vendoring.
