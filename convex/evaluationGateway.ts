@@ -1,10 +1,9 @@
 import type { LanguageModelV4CallOptions, LanguageModelV4GenerateResult } from "@ai-sdk/provider";
 import { ConvexError, v } from "convex/values";
-import { action, internalAction, type ActionCtx } from "./_generated/server";
+import { action, internalAction } from "./_generated/server";
 import { roomScoutLanguageModel, ROOMSCOUT_MODEL_ID } from "./ai";
 import { requireActionUserId } from "./integrations/authz";
 import { envValue } from "./integrations/env";
-import { roomScoutRateLimiter } from "./rateLimits";
 import { internal } from "./_generated/api";
 
 const DEV_CLOUD_URL = "https://perceptive-antelope-445.eu-west-1.convex.cloud";
@@ -110,9 +109,7 @@ function serializeResult(result: LanguageModelV4GenerateResult): string {
 }
 
 async function generateCore(
-  ctx: ActionCtx,
   args: { requestJson: string; callIndex: number },
-  rateLimitKey: string,
 ): Promise<{ responseJson: string; model: typeof ROOMSCOUT_MODEL_ID }> {
   assertDevelopment();
   if (!Number.isInteger(args.callIndex) || args.callIndex < 0 || args.callIndex >= 48) {
@@ -124,10 +121,6 @@ async function generateCore(
   } catch {
     throw new ConvexError({ code: "EVAL_GATEWAY_INPUT_INVALID" });
   }
-  await Promise.all([
-    roomScoutRateLimiter.limit(ctx, "evaluationGatewayUser", { key: rateLimitKey, throws: true }),
-    roomScoutRateLimiter.limit(ctx, "evaluationGatewayGlobal", { key: "global", throws: true }),
-  ]);
   try {
     const result = await roomScoutLanguageModel.doGenerate({
       ...request,
@@ -147,7 +140,7 @@ export const generate = action({
     const ownerId = await requireActionUserId(ctx);
     const operator = await ctx.runQuery(internal.users.isOperatorInternal, { userId: ownerId });
     if (!operator) throw new ConvexError({ code: "FORBIDDEN" });
-    return await generateCore(ctx, args, ownerId);
+    return await generateCore(args);
   },
 });
 
@@ -155,6 +148,6 @@ export const generate = action({
 export const generateInternal = internalAction({
   args: { requestJson: v.string(), callIndex: v.number() },
   returns: v.object({ responseJson: v.string(), model: v.literal(ROOMSCOUT_MODEL_ID) }),
-  handler: async (ctx, args): Promise<{ responseJson: string; model: typeof ROOMSCOUT_MODEL_ID }> =>
-    await generateCore(ctx, args, "local-evaluation-cli"),
+  handler: async (_ctx, args): Promise<{ responseJson: string; model: typeof ROOMSCOUT_MODEL_ID }> =>
+    await generateCore(args),
 });

@@ -171,6 +171,62 @@ export default defineSchema({
     .index("by_role", ["role"])
     .index("by_controlled_proof_actor_key", ["controlledProofActorKey"]),
 
+  devUserResets: defineTable({
+    targetUserId: v.id("users"),
+    targetUsername: v.string(),
+    status: v.union(
+      v.literal("scheduled"),
+      v.literal("running"),
+      v.literal("completed"),
+    ),
+    phase: v.optional(v.union(v.literal("quiescing"), v.literal("provider_cleanup_completed"), v.literal("deleting_app_data"), v.literal("completed"))),
+    stage: v.number(),
+    deletedDocumentCount: v.number(),
+    providerInboxResult: v.union(
+      v.literal("not_present"),
+      v.literal("deleted"),
+      v.literal("already_absent"),
+    ),
+    providerContextCount: v.number(),
+    authUsernameReleased: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+  })
+    .index("by_target_user", ["targetUserId"])
+    .index("by_status", ["status"]),
+
+  demoSourceChecks: defineTable({
+    singletonKey: v.literal("global"),
+    generation: v.string(),
+    mode: v.union(v.literal("manual"), v.literal("demo")),
+    status: v.union(v.literal("queued"), v.literal("scraping"), v.literal("processing"), v.literal("waiting"), v.literal("completed"), v.literal("stopped"), v.literal("failed")),
+    requestedBy: v.id("users"),
+    checksCompleted: v.number(),
+    maxChecks: v.number(),
+    detailPagesUsed: v.number(),
+    maxDetailPages: v.number(),
+    startedAt: v.number(),
+    expiresAt: v.number(),
+    nextCheckAt: v.optional(v.number()),
+    lastCompletedAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+    updatedAt: v.number(),
+  })
+    .index("by_singleton_key", ["singletonKey"])
+    .index("by_requested_by", ["requestedBy"]),
+
+  demoSourceCheckRequests: defineTable({
+    requestId: v.string(),
+    requestedBy: v.id("users"),
+    kind: v.union(v.literal("manual"), v.literal("demo")),
+    accepted: v.boolean(),
+    status: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_request_id", ["requestId"])
+    .index("by_requested_by", ["requestedBy"]),
+
   sources: defineTable({
     platformId: v.optional(v.id("sourcePlatforms")),
     slug: v.string(),
@@ -486,7 +542,10 @@ export default defineSchema({
     status: v.union(v.literal("ready"), v.literal("failed")),
     assessment: v.optional(matchAssessmentValidator), model: v.string(), promptVersion: v.string(),
     retryAfter: v.number(), updatedAt: v.number(),
-  }).index("by_need_and_signal", ["savedNeedId", "signalId"]),
+    attempts: v.optional(v.number()), errorCode: v.optional(v.string()),
+  })
+    .index("by_need_and_signal", ["savedNeedId", "signalId"])
+    .index("by_owner", ["ownerId"]),
 
   signalMatches: defineTable({
     ownerId: v.id("users"),
@@ -558,8 +617,12 @@ export default defineSchema({
   savedNeeds: defineTable({
     ownerId: v.id("users"),
     title: v.string(),
+    // Transitional compatibility fields. New APIs no longer accept either;
+    // the migration removes districts after backfilling the fields below.
     city: v.string(),
-    districts: v.array(v.string()),
+    districts: v.optional(v.array(v.string())),
+    locationQuery: v.optional(v.string()),
+    locationLabel: v.optional(v.string()),
     maxBudgetEur: v.optional(v.number()),
     arrangement: v.array(
       v.union(
@@ -580,6 +643,10 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
     radiusKm: v.optional(v.number()),
+    centerLatitude: v.optional(v.number()),
+    centerLongitude: v.optional(v.number()),
+    locationPrecision: v.optional(locationPrecision),
+    geocodeId: v.optional(v.id("geocodes")),
     genres: v.optional(v.array(v.string())),
     instruments: v.optional(v.array(v.string())),
     collaborationOpen: v.optional(v.boolean()),
@@ -1409,6 +1476,9 @@ export default defineSchema({
     ownerId: v.id("users"),
     contextId: v.optional(v.id("browserContexts")),
     providerSessionId: v.optional(v.string()),
+    browserEngine: v.optional(
+      v.union(v.literal("stagehand"), v.literal("legacy")),
+    ),
     kind: v.union(
       v.literal("recon"),
       v.literal("authenticate"),
@@ -1464,7 +1534,9 @@ export default defineSchema({
     ),
     message: v.optional(v.string()),
     createdAt: v.number(),
-  }).index("by_run", ["runId"]),
+  })
+    .index("by_run", ["runId"])
+    .index("by_owner", ["ownerId"]),
 
   platformThreads: defineTable({
     connectionId: v.id("portalConnections"),
@@ -1506,7 +1578,8 @@ export default defineSchema({
       "connectionId",
       "providerMessageId",
     ])
-    .index("by_thread_and_sent_at", ["threadId", "sentAt"]),
+    .index("by_thread_and_sent_at", ["threadId", "sentAt"])
+    .index("by_owner", ["ownerId"]),
 
   searchMandates: defineTable({
     ownerId: v.id("users"),
@@ -1763,7 +1836,9 @@ export default defineSchema({
     requestId: v.id("actionRequests"), ownerId: v.id("users"),
     snapshotHash: v.string(), contentHash: v.string(), contentVersion: v.number(),
     assessment: messageSafetyValidator, model: v.string(), version: v.string(), createdAt: v.number(),
-  }).index("by_request_and_snapshot", ["requestId", "snapshotHash"]),
+  })
+    .index("by_request_and_snapshot", ["requestId", "snapshotHash"])
+    .index("by_owner", ["ownerId"]),
 
   actionApprovals: defineTable({
     requestId: v.id("actionRequests"),
@@ -1842,7 +1917,8 @@ export default defineSchema({
   })
     .index("by_event_key", ["eventKey"])
     .index("by_entity_key_and_occurred_at", ["entityKey", "occurredAt"])
-    .index("by_action_request_and_occurred_at", ["actionRequestId", "occurredAt"]),
+    .index("by_action_request_and_occurred_at", ["actionRequestId", "occurredAt"])
+    .index("by_actor_user_id", ["actorUserId"]),
 
   migrationRuns: defineTable({
     name: v.string(),

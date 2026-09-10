@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { z } from "zod";
 import type { MatchNeed, MatchSignal } from "../matchingCore";
 
-export const MATCH_ASSESSMENT_VERSION = "constraints-v2";
+export const MATCH_ASSESSMENT_VERSION = "constraints-v3";
 const verdict = v.union(v.literal("satisfied"), v.literal("conflict"), v.literal("unknown"));
 const finding = { verdict, evidence: v.union(v.string(), v.null()), explanation: v.string() };
 export const matchAssessmentValidator = v.object({
@@ -61,4 +61,5 @@ For monthlyPrice.minimumEur, return only a supported lower bound for the TOTAL M
 A per-person price without a known band-member count MUST produce minimumEur: null and totalKnown: false. An hourly price without known monthly hours MUST produce minimumEur: null and totalKnown: false. Never assume one person, one hour, a band size, or monthly usage merely to create a number or compare it with the monthly band budget. Set totalKnown only when the whole band's total recurring monthly cost is explicitly established; deposits are not recurring rent.
 Sharing.open is explicit permission to share/collaborate, not just similar genres or instruments. Respect negation and restrictive conditions.
 Each definite verdict/price/sharing claim needs an exact verbatim quote from listingEvidence. Evidence quotes must not come from the need.
+Copy one contiguous substring exactly, including punctuation; do not paraphrase, translate, combine separate sentences, or add ellipses to evidence. Put interpretations only in explanation. If retryFeedback is provided, correct the previous response's evidence against listingEvidence before returning it.
 Explanations should be brief, faithful and describe what remains to ask. Do not claim availability is verified by the provider.`;

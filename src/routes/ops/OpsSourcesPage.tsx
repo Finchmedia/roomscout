@@ -6,6 +6,7 @@ import { WorkspaceShell } from "../../components/navigation/WorkspaceShell";
 import { PortalOperationsPanel } from "../../components/ops/PortalOperationsPanel";
 import { OpsPageHeader } from "../../components/ops/OpsPageHeader";
 import { SourceIntelligencePanel } from "../../components/ops/SourceIntelligencePanel";
+import { DemoSourceCheckControls } from "../../components/scout/DemoSourceCheckControls";
 import { EmptyState, LedgerCard } from "../../components/ui/LedgerCard";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 import { formatAge, formatDuration, toneForStatus, titleCase } from "./opsFormat";
@@ -41,6 +42,7 @@ export function OpsSourcesPage() {
         title="Sources & portals"
       />
       <div className="stack">
+      <DemoSourceCheckControls variant="operator" />
       <SourceIntelligencePanel />
       <PortalOperationsPanel />
       <LedgerCard header={<><span className="type">Legacy monitor registry</span><span className="mono">Firecrawl Native Monitoring</span></>}>

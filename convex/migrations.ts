@@ -2,9 +2,115 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
 import { redactPublicText } from "./lib/privacy";
+import {
+  DEFAULT_SEARCH_RADIUS_KM,
+  savedNeedLocationLabel,
+  savedNeedLocationQuery,
+} from "./lib/savedNeedLocation";
 
 const MIGRATION_NAME = "redact_evidence_and_backfill_signal_location_v1";
 const BATCH_SIZE = 50;
+
+export const SAVED_NEED_LOCATION_MIGRATION_NAME = "saved_need_location_radius_v2";
+
+export const migrateSavedNeedLocations = internalMutation({
+  args: {
+    cursor: v.optional(v.string()),
+    migrationRunId: v.optional(v.id("migrationRuns")),
+  },
+  returns: v.object({ processed: v.number(), complete: v.boolean() }),
+  handler: async (ctx, args): Promise<{ processed: number; complete: boolean }> => {
+    let migrationRunId = args.migrationRunId;
+    if (migrationRunId === undefined) {
+      const existing = await ctx.db
+        .query("migrationRuns")
+        .withIndex("by_name", (q) => q.eq("name", SAVED_NEED_LOCATION_MIGRATION_NAME))
+        .unique();
+      if (existing?.status === "completed") return { processed: 0, complete: true };
+      const now = Date.now();
+      migrationRunId = existing?._id ?? await ctx.db.insert("migrationRuns", {
+        name: SAVED_NEED_LOCATION_MIGRATION_NAME,
+        status: "running",
+        processed: 0,
+        startedAt: now,
+        updatedAt: now,
+      });
+      if (existing !== null) {
+        await ctx.db.patch(existing._id, {
+          status: "running",
+          error: undefined,
+          updatedAt: now,
+        });
+      }
+    }
+
+    const page = await ctx.db.query("savedNeeds").paginate({
+      cursor: args.cursor ?? null,
+      numItems: BATCH_SIZE,
+    });
+    for (const need of page.page) {
+      const locationQuery = savedNeedLocationQuery(need);
+      const locationLabel = savedNeedLocationLabel(need);
+      const radiusKm =
+        need.radiusKm !== undefined &&
+        Number.isFinite(need.radiusKm) &&
+        need.radiusKm > 0 &&
+        need.radiusKm <= 200
+          ? need.radiusKm
+          : locationQuery
+            ? DEFAULT_SEARCH_RADIUS_KM
+            : undefined;
+      const revision = (need.matchingRevision ?? 0) + 1;
+      const { _id, _creationTime, districts: _districts, ...fields } = need;
+      void _creationTime;
+      void _districts;
+      await ctx.db.replace(_id, {
+        ...fields,
+        ...(locationQuery ? { locationQuery } : {}),
+        ...(locationLabel ? { locationLabel } : {}),
+        ...(radiusKm === undefined ? {} : { radiusKm }),
+        ...(need.status === "active"
+          ? { matchingRevision: revision, matchingRunId: undefined }
+          : {}),
+      });
+      if (locationQuery && (need.centerLatitude === undefined || need.centerLongitude === undefined)) {
+        await ctx.scheduler.runAfter(0, internal.map.geocodeNeed, { savedNeedId: _id });
+      }
+      if (need.status === "active") {
+        await ctx.scheduler.runAfter(0, internal.matches.retireNeedMatches, {
+          ownerId: need.ownerId,
+          savedNeedId: _id,
+          needRevision: revision,
+          cursor: null,
+        });
+        if (need.centerLatitude !== undefined && need.centerLongitude !== undefined) {
+          await ctx.scheduler.runAfter(0, internal.matches.recomputeNeed, {
+            ownerId: need.ownerId,
+            savedNeedId: _id,
+          });
+        }
+      }
+    }
+
+    const run = await ctx.db.get(migrationRunId);
+    if (run !== null) {
+      await ctx.db.patch(migrationRunId, {
+        cursor: page.isDone ? undefined : page.continueCursor,
+        processed: run.processed + page.page.length,
+        status: page.isDone ? "completed" : "running",
+        completedAt: page.isDone ? Date.now() : undefined,
+        updatedAt: Date.now(),
+      });
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.migrations.migrateSavedNeedLocations, {
+        cursor: page.continueCursor,
+        migrationRunId,
+      });
+    }
+    return { processed: page.page.length, complete: page.isDone };
+  },
+});
 
 export const backfillEvidenceAndSignals = internalMutation({
   args: {

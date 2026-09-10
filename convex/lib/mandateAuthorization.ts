@@ -60,6 +60,8 @@ export type ActionAuthorizationInput = {
   complaintRecorded: boolean;
   suitableRoomConfirmed: boolean;
   bindingCommitment: boolean;
+  /** Derived server-side from the trusted default-Autopilot activation audit event. */
+  skipUsageLimits?: boolean;
 };
 
 export type AuthorizationDecision = {
@@ -139,12 +141,14 @@ export function authorizeFromMandate(
     reasons.push("The payload contains personal data outside the mandate.");
   }
   if (
-    mandate.maxContactsPerDay <= 0 ||
-    input.contactsAlreadyAttemptedToday >= mandate.maxContactsPerDay
+    !input.skipUsageLimits &&
+    (mandate.maxContactsPerDay <= 0 ||
+      input.contactsAlreadyAttemptedToday >= mandate.maxContactsPerDay)
   ) {
     reasons.push("The mandate's daily contact limit has been reached.");
   }
   if (
+    !input.skipUsageLimits &&
     BROWSER_ACTIONS.has(input.actionType) &&
     input.browserMinutesUsedToday >= mandate.maxBrowserMinutesPerDay
   ) {

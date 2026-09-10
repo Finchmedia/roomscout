@@ -1,8 +1,10 @@
 import type { MatchAssessment } from "./lib/matchAssessment";
 
 export type MatchNeed = {
-  city: string;
-  districts: string[];
+  locationQuery?: string;
+  locationLabel?: string;
+  /** Legacy fallback used only until saved-need location migration completes. */
+  city?: string;
   maxBudgetEur?: number;
   arrangement: Array<"permanent" | "shared" | "hourly">;
   requirements: string[];
@@ -85,7 +87,7 @@ function clamp(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
 
-function distanceKm(lat1: number, lon1: number, lat2: number, lon2: number) {
+export function distanceKm(lat1: number, lon1: number, lat2: number, lon2: number) {
   const radians = (value: number) => value * Math.PI / 180;
   const dLat = radians(lat2 - lat1);
   const dLon = radians(lon2 - lon1);
@@ -109,14 +111,21 @@ export function scoreSignalMatch(
     reasons: [],
     uncertainties: [],
   };
-  if (normalized(need.city) !== normalized(signal.city)) return empty;
+  const { radiusKm, centerLatitude, centerLongitude } = need;
+  const hasRadiusSearch = radiusKm !== undefined && centerLatitude !== undefined && centerLongitude !== undefined;
+  if (radiusKm !== undefined && !hasRadiusSearch) {
+    return {
+      ...empty,
+      uncertainties: ["Search center is still being resolved; radius eligibility is not confirmed"],
+    };
+  }
   if (
-    need.radiusKm !== undefined &&
-    need.centerLatitude !== undefined &&
-    need.centerLongitude !== undefined &&
+    radiusKm !== undefined &&
+    centerLatitude !== undefined &&
+    centerLongitude !== undefined &&
     signal.latitude !== undefined &&
     signal.longitude !== undefined &&
-    distanceKm(need.centerLatitude, need.centerLongitude, signal.latitude, signal.longitude) > need.radiusKm
+    distanceKm(centerLatitude, centerLongitude, signal.latitude, signal.longitude) > radiusKm
   ) return empty;
   if (
     signal.arrangement !== "unknown" &&
@@ -145,22 +154,22 @@ export function scoreSignalMatch(
     return { ...empty, reasons: ["Monthly price exceeds the maximum budget"] };
   }
 
-  const reasons = [sameCityReason(need.city)];
+  const reasons: string[] = [];
   const uncertainties: string[] = [];
-  if (need.radiusKm !== undefined && (signal.latitude === undefined || signal.longitude === undefined)) {
-    uncertainties.push("Location is not precise enough to enforce the radius");
+  if (hasRadiusSearch && signal.latitude !== undefined && signal.longitude !== undefined) {
+    const distance = distanceKm(need.centerLatitude!, need.centerLongitude!, signal.latitude, signal.longitude);
+    reasons.push(`Within ${need.radiusKm} km radius (${distance.toFixed(1)} km away)`);
+  } else if (hasRadiusSearch) {
+    uncertainties.push("Listing coordinates are unavailable; radius eligibility needs clarification");
+  } else if (need.city && normalized(need.city) === normalized(signal.city)) {
+    reasons.push(sameCityReason(need.city));
+  } else {
+    return empty;
   }
-  let points = 0.25;
+  const locationConfirmed = hasRadiusSearch && signal.latitude !== undefined && signal.longitude !== undefined ||
+    !hasRadiusSearch && need.city !== undefined && normalized(need.city) === normalized(signal.city);
+  let points = locationConfirmed ? 0.25 : 0.125;
   let possible = 0.25;
-
-  if (need.districts.length > 0) possible += 0.1;
-  if (need.districts.length > 0 && signal.district && need.districts.some((item) => normalized(item) === normalized(signal.district!))) {
-    points += 0.1;
-    reasons.push(`Preferred area: ${signal.district}`);
-  } else if (need.districts.length > 0 && !signal.district) {
-    points += 0.05;
-    uncertainties.push("District is not stated");
-  }
 
   possible += 0.15;
   if (signal.arrangement === "unknown") {

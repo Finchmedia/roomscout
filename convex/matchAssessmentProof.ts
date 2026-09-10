@@ -32,7 +32,8 @@ type ProofCase = {
 
 const baseNeed: MatchNeed = {
   city: "Example City",
-  districts: [],
+  locationQuery: "Example City",
+  locationLabel: "Example City",
   arrangement: ["shared"],
   requirements: [],
 };

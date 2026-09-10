@@ -134,9 +134,28 @@ async function mailboxDigest(ownerId: string, salt: string): Promise<string> {
   );
 }
 
-function usernameForClientId(clientId: string): string {
-  const digest = clientId.replace(/^roomscout-user-/, "");
-  return `rs-${digest.slice(0, 24).toLowerCase()}`;
+export function mailboxUsername(
+  roomScoutUsername: string,
+): string {
+  return roomScoutUsername
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32) || "musician";
+}
+
+export function collisionSafeMailboxUsername(
+  roomScoutUsername: string,
+  clientId: string,
+): string {
+  const digest = clientId.replace(/^roomscout-user-/, "").toLowerCase();
+  return `${mailboxUsername(roomScoutUsername).slice(0, 23)}-${digest.slice(0, 8)}`;
+}
+
+function isMailboxUsernameCollision(error: unknown): boolean {
+  return error instanceof Error && /(?:error|status)\s+409\b/i.test(error.message);
 }
 
 function controlledInboxFingerprint(inbox: {
@@ -174,6 +193,12 @@ export const getDraftOwner = internalQuery({
     const draft = await ctx.db.get(args.draftId);
     return draft?.ownerId ?? null;
   },
+});
+
+export const getProvisioningUsername = internalQuery({
+  args: { ownerId: v.id("users") },
+  returns: v.union(v.string(), v.null()),
+  handler: async (ctx, args) => (await ctx.db.get(args.ownerId))?.username ?? null,
 });
 
 export const claimProvisioning = internalMutation({
@@ -520,6 +545,9 @@ export const ensureForOwner = internalAction({
   args: { ownerId: v.id("users") },
   returns: ensuredMailbox,
   handler: async (ctx, args): Promise<EnsuredMailbox> => {
+    if (!await ctx.runQuery(internal.devUserReset.userMayRunWork, { userId: args.ownerId })) {
+      return { status: "disabled" as const };
+    }
     const apiKey = envValue("AGENTMAIL_API_KEY");
     const salt =
       envValue("AGENTMAIL_ADDRESS_SALT") ?? envValue("AGENTMAIL_MAILBOX_SALT");
@@ -528,6 +556,13 @@ export const ensureForOwner = internalAction({
         status: "failed" as const,
         error: "AgentMail per-user mailbox provisioning is not configured.",
       };
+    }
+    const roomScoutUsername: string | null = await ctx.runQuery(
+      internal.mailboxes.getProvisioningUsername,
+      { ownerId: args.ownerId },
+    );
+    if (roomScoutUsername === null) {
+      return { status: "failed" as const, error: "RoomScout user was not found." };
     }
     const digest = await mailboxDigest(args.ownerId, salt);
     const clientId = `roomscout-user-${digest}`;
@@ -556,7 +591,7 @@ export const ensureForOwner = internalAction({
       let inbox;
       try {
         inbox = await ctx.runAction(internal.agentmailComponent.createInbox, {
-          username: usernameForClientId(claim.clientId),
+          username: mailboxUsername(roomScoutUsername),
           domain:
             envValue("AGENTMAIL_DOMAIN") ?? envValue("AGENTMAIL_INBOX_DOMAIN"),
           displayName: "RoomScout",
@@ -567,9 +602,32 @@ export const ensureForOwner = internalAction({
           internal.agentmailComponent.findInboxByClientId,
           { clientId: claim.clientId },
         );
-        if (!inbox) {
+        if (!inbox && isMailboxUsernameCollision(createError)) {
+          try {
+            inbox = await ctx.runAction(internal.agentmailComponent.createInbox, {
+              username: collisionSafeMailboxUsername(
+                roomScoutUsername,
+                claim.clientId,
+              ),
+              domain:
+                envValue("AGENTMAIL_DOMAIN") ?? envValue("AGENTMAIL_INBOX_DOMAIN"),
+              displayName: "RoomScout",
+              clientId: claim.clientId,
+            });
+          } catch (fallbackError) {
+            inbox = await ctx.runAction(
+              internal.agentmailComponent.findInboxByClientId,
+              { clientId: claim.clientId },
+            );
+            if (!inbox) throw fallbackError;
+          }
+        } else if (!inbox) {
           throw createError;
         }
+      }
+      if (!await ctx.runQuery(internal.devUserReset.userMayRunWork, { userId: args.ownerId })) {
+        await ctx.runAction(internal.agentmailComponent.deleteInbox, { inboxId: inbox.inboxId });
+        return { status: "disabled" as const };
       }
       const completion: EnsuredMailbox = await ctx.runMutation(
         internal.mailboxes.completeProvisioning,
@@ -590,6 +648,36 @@ export const ensureForOwner = internalAction({
       });
       return { status: "failed" as const, error: message };
     }
+  },
+});
+
+export const provisionAfterSignup = internalAction({
+  args: { ownerId: v.id("users"), attempt: v.number() },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    if (!Number.isInteger(args.attempt) || args.attempt < 0 || args.attempt > 3) {
+      throw new ConvexError({ code: "INVALID_PROVISIONING_ATTEMPT" });
+    }
+    const result: EnsuredMailbox = await ctx.runAction(
+      internal.mailboxes.ensureForOwner,
+      { ownerId: args.ownerId },
+    );
+    const configured =
+      result.status !== "failed" ||
+      result.error !== "AgentMail per-user mailbox provisioning is not configured.";
+    if (
+      configured &&
+      result.status !== "active" &&
+      result.status !== "disabled" &&
+      args.attempt < 3
+    ) {
+      await ctx.scheduler.runAfter(
+        2_000 * 2 ** args.attempt,
+        internal.mailboxes.provisionAfterSignup,
+        { ownerId: args.ownerId, attempt: args.attempt + 1 },
+      );
+    }
+    return null;
   },
 });
 

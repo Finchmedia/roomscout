@@ -16,6 +16,7 @@ type ScoutConversationProps = {
   busy?: boolean;
   error?: string;
   compact?: boolean;
+  autoFocus?: boolean;
 };
 
 function renderScoutFormatting(body: string): ReactNode[] {
@@ -40,6 +41,7 @@ export function ScoutConversation({
   busy = false,
   error,
   compact = false,
+  autoFocus = false,
 }: ScoutConversationProps) {
   const inputId = useId();
   const [draft, setDraft] = useState("");
@@ -97,6 +99,7 @@ export function ScoutConversation({
           Message your Room Scout
         </label>
         <input
+          autoFocus={autoFocus}
           disabled={busy}
           id={inputId}
           onChange={(event) => setDraft(event.target.value)}

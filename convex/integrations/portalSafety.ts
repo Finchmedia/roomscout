@@ -6,8 +6,6 @@ export const PORTAL_RUN_TTLS_MS = {
   inbox_sync: 2 * 60_000,
 } as const;
 
-export const PORTAL_CIRCUIT_FAILURES = 3;
-export const PORTAL_CIRCUIT_COOLDOWN_MS = 24 * 60 * 60_000;
 export const PORTAL_MAX_RECON_RESULTS = 5;
 export const PORTAL_MAX_INBOX_THREADS = 20;
 export const PORTAL_MAX_MESSAGES_PER_THREAD = 20;
@@ -157,8 +155,12 @@ export function isControlledAgentRegistrationConnection(input: {
 
 export function sanitizeProviderError(error: unknown): string {
   if (error instanceof Error) {
+    if ("status" in error && error.status === 402) return "PROVIDER_QUOTA_EXHAUSTED";
     if (error.name === "AbortError") return "PROVIDER_TIMEOUT";
     const upper = `${error.name} ${error.message}`.toUpperCase();
+    if (upper.includes("HTTP_402") || upper.includes("PROVIDER_QUOTA_EXHAUSTED")) {
+      return "PROVIDER_QUOTA_EXHAUSTED";
+    }
     if (upper.includes("TIMEOUT")) return "PROVIDER_TIMEOUT";
     if (upper.includes("401") || upper.includes("403")) return "PROVIDER_AUTH_FAILED";
     if (upper.includes("429") || upper.includes("RATE")) return "PROVIDER_RATE_LIMITED";

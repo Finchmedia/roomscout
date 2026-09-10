@@ -8,7 +8,6 @@ import { requireActionUserId } from "./integrations/authz";
 import { envValue } from "./integrations/env";
 import { normalizeDiscoveryHit } from "./lib/sourceCandidate";
 import { discoveryQuerySlice } from "./lib/sourceDiscoveryQueries";
-import { roomScoutRateLimiter } from "./rateLimits";
 
 const firecrawl = new FirecrawlRoomScoutClient(components.firecrawlRoomScout);
 
@@ -30,10 +29,6 @@ export const runGermanySlice = action({
     if (!(await ctx.runQuery(internal.users.isOperatorInternal, { userId }))) {
       throw new ConvexError({ code: "FORBIDDEN" });
     }
-    await roomScoutRateLimiter.limit(ctx, "sourceDiscoveryOperator", {
-      key: userId,
-      throws: true,
-    });
     const apiKey = envValue("FIRECRAWL_API_KEY");
     if (!apiKey) throw new ConvexError({ code: "FIRECRAWL_NOT_CONFIGURED" });
     const slice = discoveryQuerySlice({

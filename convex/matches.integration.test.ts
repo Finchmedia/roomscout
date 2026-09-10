@@ -35,6 +35,28 @@ async function fixture() {
   return { t, owner: t.withIdentity({ subject: ids.ownerId }), ...ids };
 }
 
+it("validates saved-search radius bounds and stores the full location query", async () => {
+  const f = await fixture();
+  const input = {
+    title: "Address search",
+    locationQuery: "Hauptstätter Straße 123, Stuttgart",
+    locationLabel: "Hauptstätter Straße 123",
+    arrangement: ["shared" as const],
+    schedule: [],
+    requirements: [],
+  };
+  await expect(f.owner.mutation(api.savedNeeds.create, { ...input, radiusKm: 0 }))
+    .rejects.toThrow("INVALID_RADIUS");
+  await expect(f.owner.mutation(api.savedNeeds.create, { ...input, radiusKm: 201 }))
+    .rejects.toThrow("INVALID_RADIUS");
+  const needId = await f.owner.mutation(api.savedNeeds.create, { ...input, radiusKm: 8 });
+  expect(await f.owner.query(api.savedNeeds.getMine, { needId })).toMatchObject({
+    locationQuery: input.locationQuery,
+    locationLabel: input.locationLabel,
+    radiusKm: 8,
+  });
+});
+
 it("default Autopilot activation matches an already indexed room without a new signal", async () => {
   vi.useFakeTimers();
   vi.stubEnv("OPENAI_API_KEY", "");
@@ -65,7 +87,7 @@ it("edits hide obsolete matches immediately and expire the old opportunity after
   await f.owner.mutation(api.savedNeeds.setStatus, { needId: f.savedNeedId, status: "active" });
   await f.t.finishAllScheduledFunctions(vi.runAllTimers);
   expect(await f.owner.query(api.matches.listMine, {})).toHaveLength(1);
-  await f.owner.mutation(api.savedNeeds.update, { needId: f.savedNeedId, city: "Berlin" });
+  await f.owner.mutation(api.savedNeeds.update, { needId: f.savedNeedId, locationQuery: "Berlin" });
   expect(await f.owner.query(api.matches.listMine, {})).toHaveLength(0);
   await f.t.finishAllScheduledFunctions(vi.runAllTimers);
   const opportunity = await f.t.run(async (ctx) => ctx.db.query("opportunities").withIndex("by_saved_need_and_fingerprint", (q) => q.eq("savedNeedId", f.savedNeedId)).first());
@@ -133,6 +155,48 @@ it("processes city candidates beyond the old 75/150 row cutoffs", async () => {
   await f.t.finishAllScheduledFunctions(vi.runAllTimers);
   const rows = await f.owner.query(api.matches.listMine, {});
   expect(rows.map((row) => row.signalId)).toEqual([f.signalId]);
+});
+
+it("matches a positioned listing across city boundaries when it is inside the radius", async () => {
+  vi.useFakeTimers(); vi.stubEnv("OPENAI_API_KEY", "");
+  const f = await fixture();
+  await f.t.run(async (ctx) => {
+    await ctx.db.patch(f.savedNeedId, { radiusKm: 20, centerLatitude: 48.7758, centerLongitude: 9.1829 });
+    await ctx.db.patch(f.signalId, { city: "Esslingen", latitude: 48.7406, longitude: 9.3108 });
+  });
+  await f.owner.mutation(api.savedNeeds.setStatus, { needId: f.savedNeedId, status: "active" });
+  await f.t.finishAllScheduledFunctions(vi.runAllTimers);
+  const rows = await f.owner.query(api.matches.listMine, { savedNeedId: f.savedNeedId });
+  expect(rows).toHaveLength(1);
+  expect(rows[0]?.reasons.some((reason) => reason.startsWith("Within 20 km radius"))).toBe(true);
+});
+
+it("stores a resolved private search center with honest precision and invalidates old matches", async () => {
+  vi.useFakeTimers(); vi.stubEnv("OPENAI_API_KEY", "");
+  const f = await fixture();
+  await f.t.mutation(internal.map.storeNeedGeocode, {
+    savedNeedId: f.savedNeedId, query: "Stuttgart, Germany", queryKey: "stuttgart, germany",
+    locationLabel: "Stuttgart", precision: "city", status: "ready", latitude: 48.7758, longitude: 9.1829,
+  });
+  const need = await f.owner.query(api.savedNeeds.getMine, { needId: f.savedNeedId });
+  expect(need).toMatchObject({ centerLatitude: 48.7758, centerLongitude: 9.1829, locationPrecision: "city", matchingRevision: 1 });
+});
+
+it("preserves an exact address as the geocoding query", async () => {
+  const f = await fixture();
+  await f.owner.mutation(api.savedNeeds.update, {
+    needId: f.savedNeedId,
+    locationQuery: "Hauptstätter Straße 123, Stuttgart",
+    radiusKm: 8,
+  });
+  const location = await f.t.query(internal.map.getNeedLocation, {
+    savedNeedId: f.savedNeedId,
+  });
+  expect(location).toEqual({
+    query: "Hauptstätter Straße 123, Stuttgart, Germany",
+    queryKey: "hauptstätter straße 123, stuttgart, germany",
+    locationLabel: "Hauptstätter Straße 123, Stuttgart",
+  });
 });
 
 it("holds automatic contact on a failed AI assessment while keeping uncertainty visible", async () => {

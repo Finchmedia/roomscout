@@ -1,5 +1,7 @@
 import { ConvexError, v } from "convex/values";
+import { internal } from "./_generated/api";
 import { internalMutation, internalQuery, query } from "./_generated/server";
+import { isUserResetTombstoned } from "./devUserReset";
 
 const currentUserValidator = v.object({
   _id: v.id("users"),
@@ -22,12 +24,24 @@ export const createUserPassword = internalMutation({
     }
 
     const now = Date.now();
-    return await ctx.db.insert("users", {
+    const userId = await ctx.db.insert("users", {
       username,
       role: "musician",
       createdAt: now,
       lastSeenAt: now,
     });
+    await Promise.all([
+      ctx.scheduler.runAfter(0, internal.mailboxes.provisionAfterSignup, {
+        ownerId: userId,
+        attempt: 0,
+      }),
+      ctx.scheduler.runAfter(
+        0,
+        internal.demoSourceBootstrap.bootstrapControlledDemoForOwner,
+        { ownerId: userId },
+      ),
+    ]);
+    return userId;
   },
 });
 
@@ -40,6 +54,9 @@ export const onSignInPassword = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    if (!(await ctx.db.get(args.userId)) || await isUserResetTombstoned(ctx, args.userId)) {
+      throw new ConvexError({ code: "USER_NOT_FOUND" });
+    }
     await ctx.db.patch(args.userId, {
       lastSeenAt: Date.now(),
     });
@@ -78,6 +95,8 @@ export const resolveAuthSubject = internalQuery({
     if (userId === null || (await ctx.db.get(userId)) === null) {
       return null;
     }
+    const reset = await ctx.db.query("devUserResets").withIndex("by_target_user", (q) => q.eq("targetUserId", userId)).first();
+    if (reset) return null;
     return userId;
   },
 });

@@ -15,8 +15,7 @@ async function eligibleConnection(ctx: MutationCtx, ownerId: Id<"users">, connec
   if (!connection || connection.ownerId !== ownerId || connection.status !== "active" ||
     connection.policyDecision !== "allowed" || !connection.allowInboxPolling || !connection.inboxPath ||
     (connection.adapterKey !== "roomscout-fixture-v1" && connection.adapterKey !== "roomscout-dev-v1") ||
-    (connection.activeWriteExecutionId !== undefined && (connection.activeWriteDeadlineAt ?? 0) > now) ||
-    (connection.circuitOpenUntil !== undefined && connection.circuitOpenUntil > now)) return null;
+    (connection.activeWriteExecutionId !== undefined && (connection.activeWriteDeadlineAt ?? 0) > now)) return null;
   const context = await ctx.db.query("browserContexts").withIndex("by_connection", (q) => q.eq("connectionId", connection._id)).order("desc").first();
   if (!context || context.status !== "ready") return null;
   if (context.activeRunId) {

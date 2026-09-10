@@ -15,6 +15,7 @@ import { ApprovalComposer } from "../../components/outreach/ApprovalComposer";
 import { ProviderOfferPanel } from "../../components/opportunities/ProviderOfferPanel";
 import { ScoutBlob } from "../../components/scout/ScoutBlob";
 import { ScoutBrief } from "../../components/scout/ScoutBrief";
+import { DemoSourceCheckControls } from "../../components/scout/DemoSourceCheckControls";
 import { ScoutFactList } from "../../components/scout/ScoutFactList";
 import {
   ScoutConversation,
@@ -39,6 +40,14 @@ function readableError(error: unknown): string {
   if (error instanceof Error && /rate.?limit|too many/i.test(error.message))
     return "Kurz durchatmen: Bitte versuche es in einer Minute noch einmal.";
   return "Der Scout konnte diesen Schritt gerade nicht abschließen. Bitte versuche es erneut. Dein Suchauftrag bleibt gespeichert.";
+}
+
+function isControlledPortal(baseUrl: string): boolean {
+  try {
+    return new URL(baseUrl).hostname.replace(/^www\./, "") === "roomscout.dev";
+  } catch {
+    return false;
+  }
 }
 
 export function ScoutPage() {
@@ -106,6 +115,17 @@ export function ScoutPage() {
       ? providerConversationRows.filter((row) => row.savedNeedId === need._id)
       : [];
   const outreachDrafts = useQuery(api.outreach.listMine, { limit: 50 });
+  const externalActions = useQuery(api.externalActions.listMine, { limit: 30 });
+  const portalConnections = useQuery(api.portalConnections.listMine);
+  const controlledPortalConnection = portalConnections?.find((row) =>
+    isControlledPortal(row.baseUrl),
+  );
+  const controlledPortalRuns = useQuery(
+    api.portalConnections.listRunsMine,
+    controlledPortalConnection
+      ? { connectionId: controlledPortalConnection._id }
+      : "skip",
+  );
   const activeMandate = useQuery(
     api.mandates.getActiveMine,
     need ? { savedNeedId: need._id } : "skip",
@@ -244,17 +264,30 @@ export function ScoutPage() {
 
   const activeNeed = need;
   const facts = factsFromNeed(need);
-  const baseMode = getScoutWorkspaceMode(need, matches, opportunities);
-  const mode =
-    baseMode === "waiting" && providerConversations.some((row) => row.offer)
-      ? "results"
-      : baseMode;
-  const name = currentUser?.displayName ?? currentUser?.username ?? "there";
   const isAutopilot = Boolean(
     activeMandate &&
     (activeMandate.mode === "outreach_autopilot" ||
       activeMandate.mode === "negotiation_autopilot"),
   );
+  const baseMode = getScoutWorkspaceMode(need, matches, opportunities);
+  const readyProviderOffer = providerConversations.find(
+    (row) => row.offer?.current && row.offer.ready,
+  );
+  const providerUpdate = providerConversations.some(
+    (row) => row.offer?.current && (row.platformThreadId || row.mailThreadId),
+  );
+  const showProviderOffer = baseMode !== "paused" && baseMode !== "discovery" &&
+    Boolean(readyProviderOffer || providerUpdate);
+  const autopilotClarifying = !showProviderOffer && baseMode === "attention" && isAutopilot;
+  const mode =
+    showProviderOffer
+      ? "results"
+      : autopilotClarifying
+      ? "waiting"
+      : baseMode === "waiting" && providerConversations.some((row) => row.offer)
+        ? "results"
+        : baseMode;
+  const name = currentUser?.displayName ?? currentUser?.username ?? "there";
   const search: SavedSearch = {
     id: need._id,
     title: need.title,
@@ -281,6 +314,91 @@ export function ScoutPage() {
       ["new", "reviewing", "contacted"].includes(row.status) &&
       row.uncertainties.length,
   );
+  const needActions = (externalActions ?? []).filter(
+    (row) => row.savedNeedId === need._id,
+  );
+  const latestOutreachAction = needActions.find((row) =>
+    ["send_email", "submit_webform", "send_platform_dm"].includes(
+      row.requestedActionType,
+    ),
+  );
+  const latestRegistrationAction = (externalActions ?? []).find(
+    (row) => row.requestedActionType === "create_portal_account",
+  );
+  const latestRegistrationRun = controlledPortalRuns?.find(
+    (row) => row.kind === "authenticate",
+  );
+  const providerThreadExists = providerConversations.some(
+    (row) => row.mailThreadId || row.platformThreadId,
+  );
+  const outreachStatus = (() => {
+    if (latestOutreachAction?.status === "failed") return "blocked" as const;
+    if (latestOutreachAction?.status === "executed")
+      return "waiting_reply" as const;
+    if (
+      latestOutreachAction &&
+      ["approved", "queued", "executing"].includes(latestOutreachAction.status)
+    )
+      return "sending" as const;
+    if (
+      latestOutreachAction &&
+      ["drafted", "awaiting_approval"].includes(latestOutreachAction.status)
+    )
+      return "pending" as const;
+    if (!latestOutreachAction && providerThreadExists)
+      return "waiting_reply" as const;
+    if (
+      latestRegistrationRun?.status === "human_required" ||
+      latestRegistrationRun?.onboardingStage === "human_required"
+    )
+      return "blocked" as const;
+    if (
+      latestRegistrationRun &&
+      ["queued", "running"].includes(latestRegistrationRun.status)
+    )
+      return "registering" as const;
+    if (controlledPortalConnection?.status === "active") return "ready" as const;
+    if (
+      latestRegistrationAction &&
+      ["approved", "queued", "executing"].includes(
+        latestRegistrationAction.status,
+      )
+    )
+      return "registering" as const;
+    if (
+      latestRegistrationRun?.status === "failed" ||
+      latestRegistrationAction?.status === "failed" ||
+      controlledPortalConnection?.lastErrorCode
+    )
+      return "blocked" as const;
+    return "not_started" as const;
+  })();
+  const autopilotHeading =
+    outreachStatus === "waiting_reply"
+      ? "Die Anfrage ist gesendet. Ich warte auf die Antwort."
+      : outreachStatus === "sending"
+        ? "Die Anfrage wird gerade gesendet."
+        : outreachStatus === "pending"
+          ? "Die Anfrage ist vorbereitet, aber noch nicht gesendet."
+          : outreachStatus === "registering"
+            ? "Der Portalzugang wird gerade eingerichtet."
+            : outreachStatus === "blocked"
+              ? "Der nächste Schritt ist blockiert."
+              : "Ich habe einen passenden Raum gefunden.";
+  const autopilotDetail =
+    outreachStatus === "waiting_reply"
+      ? "Der Anbieter wurde kontaktiert; eine Antwort ist noch offen."
+      : outreachStatus === "sending"
+        ? "Der Versand läuft. Erst die bestätigte Ausführung gilt als gesendet."
+        : outreachStatus === "pending"
+          ? "Es gibt einen Entwurf oder eine ausstehende Freigabe."
+          : outreachStatus === "registering"
+            ? "Die Registrierung läuft; der Anbieter wurde noch nicht kontaktiert."
+            : outreachStatus === "blocked"
+              ? "Der Anbieter wurde nicht kontaktiert. Prüft den Portalzugang oder den fehlgeschlagenen Versand."
+              : outreachStatus === "ready"
+                ? "Der Portalzugang ist bereit; der Anbieter wurde noch nicht kontaktiert."
+                : `Offen ist: ${attention?.uncertainties[0] ?? "wie der Anbieter kontaktiert werden kann."}`;
 
   function marketSignal(
     match: NonNullable<typeof matches>[number],
@@ -355,6 +473,23 @@ export function ScoutPage() {
       threadId,
       message: `Handle the next appropriate inquiry about “${signal.title}”. Use only the active persisted mandate for eligible non-binding outreach. Any commitment or human-only step must come back to me.`,
     });
+  }
+
+  async function discussAttention() {
+    if (!threadId || !attention) return;
+    setTextOpen(true);
+    const question = attention.uncertainties[0];
+    if (attention.signalId) {
+      await setScoutFocus({
+        threadId,
+        mode: "signal_advisor",
+        activeNeedId: activeNeed._id,
+        focusedSignalId: attention.signalId,
+      });
+    }
+    await send(
+      `Hilf mir, diese offene Frage zur aktuellen Gelegenheit zu klären: ${question}`,
+    );
   }
 
   function openVoice() {
@@ -479,7 +614,7 @@ export function ScoutPage() {
                 <ScoutFactList expanded facts={facts} />
                 <button
                   className={styles.primary}
-                  disabled={working || !need.city.trim()}
+                  disabled={working || !need.locationQuery?.trim() || need.radiusKm === undefined}
                   onClick={() =>
                     void run(() =>
                       enableDefaultAutopilot({ savedNeedId: need._id }),
@@ -517,7 +652,13 @@ export function ScoutPage() {
           <div className={styles.workspace}>
             <ScoutBlob active={sending || working} compact />
             <h1 className={styles.workspaceTitle}>
-              {mode === "paused"
+              {showProviderOffer
+                ? readyProviderOffer
+                  ? "Ich habe einen passenden Raum für euch geklärt."
+                  : "Der Anbieter hat geantwortet."
+                : autopilotClarifying
+                ? autopilotHeading
+                : mode === "paused"
                 ? "Eure Suche macht eine Pause."
                 : mode === "attention"
                   ? "Eine kurze Rückfrage an euch."
@@ -526,35 +667,38 @@ export function ScoutPage() {
                     : "Ich kümmere mich darum."}
             </h1>
             <p className={styles.workspaceText}>
-              {mode === "paused"
+              {showProviderOffer
+                ? readyProviderOffer
+                  ? "Der Anbieter hat die offenen Punkte bestätigt. Prüft das Angebot – zugesagt oder gebucht ist noch nichts."
+                  : "Hier seht ihr die Antwort und welche Punkte noch offen sind."
+                : autopilotClarifying
+                ? autopilotDetail
+                : mode === "paused"
                 ? "Euer Suchauftrag bleibt gespeichert. Macht weiter, wenn ihr bereit seid."
                 : mode === "waiting"
-                  ? `Ich behalte passende Räume in ${need.city || "eurer Gegend"} im Blick. Ihr könnt die App schließen.`
+                  ? `Ich behalte passende Räume in ${need.locationLabel ?? need.locationQuery ?? "eurer Gegend"} im Blick. Ihr könnt die App schließen.`
                   : mode === "results"
                     ? "Hier findet ihr die aktuellen Treffer und Antworten zu eurem Suchauftrag."
                     : "Ein Detail ist noch offen. Sagt mir, was für euch passt."}
             </p>
+            <DemoSourceCheckControls variant="musician" />
             {mode === "attention" && attention ? (
               <section className={styles.attention}>
-                <span className={styles.attentionLabel}>Open question</span>
+                <span className={styles.attentionLabel}>Offene Frage</span>
                 <h2>{attention.uncertainties[0]}</h2>
                 <p>
                   {attention.reasons[0] ??
-                    "Scout needs your preference before proceeding."}
+                    "Scout braucht eure Einschätzung, bevor es weitergeht."}
                 </p>
                 <div className={styles.attentionActions}>
-                  {attention.uncertainties.slice(0, 2).map((question) => (
-                    <button
-                      className={styles.ghost}
-                      key={question}
-                      onClick={() =>
-                        void send(`About the current opportunity: ${question}`)
-                      }
-                      type="button"
-                    >
-                      Discuss this with Scout
-                    </button>
-                  ))}
+                  <button
+                    className={styles.ghost}
+                    disabled={working || sending || !threadId}
+                    onClick={() => void run(discussAttention)}
+                    type="button"
+                  >
+                    Mit Scout klären
+                  </button>
                 </div>
               </section>
             ) : null}
@@ -563,6 +707,7 @@ export function ScoutPage() {
                 <div className={styles.results}>
                   {providerConversations
                     .filter((row) => row.offer)
+                    .sort((left, right) => Number(Boolean(right.offer?.current && right.offer.ready)) - Number(Boolean(left.offer?.current && left.offer.ready)))
                     .slice(0, 2)
                     .map((conversation) => (
                       <ProviderOfferPanel
@@ -632,7 +777,9 @@ export function ScoutPage() {
                 <p className={styles.quiet}>
                   {mode === "paused"
                     ? "Your search is paused. Resume it to refresh your matches."
-                    : `No current matches for ${need.city || "this search"} yet.`}
+                    : matches?.length
+                      ? `${matches.length} current match${matches.length === 1 ? "" : "es"} for ${need.locationLabel ?? need.locationQuery ?? "this search"}.`
+                      : `No current matches for ${need.locationLabel ?? need.locationQuery ?? "this search"} yet.`}
                 </p>
                 <details className={styles.activity}>
                   <summary>What Scout is doing</summary>
@@ -673,6 +820,7 @@ export function ScoutPage() {
             {textOpen ? (
               <div className={styles.conversation}>
                 <ScoutConversation
+                  autoFocus={mode === "attention"}
                   busy={sending || !threadId}
                   compact
                   error={error}

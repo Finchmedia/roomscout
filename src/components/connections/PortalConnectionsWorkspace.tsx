@@ -29,6 +29,7 @@ export type PortalUiConnection = {
   status: PortalUiStatus;
   policyReady: boolean;
   canAuthenticate: boolean;
+  canRecoverRegistration?: boolean;
   canSync: boolean;
   scopes: string[];
   lastVerifiedLabel?: string;
@@ -57,10 +58,12 @@ type PortalConnectionsWorkspaceProps = {
   loading?: boolean;
   workingId?: string;
   error?: string;
+  success?: string;
   onEnsureMailbox?: () => void;
   onCreate?: (sourceId: string, label: string) => void;
   onAuthenticate?: (connectionId: string) => void;
   onAgentRegister?: (connectionId: string) => void;
+  onRecoverRegistration?: (connectionId: string) => void;
   onPause?: (connectionId: string) => void;
   onSync?: (connectionId: string) => void;
   onDisable?: (connectionId: string) => void;
@@ -106,10 +109,12 @@ export function PortalConnectionsWorkspace({
   loading = false,
   workingId,
   error,
+  success,
   onEnsureMailbox,
   onCreate,
   onAuthenticate,
   onAgentRegister,
+  onRecoverRegistration,
   onPause,
   onSync,
   onDisable,
@@ -163,6 +168,7 @@ export function PortalConnectionsWorkspace({
       </div>
 
       {error ? <p className="rs-form-error" role="alert">{error}</p> : null}
+      {success ? <p className="hint" role="status">{success}</p> : null}
 
       <LedgerCard header={<><span className="type">Your portal identities</span><span className="mono">Independent connection state</span></>}>
         {loading ? (
@@ -204,6 +210,9 @@ export function PortalConnectionsWorkspace({
                       <>
                         <button className="btn btn-p btn-sm" disabled={busy || !portal.canAuthenticate || !onAgentRegister || mailbox?.status !== "active"} onClick={() => onAgentRegister?.(portal.id)} type="button"><Mail aria-hidden="true" size={13} />Let Scout register</button>
                         <button className="btn btn-s btn-sm" disabled={busy || !portal.canAuthenticate || !onAuthenticate} onClick={() => onAuthenticate?.(portal.id)} type="button"><Link2 aria-hidden="true" size={13} />Open secure setup</button>
+                        {portal.canRecoverRegistration ? (
+                          <button className="btn btn-s btn-sm" disabled={busy || !onRecoverRegistration} onClick={() => onRecoverRegistration?.(portal.id)} type="button"><RotateCcw aria-hidden="true" size={13} />Reset failed setup</button>
+                        ) : null}
                       </>
                     ) : null}
                     {portal.status === "reauth_required" || portal.status === "paused" ? (

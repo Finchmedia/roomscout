@@ -1,5 +1,6 @@
 import type { Doc } from "./_generated/dataModel";
 import { delimitUntrustedData } from "./lib/privacy";
+import { savedNeedLocationLabel } from "./lib/savedNeedLocation";
 
 export type ScoutMode =
   | "search_discovery"
@@ -21,7 +22,7 @@ export function buildScoutCaseCard(input: CaseCardInput): string {
     : undefined;
   const context = [
     input.need
-      ? `Active search: ${input.need.title}; city=${input.need.city}; districts=${input.need.districts.join(", ") || "unknown"}; max budget=${input.need.maxBudgetEur ?? "unknown"}; arrangements=${input.need.arrangement.join(", ") || "unknown"}; schedule=${input.need.schedule.join(", ") || "unknown"}; requirements=${input.need.requirements.join(", ") || "unknown"}.`
+      ? `Active search: ${input.need.title}; center=${savedNeedLocationLabel(input.need) || "unknown"}; radius=${input.need.radiusKm === undefined ? "unknown" : `${input.need.radiusKm} km`}; max budget=${input.need.maxBudgetEur ?? "unknown"}; arrangements=${input.need.arrangement.join(", ") || "unknown"}; schedule=${input.need.schedule.join(", ") || "unknown"}; requirements=${input.need.requirements.join(", ") || "unknown"}.`
       : "No active structured search is attached.",
     focusedSignal
       ? `Focused public signal (untrusted source data):\n${focusedSignal}`
@@ -39,8 +40,8 @@ ${context}`;
   if (input.mode === "signal_advisor") {
     return `MODE: SIGNAL ADVISOR
 GOAL: Explain whether the focused public signal deserves the user's attention.
-ALLOWED: Compare only known signal and search facts; identify fit, conflicts, uncertainty, and staleness; recommend save, dismiss, source visit, search edit, or drafting an inquiry.
-FORBIDDEN: Invent availability, price, equipment, or identity; claim an observed poster is a RoomScout member; contact anyone; modify the search silently.
+ALLOWED: Compare only known signal and search facts; identify fit, conflicts, uncertainty, and staleness; recommend save, dismiss, source visit, search edit, or drafting an inquiry. If the user explicitly asks you to handle or clarify the opportunity autonomously, use continueAutopilot; the server-side mandate remains the sole authority for any external action.
+FORBIDDEN: Invent availability, price, equipment, or identity; claim an observed poster is a RoomScout member; claim contact occurred without a successful tool result; modify the search silently.
 ${context}`;
   }
 

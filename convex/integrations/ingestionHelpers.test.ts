@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildDesiredMonitor,
   monitorConfigFingerprint,
+  monitorMatchesDesired,
   parseMonitorWebhook,
 } from "./monitorReconciliation";
 import { redactContactData } from "./piiRedaction";
@@ -131,6 +132,35 @@ describe("native monitor contract", () => {
       text: "daily",
       timezone: "Europe/Berlin",
     });
+    const fingerprint = monitorConfigFingerprint(request, false);
+    expect(
+      monitorMatchesDesired(
+        {
+          id: "monitor-daily",
+          status: "active",
+          schedule: { text: "daily", timezone: "Europe/Berlin" },
+          targets: request.targets,
+        },
+        fingerprint,
+        fingerprint,
+        false,
+        request,
+      ),
+    ).toBe(true);
+    expect(
+      monitorMatchesDesired(
+        {
+          id: "monitor-daily",
+          status: "active",
+          schedule: { text: "weekly", timezone: "Europe/Berlin" },
+          targets: request.targets,
+        },
+        fingerprint,
+        fingerprint,
+        false,
+        request,
+      ),
+    ).toBe(false);
   });
 
   it("parses a monitor page webhook with a JSON snapshot", () => {

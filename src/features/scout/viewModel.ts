@@ -1,5 +1,10 @@
 import type { Doc, Id } from "../../../convex/_generated/dataModel";
 
+type SavedNeedProjection = Omit<Doc<"savedNeeds">, "city" | "districts"> & {
+  city?: string;
+  districts?: string[];
+};
+
 export type ScoutFact = {
   key: string;
   label: string;
@@ -36,9 +41,14 @@ const arrangementLabels: Record<
   hourly: "Hourly room",
 };
 
-export function factsFromNeed(need: Doc<"savedNeeds">): ScoutFact[] {
+export function factsFromNeed(need: SavedNeedProjection): ScoutFact[] {
   const facts: ScoutFact[] = [];
-  const location = [need.city, ...need.districts].filter(Boolean).join(" · ");
+  const location = [
+    need.locationLabel?.trim() || need.locationQuery?.trim() || need.city?.trim(),
+    need.radiusKm !== undefined ? `${need.radiusKm} km Umkreis` : undefined,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   if (location)
     facts.push({ key: "location", label: "Location", value: location });
   if (need.arrangement.length)
@@ -54,12 +64,6 @@ export function factsFromNeed(need: Doc<"savedNeeds">): ScoutFact[] {
       key: "budget",
       label: "Budget",
       value: `Up to €${need.maxBudgetEur} / month`,
-    });
-  if (need.radiusKm !== undefined)
-    facts.push({
-      key: "radius",
-      label: "Radius",
-      value: `${need.radiusKm} km`,
     });
   if (need.schedule.length)
     facts.push({
@@ -119,7 +123,7 @@ export function factsFromNeed(need: Doc<"savedNeeds">): ScoutFact[] {
 }
 
 export function getScoutWorkspaceMode(
-  need: Doc<"savedNeeds">,
+  need: SavedNeedProjection,
   matches: MatchProjection[] | undefined,
   opportunities: OpportunityProjection[] | undefined,
 ): ScoutWorkspaceMode {

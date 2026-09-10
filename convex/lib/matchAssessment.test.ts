@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { MATCH_ASSESSMENT_VERSION, validateMatchAssessment, type MatchAssessment } from "./matchAssessment";
 import { scoreSignalMatch, type MatchNeed, type MatchSignal } from "../matchingCore";
 
-const need: MatchNeed = { city: "Stuttgart", districts: [], arrangement: ["shared"], maxBudgetEur: 250, requirements: ["Loud drums allowed"], schedule: ["Monday evening"] };
+const need: MatchNeed = { city: "Stuttgart", arrangement: ["shared"], maxBudgetEur: 250, requirements: ["Loud drums allowed"], schedule: ["Monday evening"] };
 const signal: MatchSignal = { side: "supply", city: "Stuttgart", title: "Shared room", summary: "No acoustic drums. Monday after 18:00 is free. Rent 220 plus mandatory utilities 50 per month.", arrangement: "shared", priceEur: 220, pricePeriod: "month", requirements: [] };
 const assessment: MatchAssessment = {
   requirements: [{ index: 0, verdict: "conflict", evidence: "No acoustic drums.", explanation: "Acoustic drums are explicitly excluded" }],
@@ -43,7 +43,7 @@ describe("evidence-backed matching", () => {
     expect(checked.monthlyPrice).toEqual({ minimumEur: null, totalKnown: false, evidence: null });
     expect(scoreSignalMatch(perPersonNeed, perPersonSignal, 1, checked).reasons).not.toContain("Monthly price is within budget");
     expect(scoreSignalMatch(perPersonNeed, perPersonSignal, 1, checked).uncertainties).toContain("Price is not stated");
-    expect(MATCH_ASSESSMENT_VERSION).toBe("constraints-v2");
+    expect(MATCH_ASSESSMENT_VERSION).toBe("constraints-v3");
   });
   it("does not fabricate musical overlap when neither party has musical preferences", () => {
     const result = scoreSignalMatch({ ...need, requirements: [], schedule: [] }, { ...signal, summary: "Plain shared room" }, 0);

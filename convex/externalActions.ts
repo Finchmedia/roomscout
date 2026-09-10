@@ -10,6 +10,8 @@ import { setNeedStatus } from "./lib/needLifecycle";
 import { scoutWorkpool } from "./workpools";
 import { actionPayloadHash, canonicalJson, normalizeEmail, normalizeText } from "./integrations/contentHash";
 import { requireUserId } from "./integrations/authz";
+import { isDefaultAutopilotMandate } from "./mandates";
+import { isUserResetTombstoned } from "./devUserReset";
 import {
   authorizeFromMandate,
   containsBindingCommitment,
@@ -323,6 +325,7 @@ export const createContactFormFromScout = internalMutation({
         if (startedAt < startOfDay.getTime()) return total;
         return total + Math.max(0, ((run.endedAt ?? now) - startedAt) / 60_000);
       }, 0);
+      const skipUsageLimits = await isDefaultAutopilotMandate(ctx, mandate);
       const authorization = authorizeFromMandate({
         mode: mandate.mode,
         status: "active",
@@ -350,6 +353,7 @@ export const createContactFormFromScout = internalMutation({
         complaintRecorded: mailThreads.some((thread) => thread.lastDeliveryStatus === "complained"),
         suitableRoomConfirmed: converted.length > 0,
         bindingCommitment: containsBindingCommitment(payload),
+        skipUsageLimits,
       });
       authorizedByAutopilot = authorization.authorized;
     }
@@ -461,6 +465,7 @@ async function submitRequest(ctx: MutationCtx, ownerId: Id<"users">, requestId: 
       if (startedAt < startOfDay.getTime()) return total;
       return total + Math.max(0, ((run.endedAt ?? Date.now()) - startedAt) / 60_000);
     }, 0);
+    const skipUsageLimits = await isDefaultAutopilotMandate(ctx, mandate);
     const decision = authorizeFromMandate({
       mode: mandate.mode,
       status: "active",
@@ -487,6 +492,7 @@ async function submitRequest(ctx: MutationCtx, ownerId: Id<"users">, requestId: 
       complaintRecorded: mailThreads.some((thread) => thread.lastDeliveryStatus === "complained"),
       suitableRoomConfirmed: converted.length > 0,
       bindingCommitment: semantic ? semantic.assessment.classification !== "non_binding" : containsBindingCommitment(request.payload),
+      skipUsageLimits,
     });
     if (!decision.authorized) {
       await ctx.db.patch(request._id, { status: "awaiting_approval", updatedAt: Date.now() });
@@ -859,6 +865,7 @@ export const claimForExecutor = internalMutation({
         if (startedAt < startOfDay.getTime()) return sum;
         return sum + Math.max(0, ((run.endedAt ?? Date.now()) - startedAt) / 60_000);
       }, 0);
+      const skipUsageLimits = await isDefaultAutopilotMandate(ctx, mandate);
       const authorization = authorizeFromMandate({
         mode: mandate.mode,
         status: "active",
@@ -892,6 +899,7 @@ export const claimForExecutor = internalMutation({
         complaintRecorded: complainedThreads.some((thread) => thread.lastDeliveryStatus === "complained"),
         suitableRoomConfirmed: converted.length > 0,
         bindingCommitment: semantic ? semantic.assessment.classification !== "non_binding" : containsBindingCommitment(request.payload),
+        skipUsageLimits,
       });
       if (!authorization.authorized) {
         throw new ConvexError({ code: "MANDATE_NO_LONGER_AUTHORIZES", reasons: authorization.reasons });
@@ -1001,20 +1009,6 @@ export const attachProviderExecution = internalMutation({
     const execution = await ctx.db.get(args.executionId);
     if (execution === null || execution.ownerId !== args.ownerId || (execution.status !== "claimed" && execution.status !== "running")) {
       throw new ConvexError({ code: "EXECUTION_NOT_CLAIMED" });
-    }
-    const binding = execution.adapterBindingId ? await ctx.db.get(execution.adapterBindingId) : null;
-    if (binding?.executor === "browserbase") {
-      const cutoff = Date.now() - 8 * 60 * 1_000;
-      const recentRunning = await ctx.db.query("actionExecutions").withIndex("by_status_and_updated_at", (q) =>
-        q.eq("status", "running").gt("updatedAt", cutoff),
-      ).take(50);
-      for (const candidate of recentRunning) {
-        if (candidate._id === execution._id || !candidate.adapterBindingId) continue;
-        const candidateBinding = await ctx.db.get(candidate.adapterBindingId);
-        if (candidateBinding?.executor === "browserbase") {
-          throw new ConvexError({ code: "BROWSERBASE_WRITE_CONCURRENCY_LIMIT" });
-        }
-      }
     }
     await ctx.db.patch(execution._id, {
       status: "running",
@@ -1147,6 +1141,32 @@ export const finishExecution = internalMutation({
       occurredAt: now,
     });
     return null;
+  },
+});
+
+/** Releases only a claim that provably never attached a provider operation. */
+export const cancelUnstartedForUserReset = internalMutation({
+  args: { ownerId: v.id("users"), requestId: v.id("actionRequests") },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    if (!await isUserResetTombstoned(ctx, args.ownerId)) return false;
+    const request = await ctx.db.get(args.requestId);
+    if (!request || request.ownerId !== args.ownerId || !request.executionIdempotencyKey) return false;
+    const execution = await ctx.db.query("actionExecutions").withIndex("by_idempotency_key", (q) =>
+      q.eq("idempotencyKey", request.executionIdempotencyKey!),
+    ).unique();
+    if (!execution || execution.ownerId !== args.ownerId || execution.status !== "claimed" ||
+      execution.providerActionId || execution.providerThreadId || execution.providerMessageId) return false;
+    const now = Date.now();
+    await ctx.db.patch(execution._id, { status: "failed", completedAt: now, error: "USER_RESET_IN_PROGRESS", updatedAt: now });
+    await ctx.db.patch(request._id, { status: "failed", error: "USER_RESET_IN_PROGRESS", updatedAt: now });
+    if (execution.connectionId) {
+      const connection = await ctx.db.get(execution.connectionId);
+      if (connection?.ownerId === args.ownerId && connection.activeWriteExecutionId === execution._id) {
+        await ctx.db.patch(connection._id, { activeWriteExecutionId: undefined, activeWriteDeadlineAt: undefined, updatedAt: now });
+      }
+    }
+    return true;
   },
 });
 

@@ -91,6 +91,10 @@ describe("portalSafety", () => {
   });
 
   it("maps provider errors to non-sensitive codes", () => {
+    expect(sanitizeProviderError(Object.assign(new Error("private billing details"), { status: 402 })))
+      .toBe("PROVIDER_QUOTA_EXHAUSTED");
+    expect(sanitizeProviderError(new Error("AGENT_REGISTRATION_BROWSER_LAUNCH_HTTP_402")))
+      .toBe("PROVIDER_QUOTA_EXHAUSTED");
     expect(sanitizeProviderError(new Error("request timeout with secret details"))).toBe(
       "PROVIDER_TIMEOUT",
     );

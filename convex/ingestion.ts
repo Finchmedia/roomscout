@@ -942,12 +942,17 @@ export const ingestPageDocument = internalAction({
     sourceTargetId: v.id("sourceTargets"),
     pageUrl: v.string(),
     markdown: v.string(),
+    maxEntries: v.optional(v.number()),
   },
   returns: v.object({ discovered: v.number(), queuedDetails: v.number() }),
   handler: async (ctx, args): Promise<{
     discovered: number;
     queuedDetails: number;
   }> => {
+    const maxEntries = Math.max(
+      1,
+      Math.min(100, Math.floor(args.maxEntries ?? 100)),
+    );
     const context = await ctx.runQuery(
       internal.ingestion.getEntryIngestionContext,
       { sourceTargetId: args.sourceTargetId },
@@ -1006,7 +1011,7 @@ export const ingestPageDocument = internalAction({
                 unknowns: z.array(z.string().max(300)).max(30),
               }),
             )
-            .max(100),
+            .max(maxEntries),
         }),
         instructions: `Extract every distinct public rehearsal-room listing from ${context.sourceName}. Preserve only explicit facts. Return the listing detail URL when present, resolve no URLs yourself, never infer contact details or availability, and return an empty list if the page contains no listings.`,
         prompt: delimitUntrustedData(
@@ -1015,9 +1020,10 @@ export const ingestPageDocument = internalAction({
         ),
       });
       const entries = extractSourceEntriesFromSnapshot({
-        snapshot: { entries: output.entries },
+        snapshot: { entries: output.entries.slice(0, maxEntries) },
         pageUrl: args.pageUrl,
         defaultSide: context.defaultSide,
+        maxEntries,
       });
       const result: {
         discovered: number;
@@ -1392,6 +1398,10 @@ export const completeDetailNormalization = internalMutation({
     if (previousSignalId && previousSignalId !== signalId) {
       await refreshSignalVerification(ctx, previousSignalId);
     }
+    // Detail normalization changes the matching revision after the index-page
+    // match has already run. Recompute against the completed listing as well.
+    await ctx.scheduler.runAfter(0, internal.matches.embedSignal, { signalId });
+    await ctx.scheduler.runAfter(0, internal.map.geocodeSignal, { signalId });
     return true;
   },
 });

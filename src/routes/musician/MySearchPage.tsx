@@ -27,7 +27,7 @@ export function MySearchPage() {
     ? needs.find((candidate) => candidate._id === scoutContext?.activeNeedId && candidate.status !== "archived") ?? needs.find((candidate) => candidate.status !== "archived")
     : undefined;
   const matches = useQuery(api.matches.listMine, need ? { savedNeedId: need._id, limit: 30 } : "skip");
-  const indexedSignals = useQuery(api.signals.list, need?.city ? { city: need.city, limit: 50 } : "skip");
+  const indexedSignals = useQuery(api.signals.list, need?.locationQuery ? { city: need.locationQuery, limit: 50 } : "skip");
   const sourceCoverage = useQuery(api.searchSources.listForNeed, need ? { savedNeedId: need._id, limit: 100 } : "skip");
   const activeMandate = useQuery(api.mandates.getActiveMine, need ? { savedNeedId: need._id } : "skip");
   const setNeedStatus = useMutation(api.savedNeeds.setStatus);
@@ -166,8 +166,9 @@ export function MySearchPage() {
     platformAllowlist: activeMandate.platformIds,
     allowedActionTypes: activeMandate.allowedActionTypes.map((action) => action === "propose_visit_time" ? "propose_visit" as const : action),
     dataScopes: activeMandate.allowedPersonalData,
-    dailyContactLimit: activeMandate.maxContactsPerDay,
-    dailyBrowserMinutes: activeMandate.maxBrowserMinutesPerDay,
+        dailyContactLimit: activeMandate.maxContactsPerDay,
+        dailyBrowserMinutes: activeMandate.maxBrowserMinutesPerDay,
+        usesDefaultUnlimitedUsage: activeMandate.usesDefaultUnlimitedUsage,
     maxMonthlyPriceEur: activeMandate.maxMonthlyPriceEur,
     expiresAt: activeMandate.expiresAt,
     killSwitchEnabled: true,
@@ -218,7 +219,7 @@ export function MySearchPage() {
         </div>
       ) : null}
 
-      {activeTab === "sources" ? sourceCoverage === undefined ? <EmptyState body="Loading reviewed source coverage and your saved source preferences." title="Loading source coverage…" /> : <SearchSourcesPanel city={need.city} disclosure={sourceCoverage.disclosure} indexedSignalCount={indexedSignals?.length ?? 0} indexedSourceCount={maxEvidenceSources} onScopeChange={(sourceId, included) => void changeSourceScope(sourceId, included)} sources={coverageSources} /> : null}
+      {activeTab === "sources" ? sourceCoverage === undefined ? <EmptyState body="Loading reviewed source coverage and your saved source preferences." title="Loading source coverage…" /> : <SearchSourcesPanel city={need.locationLabel ?? need.locationQuery ?? "this area"} disclosure={sourceCoverage.disclosure} indexedSignalCount={indexedSignals?.length ?? 0} indexedSourceCount={maxEvidenceSources} onScopeChange={(sourceId, included) => void changeSourceScope(sourceId, included)} sources={coverageSources} /> : null}
 
       {activeTab === "activity" ? (
         <LedgerCard header={<><span className="type">Search activity</span><span className="mono">Persisted search + match events</span></>}>

@@ -2,8 +2,8 @@
 import { convexTest } from "convex-test";
 import { browserbase, Stagehand } from "@browserbasehq/stagehand";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { internal } from "./_generated/api";
-import { initializePortalBrowser, registrationLaunchDiagnostic, registrationStartFailureCode } from "./browserbasePortal";
+import { api, internal } from "./_generated/api";
+import { ensureRegistrationProviderContext, initializePortalBrowser, registrationLaunchDiagnostic, registrationStartFailureCode } from "./browserbasePortal";
 import schema from "./schema";
 
 vi.mock("./integrations/env", () => ({
@@ -13,13 +13,18 @@ vi.mock("./integrations/env", () => ({
 const browserbaseSdk = vi.hoisted(() => ({
   contextsCreate: vi.fn(),
   contextsDelete: vi.fn(),
+  contextsRetrieve: vi.fn(),
   sessionsUpdate: vi.fn(),
 }));
 
 vi.mock("@browserbasehq/sdk", () => ({
   Browserbase: vi.fn(function Browserbase() {
     return {
-      contexts: { create: browserbaseSdk.contextsCreate, delete: browserbaseSdk.contextsDelete },
+      contexts: {
+        create: browserbaseSdk.contextsCreate,
+        delete: browserbaseSdk.contextsDelete,
+        retrieve: browserbaseSdk.contextsRetrieve,
+      },
       sessions: { update: browserbaseSdk.sessionsUpdate },
     };
   }),
@@ -36,10 +41,45 @@ vi.mock("@browserbasehq/stagehand", () => ({
 const modules = import.meta.glob("./**/*.ts");
 
 beforeEach(() => {
+  vi.clearAllMocks();
   vi.stubEnv("CONVEX_CLOUD_URL", "https://perceptive-antelope-445.eu-west-1.convex.cloud");
   vi.stubEnv("CONVEX_SITE_URL", "https://perceptive-antelope-445.eu-west-1.convex.site");
 });
 afterEach(() => vi.unstubAllEnvs());
+
+it("allows repeated auth, inbox, and recon reservations past the former quotas", async () => {
+  const t = convexTest(schema, modules);
+  const { ownerId, connectionId } = await t.run(async (ctx) => {
+    const now = Date.now();
+    const ownerId = await ctx.db.insert("users", { username: "repeat-auth", role: "musician", createdAt: now, lastSeenAt: now });
+    const sourceId = await ctx.db.insert("sources", { slug: "repeat-auth-source", name: "Repeat auth", baseUrl: "https://roomscout.dev", side: "both", status: "active", health: "healthy", accessMode: "authenticated", automationReview: "approved", createdAt: now, updatedAt: now });
+    const connectionId = await ctx.db.insert("portalConnections", { ownerId, sourceId, label: "Repeat auth", allowedDomains: ["roomscout.dev"], allowedPaths: ["/sign-in"], status: "needs_auth", policyDecision: "allowed", allowReadOnlyRecon: true, allowInboxPolling: true, pollIntervalMinutes: 30, failureCount: 0, createdAt: now, updatedAt: now });
+    return { ownerId, connectionId };
+  });
+  for (const kind of ["authenticate", "inbox_sync", "recon"] as const) {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const runId = await t.mutation(internal.portalConnections.reserveRun, { ownerId, connectionId, kind });
+      await t.mutation(internal.portalConnections.finishRun, { runId, status: "failed", errorCode: "PROVIDER_UNAVAILABLE" });
+    }
+  }
+  await expect(t.mutation(internal.portalConnections.reserveRun, { ownerId, connectionId, kind: "authenticate" })).resolves.toBeDefined();
+  expect(await t.run((ctx) => ctx.db.get(connectionId))).not.toHaveProperty("circuitOpenUntil");
+});
+
+it("allows live browser runs on independent connections while excluding the same connection", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await t.run(async (ctx) => {
+    const now = Date.now();
+    const firstOwnerId = await ctx.db.insert("users", { username: "parallel-one", role: "musician", createdAt: now, lastSeenAt: now });
+    const secondOwnerId = await ctx.db.insert("users", { username: "parallel-two", role: "musician", createdAt: now, lastSeenAt: now });
+    const sourceId = await ctx.db.insert("sources", { slug: "parallel-source", name: "Parallel source", baseUrl: "https://roomscout.dev", side: "both", status: "active", health: "healthy", accessMode: "authenticated", automationReview: "approved", createdAt: now, updatedAt: now });
+    const makeConnection = (ownerId: typeof firstOwnerId, label: string) => ctx.db.insert("portalConnections", { ownerId, sourceId, label, allowedDomains: ["roomscout.dev"], allowedPaths: ["/inbox"], status: "active" as const, policyDecision: "allowed" as const, allowReadOnlyRecon: true, allowInboxPolling: true, pollIntervalMinutes: 30, failureCount: 0, createdAt: now, updatedAt: now });
+    return { firstOwnerId, secondOwnerId, firstConnectionId: await makeConnection(firstOwnerId, "First"), secondConnectionId: await makeConnection(secondOwnerId, "Second") };
+  });
+  await expect(t.mutation(internal.portalConnections.reserveRun, { ownerId: fixture.firstOwnerId, connectionId: fixture.firstConnectionId, kind: "inbox_sync" })).resolves.toBeDefined();
+  await expect(t.mutation(internal.portalConnections.reserveRun, { ownerId: fixture.secondOwnerId, connectionId: fixture.secondConnectionId, kind: "inbox_sync" })).resolves.toBeDefined();
+  await expect(t.mutation(internal.portalConnections.reserveRun, { ownerId: fixture.firstOwnerId, connectionId: fixture.firstConnectionId, kind: "recon" })).rejects.toThrow("BROWSER_SESSION_BUSY");
+});
 
 it("reports only allowlisted registration start stage, SDK name, and HTTP status", () => {
   const error = Object.assign(new Error("raw provider response with secret"), {
@@ -51,6 +91,11 @@ it("reports only allowlisted registration start stage, SDK name, and HTTP status
   expect(code).toBe("AGENT_REGISTRATION_CONTEXT_CREATE_AUTHENTICATION_HTTP_401");
   expect(code).not.toContain("secret");
   expect(code).not.toContain("apiKey");
+});
+
+it("preserves quota exhaustion as a safe structured launch status", () => {
+  expect(registrationStartFailureCode("browser_launch", { status: 402, message: "private billing details" }))
+    .toBe("AGENT_REGISTRATION_BROWSER_LAUNCH_HTTP_402");
 });
 
 it("fails closed to a fixed stage code for unknown provider errors", () => {
@@ -80,6 +125,37 @@ it("classifies only fixed Stagehand templates and safe cause metadata", () => {
   });
   expect(JSON.stringify(diagnostic)).not.toContain("raw API response");
   expect(JSON.stringify(diagnostic)).not.toContain("must not leak");
+});
+
+it("reuses a provider-confirmed registration context", async () => {
+  browserbaseSdk.contextsRetrieve.mockResolvedValueOnce({ id: "live-context" });
+  await expect(ensureRegistrationProviderContext(
+    { contexts: { retrieve: browserbaseSdk.contextsRetrieve, create: browserbaseSdk.contextsCreate } },
+    "live-context",
+    "run-1",
+  )).resolves.toEqual({ providerContextId: "live-context", created: false });
+  expect(browserbaseSdk.contextsCreate).not.toHaveBeenCalled();
+});
+
+it("replaces a persisted registration context that the provider no longer has", async () => {
+  browserbaseSdk.contextsRetrieve.mockRejectedValueOnce({ status: 404 });
+  browserbaseSdk.contextsCreate.mockResolvedValueOnce({ id: "replacement-context" });
+  await expect(ensureRegistrationProviderContext(
+    { contexts: { retrieve: browserbaseSdk.contextsRetrieve, create: browserbaseSdk.contextsCreate } },
+    "stale-context",
+    "run-2",
+  )).resolves.toEqual({ providerContextId: "replacement-context", created: true });
+  expect(browserbaseSdk.contextsCreate).toHaveBeenCalledWith({ name: "roomscout-agent-run-2" });
+});
+
+it("does not hide non-404 context validation failures", async () => {
+  browserbaseSdk.contextsRetrieve.mockRejectedValueOnce({ status: 503 });
+  await expect(ensureRegistrationProviderContext(
+    { contexts: { retrieve: browserbaseSdk.contextsRetrieve, create: browserbaseSdk.contextsCreate } },
+    "unknown-context",
+    "run-3",
+  )).rejects.toMatchObject({ status: 503 });
+  expect(browserbaseSdk.contextsCreate).not.toHaveBeenCalled();
 });
 
 async function registrationGuardFixture(options: {
@@ -151,10 +227,119 @@ async function registrationGuardFixture(options: {
       createdAt: now,
       updatedAt: now,
     });
-    return { connectionId };
+    return { actorId, connectionId };
   });
   return { t, ...ids };
 }
+
+it("clears only a failed controlled registration and invalidates its stale context", async () => {
+  const fixture = await registrationGuardFixture({ sourceReviewed: true, connectionOwnedByActor: true });
+  const contextId = await fixture.t.run(async (ctx) => {
+    await ctx.db.patch(fixture.connectionId, {
+      failureCount: 3,
+      circuitOpenUntil: Date.now() + 86_400_000,
+      lastErrorCode: "AGENT_REGISTRATION_BROWSER_LAUNCH_FAILED",
+    });
+    return await ctx.db.insert("browserContexts", {
+      connectionId: fixture.connectionId,
+      ownerId: fixture.actorId,
+      providerContextId: "provider-context-that-was-deleted",
+      status: "ready",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+  });
+  await expect(fixture.t.mutation(
+    internal.portalConnections.resetControlledRegistrationFailure,
+    {
+      ownerId: fixture.actorId,
+      connectionId: fixture.connectionId,
+      confirmation: "RESET_CONTROLLED_REGISTRATION_FAILURE",
+    },
+  )).resolves.toEqual({ contextInvalidated: true });
+  expect(await fixture.t.run(async (ctx) => ctx.db.get(fixture.connectionId))).toMatchObject({
+    failureCount: 0,
+    status: "needs_auth",
+  });
+  expect(await fixture.t.run(async (ctx) => ctx.db.get(contextId))).toMatchObject({
+    status: "failed",
+  });
+});
+
+async function failedStartupFixture(options: {
+  connectionOwnedByActor?: boolean; sourceReviewed?: boolean; providerSessionId?: string;
+  errorCode?: string; status?: "failed" | "running";
+} = {}) {
+  const fixture = await registrationGuardFixture({
+    sourceReviewed: options.sourceReviewed ?? true,
+    connectionOwnedByActor: options.connectionOwnedByActor ?? true,
+  });
+  await fixture.t.run(async (ctx) => {
+    const connection = (await ctx.db.get(fixture.connectionId))!;
+    await ctx.db.insert("browserRuns", {
+      ownerId: connection.ownerId, connectionId: connection._id,
+      kind: "authenticate", status: options.status ?? "failed",
+      errorCode: options.errorCode ?? "AGENT_REGISTRATION_BROWSER_LAUNCH_SESSION",
+      ...(options.providerSessionId ? { providerSessionId: options.providerSessionId } : {}),
+      expiresAt: Date.now() + 60_000, createdAt: Date.now(), updatedAt: Date.now(),
+    });
+    await ctx.db.patch(connection._id, { failureCount: 3,
+      lastErrorCode: "AGENT_REGISTRATION_BROWSER_LAUNCH_SESSION", circuitOpenUntil: Date.now() + 60_000 });
+  });
+  return { ...fixture, asOwner: fixture.t.withIdentity({ subject: fixture.actorId }) };
+}
+
+it("allows repeated owner startup recovery without registering or activating", async () => {
+  const fixture = await failedStartupFixture();
+  await expect(fixture.asOwner.mutation(api.portalConnections.recoverFailedRegistration, {
+    connectionId: fixture.connectionId,
+  })).resolves.toBeNull();
+  expect(await fixture.t.run(async (ctx) => ctx.db.get(fixture.connectionId)))
+    .toMatchObject({ status: "needs_auth", failureCount: 0 });
+  await fixture.t.run(async (ctx) => {
+    const now = Date.now();
+    await ctx.db.insert("browserRuns", { ownerId: fixture.actorId, connectionId: fixture.connectionId,
+      kind: "authenticate", status: "failed", errorCode: "AGENT_REGISTRATION_BROWSER_LAUNCH_SESSION",
+      expiresAt: now + 60_000, createdAt: now, updatedAt: now });
+  });
+  await expect(fixture.asOwner.mutation(api.portalConnections.recoverFailedRegistration, {
+    connectionId: fixture.connectionId,
+  })).resolves.toBeNull();
+  expect(browserbase.launch).not.toHaveBeenCalled();
+});
+
+it("rejects recovery by an unauthenticated caller or a different owner", async () => {
+  const fixture = await failedStartupFixture({ connectionOwnedByActor: false });
+  await expect(fixture.t.mutation(api.portalConnections.recoverFailedRegistration, {
+    connectionId: fixture.connectionId,
+  })).rejects.toThrow("UNAUTHENTICATED");
+  await expect(fixture.asOwner.mutation(api.portalConnections.recoverFailedRegistration, {
+    connectionId: fixture.connectionId,
+  })).rejects.toThrow("CONNECTION_NOT_FOUND");
+});
+
+it.each([
+  { providerSessionId: "already-reached-provider" },
+  { errorCode: "SIGNUP_PASSWORD_REQUIRES_HUMAN" },
+  { status: "running" as const },
+  { sourceReviewed: false },
+])("refuses recovery for unsafe or unreviewed state: %j", async (options) => {
+  const fixture = await failedStartupFixture(options);
+  await expect(fixture.asOwner.mutation(api.portalConnections.recoverFailedRegistration, {
+    connectionId: fixture.connectionId,
+  })).rejects.toThrow("REGISTRATION_RECOVERY_NOT_AVAILABLE");
+});
+
+it("never permits owner recovery for a different portal host", async () => {
+  const fixture = await failedStartupFixture();
+  await fixture.t.run(async (ctx) => {
+    const connection = (await ctx.db.get(fixture.connectionId))!;
+    await ctx.db.patch(connection.sourceId, { baseUrl: "https://different-portal.example" });
+  });
+  await expect(fixture.asOwner.mutation(api.portalConnections.recoverFailedRegistration, {
+    connectionId: fixture.connectionId,
+  })).rejects.toThrow("CONTROLLED_REGISTRATION_RECOVERY_REJECTED");
+});
 
 it("rejects a controlled proof actor using another owner's connection before provider work", async () => {
   const fixture = await registrationGuardFixture({ sourceReviewed: true, connectionOwnedByActor: false });
@@ -326,7 +511,14 @@ it("claims one exact Browserbase write, exposes its session only to the owner, a
       createdAt: now,
       updatedAt: now,
     });
-    const createRequest = async (suffix: string) => {
+    const otherConnectionId = await ctx.db.insert("portalConnections", {
+      ownerId: otherOwnerId, sourceId, platformId, label: "Other fixture account",
+      allowedDomains: ["portal.example"], allowedPaths: ["/roomscout-fixture/messages"],
+      adapterKey: "roomscout-fixture-v1", status: "active", policyDecision: "allowed",
+      allowReadOnlyRecon: true, allowInboxPolling: true, pollIntervalMinutes: 60,
+      failureCount: 0, createdAt: now, updatedAt: now,
+    });
+    const createRequest = async (suffix: string, requestOwnerId = ownerId, requestConnectionId = connectionId) => {
       const payload = {
         kind: "platform_message" as const,
         recipients: ["Robin"],
@@ -334,9 +526,9 @@ it("claims one exact Browserbase write, exposes its session only to the owner, a
         body: `Is the room available? ${suffix}`,
       };
       const requestId = await ctx.db.insert("actionRequests", {
-        ownerId,
+        ownerId: requestOwnerId,
         platformId,
-        connectionId,
+        connectionId: requestConnectionId,
         adapterBindingId: bindingId,
         policyVersionId: policyId,
         automationMode: "exact_once",
@@ -351,7 +543,7 @@ it("claims one exact Browserbase write, exposes its session only to the owner, a
       });
       await ctx.db.insert("actionApprovals", {
         requestId,
-        ownerId,
+        ownerId: requestOwnerId,
         contentVersion: 1,
         contentHash: `hash-${suffix}`,
         payloadSnapshot: payload,
@@ -366,6 +558,7 @@ it("claims one exact Browserbase write, exposes its session only to the owner, a
       otherOwnerId,
       firstRequestId: await createRequest("one"),
       secondRequestId: await createRequest("two"),
+      independentRequestId: await createRequest("independent", otherOwnerId, otherConnectionId),
     };
   });
 
@@ -400,6 +593,16 @@ it("claims one exact Browserbase write, exposes its session only to the owner, a
     executionId: first.executionId,
     providerActionId: "provider-session-1",
   });
+  const independent = await t.mutation(internal.externalActions.claimForExecutor, {
+    ownerId: fixture.otherOwnerId,
+    requestId: fixture.independentRequestId,
+    executor: "browserbase",
+  });
+  await expect(t.mutation(internal.externalActions.attachProviderExecution, {
+    ownerId: fixture.otherOwnerId,
+    executionId: independent.executionId,
+    providerActionId: "provider-session-2",
+  })).resolves.toBeNull();
   expect(
     await t.query(internal.externalActions.getBrowserExecutionForOwner, {
       ownerId: fixture.ownerId,

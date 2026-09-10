@@ -12,13 +12,16 @@ import {
   type MutationCtx,
 } from "./_generated/server";
 import { requireActionUserId, requireUserId } from "./integrations/authz";
-import { scoreSignalMatch } from "./matchingCore";
+import { distanceKm, scoreSignalMatch } from "./matchingCore";
 import { createOpenAIEmbedding, OPENAI_EMBEDDING_MODEL } from "./openaiEmbeddings";
 import { isCurrentMatch, signalMatchRevision } from "./lib/matchValidity";
 import { generateRoomScoutObject } from "./ai";
 import { listingEvidence, matchAssessmentSchema, validateMatchAssessment, MATCH_ASSESSMENT_INSTRUCTIONS, type MatchAssessment } from "./lib/matchAssessment";
 import { projectSignal, signalProjectionValidator } from "./signals";
-import { roomScoutRateLimiter } from "./rateLimits";
+import {
+  savedNeedLocationLabel,
+  savedNeedLocationQuery,
+} from "./lib/savedNeedLocation";
 
 const matchStatus = v.union(
   v.literal("new"),
@@ -30,8 +33,10 @@ const matchStatus = v.union(
 
 function embeddingInputForNeed(need: {
   title: string;
-  city: string;
-  districts: string[];
+  locationQuery?: string;
+  locationLabel?: string;
+  city?: string;
+  radiusKm?: number;
   maxBudgetEur?: number;
   arrangement: string[];
   schedule: string[];
@@ -41,8 +46,8 @@ function embeddingInputForNeed(need: {
 }) {
   return [
     need.title,
-    `City: ${need.city}`,
-    need.districts.length ? `Areas: ${need.districts.join(", ")}` : undefined,
+    savedNeedLocationQuery(need) ? `Search center: ${savedNeedLocationLabel(need)}` : undefined,
+    need.radiusKm === undefined ? undefined : `Radius: ${need.radiusKm} km`,
     need.maxBudgetEur === undefined ? undefined : `Maximum budget: EUR ${need.maxBudgetEur}`,
     `Arrangements: ${need.arrangement.join(", ")}`,
     `Schedule: ${need.schedule.join(", ")}`,
@@ -90,8 +95,9 @@ export const getNeedForMatching = internalQuery({
       _id: v.id("savedNeeds"),
       ownerId: v.id("users"),
       title: v.string(),
-      city: v.string(),
-      districts: v.array(v.string()),
+      locationQuery: v.optional(v.string()),
+      locationLabel: v.optional(v.string()),
+      city: v.optional(v.string()),
       maxBudgetEur: v.optional(v.number()),
       arrangement: v.array(v.union(v.literal("permanent"), v.literal("shared"), v.literal("hourly"))),
       schedule: v.array(v.string()),
@@ -113,13 +119,13 @@ export const getNeedForMatching = internalQuery({
   handler: async (ctx, args) => {
     const need = await ctx.db.get(args.savedNeedId);
     if (need === null || need.ownerId !== args.ownerId) return null;
-    const area = await ctx.db.query("marketAreas").withIndex("by_city_key", (q) => q.eq("cityKey", need.city.normalize("NFKC").toLocaleLowerCase().replace(/\s+/g, " ").trim())).unique();
     return {
       _id: need._id,
       ownerId: need.ownerId,
       title: need.title,
+      locationQuery: need.locationQuery,
+      locationLabel: need.locationLabel,
       city: need.city,
-      districts: need.districts,
       maxBudgetEur: need.maxBudgetEur,
       arrangement: need.arrangement,
       schedule: need.schedule,
@@ -129,8 +135,8 @@ export const getNeedForMatching = internalQuery({
       genres: need.genres,
       instruments: need.instruments,
       radiusKm: need.radiusKm,
-      centerLatitude: area?.latitude,
-      centerLongitude: area?.longitude,
+      centerLatitude: need.centerLatitude,
+      centerLongitude: need.centerLongitude,
       status: need.status,
       updatedAt: need.updatedAt,
       matchingRevision: need.matchingRevision ?? 0,
@@ -166,11 +172,11 @@ const candidateSignal = v.object({
 });
 
 export const getCandidateSignals = internalQuery({
-  args: { city: v.string(), cursor: v.union(v.string(), v.null()) },
+  args: { cursor: v.union(v.string(), v.null()) },
   returns: v.object({ page: v.array(candidateSignal), continueCursor: v.string(), isDone: v.boolean() }),
   handler: async (ctx, args) => {
     const result = await ctx.db.query("signals")
-      .withIndex("by_city_and_status", (q) => q.eq("city", args.city).eq("status", "published"))
+      .withIndex("by_status_and_last_seen_at", (q) => q.eq("status", "published"))
       .paginate({ cursor: args.cursor, numItems: 25 });
     const page = await Promise.all(result.page.map(async (signal) => {
       const stored = await ctx.db.query("signalEmbeddings").withIndex("by_signal", (q) => q.eq("signalId", signal._id)).unique();
@@ -424,37 +430,57 @@ async function processPage(ctx: ActionCtx, args: MatchingRun): Promise<number> {
   const need = await ctx.runQuery(internal.matches.getNeedForMatching, argsForNeed(args));
   if (!need || need.status !== "active" || need.matchingRevision !== args.needRevision || need.matchingRunId !== args.matchingRunId) return 0;
   const embedding = await ctx.runQuery(internal.matches.getNeedEmbedding, { ...argsForNeed(args), inputHash: stableHash(embeddingInputForNeed(need)) });
-  const result = await ctx.runQuery(internal.matches.getCandidateSignals, { city: need.city, cursor: args.cursor });
+  const result = await ctx.runQuery(internal.matches.getCandidateSignals, { cursor: args.cursor });
   const evaluate = async (signal: (typeof result.page)[number]) => {
     const similarity = embedding && signal.embedding ? cosine(embedding, signal.embedding) : 0;
     let assessment: MatchAssessment | undefined;
     // Cheap deterministic exclusions precede model calls; a lower ranking is not
     // an exclusion because interpretation can establish previously unknown facts.
-    const sameCity = need.city.normalize("NFKC").toLocaleLowerCase().trim() === signal.city.normalize("NFKC").toLocaleLowerCase().trim();
+    const locationCanMatch = need.radiusKm !== undefined
+      ? need.centerLatitude !== undefined && need.centerLongitude !== undefined &&
+        (signal.latitude === undefined || signal.longitude === undefined ||
+          distanceKm(need.centerLatitude, need.centerLongitude, signal.latitude, signal.longitude) <= need.radiusKm)
+      : need.city !== undefined &&
+        need.city.normalize("NFKC").toLocaleLowerCase().trim() === signal.city.normalize("NFKC").toLocaleLowerCase().trim();
     const priceConflict = signal.side === "supply" && signal.pricePeriod === "month" && signal.priceEur !== undefined && need.maxBudgetEur !== undefined && signal.priceEur > need.maxBudgetEur;
     const arrangementConflict = signal.arrangement !== "unknown" && need.arrangement.length > 0 && !need.arrangement.includes(signal.arrangement);
-    if (sameCity && !priceConflict && !arrangementConflict) {
+    if (locationCanMatch && !priceConflict && !arrangementConflict) {
       const cacheKey = { ...argsForNeed(args), needRevision: args.needRevision, signalId: signal._id, signalRevision: signal.revision };
       const cached = await ctx.runQuery(internal.matchAssessments.getCached, cacheKey);
-      if (cached?.assessment) assessment = cached.assessment;
+      if (cached?.status === "ready" && cached.assessment) assessment = cached.assessment;
       else if (!cached) {
+        let errorCode: string | undefined;
         try {
+          const input = { need: { requirements: need.requirements, schedule: need.schedule, maxMonthlyBudgetEur: need.maxBudgetEur, genres: need.genres, instruments: need.instruments }, listingEvidence: listingEvidence(signal) };
           const output = await generateRoomScoutObject({
             schema: matchAssessmentSchema, instructions: MATCH_ASSESSMENT_INSTRUCTIONS, timeoutMs: 45_000,
-            prompt: JSON.stringify({ need: { requirements: need.requirements, schedule: need.schedule, maxMonthlyBudgetEur: need.maxBudgetEur, genres: need.genres, instruments: need.instruments },
-              listingEvidence: listingEvidence(signal) }),
+            prompt: JSON.stringify(input),
           });
-          assessment = validateMatchAssessment(output, need, signal);
-        } catch {
+          try {
+            assessment = validateMatchAssessment(output, need, signal);
+          } catch {
+            const repaired = await generateRoomScoutObject({
+              schema: matchAssessmentSchema, instructions: MATCH_ASSESSMENT_INSTRUCTIONS, timeoutMs: 45_000,
+              prompt: JSON.stringify({ ...input, previousAssessment: output,
+                retryFeedback: "The previous assessment failed validation. Include every requirement index exactly once. For every definite verdict copy a contiguous, exact quote from listingEvidence. Do not translate or paraphrase evidence. Keep absent facts unknown; do not invent permission or restrictions." }),
+            });
+            assessment = validateMatchAssessment(repaired, need, signal);
+          }
+        } catch (error) {
           // Provider failures and ungrounded outputs never authorize first contact.
-          console.warn("Match semantic assessment unavailable; outreach held pending retry");
+          const safeErrors = ["Invalid requirement reference", "Ungrounded requirement verdict", "Incomplete requirement assessment", "Ungrounded schedule verdict", "Ungrounded monthly price", "Missing total price", "Ungrounded sharing consent"];
+          errorCode = error instanceof Error && safeErrors.includes(error.message) ? error.message :
+            error instanceof Error && ["AbortError", "TimeoutError", "AI_APICallError", "AI_NoObjectGeneratedError", "ZodError"].includes(error.name) ? error.name : "ASSESSMENT_GENERATION_FAILED";
+          console.warn("Match assessment failed", errorCode);
         }
-        await ctx.runMutation(internal.matchAssessments.save, { ...cacheKey, assessment });
+        await ctx.runMutation(internal.matchAssessments.save, { ...cacheKey, assessment, errorCode });
       }
     }
     const score = scoreSignalMatch(need, signal, similarity, assessment);
     if (score.eligible && !assessment) score.uncertainties.push("AI condition check is pending; automatic contact is on hold");
-    return { ...score, contactEligible: score.eligible && assessment !== undefined, signalId: signal._id, signalRevision: signal.revision,
+    const radiusConfirmed = need.radiusKm === undefined ||
+      (need.centerLatitude !== undefined && need.centerLongitude !== undefined && signal.latitude !== undefined && signal.longitude !== undefined);
+    return { ...score, contactEligible: score.eligible && assessment !== undefined && radiusConfirmed, signalId: signal._id, signalRevision: signal.revision,
       fingerprint: stableHash(`${args.needRevision}:${signal.revision}:${JSON.stringify(score)}`) };
   };
   const matches = [];
@@ -532,7 +558,6 @@ export const recomputeMine = action({
   returns: v.object({ created: v.number() }),
   handler: async (ctx, args): Promise<{ created: number }> => {
     const ownerId = await requireActionUserId(ctx);
-    await roomScoutRateLimiter.limit(ctx, "matchRefresh", { key: ownerId, throws: true });
     return { created: await recompute(ctx, ownerId, args.savedNeedId) };
   },
 });
@@ -574,7 +599,7 @@ export const embedSignal = internalAction({
     } catch {
       console.warn("Signal embedding unavailable; continuing exact constraint matching");
     }
-    await ctx.runMutation(internal.matches.rematchCity, { city: input.city, cursor: null });
+    await ctx.runMutation(internal.matches.rematchAllActive, { cursor: null });
     return null;
   },
 });
@@ -587,6 +612,19 @@ export const rematchCity = internalMutation({
       .paginate({ cursor: args.cursor, numItems: 25 });
     for (const need of result.page) await ctx.scheduler.runAfter(0, internal.matches.recomputeNeed, { ownerId: need.ownerId, savedNeedId: need._id });
     if (!result.isDone) await ctx.scheduler.runAfter(0, internal.matches.rematchCity, { ...args, cursor: result.continueCursor });
+    return null;
+  },
+});
+
+export const rematchAllActive = internalMutation({
+  args: { cursor: v.union(v.string(), v.null()) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const result = await ctx.db.query("savedNeeds")
+      .withIndex("by_status_and_city", (q) => q.eq("status", "active"))
+      .paginate({ cursor: args.cursor, numItems: 25 });
+    for (const need of result.page) await ctx.scheduler.runAfter(0, internal.matches.recomputeNeed, { ownerId: need.ownerId, savedNeedId: need._id });
+    if (!result.isDone) await ctx.scheduler.runAfter(0, internal.matches.rematchAllActive, { cursor: result.continueCursor });
     return null;
   },
 });

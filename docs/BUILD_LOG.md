@@ -1,5 +1,38 @@
 # RoomScout — Build Log
 
+## 2026-09-10 — First completed controlled happy path checkpoint
+
+The user verified the complete core flow against their landlord listing in the
+controlled portal: a band described its need in chat; Scout found a candidate,
+sent a browser-based inquiry, read the landlord replies, asked follow-up questions,
+and produced a current, ready offer with the confirmed terms. The user then
+observed the final acceptance message in the portal thread. This proves the
+interactive demo communication path, not a payment, signed contract, or an
+unattended repeatability benchmark. No raw conversation or account identifiers
+are included in this public log.
+
+The checkpoint includes signup inbox provisioning and controlled-portal bootstrap,
+the simplified Stagehand v4 browser path, inbox scheduling improvements, removal
+of obstructive application throttles, developer reset utilities, radius-based
+matching, and match-assessment retry/recovery. The last UI fix prioritizes the
+current provider assessment over stale listing uncertainties and completed
+outreach actions. Ready offers show their terms; partial replies remain distinct
+from ready offers; stale assessments and paused searches cannot claim success.
+
+Verification at this checkpoint: 664 tests passed across 106 passing test files;
+one opt-in test file/test was skipped. TypeScript, Vite build, and focused Scout
+ESLint passed. The updated frontend was published to the development static host
+at https://perceptive-antelope-445.eu-west-1.convex.site. The user also observed
+the corrected offer panel on the local Vite app. This final UI checkpoint does
+not claim a new production-backend deployment.
+
+Parallel Claude Code UI/design ports are preserved as part of the current
+baseline. No chat-UI rewrite is included in this checkpoint. Next discussion:
+review the existing chat UI and the supplied design ports, including whether a
+simpler shadcn implementation is worthwhile. A fresh run without repair actions
+is still needed to establish repeatability; long-lived portal reauthentication
+and broader monitoring reliability are not established by this one success.
+
 Convex **"All Gas"** hackathon · Aug 25 – Sep 22, 2026 (submission deadline Sep 22, 12:00 PM PT)
 
 - **Live URL:** https://fleet-jackal-83.eu-west-1.convex.site
@@ -994,3 +1027,119 @@ login redirect were inspected in the browser. Authenticated visual inspection
 and live microphone/provider checks remain pending a signed-in browser session.
 No external outreach, new provider account, backend/static deployment, commit or
 push was performed. Implementation map: `docs/UI_DESIGN_PORT_2026-09-09.md`.
+
+## 2026-09-09 — Browserbase component migration and acceptance preparation
+
+Three Sol implementation agents worked on the local Stagehand component,
+controlled portal flow, and exact browser evidence; the main agent integrated
+and tested the actual Development deployment. We retained the upstream MIT
+provenance and hosted REST protocol instead of adding a nested component or
+rewriting a browser agent. RoomScout still decides and composes messages; the
+browser layer executes the authorized exact content.
+
+Live testing caught a real boundary issue: Zod 4 JSON Schema contains `$schema`
+and potentially `$defs`/`$ref`, but Convex rejects reserved object keys crossing
+function boundaries. Schemas and dynamic results now travel as bounded JSON
+strings, with concrete Convex envelope validators and caller-side Zod validation.
+Session documents use their local schema validator; the client uses generated
+component types. Raw provider errors and credentials are not exposed.
+
+Another API mismatch was important: Stagehand's model extraction does not promise
+arbitrary hidden HTML attributes. Actual URLs, rendered terms fingerprints,
+authentication markers, composer contents and sent receipts are therefore read
+through a small fixed, read-only CDP bridge. AI handles navigation interpretation,
+not authority to send. The final claim is adjacent to submission, and uncertain
+results remain unknown rather than triggering a blind resend. OTP continuation
+keeps its existing page, while new-account registration explicitly selects signup.
+
+The user requested a realistic terms test fixture. The prop portal now has a
+required, nonbinding, versioned demo-terms gate before Clerk. It was deployed to
+roomscout.dev and checked live through to the account form without creating an
+account. Native CAPTCHA handling remains bounded and provider-owned. Unknown
+terms and binding commitments still stop.
+
+Development component install and read-only live start/navigation/extract/observe
+passed. Local checkpoint: 522 tests across 91 files, backend TypeScript, build,
+and targeted backend lint passed. Portal: 17 tests, typecheck, lint and build
+passed. Repository-wide lint still includes unrelated design-system/UI findings;
+this is not a blanket clean-repository claim. The extended live form smoke also
+passed: accepted only the pinned demo terms, observed a variable-backed fill,
+filled a reserved test value exactly, and cleaned up without submitting signup.
+It exposed unsupported hosted session options and extra fields in successful act
+responses, both now normalized at the component boundary. Empty CAPTCHA containers
+no longer falsely block the form. Convex minification also injected references
+into serialized DOM callbacks; static read-only expression strings and an actual
+minified-build regression now cover that failure.
+
+Main RoomScout production is unchanged. The Stagehand rollout remains gated;
+no agent portal account or outreach was created during these probes. The shared
+test will cover personal inbox provisioning, registration/OTP, a portal message,
+the owner's reply and the Resend → AgentMail → Browserbase → Scout return path.
+No commit or push occurred. Checklist: `BROWSERBASE_COMPONENT_MIGRATION.md`.
+
+## 2026-09-09 — RoomScout band-flow production checkpoint
+
+The end-to-end band flow is now deployed to Convex production. Password signup
+schedules a personal AgentMail inbox with a readable username-first address and
+bootstraps the controlled `roomscout.dev` connection in the truthful
+`needs_auth` state. The mandate orchestrator now reserves one idempotent portal
+authentication run when an active outreach/negotiation mandate explicitly allows
+account creation on the controlled platform; outreach stays blocked until that
+connection becomes active. Mandate and policy are revalidated immediately before
+provider access.
+
+Saved-need geography now uses a geocoded center and radius for hard eligibility.
+The production migration processed all three existing needs. The global public
+`roomscout.dev` source, controlled authenticated source, policies and bindings
+were reconciled, and Firecrawl confirmed monitor
+`01a0616d-d362-726a-8768-996fe2d346c1` as updated.
+
+Verification: 581 tests across 98 files, project TypeScript, Vite production build,
+focused orchestration test, Convex deployment typecheck, production function spec,
+and an HTTP 200/current-asset check passed. Backend and static frontend are live at
+`fleet-jackal-83`; no portal account or outbound message was created during this
+checkpoint. The next action is the shared acceptance run with a fresh band account.
+
+## 2026-09-10 — Actual Stagehand v4 runtime deployed
+
+Replaced the controlled portal's hosted REST execution with the installed
+Stagehand 4.0.2 SDK inside Node actions. The local component now stores session
+metadata only. Registration, OTP continuation, inbox reads and message writes
+share a runtime with explicit credentials, disabled model caching/logging and
+bounded operations. Waiting for AgentMail disconnects SDK handles while keeping
+the provider session available; terminal paths explicitly request its release.
+
+Form handling checks actual field semantics and reads exact values back, then
+rechecks all filled fields together before the submit. A regression proves that
+a password step overwriting the email causes no submit. Existing mandate gates,
+the single-send claim and deterministic receipt/message evidence remain intact.
+
+Verification: 605 tests across 100 files pass; one opt-in local-browser probe is
+skipped in the regular suite. TypeScript, production build, scoped lint and
+diff-check pass. Development and production backend deployment succeeded. No
+frontend change was required for this migration, and no commit or push occurred.
+
+The development provider smoke failed at session creation. The v4 SDK hides the
+underlying status behind `BrowserbaseSessionError`; the preceding direct check
+reported quota exhaustion (HTTP 402). A credential-free local SDK probe timed
+out. No successful real portal registration or message round trip is claimed.
+
+## 2026-09-10 — Browser capacity restored and failed-start recovery
+
+A direct SDK check reconfirmed HTTP 402 from the exhausted free browser-minute
+budget. After the user restored capacity, both deployed Development Stagehand v4
+smokes succeeded: public navigation/extraction/observation, then reviewed demo
+terms and exact email-field filling. No signup, OTP or outbound message was
+submitted by these probes.
+
+Registration limits now cross the app boundary as structured cooldown errors.
+An explicit owner mutation can reset only the reviewed controlled connection
+after its latest authentication run failed before provider-session attachment.
+It rejects other owners, other hosts, unreviewed sources and active sessions;
+recovery is limited to once per daily window. The UI separates this reset from
+the subsequent registration click. Normal attempt and global browser budgets
+remain configured and no existing user or inbox is removed.
+
+Verification: 622 tests pass across 101 files, with one opt-in local probe skipped;
+TypeScript, production build and scoped ESLint pass. Signup/OTP and the full
+provider-message round trip are still acceptance steps, not claimed successes.

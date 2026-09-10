@@ -4,9 +4,9 @@ import auth from "@convex-dev/auth/core/convex.config.js";
 import password from "@convex-dev/auth/providers/password/convex.config.js";
 import username from "@convex-dev/auth/username/convex.config.js";
 import staticHosting from "@convex-dev/static-hosting/convex.config";
-import rateLimiter from "@convex-dev/rate-limiter/convex.config.js";
 import agentmail from "@agentmail/convex/convex.config";
 import firecrawlRoomScout from "./components/firecrawlRoomScout/convex.config.js";
+import stagehandRoomScout from "./components/stagehandRoomScout/convex.config.js";
 import { defineApp } from "convex/server";
 import { v } from "convex/values";
 
@@ -20,6 +20,10 @@ const app = defineApp({
     FIRECRAWL_MONITOR_WEBHOOK_BEARER: v.optional(v.string()),
     AGENTMAIL_API_KEY: v.string(),
     AGENTMAIL_BASE_URL: v.optional(v.string()),
+    BROWSERBASE_API_KEY: v.string(),
+    BROWSERBASE_PROJECT_ID: v.string(),
+    OPENAI_API_KEY: v.string(),
+    BROWSERBASE_MODEL: v.optional(v.string()),
   },
 });
 
@@ -35,7 +39,6 @@ app.use(password);
 app.use(agent);
 app.use(workpool, { name: "scoutWorkpool" });
 app.use(workpool, { name: "browserWorkpool" });
-app.use(rateLimiter);
 app.use(staticHosting);
 app.use(agentmail, {
   env: {
@@ -43,6 +46,8 @@ app.use(agentmail, {
     AGENTMAIL_BASE_URL: app.env.AGENTMAIL_BASE_URL,
   },
 });
+// Session metadata stays isolated; the Node action owns Stagehand v4 execution.
+app.use(stagehandRoomScout);
 app.use(firecrawlRoomScout, {
   // Durable crawl callbacks are isolated from RoomScout's native-monitor
   // webhook at /api/webhooks/firecrawl.

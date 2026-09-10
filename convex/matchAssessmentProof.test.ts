@@ -13,7 +13,7 @@ function unknownAssessment(requirementCount: number): MatchAssessment {
 
 describe("controlled semantic match proof", () => {
   it("uses the fixed production request shape exactly once per bounded case", async () => {
-    expect(MATCH_ASSESSMENT_VERSION).toBe("constraints-v2");
+    expect(MATCH_ASSESSMENT_VERSION).toBe("constraints-v3");
     expect(MATCH_ASSESSMENT_INSTRUCTIONS).toContain("TOTAL MONTHLY COST FOR THE WHOLE BAND");
     expect(MATCH_ASSESSMENT_INSTRUCTIONS).toContain("per-person price without a known band-member count MUST produce minimumEur: null");
     const generate = vi.fn(async (args: Parameters<NonNullable<Parameters<typeof runMatchAssessmentProof>[0]>>[0]) => {

@@ -21,12 +21,15 @@ in conversation are not requirements until explicitly adopted.
 
 - Guided mode requires explicit approval of the exact destination and final
   content. A user may separately activate a versioned, scoped, expiring
-  standing mandate for approved outreach actions. Contracts, terms acceptance,
-  bookings, payments, deposits, passwords, 2FA, and CAPTCHAs always require the
-  user.
-- OpenAI is the only in-product model provider. Text generation uses the Convex
-  AI Gateway with `openai/gpt-5.6-terra`; embeddings and Realtime WebRTC use the
-  direct OpenAI endpoints because the Gateway does not provide those endpoints.
+  standing mandate for approved outreach actions. Contracts, bookings,
+  payments, deposits, passwords, and 2FA always require the user. The sole
+  `roomscout.dev` controlled-demo registration may accept only pre-reviewed,
+  fingerprint-pinned free-account terms and may use Browserbase's native
+  CAPTCHA solver; changed/unknown terms, costs, and commitments stop.
+- OpenAI is the only in-product model provider. Scout text and normalization use
+  the Convex AI Gateway with `openai/gpt-5.6-terra`; embeddings, Realtime WebRTC,
+  and browser interpretation in the Stagehand v4 Node runtime may use the direct
+  OpenAI endpoint because the Gateway does not provide those paths.
 - Firecrawl performs web discovery and crawling; AgentMail handles approved
   email and replies.
 - Firecrawl Interact executes exact reviewed public-form workflows after a final

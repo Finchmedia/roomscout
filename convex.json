@@ -1,5 +1,5 @@
 {
   "node": {
-    "externalPackages": ["@browserbasehq/stagehand"]
+    "externalPackages": ["@browserbasehq/stagehand", "playwright-core"]
   }
 }

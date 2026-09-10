@@ -7,7 +7,7 @@ import schema from "./schema";
 const modules = import.meta.glob("./**/*.ts");
 const confirmation = "RUN_ROOMSCOUT_DEV_SOURCE_ONLY" as const;
 
-it("activates only the exact first-party RoomScout source and pauses it cleanly", async () => {
+it("activates the exact first-party RoomScout records and can pause the public proof target", async () => {
   const t = convexTest(schema, modules);
   await t.run(async (ctx) => {
     const now = Date.now();
@@ -49,18 +49,21 @@ it("activates only the exact first-party RoomScout source and pauses it cleanly"
 
   await t.run(async (ctx) => {
     const sources = await ctx.db.query("sources").collect();
-    expect(sources.find((source) => source.slug === "roomscout-dev-public"))
-      .toMatchObject({
-        baseUrl: "https://roomscout.dev",
-        status: "active",
-        automationReview: "approved",
-        accessMode: "public",
-        publicDisplay: true,
-      });
-    expect(sources.find((source) => source.slug === "third-party-review-source"))
-      .toMatchObject({ status: "reviewing", automationReview: "pending" });
+    expect(
+      sources.find((source) => source.slug === "roomscout-dev-public"),
+    ).toMatchObject({
+      baseUrl: "https://roomscout.dev",
+      status: "active",
+      automationReview: "approved",
+      accessMode: "public",
+      publicDisplay: true,
+    });
+    expect(
+      sources.find((source) => source.slug === "third-party-review-source"),
+    ).toMatchObject({ status: "reviewing", automationReview: "pending" });
     const active = sources.filter((source) => source.status === "active");
-    expect(active.map((source) => source.slug)).toEqual([
+    expect(active.map((source) => source.slug).sort()).toEqual([
+      "roomscout-dev-connected",
       "roomscout-dev-public",
     ]);
   });
@@ -77,7 +80,7 @@ it("activates only the exact first-party RoomScout source and pauses it cleanly"
   });
 });
 
-it("refuses to run while any unrelated source is active", async () => {
+it("keeps the global controlled source independent of other active sources", async () => {
   const t = convexTest(schema, modules);
   await t.run(async (ctx) => {
     const now = Date.now();
@@ -97,5 +100,5 @@ it("refuses to run while any unrelated source is active", async () => {
   });
   await expect(
     t.mutation(internal.controlledSourceProof.prepare, { confirmation }),
-  ).rejects.toThrow("OTHER_ACTIVE_SOURCE_PRESENT");
+  ).resolves.toMatchObject({ sourceTargetId: expect.any(String) });
 });

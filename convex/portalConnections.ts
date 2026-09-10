@@ -9,12 +9,7 @@ import {
   type MutationCtx,
 } from "./_generated/server";
 import { requireOperatorId, requireUserId } from "./integrations/authz";
-import {
-  PORTAL_CIRCUIT_COOLDOWN_MS,
-  PORTAL_CIRCUIT_FAILURES,
-  PORTAL_RUN_TTLS_MS,
-  normalizeHostname,
-} from "./integrations/portalSafety";
+import { PORTAL_RUN_TTLS_MS, normalizeHostname } from "./integrations/portalSafety";
 import { PORTAL_WRITE_TTL_MS } from "./integrations/portalWriteAdapters";
 
 const connectionStatusValidator = v.union(
@@ -56,6 +51,11 @@ const onboardingStageValidator = v.union(
   v.literal("human_required"),
   v.literal("completed"),
   v.literal("failed"),
+);
+
+const browserEngineValidator = v.union(
+  v.literal("stagehand"),
+  v.literal("legacy"),
 );
 
 const publicConnectionValidator = v.object({
@@ -333,7 +333,7 @@ export const reviewConnection = mutation({
     if (args.allowInboxPolling && source.accessMode !== "authenticated") {
       throw new ConvexError({ code: "AUTHENTICATED_SOURCE_REQUIRED" });
     }
-    if (args.pollIntervalMinutes < 30 || args.pollIntervalMinutes > 24 * 60) {
+    if (!Number.isInteger(args.pollIntervalMinutes) || args.pollIntervalMinutes <= 0) {
       throw new ConvexError({ code: "INVALID_POLL_INTERVAL" });
     }
 
@@ -537,9 +537,6 @@ export const reserveRun = internalMutation({
       throw new ConvexError({ code: "INBOX_POLLING_NOT_ALLOWED" });
     }
     const now = Date.now();
-    if (connection.circuitOpenUntil && connection.circuitOpenUntil > now) {
-      throw new ConvexError({ code: "PORTAL_CIRCUIT_OPEN" });
-    }
     if (connection.activeWriteExecutionId && (connection.activeWriteDeadlineAt ?? 0) > now) {
       throw new ConvexError({ code: "BROWSER_SESSION_BUSY" });
     }
@@ -549,13 +546,6 @@ export const reserveRun = internalMutation({
     ).order("desc").take(20);
     if (connectionRuns.some((run) => ["queued", "running", "human_required"].includes(run.status))) {
       throw new ConvexError({ code: "BROWSER_SESSION_BUSY" });
-    }
-    for (const status of ["queued", "running", "human_required"] as const) {
-      const active = await ctx.db
-        .query("browserRuns")
-        .withIndex("by_status", (q) => q.eq("status", status))
-        .take(1);
-      if (active.length > 0) throw new ConvexError({ code: "BROWSER_CONCURRENCY_LIMIT" });
     }
     const runId = await ctx.db.insert("browserRuns", {
       connectionId: connection._id,
@@ -681,6 +671,7 @@ export const getRunForOwner = internalQuery({
       connectionId: v.id("portalConnections"),
       contextId: v.optional(v.id("browserContexts")),
       providerSessionId: v.optional(v.string()),
+      browserEngine: v.optional(browserEngineValidator),
       kind: runKindValidator,
       status: runStatusValidator,
       expiresAt: v.number(),
@@ -700,6 +691,7 @@ export const getRunForOwner = internalQuery({
       connectionId: run.connectionId,
       contextId: run.contextId,
       providerSessionId: run.providerSessionId,
+      browserEngine: run.browserEngine,
       kind: run.kind,
       status: run.status,
       expiresAt: run.expiresAt,
@@ -764,6 +756,7 @@ export const attachProviderRun = internalMutation({
     ownerId: v.id("users"),
     providerSessionId: v.string(),
     providerContextId: v.optional(v.string()),
+    browserEngine: v.optional(browserEngineValidator),
     humanRequired: v.boolean(),
   },
   returns: v.object({ contextId: v.optional(v.id("browserContexts")) }),
@@ -804,6 +797,7 @@ export const attachProviderRun = internalMutation({
     await ctx.db.patch(run._id, {
       contextId,
       providerSessionId: args.providerSessionId,
+      browserEngine: args.browserEngine ?? "legacy",
       status,
       startedAt: now,
       updatedAt: now,
@@ -872,10 +866,6 @@ export const finishRun = internalMutation({
     }
     if (connection !== null) {
       const failureCount = args.status === "failed" ? connection.failureCount + 1 : 0;
-      const circuitOpenUntil =
-        failureCount >= PORTAL_CIRCUIT_FAILURES
-          ? now + PORTAL_CIRCUIT_COOLDOWN_MS
-          : undefined;
       const failureBackoffMs = Math.min(
         connection.pollIntervalMinutes * 60_000,
         5 * 60_000 * 2 ** Math.min(Math.max(failureCount - 1, 0), 4),
@@ -888,18 +878,136 @@ export const finishRun = internalMutation({
               ? "reauth_required"
               : connection.status,
         failureCount,
-        circuitOpenUntil,
+        circuitOpenUntil: undefined,
         lastSuccessAt: args.status === "completed" ? now : connection.lastSuccessAt,
         lastErrorCode: args.status === "failed" ? args.errorCode?.slice(0, 100) : undefined,
         nextPollAt:
           args.status === "completed" && connection.allowInboxPolling
             ? now + connection.pollIntervalMinutes * 60_000
             : args.status === "failed" && connection.allowInboxPolling && !args.reauthRequired
-              ? circuitOpenUntil ?? now + failureBackoffMs
+              ? now + failureBackoffMs
               : undefined,
         updatedAt: now,
       });
     }
+    if (args.status === "completed" && args.contextReady) {
+      await ctx.scheduler.runAfter(0, internal.mandateOrchestrator.runForOwner, {
+        ownerId: run.ownerId,
+      });
+    }
+    return null;
+  },
+});
+
+/** Narrow operator recovery for a controlled registration whose provider
+ * context disappeared after a failed run. This never activates the connection;
+ * it only permits the already-authorized onboarding flow to retry cleanly. */
+export const resetControlledRegistrationFailure = internalMutation({
+  args: {
+    ownerId: v.id("users"),
+    connectionId: v.id("portalConnections"),
+    confirmation: v.literal("RESET_CONTROLLED_REGISTRATION_FAILURE"),
+  },
+  returns: v.object({ contextInvalidated: v.boolean() }),
+  handler: async (ctx, args) => {
+    const connection = await ctx.db.get(args.connectionId);
+    const source = connection ? await ctx.db.get(connection.sourceId) : null;
+    let sourceUrl: URL | null;
+    try {
+      sourceUrl = source ? new URL(source.baseUrl) : null;
+    } catch {
+      sourceUrl = null;
+    }
+    if (
+      !connection ||
+      connection.ownerId !== args.ownerId ||
+      connection.status !== "needs_auth" ||
+      connection.policyDecision !== "allowed" ||
+      connection.adapterKey !== "roomscout-dev-v1" ||
+      !source ||
+      source.slug !== "roomscout-dev-connected" ||
+      sourceUrl?.protocol !== "https:" ||
+      sourceUrl.hostname !== "roomscout.dev" ||
+      sourceUrl.port !== "" ||
+      (sourceUrl.pathname !== "/" && sourceUrl.pathname !== "") ||
+      source.adapterKey !== "roomscout-dev-v1"
+    ) {
+      throw new ConvexError({ code: "CONTROLLED_REGISTRATION_RECOVERY_REJECTED" });
+    }
+    const runs = await ctx.db
+      .query("browserRuns")
+      .withIndex("by_connection", (q) => q.eq("connectionId", connection._id))
+      .order("desc")
+      .take(20);
+    if (runs.some((run) => ["queued", "running", "human_required"].includes(run.status))) {
+      throw new ConvexError({ code: "BROWSER_SESSION_BUSY" });
+    }
+    const context = await ctx.db
+      .query("browserContexts")
+      .withIndex("by_connection", (q) => q.eq("connectionId", connection._id))
+      .order("desc")
+      .first();
+    const now = Date.now();
+    if (context && context.status !== "deleted") {
+      await ctx.db.patch(context._id, {
+        status: "failed",
+        activeRunId: undefined,
+        updatedAt: now,
+      });
+    }
+    await ctx.db.patch(connection._id, {
+      failureCount: 0,
+      circuitOpenUntil: undefined,
+      lastErrorCode: undefined,
+      nextPollAt: undefined,
+      updatedAt: now,
+    });
+    await ctx.db.insert("auditEvents", {
+      eventKey: `connection:${connection._id}:controlled_registration_recovery:${now}`,
+      actorType: "system",
+      actorUserId: args.ownerId,
+      entityKey: `connection:${connection._id}`,
+      eventType: "portal.controlled_registration_recovered",
+      summary: "Cleared failed controlled registration state for a clean retry",
+      occurredAt: now,
+    });
+    return { contextInvalidated: Boolean(context && context.status !== "deleted") };
+  },
+});
+
+/** Explicit owner-initiated recovery for failed browser startup only. It never
+ * registers or sends, and same-connection live work still blocks recovery. */
+export const recoverFailedRegistration = mutation({
+  args: { connectionId: v.id("portalConnections") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const ownerId = await requireUserId(ctx);
+    const connection = await ctx.db.get(args.connectionId);
+    if (!connection || connection.ownerId !== ownerId) {
+      throw new ConvexError({ code: "CONNECTION_NOT_FOUND" });
+    }
+    const source = await ctx.db.get(connection.sourceId);
+    if (!source || source.status !== "active" || source.automationReview !== "approved" ||
+      source.accessMode !== "authenticated") {
+      throw new ConvexError({ code: "REGISTRATION_RECOVERY_NOT_AVAILABLE" });
+    }
+    const latest = await ctx.db.query("browserRuns")
+      .withIndex("by_connection", (q) => q.eq("connectionId", args.connectionId))
+      .order("desc").first();
+    if (!latest || latest.ownerId !== ownerId || latest.kind !== "authenticate" ||
+      latest.status !== "failed" || latest.providerSessionId ||
+      !(latest.errorCode?.startsWith("AGENT_REGISTRATION_BROWSER_LAUNCH_") ||
+        latest.errorCode?.startsWith("AGENT_REGISTRATION_CONTEXT_CREATE_")) ||
+      (connection.activeWriteExecutionId && (connection.activeWriteDeadlineAt ?? 0) > Date.now()) ||
+      (connection.inboxSyncActiveGeneration !== undefined && (connection.inboxSyncDeadlineAt ?? 0) > Date.now())) {
+      throw new ConvexError({ code: "REGISTRATION_RECOVERY_NOT_AVAILABLE" });
+    }
+    // The shared operator helper independently checks the exact reviewed source,
+    // ownership, needs_auth state and absence of live runs in this transaction.
+    await ctx.runMutation(internal.portalConnections.resetControlledRegistrationFailure, {
+      ownerId, connectionId: connection._id,
+      confirmation: "RESET_CONTROLLED_REGISTRATION_FAILURE",
+    });
     return null;
   },
 });
@@ -976,8 +1084,7 @@ export const listDueInboxSyncs = internalQuery({
       .filter(
         (connection) =>
           connection.policyDecision === "allowed" &&
-          connection.allowInboxPolling &&
-          (!connection.circuitOpenUntil || connection.circuitOpenUntil <= args.now),
+          connection.allowInboxPolling,
       )
       .map((connection) => ({ ownerId: connection.ownerId, connectionId: connection._id }));
     return { rows, continueCursor: page.continueCursor, isDone: page.isDone };

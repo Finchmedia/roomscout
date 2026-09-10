@@ -26,11 +26,15 @@ export const scrape = action({
   args: {
     url: v.string(),
     options: v.optional(scrapeOptionsValidator),
+    maxRetries: v.optional(v.number()),
   },
   returns: v.any(),
   handler: async (_ctx, args) => {
     const body = await firecrawlRequest("/v2/scrape", {
       body: { url: args.url, ...withExtra(args.options) },
+      maxRetries: args.maxRetries === undefined
+        ? undefined
+        : Math.max(0, Math.min(3, Math.floor(args.maxRetries))),
     });
     return body.data ?? {};
   },

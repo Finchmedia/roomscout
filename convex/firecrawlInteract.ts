@@ -14,7 +14,6 @@ import {
   stopFirecrawlInteraction,
   submitApprovedFormWithFirecrawl,
 } from "./integrations/firecrawlInteractClient";
-import { roomScoutRateLimiter } from "./rateLimits";
 
 function firecrawlKey(): string {
   const key = envValue("FIRECRAWL_API_KEY");
@@ -43,7 +42,6 @@ export const prepareApprovedForm = action({
     submitted: false;
   }> => {
     const ownerId = await requireActionUserId(ctx);
-    await roomScoutRateLimiter.limit(ctx, "firecrawlInteractUser", { key: ownerId, throws: true });
     const form = await ctx.runQuery(internal.externalActions.getApprovedContactForm, { ownerId, requestId: args.requestId });
     if (form === null) throw new ConvexError({ code: "APPROVED_FORM_NOT_FOUND" });
     firecrawlKey();
@@ -151,10 +149,6 @@ async function executeApprovedForOwner(
   requestId: Id<"actionRequests">,
 ): Promise<ExecuteApprovedResult> {
   firecrawlKey();
-  await roomScoutRateLimiter.limit(ctx, "firecrawlInteractUser", {
-    key: ownerId,
-    throws: true,
-  });
   const claim = await ctx.runMutation(
     internal.externalActions.claimForExecutor,
     { ownerId, requestId, executor: "firecrawl" },

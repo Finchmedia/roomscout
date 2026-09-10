@@ -48,6 +48,7 @@ export type NativeMonitor = {
 };
 
 type RoomScoutExtensions = {
+  lib: ComponentApi["lib"] & { scrape: InternalAction };
   monitor: {
     create: InternalAction;
     list: InternalAction;
@@ -70,8 +71,8 @@ export type RoomScoutFirecrawlComponentApi = ComponentApi &
 
 /**
  * Complete upstream Firecrawl client plus RoomScout's Native Monitoring and
- * Interact surfaces. Application auth, ownership, policy checks, approvals,
- * and rate limits stay in the app wrappers before these methods are called.
+ * Interact surfaces. Application auth, ownership, policy checks, and approvals
+ * stay in the app wrappers before these methods are called.
  */
 export class FirecrawlRoomScoutClient extends FirecrawlClient {
   declare component: RoomScoutFirecrawlComponentApi;
@@ -168,6 +169,15 @@ export class FirecrawlRoomScoutClient extends FirecrawlClient {
 
   stopInteraction(ctx: ActionCtx, jobId: string) {
     return ctx.runAction(this.component.interact.stop, { jobId });
+  }
+
+  /** One billable scrape attempt with provider retries explicitly disabled. */
+  async scrapeOnce(ctx: ActionCtx, url: string, options?: ScrapeOptions) {
+    return await ctx.runAction(this.component.lib.scrape, {
+      url,
+      options,
+      maxRetries: 0,
+    });
   }
 
   /** Convenience helper for creating the underlying scrape browser session. */

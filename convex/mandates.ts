@@ -2,8 +2,9 @@ import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import { contentHash } from "./integrations/contentHash";
 import { requireUserId } from "./integrations/authz";
-import { mutation, query } from "./_generated/server";
+import { mutation, query, type QueryCtx } from "./_generated/server";
 import { setNeedStatus } from "./lib/needLifecycle";
+import { hasCompleteSavedNeedLocation } from "./lib/savedNeedLocation";
 
 const modeValidator = v.union(
   v.literal("guided"),
@@ -60,6 +61,7 @@ const mandateValidator = v.object({
   stoppedAt: v.optional(v.number()),
   createdAt: v.number(),
   updatedAt: v.number(),
+  usesDefaultUnlimitedUsage: v.boolean(),
 });
 
 function publicMandate(row: {
@@ -76,7 +78,7 @@ function publicMandate(row: {
   expiresAt: number; stopOnComplaint: boolean; stopWhenSuitableRoomConfirmed: boolean;
   commitmentBoundary?: "non_binding_outreach_only";
   contentHash: string; activatedAt?: number; stoppedAt?: number; createdAt: number; updatedAt: number;
-}) {
+}, usesDefaultUnlimitedUsage: boolean) {
   return {
     _id: row._id, savedNeedId: row.savedNeedId, version: row.version,
     supersedesMandateId: row.supersedesMandateId, mode: row.mode, status: row.status,
@@ -88,6 +90,7 @@ function publicMandate(row: {
     commitmentBoundary: row.commitmentBoundary,
     contentHash: row.contentHash, activatedAt: row.activatedAt, stoppedAt: row.stoppedAt,
     createdAt: row.createdAt, updatedAt: row.updatedAt,
+    usesDefaultUnlimitedUsage,
   };
 }
 
@@ -121,14 +124,36 @@ async function mandateHash(input: MandateInput): Promise<string> {
   ]);
 }
 
+export async function isDefaultAutopilotMandate(
+  ctx: Pick<QueryCtx, "db">,
+  mandate: {
+    _id: import("./_generated/dataModel").Id<"searchMandates">;
+    ownerId: import("./_generated/dataModel").Id<"users">;
+    version: number;
+    contentHash: string;
+  },
+): Promise<boolean> {
+  const eventKey = `mandate:${mandate._id}:default_autopilot:${mandate.version}`;
+  const event = await ctx.db
+    .query("auditEvents")
+    .withIndex("by_event_key", (q) => q.eq("eventKey", eventKey))
+    .first();
+  return event !== null &&
+    event.eventType === "mandate.default_autopilot_activated" &&
+    event.entityKey === `mandate:${mandate._id}` &&
+    event.actorType === "user" &&
+    event.actorUserId === mandate.ownerId &&
+    event.afterHash === mandate.contentHash;
+}
+
 function validateLimits(input: MandateInput, now: number): void {
   if (input.commitmentBoundary !== "non_binding_outreach_only") {
     throw new ConvexError({ code: "MANDATE_COMMITMENT_BOUNDARY_REQUIRED" });
   }
-  if (!Number.isInteger(input.maxContactsPerDay) || input.maxContactsPerDay < 0 || input.maxContactsPerDay > 50) {
+  if (!Number.isFinite(input.maxContactsPerDay) || !Number.isInteger(input.maxContactsPerDay) || input.maxContactsPerDay < 0) {
     throw new ConvexError({ code: "INVALID_CONTACT_LIMIT" });
   }
-  if (!Number.isInteger(input.maxBrowserMinutesPerDay) || input.maxBrowserMinutesPerDay < 0 || input.maxBrowserMinutesPerDay > 240) {
+  if (!Number.isFinite(input.maxBrowserMinutesPerDay) || !Number.isInteger(input.maxBrowserMinutesPerDay) || input.maxBrowserMinutesPerDay < 0) {
     throw new ConvexError({ code: "INVALID_BROWSER_LIMIT" });
   }
   if (input.maxMonthlyPriceEur !== undefined && (!Number.isFinite(input.maxMonthlyPriceEur) || input.maxMonthlyPriceEur < 0 || input.maxMonthlyPriceEur > 100_000)) {
@@ -177,7 +202,7 @@ export const enableDefaultAutopilot = mutation({
     if (need === null || need.ownerId !== ownerId || need.status === "archived") {
       throw new ConvexError({ code: "NEED_NOT_FOUND" });
     }
-    if (!need.city.trim()) throw new ConvexError({ code: "INCOMPLETE_NEED" });
+    if (!hasCompleteSavedNeedLocation(need)) throw new ConvexError({ code: "INCOMPLETE_NEED" });
 
     const now = Date.now();
     const active = await ctx.db
@@ -294,7 +319,9 @@ export const listMine = query({
       : await ctx.db.query("searchMandates").withIndex("by_owner_and_saved_need_and_status", (q) =>
           q.eq("ownerId", ownerId),
         ).take(limit);
-    return rows.map(publicMandate);
+    return await Promise.all(rows.map(async (row) =>
+      publicMandate(row, await isDefaultAutopilotMandate(ctx, row)),
+    ));
   },
 });
 
@@ -307,7 +334,7 @@ export const getActiveMine = query({
       q.eq("ownerId", ownerId).eq("savedNeedId", args.savedNeedId).eq("status", "active"),
     ).unique();
     if (row === null) return null;
-    return publicMandate(row);
+    return publicMandate(row, await isDefaultAutopilotMandate(ctx, row));
   },
 });
 

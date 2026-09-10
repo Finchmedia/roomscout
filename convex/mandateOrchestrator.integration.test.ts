@@ -2,6 +2,7 @@
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import agentTest from "@convex-dev/agent/test";
+import rateLimiterTest from "@convex-dev/rate-limiter/test";
 import workpoolTest from "@convex-dev/workpool/test";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
@@ -229,6 +230,199 @@ async function seedOrchestrationFixture(
     return { ownerId, needId, platformId, mandateId, opportunityId, signalId, entryId, sourceId, bindingId, policyId };
   });
 }
+
+async function makeControlledRegistrationEligible(
+  t: ReturnType<typeof convexTest>,
+  fixture: Awaited<ReturnType<typeof seedOrchestrationFixture>>,
+) {
+  return await t.run(async (ctx) => {
+    await ctx.db.patch(fixture.platformId, {
+      slug: "roomscout-dev",
+      canonicalDomain: "roomscout.dev",
+    });
+    await ctx.db.patch(fixture.sourceId, {
+      slug: "roomscout-dev-connected",
+      baseUrl: "https://roomscout.dev/",
+      accessMode: "authenticated",
+      automationReview: "approved",
+      adapterKey: "roomscout-dev-v1",
+    });
+    await ctx.db.patch(fixture.policyId, {
+      sourceId: fixture.sourceId,
+      maxAutomationLevel: "approved_execute",
+      humanPresenceRequired: false,
+      accountCreationAllowed: true,
+      robotsDecision: "allowed",
+      termsDecision: "allowed",
+    });
+    await ctx.db.patch(fixture.bindingId, {
+      sourceId: fixture.sourceId,
+      adapterKey: "roomscout-dev-v1",
+      executor: "browserbase",
+      config: {
+        kind: "browserbase",
+        workflowKey: "roomscout-dev.platform-message.v1",
+        contextRequired: true,
+      },
+    });
+    const connectionId = await ctx.db.insert("portalConnections", {
+      ownerId: fixture.ownerId,
+      sourceId: fixture.sourceId,
+      platformId: fixture.platformId,
+      label: "roomscout.dev portal",
+      allowedDomains: ["roomscout.dev"],
+      allowedPaths: ["/", "/sign-up", "/sign-in", "/listings", "/inbox"],
+      inboxPath: "/inbox",
+      adapterKey: "roomscout-dev-v1",
+      status: "needs_auth",
+      policyDecision: "allowed",
+      allowReadOnlyRecon: false,
+      allowInboxPolling: true,
+      pollIntervalMinutes: 60,
+      failureCount: 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    const mandate = await ctx.db.get(fixture.mandateId);
+    await ctx.db.patch(fixture.mandateId, {
+      allowedActionTypes: [...(mandate?.allowedActionTypes ?? []), "create_portal_account"],
+      commitmentBoundary: "non_binding_outreach_only",
+    });
+    return connectionId;
+  });
+}
+
+it("schedules one controlled portal registration before outreach and remains idempotent", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedOrchestrationFixture(t);
+  const connectionId = await makeControlledRegistrationEligible(t, fixture);
+
+  expect(await t.mutation(internal.mandateOrchestrator.runForOwner, {
+    ownerId: fixture.ownerId,
+  })).toMatchObject({ created: 0, scheduled: 1 });
+  expect(await t.mutation(internal.mandateOrchestrator.runForOwner, {
+    ownerId: fixture.ownerId,
+  })).toMatchObject({ created: 0, scheduled: 0 });
+
+  const state = await t.run(async (ctx) => ({
+    runs: await ctx.db.query("browserRuns").withIndex("by_connection", (q) =>
+      q.eq("connectionId", connectionId),
+    ).collect(),
+    turns: await ctx.db.query("providerTurns").collect(),
+  }));
+  expect(state.runs).toHaveLength(1);
+  expect(state.runs[0]).toMatchObject({
+    ownerId: fixture.ownerId,
+    connectionId,
+    kind: "authenticate",
+    status: "queued",
+  });
+  expect(state.turns).toEqual([]);
+});
+
+it("stops a queued registration when its standing mandate is revoked before execution", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedOrchestrationFixture(t);
+  const connectionId = await makeControlledRegistrationEligible(t, fixture);
+  await t.mutation(internal.mandateOrchestrator.runForOwner, { ownerId: fixture.ownerId });
+  const runId = await t.run(async (ctx) =>
+    (await ctx.db.query("browserRuns").withIndex("by_connection", (q) => q.eq("connectionId", connectionId)).unique())!._id,
+  );
+  await t.run(async (ctx) => {
+    await ctx.db.patch(fixture.mandateId, { status: "revoked", stoppedAt: Date.now() });
+  });
+
+  await expect(t.action(internal.browserbasePortal.runScheduledAgentRegistration, {
+    ownerId: fixture.ownerId,
+    mandateId: fixture.mandateId,
+    connectionId,
+    runId,
+  })).resolves.toBeNull();
+  expect(await t.run(async (ctx) => ctx.db.get(runId))).toMatchObject({
+    status: "stopped",
+    errorCode: "REGISTRATION_MANDATE_NO_LONGER_ACTIVE",
+  });
+});
+
+it("surfaces a scheduled registration startup failure on the reserved browser run", async () => {
+  vi.stubEnv("BROWSERBASE_API_KEY", "");
+  const t = convexTest(schema, modules);
+  rateLimiterTest.register(t);
+  const fixture = await seedOrchestrationFixture(t);
+  const connectionId = await makeControlledRegistrationEligible(t, fixture);
+  await t.mutation(internal.mandateOrchestrator.runForOwner, { ownerId: fixture.ownerId });
+  const runId = await t.run(async (ctx) =>
+    (await ctx.db.query("browserRuns").withIndex("by_connection", (q) => q.eq("connectionId", connectionId)).unique())!._id,
+  );
+
+  await expect(t.action(internal.browserbasePortal.runScheduledAgentRegistration, {
+    ownerId: fixture.ownerId,
+    mandateId: fixture.mandateId,
+    connectionId,
+    runId,
+  })).resolves.toBeNull();
+  expect(await t.run(async (ctx) => ctx.db.get(runId))).toMatchObject({
+    status: "failed",
+    errorCode: "PROVIDER_ERROR",
+  });
+});
+
+it.each([
+  {
+    name: "guided mode",
+    mutate: async (t: ReturnType<typeof convexTest>, fixture: Awaited<ReturnType<typeof seedOrchestrationFixture>>) =>
+      await t.run(async (ctx) => { await ctx.db.patch(fixture.mandateId, { mode: "guided" }); }),
+  },
+  {
+    name: "missing account-creation scope",
+    mutate: async (t: ReturnType<typeof convexTest>, fixture: Awaited<ReturnType<typeof seedOrchestrationFixture>>) =>
+      await t.run(async (ctx) => { await ctx.db.patch(fixture.mandateId, { allowedActionTypes: ["submit_webform"] }); }),
+  },
+  {
+    name: "inactive personal mailbox",
+    mutate: async (t: ReturnType<typeof convexTest>, fixture: Awaited<ReturnType<typeof seedOrchestrationFixture>>) =>
+      await t.run(async (ctx) => {
+        const mailbox = (await ctx.db.query("userMailboxes").collect()).find(
+          (candidate) => candidate.ownerId === fixture.ownerId,
+        );
+        await ctx.db.patch(mailbox!._id, { status: "provisioning" });
+      }),
+  },
+  {
+    name: "inactive saved need",
+    mutate: async (t: ReturnType<typeof convexTest>, fixture: Awaited<ReturnType<typeof seedOrchestrationFixture>>) =>
+      await t.run(async (ctx) => { await ctx.db.patch(fixture.needId, { status: "paused" }); }),
+  },
+  {
+    name: "platform outside mandate",
+    mutate: async (t: ReturnType<typeof convexTest>, fixture: Awaited<ReturnType<typeof seedOrchestrationFixture>>) =>
+      await t.run(async (ctx) => { await ctx.db.patch(fixture.mandateId, { platformIds: [] }); }),
+  },
+  {
+    name: "account creation forbidden by policy",
+    mutate: async (t: ReturnType<typeof convexTest>, fixture: Awaited<ReturnType<typeof seedOrchestrationFixture>>) =>
+      await t.run(async (ctx) => { await ctx.db.patch(fixture.policyId, { accountCreationAllowed: false }); }),
+  },
+  {
+    name: "unreviewed adapter",
+    mutate: async (t: ReturnType<typeof convexTest>, fixture: Awaited<ReturnType<typeof seedOrchestrationFixture>>) =>
+      await t.run(async (ctx) => { await ctx.db.patch(fixture.bindingId, { adapterKey: "unreviewed-v1" }); }),
+  },
+  {
+    name: "connection already active",
+    mutate: async (t: ReturnType<typeof convexTest>, _fixture: Awaited<ReturnType<typeof seedOrchestrationFixture>>, connectionId?: string) =>
+      await t.run(async (ctx) => { await ctx.db.patch(connectionId as import("./_generated/dataModel").Id<"portalConnections">, { status: "active" }); }),
+  },
+])("does not auto-register with $name", async ({ mutate }) => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedOrchestrationFixture(t);
+  const connectionId = await makeControlledRegistrationEligible(t, fixture);
+  await mutate(t, fixture, connectionId);
+  expect(await t.mutation(internal.mandateOrchestrator.runForOwner, {
+    ownerId: fixture.ownerId,
+  })).toMatchObject({ scheduled: 0 });
+  expect(await t.run(async (ctx) => ctx.db.query("browserRuns").collect())).toEqual([]);
+});
 
 it("does not send fictional demo outreach to a real Bandnet listing even with an old mandate", async () => {
   const t = convexTest(schema, modules);

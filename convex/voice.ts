@@ -9,7 +9,6 @@ import {
   mutation,
 } from "./_generated/server";
 import { requireActionUserId, requireUserId } from "./integrations/authz";
-import { roomScoutRateLimiter } from "./rateLimits";
 import { buildScoutCaseCard, scoutBaseInstructions } from "./scoutCaseCards";
 import { scoutAgent } from "./scout";
 
@@ -29,14 +28,14 @@ const toolName = v.union(
 
 const updateSearchSchema = z.object({
   title: z.string().optional(),
-  city: z.string().optional(),
-  districts: z.array(z.string()).optional(),
+  locationQuery: z.string().min(1).max(240).optional(),
+  locationLabel: z.string().min(1).max(240).optional(),
   maxBudgetEur: z.number().nonnegative().optional(),
   arrangement: z.array(z.enum(["permanent", "shared", "hourly"])).optional(),
   schedule: z.array(z.string()).optional(),
   requirements: z.array(z.string()).optional(),
   openToSharing: z.boolean().optional(),
-  radiusKm: z.number().nonnegative().optional(),
+  radiusKm: z.number().min(1).max(200).optional(),
   collaborationOpen: z.boolean().optional(),
   genres: z.array(z.string()).optional(),
   instruments: z.array(z.string()).optional(),
@@ -219,8 +218,8 @@ export const expireSession = internalMutation({
 function realtimeTools() {
   return [
     { type: "function", name: "get_current_search", description: "Read the user's current RoomScout search.", parameters: { type: "object", properties: {}, additionalProperties: false } },
-    { type: "function", name: "update_search_draft", description: "Update explicit room-search facts. Never activate, approve, or send.", parameters: { type: "object", properties: {
-      title: { type: "string" }, city: { type: "string" }, districts: { type: "array", items: { type: "string" } }, maxBudgetEur: { type: "number" }, radiusKm: { type: "number" }, arrangement: { type: "array", items: { type: "string", enum: ["permanent", "shared", "hourly"] } }, schedule: { type: "array", items: { type: "string" } }, requirements: { type: "array", items: { type: "string" } }, openToSharing: { type: "boolean" }, collaborationOpen: { type: "boolean" }, genres: { type: "array", items: { type: "string" } }, instruments: { type: "array", items: { type: "string" } }, facets: { type: "array", items: { type: "object", properties: { namespace: { type: "string" }, key: { type: "string" }, value: { type: "string" }, confidence: { type: "number" } }, required: ["namespace", "key", "value", "confidence"], additionalProperties: false } },
+    { type: "function", name: "update_search_draft", description: "Update explicit room-search facts. Preserve a complete place or address in locationQuery, use locationLabel for its concise display label, and radiusKm as the geographic boundary. Never activate, approve, or send.", parameters: { type: "object", properties: {
+      title: { type: "string" }, locationQuery: { type: "string", minLength: 1, maxLength: 240 }, locationLabel: { type: "string", minLength: 1, maxLength: 240 }, maxBudgetEur: { type: "number" }, radiusKm: { type: "number", minimum: 1, maximum: 200 }, arrangement: { type: "array", items: { type: "string", enum: ["permanent", "shared", "hourly"] } }, schedule: { type: "array", items: { type: "string" } }, requirements: { type: "array", items: { type: "string" } }, openToSharing: { type: "boolean" }, collaborationOpen: { type: "boolean" }, genres: { type: "array", items: { type: "string" } }, instruments: { type: "array", items: { type: "string" } }, facets: { type: "array", items: { type: "object", properties: { namespace: { type: "string" }, key: { type: "string" }, value: { type: "string" }, confidence: { type: "number" } }, required: ["namespace", "key", "value", "confidence"], additionalProperties: false } },
     }, additionalProperties: false } },
     { type: "function", name: "remember_fact", description: "Remember one durable musician or band fact. Never infer sensitive facts.", parameters: { type: "object", properties: {
       subject: { type: "string" }, subjectKind: { type: "string", enum: ["person", "band", "place", "equipment", "organization", "project", "other"] }, predicate: { type: "string" }, value: { type: "string" }, objectName: { type: "string" }, objectKind: { type: "string", enum: ["person", "band", "place", "equipment", "organization", "project", "other"] }, category: { type: "string", enum: ["identity", "music", "location", "mobility", "schedule", "equipment", "goal", "preference", "constraint", "relationship", "collaboration", "room_need", "other"] }, confidence: { type: "number" }, verification: { type: "string", enum: ["user_stated", "inferred"] }, sensitivity: { type: "string", enum: ["normal", "personal", "sensitive"] }, replaceExisting: { type: "boolean" },
@@ -249,7 +248,6 @@ export const sessionHttp = httpAction(async (ctx, request) => {
   if (ownerId === null) {
     return new Response("Invalid authenticated identity", { status: 401, headers });
   }
-  await roomScoutRateLimiter.limit(ctx, "voiceSession", { key: ownerId, throws: true });
   const context = await ctx.runQuery(internal.voice.getVoiceContext, { ownerId });
   if (!context) return new Response("Start a Scout conversation first", { status: 409, headers });
   const apiKey = process.env.OPENAI_API_KEY;
@@ -336,7 +334,6 @@ export const executeTool = action({
   returns: v.object({ outputJson: v.string() }),
   handler: async (ctx, args): Promise<{ outputJson: string }> => {
     const ownerId = await requireActionUserId(ctx);
-    await roomScoutRateLimiter.limit(ctx, "voiceTool", { key: ownerId, throws: true });
     const session = await ctx.runQuery(internal.voice.getOwnedSession, {
       voiceSessionId: args.voiceSessionId,
       ownerId,
@@ -408,7 +405,6 @@ export const getInstructions = action({
   returns: v.object({ instructions: v.string(), contextVersion: v.string() }),
   handler: async (ctx): Promise<{ instructions: string; contextVersion: string }> => {
     const ownerId = await requireActionUserId(ctx);
-    await roomScoutRateLimiter.limit(ctx, "voiceTool", { key: ownerId, throws: true });
     const context = await ctx.runQuery(internal.voice.getVoiceContext, { ownerId });
     if (!context) throw new ConvexError({ code: "SCOUT_CONTEXT_REQUIRED" });
     const memoryContext = await ctx.runQuery(internal.memory.getPromptContext, { ownerId });

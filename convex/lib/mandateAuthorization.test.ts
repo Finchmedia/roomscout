@@ -63,6 +63,47 @@ it("falls back to exact approval outside limits instead of silently executing", 
   expect(decision.reasons).toHaveLength(3);
 });
 
+it("skips only usage budgets for an audit-verified default mandate", () => {
+  const decision = authorizeFromMandate(activeMandate, {
+    now: 1_000,
+    actionType: "submit_webform",
+    platformId: "bandnet",
+    personalData: ["band_name"],
+    contactsAlreadyAttemptedToday: 500,
+    browserMinutesUsedToday: 500,
+    proposedMonthlyPriceEur: 250,
+    policyDecision: "allowed",
+    policyAutomationLevel: "approved_execute",
+    connectionActive: true,
+    complaintRecorded: false,
+    suitableRoomConfirmed: false,
+    bindingCommitment: false,
+    skipUsageLimits: true,
+  });
+  expect(decision).toEqual({ authorized: true, exactApprovalRequired: false, reasons: [] });
+});
+
+it("continues enforcing explicitly selected mandate budgets", () => {
+  const decision = authorizeFromMandate(activeMandate, {
+    now: 1_000,
+    actionType: "submit_webform",
+    platformId: "bandnet",
+    personalData: ["band_name"],
+    contactsAlreadyAttemptedToday: 5,
+    browserMinutesUsedToday: 30,
+    policyDecision: "allowed",
+    policyAutomationLevel: "approved_execute",
+    connectionActive: true,
+    complaintRecorded: false,
+    suitableRoomConfirmed: false,
+    bindingCommitment: false,
+  });
+  expect(decision.reasons).toEqual([
+    "The mandate's daily contact limit has been reached.",
+    "The mandate's daily browser-time limit has been reached.",
+  ]);
+});
+
 it("cannot turn research autopilot into communication", () => {
   const decision = authorizeFromMandate(
     { ...activeMandate, mode: "research_autopilot" },

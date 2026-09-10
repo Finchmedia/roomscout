@@ -10,7 +10,8 @@ const need = (
   ownerId: "owner" as Doc<"savedNeeds">["ownerId"],
   title: "Our room",
   city: "Stuttgart",
-  districts: ["West"],
+  locationQuery: "Rotebühlstraße 1, Stuttgart",
+  locationLabel: "Stuttgart-West",
   arrangement: ["shared"],
   schedule: ["Thursday after 19:00"],
   requirements: ["Drum storage"],
@@ -31,9 +32,9 @@ describe("Scout workspace view model", () => {
   });
   it("turns persisted need fields into concise facts", () => {
     expect(
-      factsFromNeed(need({ maxBudgetEur: 350 })).map((fact) => fact.value),
+      factsFromNeed(need({ maxBudgetEur: 350, radiusKm: 15 })).map((fact) => fact.value),
     ).toEqual([
-      "Stuttgart · West",
+      "Stuttgart-West · 15 km Umkreis",
       "Shared room",
       "Up to €350 / month",
       "Thursday after 19:00",

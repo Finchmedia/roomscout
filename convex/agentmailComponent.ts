@@ -64,6 +64,11 @@ const outboundStatus = v.object({
   errorMessage: v.union(v.string(), v.null()),
 });
 
+const deletedInboxResult = v.union(
+  v.literal("deleted"),
+  v.literal("already_absent"),
+);
+
 function componentClient(): AgentMail {
   return new AgentMail(components.agentmail, {
     onEvent: internal.agentmailComponent.receiveEvent,
@@ -149,6 +154,22 @@ export const findInboxByClientId = internalAction({
       if (!pageToken) break;
     }
     return null;
+  },
+});
+
+export const deleteInbox = internalAction({
+  args: { inboxId: v.string() },
+  returns: deletedInboxResult,
+  handler: async (ctx, args) => {
+    try {
+      await componentClient().deleteInbox(ctx, args.inboxId);
+      return "deleted" as const;
+    } catch (error) {
+      if (error instanceof Error && /(?:error|status)\s+404\b/i.test(error.message)) {
+        return "already_absent" as const;
+      }
+      throw error;
+    }
   },
 });
 

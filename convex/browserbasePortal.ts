@@ -5,12 +5,25 @@ import type { SessionCreateParams } from "@browserbasehq/sdk/resources/sessions/
 import { browserbase, Stagehand, type Page, type StagehandBrowser } from "@browserbasehq/stagehand";
 import { ConvexError, v } from "convex/values";
 import { z } from "zod";
-import { internal } from "./_generated/api";
+import { components, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { action, internalAction, type ActionCtx } from "./_generated/server";
 import { generateRoomScoutObject } from "./ai";
 import { requireActionUserId } from "./integrations/authz";
 import { envValue } from "./integrations/env";
+import {
+  createStagehandV4Session,
+  connectStagehandV4Session,
+  type StagehandV4Session,
+} from "./integrations/stagehandV4Runtime";
+import {
+  controlledRegistrationFailureCode,
+  ensureControlledPortalRegistration,
+  ensurePortalAccess,
+  readPortalInbox,
+  sendControlledPortalMessage,
+  verifyControlledPortalContext,
+} from "./integrations/stagehandPortalDriver";
 import {
   buildAllowedPortalUrl,
   assertAuthenticatedPortalContract,
@@ -36,7 +49,6 @@ import {
   isRelevantPortalVerificationMessage,
 } from "./integrations/portalVerification";
 import { delimitUntrustedData } from "./lib/privacy";
-import { roomScoutRateLimiter } from "./rateLimits";
 
 const reconItemValidator = v.object({ title: v.string(), url: v.string() });
 
@@ -122,6 +134,7 @@ const registrationProviderErrorNames: Readonly<Record<string, string>> = {
 const registrationProviderStatuses: Readonly<Record<number, string>> = {
   400: "HTTP_400",
   401: "HTTP_401",
+  402: "HTTP_402",
   403: "HTTP_403",
   404: "HTTP_404",
   409: "HTTP_409",
@@ -226,6 +239,199 @@ export function registrationLaunchDiagnostic(error: unknown): RegistrationLaunch
 
 const ONBOARDING_POLL_MS = 5_000;
 const ONBOARDING_MAX_POLLS = 60;
+const INLINE_REGISTRATION_MAX_POLLS = 36;
+const INLINE_REGISTRATION_OPERATION_TIMEOUT_MS = 45_000;
+
+function agentMailBaseUrl(): string {
+  return (envValue("AGENTMAIL_BASE_URL") ?? "https://api.agentmail.to/v0")
+    .replace(/\/$/, "");
+}
+
+async function agentMailJson(path: string): Promise<unknown> {
+  const apiKey = envValue("AGENTMAIL_API_KEY");
+  if (!apiKey) throw new Error("AGENTMAIL_API_KEY_MISSING");
+  const response = await fetch(`${agentMailBaseUrl()}${path}`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) throw new Error(`AGENTMAIL_HTTP_${response.status}`);
+  return await response.json();
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+async function waitForFreshPortalVerification(input: {
+  emailAddress: string;
+  receivedAfter: number;
+  portalDomain: string;
+}): Promise<{ messageId: string; code: string } | null> {
+  const inboxPath = `/inboxes/${encodeURIComponent(input.emailAddress)}/messages`;
+  for (let attempt = 0; attempt < INLINE_REGISTRATION_MAX_POLLS; attempt += 1) {
+    const list = record(await agentMailJson(`${inboxPath}?limit=10`));
+    const messages = Array.isArray(list?.messages) ? list.messages : [];
+    for (const raw of messages) {
+      const summary = record(raw);
+      const messageId = typeof summary?.message_id === "string"
+        ? summary.message_id
+        : null;
+      const receivedAt = Date.parse(
+        typeof summary?.created_at === "string"
+          ? summary.created_at
+          : typeof summary?.timestamp === "string"
+            ? summary.timestamp
+            : "",
+      );
+      if (!messageId || !Number.isFinite(receivedAt) || receivedAt < input.receivedAfter) {
+        continue;
+      }
+      const message = record(await agentMailJson(
+        `${inboxPath}/${encodeURIComponent(messageId)}`,
+      ));
+      const subject = typeof message?.subject === "string" ? message.subject : "";
+      const body = typeof message?.extracted_text === "string"
+        ? message.extracted_text
+        : typeof message?.text === "string"
+          ? message.text
+          : "";
+      const from = typeof message?.from === "string"
+        ? message.from
+        : JSON.stringify(message?.from ?? "").slice(0, 1_000);
+      if (!isRelevantPortalVerificationMessage({
+        from,
+        subject,
+        body,
+        portalDomain: input.portalDomain,
+      })) continue;
+      const code = await codeFromMessage({ subject, body });
+      if (code) return { messageId, code };
+    }
+    if (attempt < INLINE_REGISTRATION_MAX_POLLS - 1) {
+      await new Promise((resolve) => setTimeout(resolve, ONBOARDING_POLL_MS));
+    }
+  }
+  return null;
+}
+type RegistrationContextClient = {
+  contexts: {
+    retrieve: (id: string) => Promise<unknown>;
+    create: (input: { name: string }) => Promise<{ id: string }>;
+  };
+};
+
+function isProviderContextNotFound(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { status?: unknown; cause?: unknown };
+  if (candidate.status === 404) return true;
+  return Boolean(
+    candidate.cause &&
+      typeof candidate.cause === "object" &&
+      (candidate.cause as { status?: unknown }).status === 404,
+  );
+}
+
+/** Browserbase contexts can be removed remotely after a failed onboarding run.
+ * Never trust a persisted context ID until the provider confirms it still
+ * exists; a 404 is repaired by creating a fresh context for the same owner. */
+export async function ensureRegistrationProviderContext(
+  client: RegistrationContextClient,
+  existingContextId: string | undefined,
+  runId: string,
+): Promise<{ providerContextId: string; created: boolean }> {
+  if (existingContextId) {
+    try {
+      await client.contexts.retrieve(existingContextId);
+      return { providerContextId: existingContextId, created: false };
+    } catch (error) {
+      if (!isProviderContextNotFound(error)) throw error;
+    }
+  }
+  const context = await client.contexts.create({
+    name: `roomscout-agent-${runId}`,
+  });
+  return { providerContextId: context.id, created: true };
+}
+
+export type PortalBrowserEngine = "stagehand" | "legacy";
+
+export function resolvePortalBrowserEngine(input: {
+  configuredExecutor: string | undefined;
+  controlledDemo: boolean;
+}): PortalBrowserEngine {
+  return input.configuredExecutor === "stagehand" && input.controlledDemo
+    ? "stagehand"
+    : "legacy";
+}
+
+export function resolvePersistedPortalBrowserEngine(
+  browserEngine: PortalBrowserEngine | undefined,
+): PortalBrowserEngine {
+  return browserEngine ?? "legacy";
+}
+
+export function selectSingleLivePageUrl(
+  pages: readonly { url: string }[],
+): string {
+  const livePages = pages
+    .map((page) => page.url)
+    .filter((url) => url !== "about:blank" && url.length > 0);
+  if (livePages.length !== 1) {
+    throw new Error("STAGEHAND_LIVE_PAGE_AMBIGUOUS");
+  }
+  return livePages[0]!;
+}
+function stagehandV4Config() {
+  const modelApiKey = envValue("OPENAI_API_KEY");
+  if (!modelApiKey) throw new Error("STAGEHAND_MODEL_API_KEY_MISSING");
+  return {
+    apiKey: browserbaseApiKey(),
+    modelApiKey,
+    modelName: envValue("BROWSERBASE_MODEL") ?? "openai/gpt-4o",
+  };
+}
+
+async function startStagehandSession(
+  ctx: ActionCtx,
+  input: {
+    url: string;
+    contextId?: string;
+    persistContext: boolean;
+    timeoutMs: number;
+    solveCaptchas: boolean;
+  },
+): Promise<StagehandV4Session> {
+  const session = await createStagehandV4Session({ ...stagehandV4Config(), ...input });
+  try {
+    await ctx.runMutation(components.stagehandRoomScout.lib.recordSession, {
+      sessionId: session.sessionId,
+      region: "eu-central-1",
+      contextId: input.contextId,
+      persistContext: input.persistContext,
+      lastUrl: input.url,
+    });
+    return session;
+  } catch {
+    await session.close().catch(() => undefined);
+    await releaseProviderSession(createBrowserbaseClient(browserbaseApiKey()), session.sessionId);
+    throw new Error("STAGEHAND_SESSION_RECORD_FAILED");
+  }
+}
+
+async function reconnectStagehandSession(sessionId: string): Promise<StagehandV4Session> {
+  return await connectStagehandV4Session({ ...stagehandV4Config(), sessionId });
+}
+
+async function endStagehandSession(ctx: ActionCtx, sessionId: string): Promise<void> {
+  await releaseProviderSession(createBrowserbaseClient(browserbaseApiKey()), sessionId);
+  await ctx.runMutation(components.stagehandRoomScout.lib.updateSession, {
+    sessionId,
+    status: "completed",
+    endedAt: Date.now(),
+  });
+}
 
 type ClaimedBrowserAction = {
   executionId: Id<"actionExecutions">;
@@ -284,45 +490,12 @@ async function getWorkerConnection(
   return connection;
 }
 
-async function applySessionLimits(
-  ctx: ActionCtx,
-  ownerId: Id<"users">,
-  connectionId: Id<"portalConnections">,
-  kind: "recon" | "authenticate" | "inbox_sync",
-): Promise<void> {
-  if (kind === "recon") {
-    await roomScoutRateLimiter.limit(ctx, "portalReconUser", {
-      key: ownerId,
-      throws: true,
-    });
-    await roomScoutRateLimiter.limit(ctx, "portalReconSource", {
-      key: connectionId,
-      throws: true,
-    });
-  } else if (kind === "authenticate") {
-    await roomScoutRateLimiter.limit(ctx, "portalAuthSource", {
-      key: connectionId,
-      throws: true,
-    });
-  } else {
-    await roomScoutRateLimiter.limit(ctx, "portalInboxSource", {
-      key: connectionId,
-      throws: true,
-    });
-  }
-  await roomScoutRateLimiter.limit(ctx, "portalSessionGlobal", {
-    key: "browserbase",
-    throws: true,
-  });
-}
-
 async function reserveRun(
   ctx: ActionCtx,
   ownerId: Id<"users">,
   connectionId: Id<"portalConnections">,
   kind: "recon" | "authenticate" | "inbox_sync",
 ): Promise<Id<"browserRuns">> {
-  await applySessionLimits(ctx, ownerId, connectionId, kind);
   return await ctx.runMutation(internal.portalConnections.reserveRun, {
     ownerId,
     connectionId,
@@ -750,15 +923,20 @@ export const startAuthentication = action({
 
 /**
  * First-party controlled onboarding proof: Browserbase opens roomscout.dev,
- * AgentMail receives the Clerk verification email, and a scheduled worker
- * injects only the extracted code. The random password is never persisted.
+ * AgentMail receives the Clerk verification email and this same bounded action
+ * injects only the extracted code before closing Stagehand. The random password
+ * is never persisted.
  * Unknown portals and CAPTCHA/terms screens always hand control to the user.
  */
 export async function startAgentRegistrationForOwner(
   ctx: ActionCtx,
   ownerId: Id<"users">,
   connectionId: Id<"portalConnections">,
+  preReservedRunId?: Id<"browserRuns">,
 ): Promise<AgentRegistrationResult> {
+    if (!await ctx.runQuery(internal.devUserReset.userMayRunWork, { userId: ownerId })) {
+      throw new ConvexError({ code: "USER_RESET_IN_PROGRESS" });
+    }
     const connection = await getWorkerConnection(ctx, ownerId, connectionId);
     if (!isControlledAgentRegistrationConnection(connection)) {
       throw new ConvexError({ code: "AGENT_REGISTRATION_NOT_REVIEWED" });
@@ -781,25 +959,155 @@ export async function startAgentRegistrationForOwner(
       });
     }
 
-    const runId = await reserveRun(
-      ctx,
-      ownerId,
-      connection.connectionId,
-      "authenticate",
+    const runId = preReservedRunId ?? await reserveRun(
+      ctx, ownerId, connection.connectionId, "authenticate",
     );
     const apiKey = browserbaseApiKey();
     const client = createBrowserbaseClient(apiKey);
     let providerContextId = connection.providerContextId;
     let createdContext = false;
     let browser: StagehandBrowser | undefined;
-    let startStage: RegistrationStartStage | null = providerContextId ? "browser_launch" : "context_create";
+    let stagehandSessionId: string | undefined;
+    let v4Session: StagehandV4Session | undefined;
+    const browserEngine = resolvePortalBrowserEngine({
+      configuredExecutor: envValue("BROWSERBASE_EXECUTOR"),
+      controlledDemo: true,
+    });
+    let startStage: RegistrationStartStage | null = "context_create";
     try {
-      if (!providerContextId) {
-        const context = await client.contexts.create({
-          name: `roomscout-agent-${runId}`,
+      const ensuredContext = await ensureRegistrationProviderContext(
+        client,
+        providerContextId,
+        runId,
+      );
+      providerContextId = ensuredContext.providerContextId;
+      createdContext = ensuredContext.created;
+      startStage = "browser_launch";
+      if (browserEngine === "stagehand") {
+        startStage = "browser_launch";
+        const session = await startStagehandSession(ctx, {
+          url: signupUrl,
+          contextId: providerContextId,
+          persistContext: true,
+          timeoutMs: INLINE_REGISTRATION_OPERATION_TIMEOUT_MS,
+          solveCaptchas: true,
         });
-        providerContextId = context.id;
-        createdContext = true;
+        v4Session = session;
+        stagehandSessionId = session.sessionId;
+        startStage = "session_validation";
+        if (!stagehandSessionId) throw new Error("PROVIDER_SESSION_MISSING");
+        await ctx.runMutation(internal.portalConnections.attachProviderRun, {
+          runId,
+          ownerId,
+          providerSessionId: stagehandSessionId,
+          providerContextId,
+          browserEngine,
+          humanRequired: false,
+        });
+        startStage = null;
+        await ctx.runMutation(internal.portalConnections.markAgentOnboardingState, {
+          ownerId,
+          runId,
+          stage: "opening_signup",
+          mailboxId: mailbox.mailboxId,
+          pollAttempt: 0,
+          humanRequired: false,
+          eventMessage: "AGENT_SIGNUP_OPENED",
+        });
+        const access = await ensureControlledPortalRegistration({
+          client: session.primitives,
+          email: mailbox.emailAddress,
+          password: ephemeralPortalPassword(),
+        });
+        if (access.outcome === "human_required") {
+          await ctx.runMutation(internal.portalConnections.markAgentOnboardingState, {
+            ownerId,
+            runId,
+            stage: "human_required",
+            mailboxId: mailbox.mailboxId,
+            humanRequired: true,
+            eventMessage: `SIGNUP_${access.blocker.toUpperCase()}_REQUIRES_HUMAN`,
+          });
+          return { runId, status: "human_required" };
+        }
+        if (access.outcome === "authenticated") {
+          await session.close();
+          await endStagehandSession(ctx, stagehandSessionId).catch(
+            () => undefined,
+          );
+          stagehandSessionId = undefined;
+          await ctx.runMutation(internal.portalConnections.finishRun, {
+            runId,
+            status: "completed",
+            resultCount: 0,
+            contextReady: true,
+          });
+          return { runId, status: "completed" };
+        }
+        const verificationRequestedAt = Date.now() - 5_000;
+        await ctx.runMutation(internal.portalConnections.markAgentOnboardingState, {
+          ownerId,
+          runId,
+          stage: "waiting_verification",
+          mailboxId: mailbox.mailboxId,
+          verificationRequestedAt,
+          pollAttempt: 0,
+          humanRequired: false,
+          eventMessage: "WAITING_FOR_AGENTMAIL_VERIFICATION",
+        });
+        const verification = await waitForFreshPortalVerification({
+          emailAddress: mailbox.emailAddress,
+          receivedAfter: verificationRequestedAt,
+          portalDomain: new URL(connection.baseUrl).hostname,
+        });
+        if (!verification) {
+          await ctx.runMutation(internal.portalConnections.markAgentOnboardingState, {
+            ownerId,
+            runId,
+            stage: "human_required",
+            mailboxId: mailbox.mailboxId,
+            pollAttempt: INLINE_REGISTRATION_MAX_POLLS,
+            humanRequired: true,
+            eventMessage: "VERIFICATION_EMAIL_NOT_FOUND",
+          });
+          return { runId, status: "human_required" };
+        }
+        await ctx.runMutation(internal.portalConnections.markAgentOnboardingState, {
+          ownerId,
+          runId,
+          stage: "submitting_verification",
+          mailboxId: mailbox.mailboxId,
+          humanRequired: false,
+          eventMessage: "VERIFICATION_CODE_RECEIVED",
+        });
+        const verified = await ensureControlledPortalRegistration({
+          client: session.primitives,
+          verificationCode: verification.code,
+        });
+        if (verified.outcome !== "authenticated") {
+          await ctx.runMutation(internal.portalConnections.markAgentOnboardingState, {
+            ownerId,
+            runId,
+            stage: "human_required",
+            mailboxId: mailbox.mailboxId,
+            humanRequired: true,
+            eventMessage: verified.outcome === "human_required"
+              ? `VERIFY_${verified.blocker.toUpperCase()}_REQUIRES_HUMAN`
+              : "VERIFICATION_REQUIRES_HUMAN_REVIEW",
+          });
+          return { runId, status: "human_required" };
+        }
+        await session.close();
+        await endStagehandSession(ctx, stagehandSessionId).catch(() => undefined);
+        stagehandSessionId = undefined;
+        v4Session = undefined;
+        await ctx.runMutation(internal.portalConnections.finishRun, {
+          runId,
+          status: "completed",
+          resultCount: 1,
+          contextReady: true,
+        });
+        return { runId, status: "completed" };
       }
       startStage = "browser_launch";
       browser = await launchRegistrationBrowser({
@@ -814,6 +1122,7 @@ export async function startAgentRegistrationForOwner(
         ownerId,
         providerSessionId: browser.sessionId,
         providerContextId,
+        browserEngine,
         humanRequired: false,
       });
       startStage = null;
@@ -929,6 +1238,12 @@ export async function startAgentRegistrationForOwner(
       );
       return { runId, status: "waiting_verification" };
     } catch (error) {
+      await v4Session?.close().catch(() => undefined);
+      if (stagehandSessionId) {
+        await endStagehandSession(ctx, stagehandSessionId).catch(
+          () => undefined,
+        );
+      }
       if (browser?.sessionId) {
         await releaseProviderSession(client, browser.sessionId);
       }
@@ -944,15 +1259,61 @@ export async function startAgentRegistrationForOwner(
         status: "failed",
         errorCode: startStage
           ? registrationStartFailureCode(startStage, error)
-          : sanitizeProviderError(error),
+          : controlledRegistrationFailureCode(error) ?? sanitizeProviderError(error),
       });
       throw new ConvexError({
         code: startStage
           ? registrationStartFailureCode(startStage, error)
-          : sanitizeProviderError(error),
+          : controlledRegistrationFailureCode(error) ?? sanitizeProviderError(error),
       });
+    } finally {
+      // Disconnect this action's SDK handles, preserving the remote session
+      // while AgentMail delivers verification or the user handles a blocker.
+      await v4Session?.close().catch(() => undefined);
     }
 }
+
+export const runScheduledAgentRegistration = internalAction({
+  args: {
+    ownerId: v.id("users"),
+    mandateId: v.id("searchMandates"),
+    connectionId: v.id("portalConnections"),
+    runId: v.id("browserRuns"),
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    if (!await ctx.runQuery(internal.devUserReset.userMayRunWork, { userId: args.ownerId })) {
+      await ctx.runMutation(internal.portalConnections.finishRun, {
+        runId: args.runId,
+        status: "stopped",
+        errorCode: "USER_RESET_IN_PROGRESS",
+      });
+      return null;
+    }
+    const eligible: boolean = await ctx.runQuery(
+      internal.mandateOrchestrator.validateScheduledRegistration,
+      args,
+    );
+    if (!eligible) {
+      await ctx.runMutation(internal.portalConnections.finishRun, {
+        runId: args.runId,
+        status: "stopped",
+        errorCode: "REGISTRATION_MANDATE_NO_LONGER_ACTIVE",
+      });
+      return null;
+    }
+    try {
+      await startAgentRegistrationForOwner(ctx, args.ownerId, args.connectionId, args.runId);
+    } catch (error) {
+      await ctx.runMutation(internal.portalConnections.finishRun, {
+        runId: args.runId,
+        status: "failed",
+        errorCode: sanitizeProviderError(error),
+      });
+    }
+    return null;
+  },
+});
 
 export const startAgentRegistration = action({
   args: { connectionId: v.id("portalConnections") },
@@ -1066,9 +1427,18 @@ export const continueAgentRegistration = internalAction({
     ) {
       return null;
     }
-    const client = createBrowserbaseClient(browserbaseApiKey());
+    const runEngine = resolvePersistedPortalBrowserEngine(run.browserEngine);
+    const client = runEngine === "legacy"
+      ? createBrowserbaseClient(browserbaseApiKey())
+      : undefined;
     if (run.expiresAt <= Date.now()) {
-      await releaseProviderSession(client, run.providerSessionId);
+      if (runEngine === "stagehand") {
+        await endStagehandSession(ctx, run.providerSessionId).catch(
+          () => undefined,
+        );
+      } else if (client) {
+        await releaseProviderSession(client, run.providerSessionId);
+      }
       await ctx.runMutation(internal.portalConnections.finishRun, {
         runId: run.runId,
         status: "failed",
@@ -1158,6 +1528,65 @@ export const continueAgentRegistration = internalAction({
       eventMessage: "VERIFICATION_CODE_RECEIVED",
     });
 
+    if (runEngine === "stagehand") {
+      let session: StagehandV4Session | undefined;
+      try {
+        session = await reconnectStagehandSession(run.providerSessionId);
+        const access = await ensurePortalAccess({
+          client: session.primitives,
+          baseUrl: connection.baseUrl,
+          adapterKey: connection.adapterKey ?? "",
+          mode: "register",
+          verificationCode: code,
+        });
+        if (access.outcome !== "authenticated") {
+          await ctx.runMutation(
+            internal.portalConnections.markAgentOnboardingState,
+            {
+              ownerId: args.ownerId,
+              runId: run.runId,
+              stage: "human_required",
+              mailboxId: run.onboardingMailboxId,
+              verificationMessageId: message.messageId,
+              humanRequired: true,
+              eventMessage:
+                access.outcome === "human_required"
+                  ? `VERIFY_${access.blocker.toUpperCase()}_REQUIRES_HUMAN`
+                  : "VERIFICATION_REQUIRES_HUMAN_REVIEW",
+            },
+          );
+          return null;
+        }
+        await ctx.runMutation(internal.inbox.markMailboxMessageReadInternal, {
+          ownerId: args.ownerId,
+          messageId: message.messageId,
+        });
+        await session.close();
+        await endStagehandSession(ctx, run.providerSessionId).catch(
+          () => undefined,
+        );
+        await ctx.runMutation(internal.portalConnections.finishRun, {
+          runId: run.runId,
+          status: "completed",
+          resultCount: 1,
+          contextReady: true,
+        });
+      } catch (error) {
+        await ctx.runMutation(internal.portalConnections.markAgentOnboardingState, {
+          ownerId: args.ownerId,
+          runId: run.runId,
+          stage: "human_required",
+          mailboxId: run.onboardingMailboxId,
+          verificationMessageId: message.messageId,
+          humanRequired: true,
+          eventMessage: sanitizeProviderError(error),
+        });
+      } finally {
+        await session?.close().catch(() => undefined);
+      }
+      return null;
+    }
+
     let browser: StagehandBrowser | undefined;
     try {
       browser = await initializePortalBrowser(await browserbase.connect({
@@ -1214,7 +1643,7 @@ export const continueAgentRegistration = internalAction({
         ownerId: args.ownerId,
         messageId: message.messageId,
       });
-      await releaseProviderSession(client, run.providerSessionId);
+      await releaseProviderSession(client!, run.providerSessionId);
       await ctx.runMutation(internal.portalConnections.finishRun, {
         runId: run.runId,
         status: "completed",
@@ -1233,6 +1662,58 @@ export const continueAgentRegistration = internalAction({
       });
     }
     return null;
+  },
+});
+
+/** Development-only read proof for an already authenticated controlled context. */
+export const smokeExistingControlledContext = internalAction({
+  args: {
+    confirmation: v.literal("READ_ONLY_EXISTING_PORTAL_CONTEXT_SMOKE"),
+    contextId: v.string(),
+  },
+  returns: v.object({
+    authenticated: v.boolean(),
+    threadCount: v.number(),
+    hasInboundReply: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    await ctx.runQuery(internal.controlledPersonalInboxProof.resolveActors, {
+      confirmation: CONTROLLED_PROOF_CONFIRMATION,
+    });
+    if (!/^[-A-Za-z0-9_]{1,200}$/.test(args.contextId)) {
+      throw new Error("STAGEHAND_V4_CONTEXT_ID_INVALID");
+    }
+    const session = await startStagehandSession(ctx, {
+      url: "https://roomscout.dev/",
+      contextId: args.contextId,
+      persistContext: true,
+      timeoutMs: PORTAL_RUN_TTLS_MS.recon,
+      solveCaptchas: false,
+    });
+    try {
+      const authenticated = await verifyControlledPortalContext({
+        client: session.primitives,
+        baseUrl: "https://roomscout.dev",
+        adapterKey: "roomscout-dev-v1",
+      });
+      const threads = authenticated
+        ? await readPortalInbox({
+            client: session.primitives,
+            baseUrl: "https://roomscout.dev",
+            adapterKey: "roomscout-dev-v1",
+          })
+        : [];
+      return {
+        authenticated,
+        threadCount: threads.length,
+        hasInboundReply: threads.some((thread) =>
+          thread.messages.some((message) => message.direction === "inbound")
+        ),
+      };
+    } finally {
+      await session.close().catch(() => undefined);
+      await endStagehandSession(ctx, session.sessionId).catch(() => undefined);
+    }
   },
 });
 
@@ -1289,6 +1770,37 @@ export const resumeAuthentication = action({
     ) {
       throw new ConvexError({ code: "AUTH_RUN_NOT_RESUMABLE" });
     }
+    if (run.browserEngine === "stagehand") {
+      const connection = await getWorkerConnection(ctx, ownerId, run.connectionId);
+      const session = await reconnectStagehandSession(run.providerSessionId);
+      try {
+        const access = await ensurePortalAccess({
+          client: session.primitives,
+          baseUrl: connection.baseUrl,
+          adapterKey: connection.adapterKey ?? "",
+          mode: "login",
+        });
+        if (access.outcome !== "authenticated") {
+          throw new ConvexError({ code: "AUTH_RUN_NOT_RESUMABLE" });
+        }
+      } finally {
+        await session.close();
+      }
+      await ctx.runMutation(internal.portalConnections.markRunResumed, {
+        ownerId,
+        runId: run.runId,
+      });
+      await endStagehandSession(ctx, run.providerSessionId).catch(
+        () => undefined,
+      );
+      await ctx.runMutation(internal.portalConnections.finishRun, {
+        runId: run.runId,
+        status: "completed",
+        resultCount: 0,
+        contextReady: true,
+      });
+      return { status: "completed" as const };
+    }
     const client = createBrowserbaseClient(browserbaseApiKey());
     const session = await client.sessions.retrieve(run.providerSessionId);
     if (session.status !== "RUNNING") {
@@ -1326,10 +1838,16 @@ export const stopRun = action({
     });
     if (run === null) throw new ConvexError({ code: "RUN_NOT_FOUND" });
     if (run.providerSessionId) {
-      await releaseProviderSession(
-        createBrowserbaseClient(browserbaseApiKey()),
-        run.providerSessionId,
-      );
+      if (run.browserEngine === "stagehand") {
+        await endStagehandSession(ctx, run.providerSessionId).catch(
+          () => undefined,
+        );
+      } else {
+        await releaseProviderSession(
+          createBrowserbaseClient(browserbaseApiKey()),
+          run.providerSessionId,
+        );
+      }
     }
     await ctx.runMutation(internal.portalConnections.finishRun, {
       runId: run.runId,
@@ -1344,6 +1862,9 @@ async function syncInboxForOwner(
   ownerId: Id<"users">,
   connectionId: Id<"portalConnections">,
 ): Promise<{ runId: Id<"browserRuns">; threadsCreated: number; messagesCreated: number }> {
+  if (!await ctx.runQuery(internal.devUserReset.userMayRunWork, { userId: ownerId })) {
+    throw new ConvexError({ code: "USER_RESET_IN_PROGRESS" });
+  }
   const connection = await getWorkerConnection(ctx, ownerId, connectionId);
   if (!connection.allowInboxPolling || !connection.inboxPath) {
     throw new ConvexError({ code: "INBOX_POLLING_NOT_ALLOWED" });
@@ -1365,7 +1886,50 @@ async function syncInboxForOwner(
   });
   const runId = await reserveRun(ctx, ownerId, connectionId, "inbox_sync");
   let browser: StagehandBrowser | undefined;
+  let stagehandSessionId: string | undefined;
+  let v4Session: StagehandV4Session | undefined;
+  const browserEngine = resolvePortalBrowserEngine({
+    configuredExecutor: envValue("BROWSERBASE_EXECUTOR"),
+    controlledDemo: isControlledAgentRegistrationConnection(connection),
+  });
   try {
+    if (browserEngine === "stagehand") {
+      const session = await startStagehandSession(ctx, {
+        url: targetUrl,
+        contextId: connection.providerContextId,
+        persistContext: true,
+        timeoutMs: PORTAL_RUN_TTLS_MS.inbox_sync,
+        solveCaptchas: false,
+      });
+      v4Session = session;
+      stagehandSessionId = session.sessionId;
+      if (!stagehandSessionId) throw new Error("PROVIDER_SESSION_MISSING");
+      await ctx.runMutation(internal.portalConnections.attachProviderRun, {
+        runId,
+        ownerId,
+        providerSessionId: stagehandSessionId,
+        providerContextId: connection.providerContextId,
+        browserEngine,
+        humanRequired: false,
+      });
+      const threads: SafeInboxThread[] = sanitizeInboxThreads(
+        await readPortalInbox({
+          client: session.primitives,
+          baseUrl: connection.baseUrl,
+          adapterKey: connection.adapterKey ?? "",
+        }),
+      );
+      const result = await ctx.runMutation(
+        internal.platformInbox.upsertReadOnlyBatch,
+        { ownerId, connectionId, threads },
+      );
+      await ctx.runMutation(internal.portalConnections.finishRun, {
+        runId,
+        status: "completed",
+        resultCount: result.messagesCreated,
+      });
+      return { runId, ...result };
+    }
     browser = await launchReadOnlyBrowser({
       apiKey: browserbaseApiKey(),
       allowedDomains: connection.allowedDomains,
@@ -1378,6 +1942,7 @@ async function syncInboxForOwner(
       ownerId,
       providerSessionId: browser.sessionId,
       providerContextId: connection.providerContextId,
+      browserEngine,
       humanRequired: false,
     });
     const pages = await browser.context.pages();
@@ -1535,6 +2100,12 @@ async function syncInboxForOwner(
     });
     throw new ConvexError({ code: errorCode });
   } finally {
+    await v4Session?.close().catch(() => undefined);
+    if (stagehandSessionId) {
+      await endStagehandSession(ctx, stagehandSessionId).catch(
+        () => undefined,
+      );
+    }
     if (browser) {
       try {
         await browser.close();
@@ -1571,6 +2142,7 @@ export const syncInboxCoordinatedWorker = internalAction({
   args: { ownerId: v.id("users"), connectionId: v.id("portalConnections"), generation: v.number() },
   returns: v.null(),
   handler: async (ctx, args) => {
+    if (!await ctx.runQuery(internal.devUserReset.userMayRunWork, { userId: args.ownerId })) return null;
     const claimed = await ctx.runMutation(internal.portalInboxSync.claimWorker, args);
     if (!claimed) return null;
     await syncInboxForOwner(ctx, args.ownerId, args.connectionId);
@@ -1585,6 +2157,7 @@ export const syncInboxWorker = internalAction({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    if (!await ctx.runQuery(internal.devUserReset.userMayRunWork, { userId: args.ownerId })) return null;
     // Compatibility entry for jobs scheduled before the coordinator existed.
     // It does not touch Browserbase directly and is subject to the same
     // ownership, policy, auth-session, generation and coalescing gates.
@@ -1610,25 +2183,6 @@ export const scheduleDueInboxSync = internalAction({
   },
 });
 
-async function applyWriteLimits(
-  ctx: ActionCtx,
-  ownerId: Id<"users">,
-  connectionId: Id<"portalConnections">,
-): Promise<void> {
-  await roomScoutRateLimiter.limit(ctx, "portalWriteUser", {
-    key: ownerId,
-    throws: true,
-  });
-  await roomScoutRateLimiter.limit(ctx, "portalWriteSource", {
-    key: connectionId,
-    throws: true,
-  });
-  await roomScoutRateLimiter.limit(ctx, "portalSessionGlobal", {
-    key: "browserbase",
-    throws: true,
-  });
-}
-
 async function finishBrowserExecution(
   ctx: ActionCtx,
   input: {
@@ -1648,6 +2202,9 @@ async function executeApprovedWriteForOwner(
   ownerId: Id<"users">,
   requestId: Id<"actionRequests">,
 ): Promise<ApprovedWriteResult> {
+  if (!await ctx.runQuery(internal.devUserReset.userMayRunWork, { userId: ownerId })) {
+    throw new ConvexError({ code: "USER_RESET_IN_PROGRESS" });
+  }
   // Configuration is checked before the transactional claim so a missing
   // provider key cannot strand a newly approved action in `claimed`.
   const apiKey = browserbaseApiKey();
@@ -1656,6 +2213,22 @@ async function executeApprovedWriteForOwner(
     internal.externalActions.claimForExecutor,
     { ownerId, requestId, executor: "browserbase" },
   );
+  if (!await ctx.runQuery(internal.devUserReset.userMayRunWork, { userId: ownerId })) {
+    await finishBrowserExecution(ctx, {
+      ownerId,
+      executionId: claim.executionId,
+      status: "failed",
+      error: "USER_RESET_IN_PROGRESS",
+    });
+    if (claim.connectionId) {
+      await ctx.runMutation(internal.portalConnections.releaseWriteSession, {
+        ownerId,
+        connectionId: claim.connectionId,
+        executionId: claim.executionId,
+      });
+    }
+    throw new ConvexError({ code: "USER_RESET_IN_PROGRESS" });
+  }
   if (claim.executionStatus === "succeeded") {
     return {
       executionId: claim.executionId,
@@ -1716,6 +2289,8 @@ async function executeApprovedWriteForOwner(
   }
 
   let browser: StagehandBrowser | undefined;
+  let stagehandSessionId: string | undefined;
+  let v4Session: StagehandV4Session | undefined;
   let providerSessionId: string | undefined;
   let keepSessionForHuman = false;
   let submissionMayHaveOccurred = false;
@@ -1764,14 +2339,106 @@ async function executeApprovedWriteForOwner(
       providerThreadId: existingThread?.providerThreadId,
       payload: claim.payload,
     });
+    const browserEngine = resolvePortalBrowserEngine({
+      configuredExecutor: envValue("BROWSERBASE_EXECUTOR"),
+      controlledDemo:
+        isControlledAgentRegistrationConnection(connection) &&
+        claim.requestedActionType === "send_platform_dm",
+    });
 
-    await applyWriteLimits(ctx, ownerId, connection.connectionId);
     writeSessionClaimed = await ctx.runMutation(internal.portalConnections.claimWriteSession, {
       ownerId,
       connectionId: connection.connectionId,
       executionId: claim.executionId,
     });
     if (!writeSessionClaimed) throw new Error("BROWSER_CONTEXT_BUSY");
+    if (browserEngine === "stagehand") {
+      const session = await startStagehandSession(ctx, {
+        url: targetUrl,
+        contextId: connection.providerContextId,
+        persistContext: true,
+        timeoutMs: PORTAL_WRITE_TTL_MS,
+        solveCaptchas: false,
+      });
+      v4Session = session;
+      stagehandSessionId = session.sessionId;
+      if (!stagehandSessionId) throw new Error("PROVIDER_SESSION_MISSING");
+      providerSessionId = stagehandSessionId;
+      await ctx.runMutation(internal.externalActions.attachProviderExecution, {
+        ownerId,
+        executionId: claim.executionId,
+        providerActionId: providerSessionId,
+      });
+      const result = await sendControlledPortalMessage({
+        client: session.primitives,
+        baseUrl: connection.baseUrl,
+        adapterKey: connection.adapterKey ?? "",
+        body: claim.payload.body,
+        providerThreadId: existingThread?.providerThreadId,
+        targetPath: new URL(targetUrl).pathname,
+        senderLabel: claim.payload.senderLabel,
+        beforeSubmit: async () => {
+          // From this point forward, even an ambiguous claim response must not
+          // permit a blind retry that could duplicate the provider write.
+          submissionMayHaveOccurred = true;
+          await ctx.runMutation(internal.externalActions.claimForExecutor, {
+            ownerId,
+            requestId,
+            executor: "browserbase",
+          });
+        },
+      });
+      if (result.outcome === "human_required") {
+        keepSessionForHuman = true;
+        return {
+          executionId: claim.executionId,
+          status: "human_required",
+          blocker: result.blocker,
+          alreadyCompleted: false,
+        };
+      }
+      if (result.outcome === "unknown") {
+        await finishBrowserExecution(ctx, {
+          ownerId,
+          executionId: claim.executionId,
+          status: "unknown",
+          error: result.errorCode,
+        });
+        return {
+          executionId: claim.executionId,
+          status: "unknown",
+          alreadyCompleted: false,
+        };
+      }
+      if (claim.requestedActionType === "send_platform_dm") {
+        await ctx.runMutation(internal.platformInbox.recordOutboundWrite, {
+          ownerId,
+          connectionId: connection.connectionId,
+          threadId: claim.payload.threadId,
+          providerThreadId: result.providerThreadId,
+          providerMessageId: result.providerMessageId,
+          participants:
+            claim.payload.recipients.length > 0
+              ? claim.payload.recipients
+              : (existingThread?.participants ?? []),
+          subject: claim.payload.subject,
+          bodyText: claim.payload.body,
+          sentAt: Date.now(),
+        });
+      }
+      await finishBrowserExecution(ctx, {
+        ownerId,
+        executionId: claim.executionId,
+        status: "succeeded",
+        providerThreadId: result.providerThreadId,
+        providerMessageId: result.providerMessageId,
+      });
+      return {
+        executionId: claim.executionId,
+        status: "succeeded",
+        alreadyCompleted: false,
+      };
+    }
     browser = await launchWriteBrowser({
       apiKey,
       allowedDomains: connection.allowedDomains,
@@ -1799,8 +2466,8 @@ async function executeApprovedWriteForOwner(
       allowedPaths: connection.allowedPaths,
       humanPresenceRequired: claim.humanPresenceRequired,
       beforeSubmit: async () => {
-        await ctx.runMutation(internal.externalActions.claimForExecutor, { ownerId, requestId, executor: "browserbase" });
         submissionMayHaveOccurred = true;
+        await ctx.runMutation(internal.externalActions.claimForExecutor, { ownerId, requestId, executor: "browserbase" });
       },
     });
     if (result.outcome === "human_required") {
@@ -1865,7 +2532,13 @@ async function executeApprovedWriteForOwner(
     });
     throw new ConvexError({ code: errorCode });
   } finally {
+    await v4Session?.close().catch(() => undefined);
     if (!keepSessionForHuman) {
+      if (stagehandSessionId) {
+        await endStagehandSession(ctx, stagehandSessionId).catch(
+          () => undefined,
+        );
+      }
       if (browser) {
         try {
           await browser.close();
@@ -1873,7 +2546,9 @@ async function executeApprovedWriteForOwner(
           // Browserbase session release below remains the cleanup boundary.
         }
       }
-      await releaseProviderSession(client, providerSessionId);
+      if (!stagehandSessionId) {
+        await releaseProviderSession(client, providerSessionId);
+      }
       if (writeSessionClaimed && claim.connectionId) {
         await ctx.runMutation(internal.portalConnections.releaseWriteSession, {
           ownerId,
@@ -1902,6 +2577,13 @@ export const executeApprovedWriteWorker = internalAction({
   },
   returns: writeResultValidator,
   handler: async (ctx, args): Promise<ApprovedWriteResult> => {
+    if (!await ctx.runQuery(internal.devUserReset.userMayRunWork, { userId: args.ownerId })) {
+      await ctx.runMutation(internal.externalActions.cancelUnstartedForUserReset, {
+        ownerId: args.ownerId,
+        requestId: args.requestId,
+      });
+      throw new ConvexError({ code: "USER_RESET_IN_PROGRESS" });
+    }
     try {
       return await executeApprovedWriteForOwner(ctx, args.ownerId, args.requestId);
     } catch (error) {

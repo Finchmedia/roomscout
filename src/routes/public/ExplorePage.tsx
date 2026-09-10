@@ -28,6 +28,7 @@ function ExploreContent({ authenticated = false }: ExplorePageProps) {
   const navigate = useNavigate();
   const initialCity = new URLSearchParams(routeLocation.search).get("city") ?? "Stuttgart";
   const [location, setLocation] = useState(initialCity);
+  const [radiusKm, setRadiusKm] = useState(20);
   const [side, setSide] = useState<SignalSide | "all">("all");
   const [selectedFilters, setSelectedFilters] = useState(() => new Set<string>());
   const [sort, setSort] = useState("relevant");
@@ -72,7 +73,11 @@ function ExploreContent({ authenticated = false }: ExplorePageProps) {
   async function saveSearch() {
     const city = location.trim();
     if (!city) {
-      setSaveError("Add a city before saving this search.");
+      setSaveError("Add a location before saving this search.");
+      return;
+    }
+    if (!Number.isFinite(radiusKm) || radiusKm < 1 || radiusKm > 200) {
+      setSaveError("Choose a radius from 1 to 200 km.");
       return;
     }
     setSaving(true);
@@ -80,8 +85,9 @@ function ExploreContent({ authenticated = false }: ExplorePageProps) {
     try {
       await createNeed({
         title: `Rehearsal-room search in ${city}`,
-        city,
-        districts: [],
+        locationQuery: city,
+        locationLabel: city,
+        radiusKm,
         arrangement: [
           ...(selectedFilters.has("Fixed monthly") ? ["permanent" as const, "shared" as const] : []),
           ...(selectedFilters.has("Hourly") ? ["hourly" as const] : []),
@@ -108,7 +114,9 @@ function ExploreContent({ authenticated = false }: ExplorePageProps) {
       <CoverageTrustNotice compact />
       <div className="tools rs-explore__tools">
         <label className="sr-only" htmlFor="explore-location">Location</label>
-        <input className="input" id="explore-location" onChange={(event) => setLocation(event.target.value)} placeholder="City" value={location} />
+        <input className="input" id="explore-location" onChange={(event) => setLocation(event.target.value)} placeholder="City, postcode, or address" value={location} />
+        <label className="sr-only" htmlFor="explore-radius">Radius in kilometres</label>
+        <input className="input" id="explore-radius" min={1} max={200} onChange={(event) => setRadiusKm(Number(event.target.value))} type="number" value={radiusKm} />
         <div aria-label="Signal side" className="seg" role="group">
           {(["all", "supply", "demand"] as const).map((value) => (
             <button className={side === value ? "on" : undefined} key={value} onClick={() => setSide(value)} type="button">

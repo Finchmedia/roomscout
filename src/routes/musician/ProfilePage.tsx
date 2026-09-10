@@ -30,6 +30,7 @@ import {
   type PortalUiConnection,
   type PortalUiStatus,
 } from "../../components/connections/PortalConnectionsWorkspace";
+import { portalRegistrationErrorMessage } from "../../components/connections/portalRegistrationError";
 import { WorkspaceShell } from "../../components/navigation/WorkspaceShell";
 import { ActionDialog } from "../../components/ui/ActionDialog";
 import { EmptyState, LedgerCard } from "../../components/ui/LedgerCard";
@@ -102,6 +103,9 @@ export function ProfilePage() {
   const requestPortalConnection = useMutation(
     api.portalConnections.requestConnection,
   );
+  const recoverFailedRegistration = useMutation(
+    api.portalConnections.recoverFailedRegistration,
+  );
   const [importOpen, setImportOpen] = useState(false);
   const [importedCount, setImportedCount] = useState<number>();
   const [forgetFactId, setForgetFactId] = useState<Id<"memoryFacts">>();
@@ -111,6 +115,7 @@ export function ProfilePage() {
   >("idle");
   const [contextRefresh, setContextRefresh] = useState(false);
   const [connectionError, setConnectionError] = useState("");
+  const [connectionSuccess, setConnectionSuccess] = useState("");
   const [connectionWorking, setConnectionWorking] = useState<string>();
   const [disableConnectionId, setDisableConnectionId] =
     useState<Id<"portalConnections">>();
@@ -188,6 +193,16 @@ export function ProfilePage() {
         (connection.status === "needs_auth" ||
           connection.status === "reauth_required" ||
           connection.status === "paused"),
+      canRecoverRegistration:
+        connection.policyDecision === "allowed" &&
+        domainFromUrl(connection.baseUrl) === "roomscout.dev" &&
+        connection.status === "needs_auth" &&
+        (connection.lastErrorCode?.startsWith(
+          "AGENT_REGISTRATION_BROWSER_LAUNCH_",
+        ) === true ||
+          connection.lastErrorCode?.startsWith(
+            "AGENT_REGISTRATION_CONTEXT_CREATE_",
+          ) === true),
       canSync:
         connection.policyDecision === "allowed" &&
         connection.status === "active" &&
@@ -249,17 +264,32 @@ export function ProfilePage() {
   async function letScoutRegister(connectionId: string) {
     setConnectionWorking(connectionId);
     setConnectionError("");
+    setConnectionSuccess("");
     try {
       const result = await startAgentRegistration({
         connectionId: connectionId as Id<"portalConnections">,
       });
       navigate(`/app/runs/${result.runId}`);
     } catch (caught) {
-      setConnectionError(
-        caught instanceof Error
-          ? caught.message
-          : "The controlled portal registration could not be started.",
+      setConnectionError(portalRegistrationErrorMessage(caught));
+    } finally {
+      setConnectionWorking(undefined);
+    }
+  }
+
+  async function recoverPortalRegistration(connectionId: string) {
+    setConnectionWorking(connectionId);
+    setConnectionError("");
+    setConnectionSuccess("");
+    try {
+      await recoverFailedRegistration({
+        connectionId: connectionId as Id<"portalConnections">,
+      });
+      setConnectionSuccess(
+        "Setup unblocked. You can now let Scout register.",
       );
+    } catch (caught) {
+      setConnectionError(portalRegistrationErrorMessage(caught));
     } finally {
       setConnectionWorking(undefined);
     }
@@ -367,6 +397,7 @@ export function ProfilePage() {
             <PortalConnectionsWorkspace
               availablePortals={connectableSources}
               error={connectionError}
+              success={connectionSuccess}
               loading={
                 portalRows === undefined || connectableRows === undefined
               }
@@ -376,6 +407,9 @@ export function ProfilePage() {
               }
               onAgentRegister={(connectionId) =>
                 void letScoutRegister(connectionId)
+              }
+              onRecoverRegistration={(connectionId) =>
+                void recoverPortalRegistration(connectionId)
               }
               onCreate={(sourceId, connectionLabel) =>
                 void addPortalSource(sourceId, connectionLabel)

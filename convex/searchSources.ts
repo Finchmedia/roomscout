@@ -1,6 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireUserId } from "./integrations/authz";
+import { savedNeedLocationLabel, savedNeedLocationQuery } from "./lib/savedNeedLocation";
 
 const preferenceValidator = v.union(
   v.literal("include"), v.literal("prefer"), v.literal("neutral"), v.literal("exclude"),
@@ -29,12 +30,14 @@ export const listForNeed = query({
     const ownerId = await requireUserId(ctx);
     const need = await ctx.db.get(args.savedNeedId);
     if (need === null || need.ownerId !== ownerId) throw new ConvexError({ code: "NEED_NOT_FOUND" });
-    const normalizedCity = need.city.trim().toLowerCase().replace(/\s+/g, " ");
+    const location = savedNeedLocationQuery(need);
+    const label = savedNeedLocationLabel(need);
+    const normalizedCity = location.toLowerCase().replace(/\s+/g, " ");
     const area = normalizedCity
       ? await ctx.db.query("geoAreas").withIndex("by_country_code_and_normalized_name", (q) => q.eq("countryCode", "DE").eq("normalizedName", normalizedCity)).first()
       : null;
     if (area === null) {
-      return { city: need.city, areaResolved: false, sources: [], disclosure: "No reviewed source coverage has been mapped to this city yet." };
+      return { city: label, areaResolved: false, sources: [], disclosure: "No reviewed source coverage has been mapped to this search center yet." };
     }
     const limit = Math.max(1, Math.min(100, Math.floor(args.limit ?? 50)));
     const [supply, demand, preferences] = await Promise.all([
@@ -67,7 +70,7 @@ export const listForNeed = query({
       });
     }
     return {
-      city: need.city,
+      city: label,
       areaResolved: true,
       sources: sources.sort((a, b) => b.confidence - a.confidence).slice(0, limit),
       disclosure: "Coverage describes reviewed public sources RoomScout knows about; it is not a claim that the whole market is indexed.",

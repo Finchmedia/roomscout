@@ -2,6 +2,7 @@ import { ConvexError } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
+import { hasCompleteSavedNeedLocation } from "./savedNeedLocation";
 
 /** All edits/status changes invalidate old async work in the same transaction. */
 export async function refreshNeedMatching(ctx: MutationCtx, need: Doc<"savedNeeds">) {
@@ -19,7 +20,9 @@ export async function refreshNeedMatching(ctx: MutationCtx, need: Doc<"savedNeed
 
 export async function setNeedStatus(ctx: MutationCtx, need: Doc<"savedNeeds">, status: Doc<"savedNeeds">["status"]) {
   if (need.status === "archived" && status !== "archived") throw new ConvexError({ code: "NEED_ARCHIVED" });
-  if (status === "active" && !need.city.trim()) throw new ConvexError({ code: "INCOMPLETE_NEED" });
+  if (status === "active" && !hasCompleteSavedNeedLocation(need)) {
+    throw new ConvexError({ code: "INCOMPLETE_NEED" });
+  }
   // Retrying activation is a no-op; the original transaction already queued matching.
   if (need.status === status) return;
   await ctx.db.patch(need._id, { status, updatedAt: Date.now() });

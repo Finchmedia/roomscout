@@ -2,6 +2,10 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { DEMO_PROVENANCE_MIGRATION_NAME } from "./lib/demoProvenance";
 import {
+  geocodeQueryForSavedNeed,
+  savedNeedLocationLabel,
+} from "./lib/savedNeedLocation";
+import {
   internalAction,
   internalMutation,
   internalQuery,
@@ -23,9 +27,36 @@ function queryKey(value: string): string {
 type MapboxFeature = {
   id?: string;
   geometry?: { coordinates?: unknown };
+  properties?: {
+    feature_type?: string;
+    full_address?: string;
+    name?: string;
+    place_formatted?: string;
+  };
 };
 
 type MapboxResponse = { features?: MapboxFeature[] };
+
+function mapboxPrecision(featureType: string | undefined): "exact" | "postal_code" | "district" | "city" | "unknown" {
+  if (featureType === "address") return "exact";
+  if (featureType === "postcode") return "postal_code";
+  if (featureType === "neighborhood" || featureType === "locality") return "district";
+  if (featureType === "place") return "city";
+  return "unknown";
+}
+
+function mapboxLocationLabel(feature: MapboxFeature, fallback: string): string {
+  const properties = feature.properties;
+  return properties?.full_address?.trim() ||
+    [properties?.name?.trim(), properties?.place_formatted?.trim()].filter(Boolean).join(", ") ||
+    fallback;
+}
+
+function validCoordinates(latitude: number | undefined, longitude: number | undefined): boolean {
+  return latitude !== undefined && longitude !== undefined &&
+    Number.isFinite(latitude) && Number.isFinite(longitude) &&
+    latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180;
+}
 
 export const getSignalLocation = internalQuery({
   args: { signalId: v.id("signals") },
@@ -34,7 +65,6 @@ export const getSignalLocation = internalQuery({
       query: v.string(),
       queryKey: v.string(),
       precision,
-      city: v.string(),
     }),
     v.null(),
   ),
@@ -48,7 +78,6 @@ export const getSignalLocation = internalQuery({
       query: `${location}, Germany`,
       queryKey: queryKey(`${location}, Germany`),
       precision: signal.locationPrecision ?? (signal.district ? "district" : "city"),
-      city: signal.city,
     };
   },
 });
@@ -60,13 +89,14 @@ export const getCachedGeocode = internalQuery({
       geocodeId: v.id("geocodes"),
       latitude: v.optional(v.number()),
       longitude: v.optional(v.number()),
+      precision,
       status: v.union(v.literal("ready"), v.literal("not_found"), v.literal("failed")),
     }),
     v.null(),
   ),
   handler: async (ctx, args) => {
     const row = await ctx.db.query("geocodes").withIndex("by_query_key", (q) => q.eq("queryKey", args.queryKey)).unique();
-    return row ? { geocodeId: row._id, latitude: row.latitude, longitude: row.longitude, status: row.status } : null;
+    return row ? { geocodeId: row._id, latitude: row.latitude, longitude: row.longitude, precision: row.precision, status: row.status } : null;
   },
 });
 
@@ -86,6 +116,7 @@ export const storeGeocode = internalMutation({
   handler: async (ctx, args) => {
     const signal = await ctx.db.get(args.signalId);
     if (!signal) return null;
+    if (args.status === "ready" && !validCoordinates(args.latitude, args.longitude)) return null;
     const existing = await ctx.db.query("geocodes").withIndex("by_query_key", (q) => q.eq("queryKey", args.queryKey)).unique();
     const now = Date.now();
     const values = {
@@ -103,6 +134,7 @@ export const storeGeocode = internalMutation({
       ? (await ctx.db.patch(existing._id, values), existing._id)
       : await ctx.db.insert("geocodes", { ...values, queryKey: args.queryKey, createdAt: now });
     if (args.status === "ready" && args.latitude !== undefined && args.longitude !== undefined) {
+      const coordinatesChanged = signal.latitude !== args.latitude || signal.longitude !== args.longitude;
       await ctx.db.patch(signal._id, {
         geocodeId,
         latitude: args.latitude,
@@ -110,6 +142,9 @@ export const storeGeocode = internalMutation({
         locationPrecision: args.precision,
       });
       await ctx.scheduler.runAfter(0, internal.map.rebuildArea, { city: signal.city });
+      if (coordinatesChanged) {
+        await ctx.scheduler.runAfter(0, internal.matches.rematchAllActive, { cursor: null });
+      }
     }
     return null;
   },
@@ -188,6 +223,96 @@ export const geocodeSignal = internalAction({
         status: "failed",
         error: error instanceof Error ? error.message : "Geocoding failed",
       });
+    }
+    return null;
+  },
+});
+
+export const getNeedLocation = internalQuery({
+  args: { savedNeedId: v.id("savedNeeds") },
+  returns: v.union(v.object({ query: v.string(), queryKey: v.string(), locationLabel: v.string() }), v.null()),
+  handler: async (ctx, args) => {
+    const need = await ctx.db.get(args.savedNeedId);
+    if (!need) return null;
+    const query = geocodeQueryForSavedNeed(need);
+    if (!query) return null;
+    return {
+      query,
+      queryKey: queryKey(query),
+      locationLabel: savedNeedLocationLabel(need),
+    };
+  },
+});
+
+export const storeNeedGeocode = internalMutation({
+  args: {
+    savedNeedId: v.id("savedNeeds"), queryKey: v.string(), query: v.string(), locationLabel: v.string(), precision,
+    status: v.union(v.literal("ready"), v.literal("not_found"), v.literal("failed")),
+    latitude: v.optional(v.number()), longitude: v.optional(v.number()), providerFeatureId: v.optional(v.string()), error: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const need = await ctx.db.get(args.savedNeedId);
+    if (!need || queryKey(geocodeQueryForSavedNeed(need)) !== args.queryKey) return null;
+    if (args.status === "ready" && !validCoordinates(args.latitude, args.longitude)) return null;
+    const existing = await ctx.db.query("geocodes").withIndex("by_query_key", (q) => q.eq("queryKey", args.queryKey)).unique();
+    const now = Date.now();
+    const values = { query: args.query, precision: args.precision, provider: "mapbox" as const, status: args.status,
+      latitude: args.latitude, longitude: args.longitude, providerFeatureId: args.providerFeatureId, error: args.error?.slice(0, 500), updatedAt: now };
+    const geocodeId = existing ? (await ctx.db.patch(existing._id, values), existing._id) :
+      await ctx.db.insert("geocodes", { ...values, queryKey: args.queryKey, createdAt: now });
+    if (args.status === "ready" && args.latitude !== undefined && args.longitude !== undefined) {
+      const matchingRevision = (need.matchingRevision ?? 0) + 1;
+      await ctx.db.patch(need._id, { geocodeId, centerLatitude: args.latitude, centerLongitude: args.longitude,
+        locationLabel: args.locationLabel.trim() || savedNeedLocationLabel(need),
+        locationPrecision: args.precision, matchingRevision, matchingRunId: undefined });
+      await ctx.scheduler.runAfter(0, internal.matches.retireNeedMatches, {
+        ownerId: need.ownerId, savedNeedId: need._id, needRevision: matchingRevision, cursor: null,
+      });
+      await ctx.scheduler.runAfter(0, internal.matches.recomputeNeed, { ownerId: need.ownerId, savedNeedId: need._id });
+    }
+    return null;
+  },
+});
+
+export const geocodeNeed = internalAction({
+  args: { savedNeedId: v.id("savedNeeds") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const location = await ctx.runQuery(internal.map.getNeedLocation, args);
+    if (!location) return null;
+    const cached = await ctx.runQuery(internal.map.getCachedGeocode, { queryKey: location.queryKey });
+    if (cached?.status === "ready" && cached.latitude !== undefined && cached.longitude !== undefined) {
+      await ctx.runMutation(internal.map.storeNeedGeocode, { ...args, ...location, status: "ready", precision: cached.precision, latitude: cached.latitude, longitude: cached.longitude });
+      return null;
+    }
+    const token = process.env.MAPBOX_SECRET_TOKEN;
+    if (!token) return null;
+    const url = new URL("https://api.mapbox.com/search/geocode/v6/forward");
+    url.searchParams.set("q", location.query.slice(0, 256)); url.searchParams.set("access_token", token);
+    url.searchParams.set("country", "de"); url.searchParams.set("limit", "1"); url.searchParams.set("autocomplete", "false"); url.searchParams.set("permanent", "true");
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`Mapbox geocoding returned ${response.status}`);
+      const feature = ((await response.json()) as MapboxResponse).features?.[0];
+      const coordinates = feature?.geometry?.coordinates;
+      if (!Array.isArray(coordinates) || coordinates.length < 2 || typeof coordinates[0] !== "number" || typeof coordinates[1] !== "number") {
+        await ctx.runMutation(internal.map.storeNeedGeocode, { ...args, ...location, status: "not_found", precision: "unknown" }); return null;
+      }
+      await ctx.runMutation(internal.map.storeNeedGeocode, {
+        ...args,
+        ...location,
+        locationLabel: feature
+          ? mapboxLocationLabel(feature, location.locationLabel)
+          : location.locationLabel,
+        status: "ready",
+        precision: mapboxPrecision(feature?.properties?.feature_type),
+        longitude: coordinates[0],
+        latitude: coordinates[1],
+        providerFeatureId: feature?.id,
+      });
+    } catch (error) {
+      await ctx.runMutation(internal.map.storeNeedGeocode, { ...args, ...location, status: "failed", precision: "unknown", error: error instanceof Error ? error.message : "Geocoding failed" });
     }
     return null;
   },

@@ -1,9 +1,6 @@
 import { ConvexError, v } from "convex/values";
-import {
-  internalMutation,
-  internalQuery,
-  type MutationCtx,
-} from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
+import { ensureControlledDemoRecords } from "./demoSourceBootstrap";
 import {
   CONTROLLED_SOURCE_PROOF_CONFIRMATION,
   CONTROLLED_SOURCE_SLUG,
@@ -12,25 +9,9 @@ import {
 
 const confirmation = v.literal(CONTROLLED_SOURCE_PROOF_CONFIRMATION);
 
-async function assertNoOtherActiveSources(ctx: MutationCtx) {
-  const activeSources = await ctx.db
-    .query("sources")
-    .withIndex("by_status", (q) => q.eq("status", "active"))
-    .take(100);
-  const unexpected = activeSources.find(
-    (source) => source.slug !== CONTROLLED_SOURCE_SLUG,
-  );
-  if (unexpected) {
-    throw new ConvexError({
-      code: "OTHER_ACTIVE_SOURCE_PRESENT",
-      sourceSlug: unexpected.slug,
-    });
-  }
-}
-
 /**
- * Exact, internal-only bootstrap for the first production ingestion proof.
- * It can activate only the first-party roomscout.dev public listing source.
+ * Exact, internal-only bootstrap for the global first-party ingestion source.
+ * Unrelated reviewed sources can remain active independently.
  */
 export const prepare = internalMutation({
   args: { confirmation },
@@ -40,131 +21,13 @@ export const prepare = internalMutation({
     providerMonitorId: v.optional(v.string()),
   }),
   handler: async (ctx) => {
-    await assertNoOtherActiveSources(ctx);
-    const now = Date.now();
-
-    let platform = await ctx.db
-      .query("sourcePlatforms")
-      .withIndex("by_canonical_domain", (q) =>
-        q.eq("canonicalDomain", "roomscout.dev"),
-      )
-      .unique();
-    if (platform && platform.slug !== "roomscout-dev") {
-      throw new ConvexError({ code: "CONTROLLED_PLATFORM_CONFLICT" });
-    }
-    if (!platform) {
-      const platformId = await ctx.db.insert("sourcePlatforms", {
-        slug: "roomscout-dev",
-        name: "roomscout.dev controlled demo portal",
-        canonicalDomain: "roomscout.dev",
-        kind: "community",
-        status: "active",
-        firstSeenAt: now,
-        lastObservedAt: now,
-        createdAt: now,
-        updatedAt: now,
-      });
-      platform = await ctx.db.get(platformId);
-    }
-    if (!platform) {
-      throw new ConvexError({ code: "CONTROLLED_PLATFORM_CREATE_FAILED" });
-    }
-
-    let source = await ctx.db
-      .query("sources")
-      .withIndex("by_slug", (q) => q.eq("slug", CONTROLLED_SOURCE_SLUG))
-      .unique();
-    if (
-      source &&
-      (source.platformId !== platform._id ||
-        source.baseUrl !== CONTROLLED_SOURCE_URL ||
-        source.accessMode !== "public" ||
-        source.adapterKey !== "generic-list-v1")
-    ) {
-      throw new ConvexError({ code: "CONTROLLED_SOURCE_CONFLICT" });
-    }
-    if (!source) {
-      const sourceId = await ctx.db.insert("sources", {
-        platformId: platform._id,
-        slug: CONTROLLED_SOURCE_SLUG,
-        name: "roomscout.dev · demo public listings",
-        baseUrl: CONTROLLED_SOURCE_URL,
-        side: "both",
-        status: "active",
-        health: "unknown",
-        geographicScope: "Controlled hackathon demo",
-        accessMode: "public",
-        automationReview: "approved",
-        policyNotes:
-          "First-party controlled source. This proof may read public listings only and cannot communicate with anyone.",
-        reviewedAt: now,
-        adapterKey: "generic-list-v1",
-        publicDisplay: true,
-        createdAt: now,
-        updatedAt: now,
-      });
-      source = await ctx.db.get(sourceId);
-    } else {
-      await ctx.db.patch(source._id, {
-        status: "active",
-        automationReview: "approved",
-        publicDisplay: true,
-        reviewedAt: source.reviewedAt ?? now,
-        updatedAt: now,
-      });
-      source = await ctx.db.get(source._id);
-    }
-    if (!source) {
-      throw new ConvexError({ code: "CONTROLLED_SOURCE_CREATE_FAILED" });
-    }
-
-    const targets = await ctx.db
-      .query("sourceTargets")
-      .withIndex("by_source", (q) => q.eq("sourceId", source!._id))
-      .take(20);
-    const unexpectedTarget = targets.find(
-      (target) => target.url !== CONTROLLED_SOURCE_URL,
-    );
-    if (unexpectedTarget) {
-      throw new ConvexError({ code: "CONTROLLED_TARGET_CONFLICT" });
-    }
-
-    let target = targets.find(
-      (candidate) => candidate.url === CONTROLLED_SOURCE_URL,
-    );
-    if (!target) {
-      const targetId = await ctx.db.insert("sourceTargets", {
-        sourceId: source._id,
-        url: CONTROLLED_SOURCE_URL,
-        mode: "scrape",
-        changeTrackingTag: "roomscout-dev-public:v1",
-        scheduleMinutes: 24 * 60,
-        nextRunAt: now,
-        paused: false,
-        monitorStatus: "unconfigured",
-        sideScope: "both",
-        adapterKey: "generic-list-v1",
-        successfulSnapshotCount: 0,
-        backlogCount: 0,
-        createdAt: now,
-        updatedAt: now,
-      });
-      const createdTarget = await ctx.db.get(targetId);
-      if (!createdTarget) {
-        throw new ConvexError({ code: "CONTROLLED_TARGET_CREATE_FAILED" });
-      }
-      target = createdTarget;
-    } else {
-      await ctx.db.patch(target._id, {
-        paused: false,
-        nextRunAt: now,
-        updatedAt: now,
-      });
-    }
-
+    const records = await ensureControlledDemoRecords(ctx);
+    const target = await ctx.db.get(records.publicTargetId);
+    if (!target)
+      throw new ConvexError({ code: "CONTROLLED_TARGET_CREATE_FAILED" });
     return {
-      sourceId: source._id,
-      sourceTargetId: target._id,
+      sourceId: records.publicSourceId,
+      sourceTargetId: records.publicTargetId,
       providerMonitorId: target.providerMonitorId,
     };
   },
@@ -185,11 +48,7 @@ export const getRunContext = internalQuery({
   ),
   handler: async (ctx, args) => {
     const target = await ctx.db.get(args.sourceTargetId);
-    if (
-      !target ||
-      target.url !== CONTROLLED_SOURCE_URL ||
-      target.paused
-    ) {
+    if (!target || target.url !== CONTROLLED_SOURCE_URL || target.paused) {
       return null;
     }
     const source = await ctx.db.get(target.sourceId);
@@ -204,17 +63,14 @@ export const getRunContext = internalQuery({
     }
     const monitor = await ctx.db
       .query("sourceMonitors")
-      .withIndex("by_source_target", (q) =>
-        q.eq("sourceTargetId", target._id),
-      )
+      .withIndex("by_source_target", (q) => q.eq("sourceTargetId", target._id))
       .unique();
     return {
       sourceTargetId: target._id,
       sourceName: source.name,
       url: target.url,
       scheduleMinutes: target.scheduleMinutes,
-      providerMonitorId:
-        monitor?.providerMonitorId ?? target.providerMonitorId,
+      providerMonitorId: monitor?.providerMonitorId ?? target.providerMonitorId,
       storedFingerprint: monitor?.configFingerprint,
     };
   },
@@ -255,14 +111,11 @@ export const pause = internalMutation({
     ]);
     const monitor = await ctx.db
       .query("sourceMonitors")
-      .withIndex("by_source_target", (q) =>
-        q.eq("sourceTargetId", target._id),
-      )
+      .withIndex("by_source_target", (q) => q.eq("sourceTargetId", target._id))
       .unique();
     return {
       sourceTargetId: target._id,
-      providerMonitorId:
-        monitor?.providerMonitorId ?? target.providerMonitorId,
+      providerMonitorId: monitor?.providerMonitorId ?? target.providerMonitorId,
     };
   },
 });

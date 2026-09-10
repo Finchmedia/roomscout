@@ -7,14 +7,31 @@
 - **Repo:** https://github.com/Finchmedia/roomscout
 - **Frontend:** Convex static hosting
 - **Convex deployment:** https://fleet-jackal-83.eu-west-1.convex.cloud
-- **Components:** @convex-dev/agent, @convex-dev/auth, @convex-dev/rate-limiter, @convex-dev/static-hosting, @convex-dev/workpool
+- **Components:** @convex-dev/agent, @convex-dev/auth, @convex-dev/static-hosting, @convex-dev/workpool, @agentmail/convex, local Firecrawl and Stagehand components
 - **Convex features:** schema, tables, indexes, vector search, queries, mutations, actions, HTTP actions, crons, scheduled functions, realtime queries, paginated queries
 - **Auth:** Convex Auth
 - **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-realtime-2.1`
 - **Started:** 2026-08-26T13:55:26Z
-- **Last updated:** 2026-09-09T01:26:35Z
+- **Last updated:** 2026-09-10T13:01:10Z
 
 ## Log
+
+### 2026-09-10 - first successful controlled end-to-end happy path
+
+Completed the first user-observed band-to-landlord flow on the controlled portal:
+conversational search, matching, browser outreach, provider replies, autonomous
+follow-up questions, a fully assessed offer, and a final acceptance message
+visible in the portal. This is a controlled demo, not a payment or signed contract.
+Removed obstructive app-level throttles and shortened due inbox scheduling;
+fixed match-assessment recovery and made current provider offers take precedence
+over stale listing questions and old outreach status in the Scout UI.
+
+The development frontend is deployed. Verification: 664 tests passed, one opt-in
+test skipped, TypeScript and production build passed. This is the first completed
+interactive run after fixes, not yet a repeatability claim for unattended fresh
+runs. This checkpoint preserves the parallel Claude Code design-port work;
+chat-UI simplification and further UI-port decisions remain for a separate review.
+Detailed evidence and limitations: `docs/BUILD_LOG.md`.
 
 ### 2026-08-26 - de10b22
 Defined RoomScout as a shared index of rehearsal-room supply and demand with
@@ -134,3 +151,36 @@ Voice survives authenticated route changes; transcript ordering, cancellation an
 stale tool results have regression coverage. Local test/build and public-browser
 checks are recorded in `docs/UI_DESIGN_PORT_2026-09-09.md`; authenticated visual and
 live provider verification remain open. No deployment, commit or push occurred.
+
+Subsequently mounted a local MIT-derived Stagehand REST component, retaining
+RoomScout's authorization and send ledger. Fixed Zod 4 JSON Schema transport
+across Convex boundaries and added deterministic DOM receipt checks
+(`convex/components/stagehandRoomScout/`, `convex/browserbasePortal.ts`).
+The Development component passes live navigation, extraction, observation and
+exact variable-backed form filling; the prop portal's reviewed demo-terms gate
+is deployed and live-tested. Signup was not submitted. Local checks pass 522 tests,
+build, backend typecheck and scoped lint; unrelated UI lint findings remain.
+Registration and the mail/browser round trip remain pending shared acceptance.
+Details, test evidence and remaining gates: `docs/BROWSERBASE_COMPONENT_MIGRATION.md`.
+
+### 2026-09-09 - deployable band acceptance flow
+
+The complete test path is deployed to production: readable personal AgentMail
+inboxes at signup, automatic controlled `roomscout.dev` connection bootstrap,
+radius-based matching, global public-source monitoring and idempotent portal
+account registration from an explicitly scoped autopilot mandate. Outreach waits
+for an active portal connection. Production data migration and source/monitor
+reconciliation completed; the hosted frontend returns the current production
+asset manifest. Local and deployment checks pass 581 tests, TypeScript and build.
+The remaining item is user-driven acceptance with a fresh band account,
+including provider OTP, first portal message and landlord reply.
+
+### 2026-09-10 - working tree
+Replaced the controlled portal's hosted REST execution with actual Stagehand v4
+Node actions; the local component retains session metadata only. Form fields
+are validated and read back together before submission. Both backend deployments,
+622 tests, TypeScript, build and scoped lint pass. Provider quota exhaustion was
+confirmed; after capacity was restored, real v4 read and exact-fill form smokes
+passed. Added owner-initiated, once-per-day failed-start recovery and readable
+cooldowns. Live signup and the message round trip remain unproven
+(`docs/BROWSERBASE_COMPONENT_MIGRATION.md`).

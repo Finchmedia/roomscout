@@ -37,18 +37,23 @@ says to lock them in or asks for a file update.
   active, versioned, expiring standing mandate with daily limits and stop
   conditions. Any agreement, booking, contract, payment, deposit, or other
   binding commitment requires exact approval in every mode and channel;
-  credentials, 2FA and CAPTCHAs remain human-only. The sole controlled-demo
+  credentials and 2FA remain human-only. The sole controlled-demo
   exception is the reviewed `roomscout-dev-v1` adapter on exactly
   `https://roomscout.dev`: it may generate an ephemeral, unpersisted password
   and submit one unambiguous numeric email-verification code received in the
-  user's AgentMail inbox. It must never follow verification links, solve a
-  CAPTCHA, accept terms, handle payment, or apply this exception to another
-  source, host, or adapter.
+  user's AgentMail inbox. CAPTCHA handling may use only Browserbase's native
+  CAPTCHA solver. It may accept
+  only a free-account terms version whose exact path and canonical content
+  fingerprint were pre-reviewed and pinned in code; absent terms need no
+  acceptance, while unfamiliar or changed terms stop for review. It must never
+  follow verification links, handle payment/contracts, use custom CAPTCHA
+  bypass logic, or apply this exception to another source, host, or adapter.
 - **Text generation uses OpenAI through the Convex AI Gateway.**
   `openai/gpt-5.6-terra` is the shared text-generation model. The regular OpenAI
-  endpoint may use `OPENAI_API_KEY` only for semantic embeddings and the
-  approved Realtime WebRTC voice flow; do not use that key for a second text
-  chat or normalization path.
+  endpoint may use `OPENAI_API_KEY` only for semantic embeddings, the approved
+  Realtime WebRTC voice flow, and browser interpretation inside the Stagehand
+  v4 Node runtime. Scout text and normalization stay on the Gateway; do not
+  use that key for a second Scout chat or normalization path.
 - **Firecrawl handles web discovery and crawling; AgentMail handles email.** Each
   sponsor must perform genuine product work.
 - **Matching is consent-based if built.** Never expose a private band profile or

@@ -2,6 +2,7 @@
 import { convexTest } from "convex-test";
 import { expect, it } from "vitest";
 import { api } from "./_generated/api";
+import { isDefaultAutopilotMandate } from "./mandates";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -100,4 +101,32 @@ it("activates one safe default Autopilot mandate and respects excluded sources",
     commitmentBoundary: "non_binding_outreach_only",
   });
   expect(mandate?.platformIds).not.toContain(fixture.excludedPlatformId);
+  expect(await t.run(async (ctx) => {
+    const row = await ctx.db.get(first.mandateId);
+    return row ? await isDefaultAutopilotMandate(ctx, row) : false;
+  })).toBe(true);
+
+  const explicit = await owner.mutation(api.mandates.createDraft, {
+    savedNeedId: fixture.savedNeedId,
+    mode: "outreach_autopilot",
+    platformIds: [fixture.includedPlatformId],
+    allowedActionTypes: ["send_email"],
+    allowedPersonalData: ["reply_email"],
+    maxContactsPerDay: 500,
+    maxBrowserMinutesPerDay: 1_000,
+    expiresAt: Date.now() + 60_000,
+    stopOnComplaint: true,
+    stopWhenSuitableRoomConfirmed: true,
+  });
+  expect(await t.run(async (ctx) => {
+    const row = await ctx.db.get(explicit.mandateId);
+    return row ? await isDefaultAutopilotMandate(ctx, row) : false;
+  })).toBe(false);
+  expect(await t.run(async (ctx) => {
+    const row = await ctx.db.get(explicit.mandateId);
+    return row && {
+      maxContactsPerDay: row.maxContactsPerDay,
+      maxBrowserMinutesPerDay: row.maxBrowserMinutesPerDay,
+    };
+  })).toEqual({ maxContactsPerDay: 500, maxBrowserMinutesPerDay: 1_000 });
 });

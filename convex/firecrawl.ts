@@ -55,6 +55,7 @@ export const listMonitorCandidates = internalQuery({
       const source = await ctx.db.get(target.sourceId);
       if (
         !source ||
+        source.slug === "roomscout-dev-public" ||
         source.status !== "active" ||
         source.automationReview !== "approved"
       ) {
@@ -237,7 +238,9 @@ export const runDueTargets = internalAction({
     succeeded: v.number(),
     failed: v.number(),
   }),
-  handler: async (ctx): Promise<{
+  handler: async (
+    ctx,
+  ): Promise<{
     claimed: number;
     succeeded: number;
     failed: number;
@@ -260,7 +263,10 @@ export const runDueTargets = internalAction({
 export const webhook = httpAction(async (ctx, request) => {
   const bearer = envValue("FIRECRAWL_MONITOR_WEBHOOK_BEARER");
   if (!bearer) {
-    return Response.json({ error: "Webhook is not configured" }, { status: 503 });
+    return Response.json(
+      { error: "Webhook is not configured" },
+      { status: 503 },
+    );
   }
   if (
     !(await constantTimeSecretMatches(
@@ -383,12 +389,15 @@ export const webhook = httpAction(async (ctx, request) => {
 
     const markdown = markdownFromPayload(payload);
     if (markdown && pageUrl) {
-      const outcome = await ctx.runAction(internal.ingestion.ingestPageDocument, {
-        eventId: receipt.eventId,
-        sourceTargetId: receipt.sourceTargetId,
-        pageUrl,
-        markdown,
-      });
+      const outcome = await ctx.runAction(
+        internal.ingestion.ingestPageDocument,
+        {
+          eventId: receipt.eventId,
+          sourceTargetId: receipt.sourceTargetId,
+          pageUrl,
+          markdown,
+        },
+      );
       if (outcome.queuedDetails > 0) {
         await ctx.scheduler.runAfter(
           0,

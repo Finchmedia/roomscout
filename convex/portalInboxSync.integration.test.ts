@@ -35,6 +35,24 @@ async function fixture(count = 1) {
 }
 
 describe("portal inbox sync coordinator", () => {
+  it("accepts repeated notifications without hourly quotas or legacy circuit cooldowns", async () => {
+    const f = await fixture(); const connectionId = f.connectionIds[0]!;
+    await f.t.run((ctx) => ctx.db.patch(connectionId, {
+      circuitOpenUntil: Date.now() + 24 * 60 * 60_000, failureCount: 3,
+    }));
+    for (let generation = 1; generation <= 6; generation += 1) {
+      expect(await f.t.mutation(internal.portalInboxSync.requestSync, {
+        ownerId: f.ownerId, connectionId, reason: "notification", receiptKey: `fresh-${generation}`,
+      })).toEqual({ status: "queued" });
+      await f.t.mutation(internal.portalInboxSync.syncCompleted, {
+        workId: `work-${generation}` as never,
+        context: { ownerId: f.ownerId, connectionId, generation },
+        result: { kind: "success", returnValue: null },
+      });
+    }
+    expect(await f.t.run((ctx) => ctx.db.get(connectionId))).toMatchObject({ inboxSyncGeneration: 6 });
+  });
+
   async function insertClaimedWrite(f: Awaited<ReturnType<typeof fixture>>) {
     return await f.t.run(async (ctx) => {
       const now = Date.now(); const connectionId = f.connectionIds[0]!;

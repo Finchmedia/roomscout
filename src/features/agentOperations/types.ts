@@ -56,6 +56,7 @@ export type ScoutMandate = {
   dataScopes: string[];
   dailyContactLimit: number;
   dailyBrowserMinutes: number;
+  usesDefaultUnlimitedUsage?: boolean;
   maxMonthlyPriceEur?: number;
   expiresAt?: number;
   killSwitchEnabled: boolean;

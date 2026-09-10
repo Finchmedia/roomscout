@@ -4,6 +4,20 @@ import { internal } from "./_generated/api";
 const crons = cronJobs();
 
 crons.interval(
+  "ensure global roomscout.dev source and monitor",
+  { minutes: 15 },
+  internal.demoSourceBootstrapActions.reconcileGlobalMonitor,
+  {},
+);
+
+crons.interval(
+  "bootstrap default roomscout.dev connections",
+  { minutes: 30 },
+  internal.demoSourceBootstrap.reconcileDefaultConnections,
+  { cursor: null },
+);
+
+crons.interval(
   "reconcile Firecrawl native monitors",
   { minutes: 15 },
   internal.firecrawl.runDueTargets,
@@ -25,8 +39,8 @@ crons.interval(
 );
 
 crons.interval(
-  "poll one reviewed platform inbox",
-  { minutes: 30 },
+  "poll due reviewed platform inboxes",
+  { minutes: 1 },
   internal.browserbasePortal.scheduleDueInboxSync,
   {},
 );

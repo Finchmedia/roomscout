@@ -161,7 +161,9 @@ export function MandatePanel({ mandate, platformOptions = [], onSave, onStatusCh
           <div>
             <strong>{autopilotOn ? "RoomScout is working for you" : "Put your room search on Autopilot"}</strong>
             <p>{autopilotOn
-              ? "The Scout can research, contact suitable leads, and continue non-binding conversations within your limits."
+              ? mandate.usesDefaultUnlimitedUsage
+                ? "The Scout can research, contact suitable leads, and continue non-binding conversations without an app usage cap."
+                : "The Scout can research, contact suitable leads, and continue non-binding conversations within your limits."
               : "Let the Scout research, contact suitable leads, and follow up without asking about every message."}</p>
           </div>
           <div className="actionsrow">
@@ -172,7 +174,7 @@ export function MandatePanel({ mandate, platformOptions = [], onSave, onStatusCh
           </div>
         </div>
         <div className="rs-mandate-boundary"><ShieldCheck aria-hidden="true" size={15} /><span>You stay in control of the consequential decision: agreements, bookings, contracts, and money always come back to you.</span></div>
-        {autopilotOn ? <div className="rs-mandate-summary"><span><b>{mandate.platformAllowlist.length}</b> platforms</span><span><b>{mandate.dailyContactLimit}</b> contacts/day</span><span>active until <b>{dateInputValue(mandate.expiresAt)}</b></span></div> : null}
+        {autopilotOn ? <div className="rs-mandate-summary"><span><b>{mandate.platformAllowlist.length}</b> platforms</span><span>{mandate.usesDefaultUnlimitedUsage ? <b>No app usage cap</b> : <><b>{mandate.dailyContactLimit}</b> contacts/day</>}</span><span>active until <b>{dateInputValue(mandate.expiresAt)}</b></span></div> : null}
         {saveError && !open ? <p className="rs-form-error" role="alert">{saveError}</p> : null}
       </LedgerCard>
 
@@ -209,6 +211,7 @@ export function MandatePanel({ mandate, platformOptions = [], onSave, onStatusCh
                 <label><span className="flabel">Max monthly price €</span><input className="input" disabled={!draftAutopilotOn} min="0" onChange={(event) => setDraft((current) => ({ ...current, maxMonthlyPriceEur: event.target.value ? Number(event.target.value) : undefined }))} type="number" value={draft.maxMonthlyPriceEur ?? ""} /></label>
                 <label><span className="flabel">Expires</span><input className="input" disabled={!draftAutopilotOn} onChange={(event) => setDraft((current) => ({ ...current, expiresAt: event.target.value ? new Date(`${event.target.value}T23:59:59`).getTime() : undefined }))} type="date" value={dateInputValue(draft.expiresAt)} /></label>
               </div>
+              {mandate.usesDefaultUnlimitedUsage ? <p className="hint">This default Autopilot has no app usage cap. Saving these advanced settings creates an explicit mandate and applies the contact and browser budgets shown above.</p> : null}
               <div className="cols rs-mandate-columns">
                 <section><span className="flabel">Stop conditions</span><ul>{draft.stopConditions.map((item) => <li key={item}>{item}</li>)}</ul></section>
                 <section><span className="flabel">Always human</span><ul className="checks">{hardHumanActionTypes.map((action) => <li className="check" key={action}><LockKeyhole aria-hidden="true" size={13} />{actionLabels[action]}</li>)}</ul></section>

@@ -1,0 +1,82 @@
+.panel {
+  width: min(100%, 42rem);
+  margin: 1.25rem auto 0;
+  padding: 1rem 1.1rem;
+  border: 1px solid rgba(255, 210, 180, 0.16);
+  border-radius: 1rem;
+  background: rgba(17, 12, 9, 0.58);
+  color: #e9ddd3;
+  text-align: left;
+}
+
+.operator {
+  width: 100%;
+  margin: 0;
+  border-color: var(--gray-800);
+  border-radius: 8px;
+  background: var(--gray-950);
+}
+
+.heading,
+.summary,
+.note,
+.feedback {
+  margin: 0;
+}
+
+.heading {
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.summary,
+.note,
+.feedback {
+  margin-top: 0.38rem;
+  color: #ad9c8e;
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.metrics,
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.metric {
+  padding: 0.28rem 0.48rem;
+  border: 1px solid rgba(255, 210, 180, 0.13);
+  border-radius: 999px;
+  color: #cbbcaf;
+  font: 0.68rem/1.2 var(--font-mono, monospace);
+}
+
+.button {
+  min-height: 2.1rem;
+  padding: 0.42rem 0.72rem;
+  border: 1px solid rgba(255, 210, 180, 0.2);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #f3e7dd;
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.buttonPrimary {
+  border-color: rgba(255, 105, 38, 0.6);
+  background: rgba(255, 105, 38, 0.15);
+}
+
+.button:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.feedback[role="alert"] {
+  color: #ffb38e;
+}

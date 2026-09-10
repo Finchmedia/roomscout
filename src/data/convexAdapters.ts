@@ -1,6 +1,11 @@
 import type { Doc, Id } from "../../convex/_generated/dataModel";
 import type { MarketSignal, SavedSearch, SearchField } from "../mocks/demoData";
 
+type SavedNeedProjection = Omit<Doc<"savedNeeds">, "city" | "districts"> & {
+  city?: string;
+  districts?: string[];
+};
+
 type PublicSignal = {
   _id: Id<"signals">;
   isDemo?: boolean;
@@ -82,9 +87,9 @@ export function publicSignalToMarketSignal(
   };
 }
 
-export function savedNeedToSearch(need: Doc<"savedNeeds">): SavedSearch {
+export function savedNeedToSearch(need: SavedNeedProjection): SavedSearch {
   const fields: SearchField[] = [];
-  const location = [need.city, ...need.districts].filter(Boolean).join(" · ");
+  const location = need.locationLabel?.trim() || need.locationQuery?.trim() || need.city?.trim() || "";
   if (location) fields.push({ label: "Location", value: location, source: "you" });
   if (need.radiusKm !== undefined) fields.push({ label: "Radius", value: `${need.radiusKm} km`, source: "you" });
   if (need.arrangement.length > 0) {

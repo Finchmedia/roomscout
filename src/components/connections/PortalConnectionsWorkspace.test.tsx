@@ -10,6 +10,7 @@ const portals: PortalUiConnection[] = [
     status: "login_needed",
     policyReady: true,
     canAuthenticate: true,
+    canRecoverRegistration: true,
     canSync: false,
     scopes: ["Inbox sync"],
   },
@@ -56,6 +57,7 @@ describe("PortalConnectionsWorkspace", () => {
   it("renders independent portal states and wires their scoped actions", () => {
     const onAuthenticate = vi.fn();
     const onPause = vi.fn();
+    const onRecoverRegistration = vi.fn();
     const onSync = vi.fn();
     const onDisable = vi.fn();
 
@@ -65,6 +67,7 @@ describe("PortalConnectionsWorkspace", () => {
         onAuthenticate={onAuthenticate}
         onDisable={onDisable}
         onPause={onPause}
+        onRecoverRegistration={onRecoverRegistration}
         onSync={onSync}
         portals={portals}
       />,
@@ -79,11 +82,13 @@ describe("PortalConnectionsWorkspace", () => {
     expect(screen.getByText("scout@agentmail.to")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /open secure setup/i }));
+    fireEvent.click(screen.getByRole("button", { name: /reset failed setup/i }));
     fireEvent.click(screen.getByRole("button", { name: /sync inbox/i }));
     fireEvent.click(screen.getByRole("button", { name: /^pause$/i }));
     fireEvent.click(screen.getByRole("button", { name: /reauthenticate/i }));
 
     expect(onAuthenticate).toHaveBeenCalledWith("login");
+    expect(onRecoverRegistration).toHaveBeenCalledWith("login");
     expect(onAuthenticate).toHaveBeenCalledWith("reauth");
     expect(onSync).toHaveBeenCalledWith("active");
     expect(onPause).toHaveBeenCalledWith("active");
@@ -92,6 +97,23 @@ describe("PortalConnectionsWorkspace", () => {
     expect(disableButtons).toHaveLength(4);
     fireEvent.click(disableButtons[0]!);
     expect(onDisable).toHaveBeenCalledWith("login");
+  });
+
+  it("shows recovery success without starting registration", () => {
+    const onAgentRegister = vi.fn();
+    render(
+      <PortalConnectionsWorkspace
+        mailbox={{ status: "active", emailAddress: "scout@agentmail.to" }}
+        onAgentRegister={onAgentRegister}
+        portals={portals}
+        success="Setup unblocked. You can now let Scout register."
+      />,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Setup unblocked. You can now let Scout register.",
+    );
+    expect(onAgentRegister).not.toHaveBeenCalled();
   });
 
   it("creates the AgentMail registration identity only from an explicit action", () => {

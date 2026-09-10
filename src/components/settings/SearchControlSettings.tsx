@@ -48,7 +48,7 @@ export function SearchControlSettings({
   );
   const signals = useQuery(
     api.signals.list,
-    need?.city ? { city: need.city, limit: 50 } : "skip",
+    need?.locationQuery ? { city: need.locationQuery, limit: 50 } : "skip",
   );
   const activeMandate = useQuery(
     api.mandates.getActiveMine,
@@ -137,7 +137,7 @@ export function SearchControlSettings({
           </p>
         ) : null}
         <SearchSourcesPanel
-          city={need.city}
+          city={need.locationLabel ?? need.locationQuery ?? "this area"}
           disclosure={`${coverage?.disclosure ?? "Coverage is based on reviewed sources."} Signal totals are a bounded sample of up to 50 city results; evidence sources is the largest source count attached to one result, not a market-wide total.`}
           indexedSignalCount={signals?.length ?? 0}
           indexedSourceCount={maxEvidenceSources}
@@ -174,8 +174,9 @@ export function SearchControlSettings({
           action === "propose_visit_time" ? ("propose_visit" as const) : action,
         ),
         dataScopes: activeMandate.allowedPersonalData,
-        dailyContactLimit: activeMandate.maxContactsPerDay,
-        dailyBrowserMinutes: activeMandate.maxBrowserMinutesPerDay,
+    dailyContactLimit: activeMandate.maxContactsPerDay,
+    dailyBrowserMinutes: activeMandate.maxBrowserMinutesPerDay,
+    usesDefaultUnlimitedUsage: activeMandate.usesDefaultUnlimitedUsage,
         maxMonthlyPriceEur: activeMandate.maxMonthlyPriceEur,
         expiresAt: activeMandate.expiresAt,
         killSwitchEnabled: true,

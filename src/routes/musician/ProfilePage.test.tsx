@@ -10,6 +10,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProfilePage } from "./ProfilePage";
 
 const deleteFact = vi.fn(async () => undefined);
+const recoverSetup = vi.fn(async () => undefined);
+const registerPortal = vi.fn(async () => ({ runId: "new-run" }));
 
 vi.mock("../../../convex/_generated/api", () => ({
   api: {
@@ -29,6 +31,7 @@ vi.mock("../../../convex/_generated/api", () => ({
       listConnectableSources: "portalConnections.listConnectableSources",
       pauseMine: "portalConnections.pauseMine",
       requestConnection: "portalConnections.requestConnection",
+      recoverFailedRegistration: "portalConnections.recoverFailedRegistration",
     },
     browserbasePortal: {
       startAuthentication: "browserbasePortal.startAuthentication",
@@ -103,8 +106,10 @@ vi.mock("convex/react", () => ({
   useMutation: (mutation: string) =>
     mutation === "memory.deleteFact"
       ? deleteFact
-      : vi.fn(async () => undefined),
-  useAction: () => vi.fn(async () => ({ configured: true, status: "active" })),
+      : mutation === "portalConnections.recoverFailedRegistration"
+        ? recoverSetup : vi.fn(async () => undefined),
+  useAction: (action: string) => action === "browserbasePortal.startAgentRegistration"
+    ? registerPortal : vi.fn(async () => ({ configured: true, status: "active" })),
 }));
 
 vi.mock("../../components/navigation/WorkspaceShell", () => ({
@@ -113,7 +118,13 @@ vi.mock("../../components/navigation/WorkspaceShell", () => ({
   ),
 }));
 vi.mock("../../components/connections/PortalConnectionsWorkspace", () => ({
-  PortalConnectionsWorkspace: () => <div>Live portal controls</div>,
+  PortalConnectionsWorkspace: ({ onRecoverRegistration, success, error }: {
+    onRecoverRegistration?: (id: string) => void; success?: string; error?: string;
+  }) => <div>Live portal controls
+    <button onClick={() => onRecoverRegistration?.("failed-connection")} type="button">Reset failed setup</button>
+    {success ? <p role="status">{success}</p> : null}
+    {error ? <p role="alert">{error}</p> : null}
+  </div>,
 }));
 vi.mock("../../components/memory/ContextImportDialog", () => ({
   ContextImportDialog: () => null,
@@ -131,7 +142,9 @@ function renderSection(path: string) {
 }
 
 describe("ProfilePage settings routes", () => {
-  beforeEach(() => deleteFact.mockClear());
+  beforeEach(() => {
+    deleteFact.mockClear(); recoverSetup.mockReset(); registerPortal.mockClear();
+  });
   afterEach(cleanup);
 
   it("uses the deep-linked section and presents sources without requiring a search", () => {
@@ -144,6 +157,22 @@ describe("ProfilePage settings routes", () => {
       screen.getByRole("heading", { name: "Create a search first" }),
     ).toBeInTheDocument();
     expect(screen.getByText(/portal access/i)).toBeInTheDocument();
+  });
+
+  it("recovers only the selected setup and waits for a separate registration click", async () => {
+    renderSection("/app/settings/sources");
+    fireEvent.click(screen.getByRole("button", { name: "Reset failed setup" }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Setup unblocked"));
+    expect(recoverSetup).toHaveBeenCalledWith({ connectionId: "failed-connection" });
+    expect(registerPortal).not.toHaveBeenCalled();
+  });
+
+  it("renders a recovery cooldown without leaking server details", async () => {
+    recoverSetup.mockRejectedValueOnce({ data: { kind: "RateLimited", name: "portalAuthRecovery", retryAfter: 60_000 } });
+    renderSection("/app/settings/sources");
+    fireEvent.click(screen.getByRole("button", { name: "Reset failed setup" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Try again in 1 minute"));
+    expect(registerPortal).not.toHaveBeenCalled();
   });
 
   it("states honestly that billing and metering are unavailable", () => {

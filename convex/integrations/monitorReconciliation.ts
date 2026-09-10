@@ -26,9 +26,8 @@ export function buildDesiredMonitor(args: {
   // Firecrawl's natural-language parser treats `every N minutes` as a
   // minute-unit schedule and rejects values above 60. Use the provider's
   // documented daily form for RoomScout's 24-hour source cadence.
-  const scheduleText = interval === 24 * 60
-    ? "daily"
-    : `every ${interval} minutes`;
+  const scheduleText =
+    interval === 24 * 60 ? "daily" : `every ${interval} minutes`;
   const scrapeOptions = {
     onlyMainContent: true,
     maxAge: 0,
@@ -68,8 +67,7 @@ export function buildDesiredMonitor(args: {
     },
     targets: [target],
     retentionDays: 7,
-    goal:
-      "Alert when rehearsal-room listings are added, removed, or substantively changed. Ignore unrelated navigation, advertising, and page chrome.",
+    goal: "Alert when rehearsal-room listings are added, removed, or substantively changed. Ignore unrelated navigation, advertising, and page chrome.",
     judgeEnabled: true,
   };
 }
@@ -82,7 +80,10 @@ export function monitorConfigFingerprint(
     JSON.stringify({
       ...request,
       webhook: request.webhook
-        ? { ...request.webhook, headers: Object.keys(request.webhook.headers ?? {}).sort() }
+        ? {
+            ...request.webhook,
+            headers: Object.keys(request.webhook.headers ?? {}).sort(),
+          }
         : undefined,
       desiredStatus: paused ? "paused" : "active",
     }),
@@ -94,9 +95,33 @@ export function monitorMatchesDesired(
   fingerprint: string,
   storedFingerprint: string | undefined,
   paused: boolean,
+  desired?: CreateMonitorRequest,
 ): boolean {
   const expectedStatus = paused ? "paused" : "active";
-  return storedFingerprint === fingerprint && monitor.status === expectedStatus;
+  if (storedFingerprint !== fingerprint || monitor.status !== expectedStatus) {
+    return false;
+  }
+  if (!desired) return true;
+
+  const providerSchedule = recordOf(monitor.schedule);
+  if (
+    providerSchedule &&
+    (providerSchedule.text !== desired.schedule.text ||
+      (typeof providerSchedule.timezone === "string" &&
+        providerSchedule.timezone !== desired.schedule.timezone))
+  ) {
+    return false;
+  }
+  if (monitor.targets.length !== desired.targets.length) return false;
+  return monitor.targets.every((target, index) => {
+    const expected = desired.targets[index];
+    if (!expected) return false;
+    return (
+      target.type === expected.type &&
+      target.url === expected.url &&
+      JSON.stringify(target.urls ?? []) === JSON.stringify(expected.urls ?? [])
+    );
+  });
 }
 
 export type ParsedMonitorWebhook = {
@@ -118,13 +143,19 @@ function recordOf(value: unknown): Record<string, unknown> | null {
 }
 
 function stringValue(...values: unknown[]): string | undefined {
-  return values.find((value): value is string => typeof value === "string" && !!value);
+  return values.find(
+    (value): value is string => typeof value === "string" && !!value,
+  );
 }
 
-export function parseMonitorWebhook(payload: Record<string, unknown>): ParsedMonitorWebhook {
+export function parseMonitorWebhook(
+  payload: Record<string, unknown>,
+): ParsedMonitorWebhook {
   // Current Firecrawl monitor webhooks wrap event records in `data: [...]`,
   // even though each monitor.page delivery normally contains one page.
-  const dataValue = Array.isArray(payload.data) ? payload.data[0] : payload.data;
+  const dataValue = Array.isArray(payload.data)
+    ? payload.data[0]
+    : payload.data;
   const data = recordOf(dataValue) ?? {};
   const page = recordOf(data.page) ?? data;
   const rootMetadata = recordOf(payload.metadata) ?? {};
@@ -162,7 +193,14 @@ export function parseMonitorWebhook(payload: Record<string, unknown>): ParsedMon
   const providerEventId =
     stringValue(payload.id, payload.eventId) ??
     stableFingerprint(
-      [eventType, providerMonitorId, providerCheckId, pageId, pageUrl, changeStatus]
+      [
+        eventType,
+        providerMonitorId,
+        providerCheckId,
+        pageId,
+        pageUrl,
+        changeStatus,
+      ]
         .filter(Boolean)
         .join("\n"),
     );

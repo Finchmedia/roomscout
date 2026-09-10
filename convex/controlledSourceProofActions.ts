@@ -32,7 +32,9 @@ export const runOnce = internalAction({
     checkId: v.string(),
     status: v.string(),
   }),
-  handler: async (ctx): Promise<{
+  handler: async (
+    ctx,
+  ): Promise<{
     sourceTargetId: Id<"sourceTargets">;
     providerMonitorId: string;
     checkId: string;
@@ -49,10 +51,9 @@ export const runOnce = internalAction({
       sourceId: Id<"sources">;
       sourceTargetId: Id<"sourceTargets">;
       providerMonitorId?: string;
-    } = await ctx.runMutation(
-      internal.controlledSourceProof.prepare,
-      { confirmation: CONTROLLED_SOURCE_PROOF_CONFIRMATION },
-    );
+    } = await ctx.runMutation(internal.controlledSourceProof.prepare, {
+      confirmation: CONTROLLED_SOURCE_PROOF_CONFIRMATION,
+    });
     const candidate: {
       sourceTargetId: Id<"sourceTargets">;
       sourceName: string;
@@ -101,6 +102,7 @@ export const runOnce = internalAction({
           fingerprint,
           candidate.storedFingerprint,
           false,
+          desired,
         )
       ) {
         const updated = await firecrawl.updateMonitor(ctx, providerMonitorId, {
@@ -141,10 +143,9 @@ export const pauseAfterProof = internalAction({
     const paused: {
       sourceTargetId: Id<"sourceTargets">;
       providerMonitorId?: string;
-    } = await ctx.runMutation(
-      internal.controlledSourceProof.pause,
-      { confirmation: CONTROLLED_SOURCE_PROOF_CONFIRMATION },
-    );
+    } = await ctx.runMutation(internal.controlledSourceProof.pause, {
+      confirmation: CONTROLLED_SOURCE_PROOF_CONFIRMATION,
+    });
     if (paused.providerMonitorId) {
       await firecrawl.updateMonitor(ctx, paused.providerMonitorId, {
         status: "paused",

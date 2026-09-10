@@ -17,7 +17,6 @@ import {
   createOpenAIEmbedding,
   OPENAI_EMBEDDING_MODEL,
 } from "./openaiEmbeddings";
-import { roomScoutRateLimiter } from "./rateLimits";
 
 const entityKinds = [
   "person",
@@ -249,17 +248,6 @@ async function insertFact(
   const factsToSupersede = input.replaceExisting
     ? activeFacts.filter((fact) => fact.predicate === predicate)
     : [];
-  if (factsToSupersede.length === 0) {
-    const activeOwnerFacts = await ctx.db
-      .query("memoryFacts")
-      .withIndex("by_owner_and_status", (q) =>
-        q.eq("ownerId", ownerId).eq("status", "active"),
-      )
-      .take(500);
-    if (activeOwnerFacts.length >= 500) {
-      throw new ConvexError({ code: "MEMORY_FACT_LIMIT", limit: 500 });
-    }
-  }
   await Promise.all(
     factsToSupersede.map(async (fact) => {
       await ctx.db.patch(fact._id, { status: "superseded", updatedAt: now });
@@ -363,10 +351,6 @@ export const importFacts = mutation({
   returns: v.object({ imported: v.number(), duplicateBatch: v.boolean() }),
   handler: async (ctx, args) => {
     const ownerId = await requireUserId(ctx);
-    await roomScoutRateLimiter.limit(ctx, "contextImport", {
-      key: ownerId,
-      throws: true,
-    });
     const batchId = cleanText(args.batchId, 100, "batchId");
     if (args.facts.length === 0 || args.facts.length > 40) {
       throw new ConvexError({ code: "INVALID_IMPORT_SIZE" });
@@ -704,10 +688,6 @@ export const refreshMyEmbeddings = action({
   returns: v.object({ processed: v.number(), configured: v.boolean() }),
   handler: async (ctx): Promise<{ processed: number; configured: boolean }> => {
     const ownerId = await requireActionUserId(ctx);
-    await roomScoutRateLimiter.limit(ctx, "contextImport", {
-      key: ownerId,
-      throws: true,
-    });
     if (!process.env.OPENAI_API_KEY) return { processed: 0, configured: false };
     const factIds: Id<"memoryFacts">[] = await ctx.runQuery(
       internal.memory.getEmbeddingCandidates,
@@ -922,10 +902,6 @@ export const refreshMyContext = action({
   returns: v.object({ rebuiltVersion: v.optional(v.number()) }),
   handler: async (ctx): Promise<{ rebuiltVersion?: number }> => {
     const ownerId = await requireActionUserId(ctx);
-    await roomScoutRateLimiter.limit(ctx, "contextImport", {
-      key: ownerId,
-      throws: true,
-    });
     const factVersion: number | null = await ctx.runQuery(
       internal.memory.getFactVersion,
       { ownerId },
@@ -957,10 +933,6 @@ export const parseContextImport = action({
   }),
   handler: async (ctx, args) => {
     const ownerId = await requireActionUserId(ctx);
-    await roomScoutRateLimiter.limit(ctx, "contextImport", {
-      key: ownerId,
-      throws: true,
-    });
     const text = args.text.trim();
     if (text.length < 20 || text.length > 50_000) {
       throw new ConvexError({ code: "INVALID_CONTEXT_IMPORT" });

@@ -29,12 +29,19 @@ but they no longer describe the implemented direction. RoomScout now contains:
   and explicit handoffs.
 
 No password, cookie, DOM snapshot, screenshot, raw audio, or ephemeral Live View
-URL is stored. No agent can solve a CAPTCHA, enter a password or 2FA code, accept
-terms, sign an agreement, complete a booking, or spend money. The generic
+URL is stored. Outside the exact `roomscout.dev` controlled-demo registration,
+no agent can solve a CAPTCHA, enter a password or 2FA code, or accept terms. The
+demo may use only Browserbase's native CAPTCHA solver and may accept only a
+free-account terms document whose path and canonical content fingerprint are
+pre-reviewed and pinned in code. Unknown/changed terms, agreements, bookings,
+payments, or other costs stop. The generic
 Browserbase write executor is implemented and covered by fixture adapters. A
 real portal remains non-executable until its concrete flow has an approved
 current policy and a tested code-owned adapter; this is a safety and correctness
 gate, not hidden autonomy.
+
+The Browserbase component migration and controlled registration proof are
+tracked in [`BROWSERBASE_COMPONENT_MIGRATION.md`](BROWSERBASE_COMPONENT_MIGRATION.md).
 
 **Firecrawl architecture correction, 2026-08-28:** RoomScout now uses Firecrawl
 Native Monitoring as the retrieval scheduler. `monitor.page` and

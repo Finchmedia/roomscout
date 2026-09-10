@@ -1,7 +1,15 @@
 import { ConvexError, v } from "convex/values";
+import { internal } from "./_generated/api";
+import type { Doc } from "./_generated/dataModel";
 import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { requireUserId } from "./integrations/authz";
 import { refreshNeedMatching, setNeedStatus } from "./lib/needLifecycle";
+import {
+  MAX_SEARCH_RADIUS_KM,
+  MIN_SEARCH_RADIUS_KM,
+  savedNeedLocationLabel,
+  savedNeedLocationQuery,
+} from "./lib/savedNeedLocation";
 
 const arrangementValidator = v.union(
   v.literal("permanent"),
@@ -25,14 +33,18 @@ const needValidator = v.object({
   _creationTime: v.number(),
   ownerId: v.id("users"),
   title: v.string(),
-  city: v.string(),
-  districts: v.array(v.string()),
+  locationQuery: v.optional(v.string()),
+  locationLabel: v.optional(v.string()),
   maxBudgetEur: v.optional(v.number()),
   arrangement: v.array(arrangementValidator),
   schedule: v.array(v.string()),
   requirements: v.array(v.string()),
   openToSharing: v.optional(v.boolean()),
   radiusKm: v.optional(v.number()),
+  centerLatitude: v.optional(v.number()),
+  centerLongitude: v.optional(v.number()),
+  locationPrecision: v.optional(v.union(v.literal("exact"), v.literal("postal_code"), v.literal("district"), v.literal("city"), v.literal("unknown"))),
+  geocodeId: v.optional(v.id("geocodes")),
   genres: v.optional(v.array(v.string())),
   instruments: v.optional(v.array(v.string())),
   collaborationOpen: v.optional(v.boolean()),
@@ -43,6 +55,38 @@ const needValidator = v.object({
   matchingRevision: v.optional(v.number()),
   matchingRunId: v.optional(v.string()),
 });
+
+function projectNeed(need: Doc<"savedNeeds">) {
+  const locationQuery = savedNeedLocationQuery(need);
+  const locationLabel = savedNeedLocationLabel(need);
+  return {
+    _id: need._id,
+    _creationTime: need._creationTime,
+    ownerId: need.ownerId,
+    title: need.title,
+    ...(locationQuery ? { locationQuery } : {}),
+    ...(locationLabel ? { locationLabel } : {}),
+    maxBudgetEur: need.maxBudgetEur,
+    arrangement: need.arrangement,
+    schedule: need.schedule,
+    requirements: need.requirements,
+    openToSharing: need.openToSharing,
+    radiusKm: need.radiusKm,
+    centerLatitude: need.centerLatitude,
+    centerLongitude: need.centerLongitude,
+    locationPrecision: need.locationPrecision,
+    geocodeId: need.geocodeId,
+    genres: need.genres,
+    instruments: need.instruments,
+    collaborationOpen: need.collaborationOpen,
+    facets: need.facets,
+    status: need.status,
+    createdAt: need.createdAt,
+    updatedAt: need.updatedAt,
+    matchingRevision: need.matchingRevision,
+    matchingRunId: need.matchingRunId,
+  };
+}
 
 function requiredText(value: string, field: string): string {
   const normalized = value.trim();
@@ -63,13 +107,20 @@ function validBudget(value: number | undefined): number | undefined {
   return value;
 }
 
+function validRadius(value: number | undefined): number | undefined {
+  if (value !== undefined && (!Number.isFinite(value) || value < MIN_SEARCH_RADIUS_KM || value > MAX_SEARCH_RADIUS_KM)) {
+    throw new ConvexError({ code: "INVALID_RADIUS" });
+  }
+  return value;
+}
+
 export const listMine = query({
   args: { status: v.optional(statusValidator), limit: v.optional(v.number()) },
   returns: v.array(needValidator),
   handler: async (ctx, args) => {
     const ownerId = await requireUserId(ctx);
     const limit = Math.max(1, Math.min(Math.floor(args.limit ?? 30), 50));
-    return args.status === undefined
+    const needs = args.status === undefined
       ? await ctx.db
           .query("savedNeeds")
           .withIndex("by_owner", (q) => q.eq("ownerId", ownerId))
@@ -82,6 +133,7 @@ export const listMine = query({
           )
           .order("desc")
           .take(limit);
+    return needs.map(projectNeed);
   },
 });
 
@@ -91,21 +143,21 @@ export const getMine = query({
   handler: async (ctx, args) => {
     const ownerId = await requireUserId(ctx);
     const need = await ctx.db.get(args.needId);
-    return need?.ownerId === ownerId ? need : null;
+    return need?.ownerId === ownerId ? projectNeed(need) : null;
   },
 });
 
 export const create = mutation({
   args: {
     title: v.string(),
-    city: v.string(),
-    districts: v.array(v.string()),
+    locationQuery: v.string(),
+    locationLabel: v.optional(v.string()),
     maxBudgetEur: v.optional(v.number()),
     arrangement: v.array(arrangementValidator),
     schedule: v.array(v.string()),
     requirements: v.array(v.string()),
     openToSharing: v.optional(v.boolean()),
-    radiusKm: v.optional(v.number()),
+    radiusKm: v.number(),
     genres: v.optional(v.array(v.string())),
     instruments: v.optional(v.array(v.string())),
     collaborationOpen: v.optional(v.boolean()),
@@ -115,17 +167,22 @@ export const create = mutation({
   handler: async (ctx, args) => {
     const ownerId = await requireUserId(ctx);
     const now = Date.now();
-    return await ctx.db.insert("savedNeeds", {
+    const locationQuery = requiredText(args.locationQuery, "locationQuery");
+    const locationLabel = args.locationLabel === undefined
+      ? locationQuery
+      : requiredText(args.locationLabel, "locationLabel");
+    const needId = await ctx.db.insert("savedNeeds", {
       ownerId,
       title: requiredText(args.title, "title"),
-      city: requiredText(args.city, "city"),
-      districts: normalizedList(args.districts),
+      city: locationLabel,
+      locationQuery,
+      locationLabel,
       maxBudgetEur: validBudget(args.maxBudgetEur),
       arrangement: [...new Set(args.arrangement)],
       schedule: normalizedList(args.schedule),
       requirements: normalizedList(args.requirements),
       openToSharing: args.openToSharing,
-      radiusKm: args.radiusKm,
+      radiusKm: validRadius(args.radiusKm),
       genres: args.genres ? normalizedList(args.genres) : undefined,
       instruments: args.instruments ? normalizedList(args.instruments) : undefined,
       collaborationOpen: args.collaborationOpen,
@@ -134,6 +191,8 @@ export const create = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    await ctx.scheduler.runAfter(0, internal.map.geocodeNeed, { savedNeedId: needId });
+    return needId;
   },
 });
 
@@ -151,11 +210,10 @@ export const getOrCreateDraft = mutation({
     if (existing !== undefined) return existing._id;
 
     const now = Date.now();
-    return await ctx.db.insert("savedNeeds", {
+    const needId = await ctx.db.insert("savedNeeds", {
       ownerId,
       title: "My rehearsal-room search",
       city: "",
-      districts: [],
       arrangement: [],
       schedule: [],
       requirements: [],
@@ -163,6 +221,8 @@ export const getOrCreateDraft = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    await ctx.scheduler.runAfter(0, internal.map.geocodeNeed, { savedNeedId: needId });
+    return needId;
   },
 });
 
@@ -170,8 +230,8 @@ export const update = mutation({
   args: {
     needId: v.id("savedNeeds"),
     title: v.optional(v.string()),
-    city: v.optional(v.string()),
-    districts: v.optional(v.array(v.string())),
+    locationQuery: v.optional(v.string()),
+    locationLabel: v.optional(v.string()),
     maxBudgetEur: v.optional(v.number()),
     arrangement: v.optional(v.array(arrangementValidator)),
     schedule: v.optional(v.array(v.string())),
@@ -194,15 +254,26 @@ export const update = mutation({
       throw new ConvexError({ code: "NEED_ARCHIVED" });
     }
 
+    const locationQuery = args.locationQuery === undefined
+      ? undefined
+      : requiredText(args.locationQuery, "locationQuery");
+    const locationChanged = locationQuery !== undefined &&
+      locationQuery !== savedNeedLocationQuery(need);
+
     await ctx.db.patch(need._id, {
       ...(args.title !== undefined
         ? { title: requiredText(args.title, "title") }
         : {}),
-      ...(args.city !== undefined
-        ? { city: requiredText(args.city, "city") }
-        : {}),
-      ...(args.districts !== undefined
-        ? { districts: normalizedList(args.districts) }
+      ...(locationQuery !== undefined ? {
+        city: args.locationLabel === undefined
+          ? locationQuery
+          : requiredText(args.locationLabel, "locationLabel"),
+        locationQuery,
+        locationLabel: args.locationLabel === undefined
+          ? locationQuery
+          : requiredText(args.locationLabel, "locationLabel"),
+      } : args.locationLabel !== undefined
+        ? { locationLabel: requiredText(args.locationLabel, "locationLabel") }
         : {}),
       ...(args.maxBudgetEur !== undefined
         ? { maxBudgetEur: validBudget(args.maxBudgetEur) }
@@ -219,7 +290,8 @@ export const update = mutation({
       ...(args.openToSharing !== undefined
         ? { openToSharing: args.openToSharing }
         : {}),
-      ...(args.radiusKm !== undefined ? { radiusKm: args.radiusKm } : {}),
+      ...(args.radiusKm !== undefined ? { radiusKm: validRadius(args.radiusKm) } : {}),
+      ...(locationChanged ? { centerLatitude: undefined, centerLongitude: undefined, locationPrecision: undefined, geocodeId: undefined } : {}),
       ...(args.genres !== undefined ? { genres: normalizedList(args.genres) } : {}),
       ...(args.instruments !== undefined
         ? { instruments: normalizedList(args.instruments) }
@@ -231,6 +303,7 @@ export const update = mutation({
       updatedAt: Date.now(),
     });
     await refreshNeedMatching(ctx, need);
+    if (locationChanged) await ctx.scheduler.runAfter(0, internal.map.geocodeNeed, { savedNeedId: need._id });
     return null;
   },
 });
@@ -254,7 +327,7 @@ export const getOwnedInternal = internalQuery({
   returns: v.union(needValidator, v.null()),
   handler: async (ctx, args) => {
     const need = await ctx.db.get(args.needId);
-    return need?.ownerId === args.ownerId ? need : null;
+    return need?.ownerId === args.ownerId ? projectNeed(need) : null;
   },
 });
 
@@ -263,8 +336,8 @@ export const updateFromScout = internalMutation({
     needId: v.id("savedNeeds"),
     ownerId: v.id("users"),
     title: v.optional(v.string()),
-    city: v.optional(v.string()),
-    districts: v.optional(v.array(v.string())),
+    locationQuery: v.optional(v.string()),
+    locationLabel: v.optional(v.string()),
     maxBudgetEur: v.optional(v.number()),
     arrangement: v.optional(v.array(arrangementValidator)),
     schedule: v.optional(v.array(v.string())),
@@ -282,16 +355,25 @@ export const updateFromScout = internalMutation({
     if (need === null || need.ownerId !== args.ownerId || need.status === "archived") {
       throw new ConvexError({ code: "NEED_NOT_FOUND" });
     }
-    if (need.status === "active" && args.city !== undefined && !args.city.trim()) throw new ConvexError({ code: "INCOMPLETE_NEED" });
+    const locationQuery = args.locationQuery === undefined
+      ? undefined
+      : requiredText(args.locationQuery, "locationQuery");
+    const locationChanged = locationQuery !== undefined &&
+      locationQuery !== savedNeedLocationQuery(need);
     await ctx.db.patch(need._id, {
       ...(args.title !== undefined
         ? { title: requiredText(args.title, "title") }
         : {}),
-      ...(args.city !== undefined
-        ? { city: args.city.trim() }
-        : {}),
-      ...(args.districts !== undefined
-        ? { districts: normalizedList(args.districts) }
+      ...(locationQuery !== undefined ? {
+        city: args.locationLabel === undefined
+          ? locationQuery
+          : requiredText(args.locationLabel, "locationLabel"),
+        locationQuery,
+        locationLabel: args.locationLabel === undefined
+          ? locationQuery
+          : requiredText(args.locationLabel, "locationLabel"),
+      } : args.locationLabel !== undefined
+        ? { locationLabel: requiredText(args.locationLabel, "locationLabel") }
         : {}),
       ...(args.maxBudgetEur !== undefined
         ? { maxBudgetEur: validBudget(args.maxBudgetEur) }
@@ -308,7 +390,8 @@ export const updateFromScout = internalMutation({
       ...(args.openToSharing !== undefined
         ? { openToSharing: args.openToSharing }
         : {}),
-      ...(args.radiusKm !== undefined ? { radiusKm: args.radiusKm } : {}),
+      ...(args.radiusKm !== undefined ? { radiusKm: validRadius(args.radiusKm) } : {}),
+      ...(locationChanged ? { centerLatitude: undefined, centerLongitude: undefined, locationPrecision: undefined, geocodeId: undefined } : {}),
       ...(args.genres !== undefined ? { genres: normalizedList(args.genres) } : {}),
       ...(args.instruments !== undefined
         ? { instruments: normalizedList(args.instruments) }
@@ -320,6 +403,7 @@ export const updateFromScout = internalMutation({
       updatedAt: Date.now(),
     });
     await refreshNeedMatching(ctx, need);
+    if (locationChanged) await ctx.scheduler.runAfter(0, internal.map.geocodeNeed, { savedNeedId: need._id });
     return null;
   },
 });

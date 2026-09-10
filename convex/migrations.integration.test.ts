@@ -6,6 +6,72 @@ import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
 
+it("migrates legacy saved-need cities to location centers and removes district constraints", async () => {
+  const t = convexTest(schema, modules);
+  const savedNeedId = await t.run(async (ctx) => {
+    const ownerId = await ctx.db.insert("users", {
+      username: "location-migration",
+      role: "musician",
+      createdAt: 1,
+      lastSeenAt: 1,
+    });
+    return await ctx.db.insert("savedNeeds", {
+      ownerId,
+      title: "Legacy search",
+      city: "Stuttgart",
+      districts: ["West", "Süd"],
+      arrangement: ["shared"],
+      schedule: [],
+      requirements: [],
+      status: "draft",
+      createdAt: 1,
+      updatedAt: 1,
+    });
+  });
+
+  await expect(t.mutation(internal.migrations.migrateSavedNeedLocations, {}))
+    .resolves.toEqual({ processed: 1, complete: true });
+  const migrated = await t.run(async (ctx) => ctx.db.get(savedNeedId));
+  expect(migrated).toMatchObject({
+    city: "Stuttgart",
+    locationQuery: "Stuttgart",
+    locationLabel: "Stuttgart",
+    radiusKm: 20,
+  });
+  expect(migrated?.districts).toBeUndefined();
+  await expect(t.mutation(internal.migrations.migrateSavedNeedLocations, {}))
+    .resolves.toEqual({ processed: 0, complete: true });
+});
+
+it("repairs legacy zero radii to the bounded default", async () => {
+  const t = convexTest(schema, modules);
+  const savedNeedId = await t.run(async (ctx) => {
+    const ownerId = await ctx.db.insert("users", {
+      username: "location-zero-radius-migration",
+      role: "musician",
+      createdAt: 1,
+      lastSeenAt: 1,
+    });
+    return await ctx.db.insert("savedNeeds", {
+      ownerId,
+      title: "Legacy zero-radius search",
+      city: "Stuttgart",
+      districts: [],
+      radiusKm: 0,
+      arrangement: ["shared"],
+      schedule: [],
+      requirements: [],
+      status: "draft",
+      createdAt: 1,
+      updatedAt: 1,
+    });
+  });
+
+  await t.mutation(internal.migrations.migrateSavedNeedLocations, {});
+  const migrated = await t.run(async (ctx) => ctx.db.get(savedNeedId));
+  expect(migrated?.radiusKm).toBe(20);
+});
+
 it("seeds prohibited platform capabilities idempotently", async () => {
   const t = convexTest(schema, modules);
   await t.run(async (ctx) => {

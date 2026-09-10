@@ -323,6 +323,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "action",
         "internal",
         {
+          maxRetries?: number;
           options?: {
             actions?: Array<any>;
             blockAds?: boolean;

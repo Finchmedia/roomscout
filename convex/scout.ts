@@ -8,8 +8,8 @@ import { action, internalQuery, mutation, query } from "./_generated/server";
 import { requireActionUserId, requireUserId } from "./integrations/authz";
 import { buildScoutCaseCard } from "./scoutCaseCards";
 import { runScoutTurn, scoutAgent } from "./scoutRuntime";
+import { isUserResetTombstoned } from "./devUserReset";
 export { scoutAgent } from "./scoutRuntime";
-import { roomScoutRateLimiter } from "./rateLimits";
 
 const modeValidator = v.union(
   v.literal("search_discovery"),
@@ -55,6 +55,9 @@ export const getOrCreateThread = mutation({
   returns: contextValidator,
   handler: async (ctx, args) => {
     const ownerId = await requireUserId(ctx);
+    if (await isUserResetTombstoned(ctx, ownerId)) {
+      throw new ConvexError({ code: "USER_RESET_IN_PROGRESS" });
+    }
     if (args.activeNeedId !== undefined) {
       await ownedNeed(ctx, args.activeNeedId, ownerId);
     }
@@ -252,10 +255,6 @@ export const sendMessage = action({
   returns: v.object({ text: v.string() }),
   handler: async (ctx, args): Promise<{ text: string }> => {
     const ownerId = await requireActionUserId(ctx);
-    await roomScoutRateLimiter.limit(ctx, "scoutMessage", {
-      key: ownerId,
-      throws: true,
-    });
     const message = args.message.trim();
     if (message.length === 0 || message.length > 4_000) {
       throw new ConvexError({ code: "INVALID_MESSAGE" });
@@ -295,17 +294,17 @@ export const sendMessage = action({
     if (context.mode === "search_discovery" && context.activeNeedId) {
       const needId = context.activeNeedId;
       const updateSearchDraft = createTool({
-        description: "Update explicit facts on the user's attached draft search.",
+        description: "Update explicit facts on the user's attached draft search. Preserve the user's complete place or address in locationQuery, use locationLabel for its concise display label, and radiusKm as the geographic boundary.",
         inputSchema: z.object({
           title: z.string().optional(),
-          city: z.string().optional(),
-          districts: z.array(z.string()).optional(),
+          locationQuery: z.string().min(1).max(240).optional(),
+          locationLabel: z.string().min(1).max(240).optional(),
           maxBudgetEur: z.number().nonnegative().optional(),
           arrangement: z.array(z.enum(["permanent", "shared", "hourly"])).optional(),
           schedule: z.array(z.string()).optional(),
           requirements: z.array(z.string()).optional(),
           openToSharing: z.boolean().optional(),
-          radiusKm: z.number().nonnegative().optional(),
+          radiusKm: z.number().min(1).max(200).optional(),
           genres: z.array(z.string()).optional(),
           instruments: z.array(z.string()).optional(),
           collaborationOpen: z.boolean().optional(),
@@ -392,6 +391,38 @@ export const sendMessage = action({
       });
       const responseText = (await runScoutTurn(ctx, {
         ...turn, tools: { createOutreachDraft, createWebformDraft, rememberFact },
+      })).text;
+      return { text: responseText };
+    }
+
+    if (
+      context.mode === "signal_advisor" &&
+      context.activeNeedId &&
+      context.focusedSignalId
+    ) {
+      const continueAutopilot = createTool({
+        description:
+          "Use when the musician explicitly asks RoomScout to handle, contact, ask, or clarify the focused opportunity autonomously. This invokes only the existing persisted standing mandate and cannot widen permissions. Report the returned status honestly.",
+        inputSchema: z.object({}),
+        execute: async () => {
+          const result = await ctx.runMutation(
+            internal.mandateOrchestrator.runForOwner,
+            { ownerId, limit: 3 },
+          );
+          return {
+            status:
+              result.created > 0
+                ? "provider_follow_up_started"
+                : result.scheduled > 0
+                  ? "portal_connection_started"
+                  : "already_running_or_waiting",
+            ...result,
+          };
+        },
+      });
+      const responseText = (await runScoutTurn(ctx, {
+        ...turn,
+        tools: { continueAutopilot, rememberFact },
       })).text;
       return { text: responseText };
     }

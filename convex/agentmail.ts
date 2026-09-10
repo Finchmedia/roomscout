@@ -3,7 +3,6 @@ import { internal } from "./_generated/api";
 import { httpAction, internalAction, internalMutation } from "./_generated/server";
 import { handleAgentMailWebhook } from "./agentmailComponent";
 import { envValue } from "./integrations/env";
-import { roomScoutRateLimiter } from "./rateLimits";
 
 const eventStatus = v.union(
   v.literal("processed"),
@@ -281,6 +280,7 @@ export const sendApprovedDraft = internalAction({
     if (ownerId === null) {
       return null;
     }
+    if (!await ctx.runQuery(internal.devUserReset.userMayRunWork, { userId: ownerId })) return null;
     const mailbox = await ctx.runAction(internal.mailboxes.ensureForOwner, {
       ownerId,
     });
@@ -292,18 +292,20 @@ export const sendApprovedDraft = internalAction({
       return null;
     }
 
-    await roomScoutRateLimiter.limit(ctx, "agentMailUser", {
-      key: ownerId,
-      throws: true,
-    });
-    await roomScoutRateLimiter.limit(ctx, "agentMailGlobal", { throws: true });
-
     // This mutation is the final exact-content approval gate. Provisioning occurs
     // first so a failed mailbox setup never consumes an otherwise valid approval.
     const envelope = await ctx.runMutation(internal.outreach.claimApprovedSend, {
       draftId: args.draftId,
     });
     if (!envelope.shouldSend) {
+      return null;
+    }
+    if (!await ctx.runQuery(internal.devUserReset.userMayRunWork, { userId: ownerId })) {
+      await ctx.runMutation(internal.outreach.markSendFailed, {
+        draftId: envelope.draftId,
+        idempotencyKey: envelope.idempotencyKey,
+        error: "USER_RESET_IN_PROGRESS",
+      });
       return null;
     }
 
@@ -330,10 +332,18 @@ export const sendApprovedDraft = internalAction({
 export const executeApprovedReply = internalAction({
   args: { ownerId: v.id("users"), requestId: v.id("actionRequests") }, returns: v.null(),
   handler: async (ctx, args) => {
-    await roomScoutRateLimiter.limit(ctx, "agentMailUser", { key: args.ownerId, throws: true });
-    await roomScoutRateLimiter.limit(ctx, "agentMailGlobal", { throws: true });
+    if (!await ctx.runQuery(internal.devUserReset.userMayRunWork, { userId: args.ownerId })) return null;
     const claim = await ctx.runMutation(internal.externalActions.claimForExecutor, { ...args, executor: "agentmail" });
     if (claim.executionStatus !== "claimed" || claim.alreadyClaimed) return null;
+    if (!await ctx.runQuery(internal.devUserReset.userMayRunWork, { userId: args.ownerId })) {
+      await ctx.runMutation(internal.externalActions.finishExecution, {
+        ownerId: args.ownerId,
+        executionId: claim.executionId,
+        status: "failed",
+        error: "USER_RESET_IN_PROGRESS",
+      });
+      return null;
+    }
     try {
       const queued = await ctx.runMutation(internal.agentmailComponent.enqueueClaimedReply, { ownerId: args.ownerId, executionId: claim.executionId });
       await ctx.scheduler.runAfter(1_000, internal.agentmail.reconcileApprovedReply, { ...args, executionId: claim.executionId, outboundId: queued.outboundId, attempt: 0 });

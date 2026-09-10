@@ -2,6 +2,7 @@ import { ConvexError } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { ActionCtx, MutationCtx, QueryCtx } from "../_generated/server";
+import { isUserResetTombstoned } from "../devUserReset";
 
 type DatabaseCtx = QueryCtx | MutationCtx;
 
@@ -12,7 +13,7 @@ export async function requireUserId(ctx: DatabaseCtx): Promise<Id<"users">> {
   }
 
   const userId = ctx.db.normalizeId("users", identity.subject);
-  if (userId === null || (await ctx.db.get(userId)) === null) {
+  if (userId === null || (await ctx.db.get(userId)) === null || await isUserResetTombstoned(ctx, userId)) {
     throw new ConvexError({ code: "INVALID_IDENTITY" });
   }
 
@@ -41,6 +42,9 @@ export async function requireActionUserId(
     subject: identity.subject,
   });
   if (userId === null) {
+    throw new ConvexError({ code: "INVALID_IDENTITY" });
+  }
+  if (!await ctx.runQuery(internal.devUserReset.userMayRunWork, { userId })) {
     throw new ConvexError({ code: "INVALID_IDENTITY" });
   }
   return userId;
