@@ -1252,3 +1252,14 @@ unknown readiness and unavailable controls are explicit, not simulated.
 Compared the rendered surface with the reference using an isolated visual fixture.
 All 27 focused tests, frontend build and scoped ESLint pass. No backend deployment,
 role changes or authenticated live-admin verification were performed.
+
+### 2026-09-11 — Combined UI/backend production release
+
+Committed and pushed c2e802a on ui-port. All 753 tests pass with two workers;
+one opt-in test is skipped. Production build and app/backend ESLint pass.
+Full-repository lint retains 45 pre-existing no-undef errors in unchanged local
+browser scripts. Published Convex backend and 23 frontend files using the
+official Static Hosting deployment command. Hosted route HTML matches the local
+production build and entry assets return HTTP 200. No user data was deleted,
+roles changed, messages sent or approvals exercised during release checks.
+Authenticated user/admin and fresh-band round-trip acceptance remain separate.

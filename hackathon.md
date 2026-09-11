@@ -28,7 +28,7 @@ read-only. No production rollout or external messages in this verification.
 - **Auth:** Convex Auth
 - **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-realtime-2.1`
 - **Started:** 2026-08-26T13:55:26Z
-- **Last updated:** 2026-09-11T11:21:33Z
+- **Last updated:** 2026-09-11T11:26:01Z
 
 ## Log
 
@@ -263,3 +263,11 @@ The earlier worker-start timeouts did not recur with two workers. Frontend build
 passes. Full-repository lint still reports pre-existing browser-script globals;
 these scripts are unchanged. Public-facing architecture and migration docs were
 sanitized before release. Production rollout follows this checkpoint.
+
+### 2026-09-11 — c2e802a production release
+
+Pushed the combined UI and backend release to the ui-port branch. Deployed
+Convex functions and the production-built SPA through Convex Static Hosting.
+Hosted landing, Scout, settings and operator routes return the current build;
+referenced entry assets are available. App/backend lint passes. This HTTP smoke
+does not replace authenticated operator checks or a fresh-band end-to-end run.
