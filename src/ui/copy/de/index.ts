@@ -11,10 +11,14 @@
  */
 
 import { commonDe } from "./common";
+import { appRoutesDe } from "./appRoutes";
+import { liveOperatorCopy } from "../../operator/live/copy";
+import { liveSettingsCopy } from "../../settings/liveCopy";
 import { landingDe } from "./landing";
 import { operatorDe } from "./operator";
 import { scoutDe } from "./scout";
 import { settingsDe } from "./settings";
+import { liveScoutDe } from "./liveScout";
 
 /**
  * The paths the two hand-edits of §6.1 are supposed to produce, plus the hoist of rule 3.
@@ -22,19 +26,27 @@ import { settingsDe } from "./settings";
  * than a wrong string at runtime.
  */
 type NamespaceContract = {
+  liveSettings: typeof liveSettingsCopy;
+  liveOperator: typeof liveOperatorCopy;
+  appRoutes: Record<string, string>;
   common: { saved: string; back: string; close: string };
   scout: { chrome: { menu: { backToScout: string } } };
   settings: { nav: { back: string } }; // §6.1 rule 1 — NOT settings.settings.nav.back
   operator: { nav: { back: string } }; // §6.1 rule 1 — NOT operator.operator.nav.back
   landing: { header: Record<string, unknown> };
+  liveScout: Record<string, string>;
 };
 
 export const de = {
+  liveSettings: liveSettingsCopy,
+  liveOperator: liveOperatorCopy,
+  appRoutes: appRoutesDe,
   common: commonDe,
   scout: scoutDe,
   settings: settingsDe,
   operator: operatorDe,
   landing: landingDe,
+  liveScout: liveScoutDe,
 } as const satisfies NamespaceContract;
 
 export type DeDict = typeof de;

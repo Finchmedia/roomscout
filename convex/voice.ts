@@ -19,6 +19,7 @@ const MAX_SESSION_MS = 15 * 60 * 1_000;
 const toolName = v.union(
   v.literal("get_current_search"),
   v.literal("update_search_draft"),
+  v.literal("mark_search_brief_ready"),
   v.literal("remember_fact"),
   v.literal("recall_relevant_memory"),
   v.literal("get_focused_signal"),
@@ -221,6 +222,7 @@ function realtimeTools() {
     { type: "function", name: "update_search_draft", description: "Update explicit room-search facts. Preserve a complete place or address in locationQuery, use locationLabel for its concise display label, and radiusKm as the geographic boundary. Never activate, approve, or send.", parameters: { type: "object", properties: {
       title: { type: "string" }, locationQuery: { type: "string", minLength: 1, maxLength: 240 }, locationLabel: { type: "string", minLength: 1, maxLength: 240 }, maxBudgetEur: { type: "number" }, radiusKm: { type: "number", minimum: 1, maximum: 200 }, arrangement: { type: "array", items: { type: "string", enum: ["permanent", "shared", "hourly"] } }, schedule: { type: "array", items: { type: "string" } }, requirements: { type: "array", items: { type: "string" } }, openToSharing: { type: "boolean" }, collaborationOpen: { type: "boolean" }, genres: { type: "array", items: { type: "string" } }, instruments: { type: "array", items: { type: "string" } }, facets: { type: "array", items: { type: "object", properties: { namespace: { type: "string" }, key: { type: "string" }, value: { type: "string" }, confidence: { type: "number" } }, required: ["namespace", "key", "value", "confidence"], additionalProperties: false } },
     }, additionalProperties: false } },
+    { type: "function", name: "mark_search_brief_ready", description: "Mark the current draft search ready for the musician to review once it is useful enough to run and material ambiguity is resolved. Do not require every optional field. This never activates the search, starts matching, or contacts anyone.", parameters: { type: "object", properties: {}, additionalProperties: false } },
     { type: "function", name: "remember_fact", description: "Remember one durable musician or band fact. Never infer sensitive facts.", parameters: { type: "object", properties: {
       subject: { type: "string" }, subjectKind: { type: "string", enum: ["person", "band", "place", "equipment", "organization", "project", "other"] }, predicate: { type: "string" }, value: { type: "string" }, objectName: { type: "string" }, objectKind: { type: "string", enum: ["person", "band", "place", "equipment", "organization", "project", "other"] }, category: { type: "string", enum: ["identity", "music", "location", "mobility", "schedule", "equipment", "goal", "preference", "constraint", "relationship", "collaboration", "room_need", "other"] }, confidence: { type: "number" }, verification: { type: "string", enum: ["user_stated", "inferred"] }, sensitivity: { type: "string", enum: ["normal", "personal", "sensitive"] }, replaceExisting: { type: "boolean" },
     }, required: ["subject", "subjectKind", "predicate", "value", "category", "confidence", "verification", "sensitivity", "replaceExisting"], additionalProperties: false } },
@@ -364,6 +366,16 @@ export const executeTool = action({
       await ctx.runMutation(internal.savedNeeds.updateFromScout, { ownerId, needId: session.activeNeedId, ...input });
       return { outputJson: JSON.stringify({ updated: true }) };
     }
+    if (args.name === "mark_search_brief_ready") {
+      if (!session.activeNeedId) throw new ConvexError({ code: "NEED_REQUIRED" });
+      z.object({}).strict().parse(parsed);
+      const result = await ctx.runMutation(internal.scout.markBriefReady, {
+        ownerId,
+        threadId: session.threadId,
+        needId: session.activeNeedId,
+      });
+      return { outputJson: JSON.stringify({ readyForReview: true, ...result, activationRequired: true }) };
+    }
     if (args.name === "remember_fact") {
       const input = rememberFactSchema.parse(parsed);
       const result = await ctx.runMutation(internal.memory.rememberFromScout, { ownerId, ...input });
@@ -413,7 +425,7 @@ export const getInstructions = action({
         scoutBaseInstructions,
         context.caseCard,
         memoryContext,
-        "VOICE RULES: Be concise and conversational. Use tools to make durable changes. An active Autopilot mandate may authorize a non-binding tool action through server-side policy; never claim that a message was sent unless the tool confirms it. Never make a binding commitment.",
+        "VOICE RULES: Be concise and conversational. Use tools to make durable changes. In search discovery, once the draft is useful enough and material ambiguity is resolved, apply final updates and then call mark_search_brief_ready; tell the musician the brief awaits review and only their explicit ‘Scout losschicken’ action starts it. Do not merely claim completion without successful tool output or require every optional field. An active Autopilot mandate may authorize a non-binding tool action through server-side policy; never claim that a message was sent unless the tool confirms it. Never make a binding commitment.",
       ].join("\n\n"),
       contextVersion: `${context.activeNeedId ?? "none"}:${context.focusedSignalId ?? "none"}:${context.caseCard.length}`,
     };

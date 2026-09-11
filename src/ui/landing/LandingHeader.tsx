@@ -41,7 +41,13 @@ const NAV_ITEMS: readonly { href: string; labelKey: StringCopyKey }[] = [
   { href: `#${SECTION_IDS.features}`, labelKey: "landing.header.nav.features" },
 ]
 
-export function LandingHeader() {
+interface LandingHeaderProps {
+  demoHref?: string
+  signInHref?: string
+  signInLabel?: React.ReactNode
+}
+
+export function LandingHeader({ demoHref = DEMO_HREF, signInHref, signInLabel }: LandingHeaderProps) {
   const { t } = useCopy()
   const narrow = useNarrow()
   const scrolled = useScrolled()
@@ -87,12 +93,18 @@ export function LandingHeader() {
       <div className="flex items-center gap-[14px] justify-self-end">
         <LanguageToggle className="flex items-center" />
 
+        {!narrow && signInHref && signInLabel ? (
+          <Button asChild variant="ghost" size="sm">
+            <a href={signInHref}>{signInLabel}</a>
+          </Button>
+        ) : null}
+
         <Button
           asChild
           size="sm"
-          className="h-11 rounded-pill px-[22px] text-[15px] font-semibold"
+          className="h-11 rounded-pill px-[22px] text-[15px] font-semibold text-rs-white! hover:text-rs-white!"
         >
-          <a href={DEMO_HREF}>{t("landing.header.cta.demo")}</a>
+          <a href={demoHref}>{t("landing.header.cta.demo")}</a>
         </Button>
 
         {narrow ? (
@@ -124,6 +136,16 @@ export function LandingHeader() {
                       </a>
                     </SheetClose>
                   ))}
+                  {signInHref && signInLabel ? (
+                    <SheetClose asChild>
+                      <a
+                        href={signInHref}
+                        className="rounded-chip px-[var(--space-4)] py-[var(--space-6)] text-[19px] text-rs-ink no-underline transition-colors duration-[var(--duration-quick)] hover:text-rs-orange"
+                      >
+                        {signInLabel}
+                      </a>
+                    </SheetClose>
+                  ) : null}
                 </nav>
               </SheetBody>
             </SheetContent>
@@ -133,3 +155,5 @@ export function LandingHeader() {
     </header>
   )
 }
+
+export type { LandingHeaderProps }

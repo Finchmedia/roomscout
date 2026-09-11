@@ -1,5 +1,21 @@
 # Hackathon log
 
+## Latest: autonomy settings fidelity
+
+Restored the designed mode cards, permission rows, limit control and commitment
+notice with actual mandate data and explicit draft/save behavior. Nine focused
+tests and build passed; live browser appearance verified without changing any
+standing permission.
+
+## Latest: sources settings fidelity
+
+Live sources now reuse the designed expandable rows with actual portal state,
+mailbox copy and separate connection management. Per-search exclusions also
+apply to existing-match visibility and new outreach under existing mandates.
+Dev-only backend deployment and signed-in browser check completed; eight UI
+and 23 backend focused tests passed. Global automatic source selection remains
+read-only. No production rollout or external messages in this verification.
+
 - **Project:** RoomScout
 - **Event:** Convex All Gas Hackathon
 - **What it does:** Indexes public rehearsal-room supply and demand and gives musicians a context-aware text/voice Scout with revocable non-binding Autopilot mandates and explicit approval for commitments.
@@ -12,9 +28,47 @@
 - **Auth:** Convex Auth
 - **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-realtime-2.1`
 - **Started:** 2026-08-26T13:55:26Z
-- **Last updated:** 2026-09-10T13:01:10Z
+- **Last updated:** 2026-09-11T11:21:33Z
 
 ## Log
+
+### 2026-09-10 — live Settings, operator and landing design integration
+
+Three parallel Sol implementation slices connected the Claude Code UI port to
+the live routes. Settings uses the sidebar panel with real profile, mailbox,
+portal, memory and mandate operations. Operator uses the same ported panel
+anatomy with role-gated data, explicit provider configuration checks and links
+to existing operational tools. The public landing preserves the design and
+separates the synthetic demonstration from real signup.
+
+Unsupported billing, notification preferences and privacy self-service are
+identified rather than simulated. Added profile-menu navigation, safe route
+error recovery, auth/routing regressions and corrected legacy anchor colors
+that hid primary button labels. No messages, approvals or account changes were
+submitted during browser verification. See BUILD_LOG for validation details.
+
+### 2026-09-10 — live Scout design integration and explicit brief readiness
+
+Connected the Claude Code design primitives to the real Scout route, preserving
+Convex conversations, voice sessions and exact user-approved offer acceptance.
+The chat uses shadcn's message-scroller primitives with Markdown rendering,
+history loading and a multiline composer. Active searches retain access to chat
+and their brief without restoring the old diagnostic dashboard.
+
+Text and voice now have an explicit draft-readiness tool: the current search
+revision opens its brief for review; only the musician's activation click starts
+Autopilot. Activity queries are scoped to the chosen search before applying their
+result limit. Provider offers and confirmed acceptance take precedence over stale
+outreach status. The acceptance dialog uses the design system and German copy
+while retaining the existing snapshot, acknowledgement and send semantics.
+
+Development backend and static frontend updated. Verification: 678 tests passed,
+one opt-in test skipped; TypeScript, production build, scoped lint and diff check
+passed. The hosted development route serves the new built assets. Browser inspection used the existing signed-in
+session without sending a message or accepting an offer. This is UI integration
+evidence, not another fresh-account end-to-end run. Settings, Inbox and operator
+routes remain outside this first live design slice; their demo ports are not
+substitutes for live data. Desktop and 390px mobile offer/chat views were checked.
 
 ### 2026-09-10 - first successful controlled end-to-end happy path
 
@@ -184,3 +238,28 @@ confirmed; after capacity was restored, real v4 read and exact-fill form smokes
 passed. Added owner-initiated, once-per-day failed-start recovery and readable
 cooldowns. Live signup and the message round trip remain unproven
 (`docs/BROWSERBASE_COMPONENT_MIGRATION.md`).
+
+### 2026-09-10 — Account settings UI
+
+Implemented the billing and privacy design layouts in the live settings routes.
+Unavailable actions are visibly disabled; real navigation remains available.
+No invented usage figures, payment integration or account deletion. Twelve
+focused tests, scoped lint and frontend build pass; local change only.
+
+### 2026-09-10 — Operator UI alignment
+
+Aligned the live operator UI with the design reference across six sections.
+Real data remains operator-gated; unknown states and unavailable controls are
+explicit. Existing advanced tools remain accessible. Visual comparison used an
+isolated fixture, not an authenticated admin session. All 27 focused tests,
+frontend build and scoped lint pass. Working-tree changes only; no deployment
+or role changes.
+
+### 2026-09-11 — Release verification
+
+Verified the combined Scout, settings, landing and operator UI changes with the
+backend compatibility updates: 753 tests pass, one opt-in test is skipped.
+The earlier worker-start timeouts did not recur with two workers. Frontend build
+passes. Full-repository lint still reports pre-existing browser-script globals;
+these scripts are unchanged. Public-facing architecture and migration docs were
+sanitized before release. Production rollout follows this checkpoint.

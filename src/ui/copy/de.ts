@@ -14,6 +14,10 @@
  */
 
 import { commonDe } from "./de/common";
+import { appRoutesDe } from "./de/appRoutes";
+import { liveOperatorCopy } from "../operator/live/copy";
+import { liveSettingsCopy } from "../settings/liveCopy";
+import { liveScoutDe } from "./de/liveScout";
 import type { DeDict } from "./de/index";
 import { landingDe } from "./de/landing";
 import { operatorDe } from "./de/operator";
@@ -22,6 +26,10 @@ import { settingsDe } from "./de/settings";
 
 export const de = {
   common: commonDe,
+  appRoutes: appRoutesDe,
+  liveOperator: liveOperatorCopy,
+  liveSettings: liveSettingsCopy,
+  liveScout: liveScoutDe,
   scout: scoutDe,
   settings: settingsDe,
   operator: operatorDe,

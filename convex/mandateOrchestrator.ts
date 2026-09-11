@@ -15,6 +15,20 @@ const CONTROLLED_ADAPTER_KEY = "roomscout-dev-v1";
 
 type ReadCtx = Pick<QueryCtx, "db">;
 
+async function platformIsExcluded(
+  ctx: ReadCtx,
+  savedNeedId: Id<"savedNeeds">,
+  platformId: Id<"sourcePlatforms">,
+) {
+  const preference = await ctx.db
+    .query("searchSourcePreferences")
+    .withIndex("by_saved_need_and_platform", (q) =>
+      q.eq("savedNeedId", savedNeedId).eq("platformId", platformId),
+    )
+    .unique();
+  return preference?.preference === "exclude";
+}
+
 async function controlledNeedsAuthConnection(
   ctx: ReadCtx,
   ownerId: Id<"users">,
@@ -63,6 +77,7 @@ async function eligibleControlledRegistration(
   if (!controlled || controlled.connection._id !== (expectedConnectionId ?? controlled.connection._id)) return null;
   const { connection, source, platform } = controlled;
   if (!mandate.platformIds.includes(platform._id)) return null;
+  if (await platformIsExcluded(ctx, mandate.savedNeedId, platform._id)) return null;
   const mailbox = await ctx.db.query("userMailboxes").withIndex("by_owner", (q) =>
     q.eq("ownerId", mandate.ownerId),
   ).unique();
@@ -130,6 +145,7 @@ async function queueOpportunity(ctx: MutationCtx, mandate: Doc<"searchMandates">
   // may be researched and indexed, never contacted by fictional demo bands.
   if (!source || source.status !== "active" || !platform || platform.status !== "active" ||
     platform.canonicalDomain !== "roomscout.dev" || !mandate.platformIds.includes(platform._id)) return false;
+  if (await platformIsExcluded(ctx, mandate.savedNeedId, platform._id)) return false;
   try {
     if (new URL(source.baseUrl).origin !== "https://roomscout.dev" ||
       new URL(entry!.detailUrl).origin !== "https://roomscout.dev") return false;

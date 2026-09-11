@@ -96,6 +96,7 @@ export const COPY_VAR_NAMES = [
   "budget",
   "city",
   "count",
+  "date",
   "h",
   "label",
   "mm",
@@ -112,6 +113,8 @@ export const COPY_VAR_NAMES = [
   "time",
   "timeLower",
   "usage",
+  "username",
+  "version",
 ] as const;
 
 /** One interpolation-variable name. */

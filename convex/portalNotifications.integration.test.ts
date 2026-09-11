@@ -34,6 +34,15 @@ async function fixture() {
 }
 
 describe("portal notification hints", () => {
+  it.each([
+    "roomscout-notifications@agentmail.to",
+    "RoomScout Community <roomscout-notifications@agentmail.to>",
+    "RoomScout Community <ROOMSCOUT-NOTIFICATIONS@AGENTMAIL.TO>",
+  ])("accepts the dedicated AgentMail portal sender: %s", async (from) => {
+    const f = await fixture();
+    expect(await f.consume({ from })).toEqual({ triggered: true, reason: "scheduled" });
+  });
+
   it("coalesces an exact controlled notification into the normal due-inbox coordinator", async () => {
     const f = await fixture();
     expect(await f.consume()).toEqual({ triggered: true, reason: "scheduled" });
@@ -49,7 +58,7 @@ describe("portal notification hints", () => {
   it("accepts the representative extracted_text selected by the real AgentMail normalizer", async () => {
     const f = await fixture(); const mail = notification(f.email);
     const parsed = parseAgentMailEvent({ event_type: "message.received", event_id: "event-extracted", message: {
-      inbox_id: "inbox-1", thread_id: "mail-thread", message_id: "mail-extracted", from: mail.from,
+      inbox_id: "inbox-1", thread_id: "mail-thread", message_id: "mail-extracted", from: "RoomScout Community <roomscout-notifications@agentmail.to>",
       to: mail.to, subject: mail.subject, extracted_text: `  ${mail.body.replace(/\n/g, "\r\n")}  `,
       text: "This fallback must not win.", timestamp: Date.now(),
     } });
@@ -60,6 +69,9 @@ describe("portal notification hints", () => {
 
   it.each([
     ["unrelated sender", { from: "attacker@example.com" }, "unrelated"],
+    ["other AgentMail inbox", { from: "someone-else@agentmail.to" }, "unrelated"],
+    ["lookalike sender domain", { from: "roomscout-notifications@agentmail.to.evil.example" }, "unrelated"],
+    ["lookalike sender local part", { from: "not-roomscout-notifications@agentmail.to" }, "unrelated"],
     ["arbitrary URL", { body: notification("owner@agentmail.to").body.replace("https://roomscout.dev/inbox/thread_123", "https://evil.example/inbox/thread_123") }, "unrelated"],
     ["credential text", { body: `${notification("owner@agentmail.to").body}\nPassword: secret` }, "unrelated"],
     ["own message", { from: "owner@agentmail.to" }, "own_message"],
@@ -82,7 +94,7 @@ describe("portal notification hints", () => {
     await f.t.run((ctx) => ctx.db.insert("providerEvents", { provider: "agentmail", providerEventId: "event-1", eventType: "message.received", payloadHash: "event-hash", status: "received", receivedAt: Date.now() }));
     await f.t.action(internal.agentmail.processInboundMessage, {
       providerEventId: "event-1", inboxId: "inbox-1", providerThreadId: "mail-thread-1",
-      providerMessageId: mail.providerMessageId, from: mail.from, to: mail.to, subject: mail.subject,
+      providerMessageId: mail.providerMessageId, from: "RoomScout Community <roomscout-notifications@agentmail.to>", to: mail.to, subject: mail.subject,
       body: mail.body, needsFullFetch: false, htmlAvailable: false, receivedAt: Date.now(), retryCount: 3,
     });
     expect((await f.t.run((ctx) => ctx.db.get(f.connectionId)))?.inboxSyncActiveGeneration).toBe(1);

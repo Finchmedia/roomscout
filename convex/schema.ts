@@ -669,6 +669,11 @@ export default defineSchema({
       v.literal("outreach_drafting"),
     ),
     focusedSignalId: v.optional(v.id("signals")),
+    // Scout may mark one exact draft revision ready for human review. Search
+    // edits advance savedNeeds.matchingRevision, making this marker stale
+    // without ever activating the search automatically.
+    readyNeedRevision: v.optional(v.number()),
+    briefReadyAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index("by_owner", ["ownerId"])
@@ -796,6 +801,8 @@ export default defineSchema({
       v.literal("fact_added"),
       v.literal("fact_superseded"),
       v.literal("fact_deleted"),
+      v.literal("fact_corrected"),
+      v.literal("fact_confirmed"),
       v.literal("context_rebuilt"),
       v.literal("import_completed"),
     ),
@@ -1826,6 +1833,7 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_owner_and_status_and_updated_at", ["ownerId", "status", "updatedAt"])
+    .index("by_owner_and_saved_need_and_updated_at", ["ownerId", "savedNeedId", "updatedAt"])
     .index("by_status_and_updated_at", ["status", "updatedAt"])
     .index("by_opportunity", ["opportunityId"])
     .index("by_provider_offer", ["providerOfferId"])

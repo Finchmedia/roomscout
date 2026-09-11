@@ -1,55 +1,58 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, beforeAll, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+
+import { LocaleProvider } from "@/ui/copy";
+
 import { LandingPage } from "./LandingPage";
-import { factsAtStage } from "../../components/landing/landingStoryModel";
 
 beforeAll(() => {
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
-    value: vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }),
+    value: vi.fn().mockReturnValue({
+      matches: false,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }),
   });
 });
 
 afterEach(cleanup);
 
-it("links the primary landing actions to the real Scout", () => {
-  render(<MemoryRouter><LandingPage /></MemoryRouter>);
-  fireEvent.click(screen.getByRole("button", { name: "Mittwoch passt" }));
-  expect(screen.getAllByRole("link", { name: /Demo (starten|ausprobieren|öffnen)/ })).toHaveLength(4);
-  screen.getAllByRole("link", { name: /Demo (starten|ausprobieren|öffnen)/ }).forEach((link) => expect(link).toHaveAttribute("href", "/app/scout"));
-});
+function renderPage() {
+  return render(<MemoryRouter><LocaleProvider><LandingPage /></LocaleProvider></MemoryRouter>);
+}
 
-it("labels the marketing story and offer as illustrative demo content", () => {
-  render(<MemoryRouter><LandingPage /></MemoryRouter>);
-  expect(screen.getByLabelText("Illustrierter Demo-Ablauf: Suchauftrag")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Mittwoch passt" }));
-  expect(screen.getByText("Illustratives Beispielangebot")).toBeInTheDocument();
-  expect(screen.getByText(/Keine echte Anzeige/)).toBeInTheDocument();
-});
+describe("public landing route", () => {
+  it("mounts the Claude design-system landing as the real public page", () => {
+    renderPage();
+    expect(screen.getByRole("heading", { name: /Ihr macht Musik/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Ich kümmere mich darum." })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Bereit für euren nächsten Proberaum?" })).toBeInTheDocument();
+  });
 
-it("reveals facts in speech order and replaces the earlier budget", () => {
-  expect(factsAtStage(1).map((fact) => fact.label)).toEqual(["Stuttgart & Umgebung", "Geteilter Raum · 4 Personen"]);
-  expect(factsAtStage(2).map((fact) => fact.label)).toContain("Bis 400 € / Monat");
-  const finalFacts = factsAtStage(4);
-  expect(finalFacts.filter((fact) => fact.id === "budget")).toEqual([{ id: "budget", label: "Bis 350 € / Monat" }]);
-  expect(finalFacts.map((fact) => fact.label)).not.toContain("Bis 400 € / Monat");
-});
+  it("separates the synthetic demo from real start and sign-in destinations", () => {
+    renderPage();
+    const demoLinks = [
+      ...screen.getAllByRole("link", { name: /Demo (starten|ausprobieren)/ }),
+      screen.getByRole("link", { name: "Angebot prüfen" }),
+    ];
+    demoLinks.forEach((link) => expect(link).toHaveAttribute("href", "/design/scout"));
+    const primaryLinks = screen.getAllByRole("link").filter((link) => link.dataset.variant === "primary");
+    expect(primaryLinks.length).toBeGreaterThan(0);
+    primaryLinks.forEach((link) => {
+      expect(link).toHaveClass("text-rs-white!", "hover:text-rs-white!");
+    });
+    expect(screen.getByRole("link", { name: "Suche starten" })).toHaveAttribute("href", "/sign-up?returnTo=%2Fapp%2Fscout");
+    expect(screen.getByRole("link", { name: "Anmelden" })).toHaveAttribute("href", "/sign-in?returnTo=%2Fapp%2Fscout");
+    expect(screen.getByRole("link", { name: "Öffentlichen Markt ansehen →" })).toHaveAttribute("href", "/explore");
+  });
 
-it("rejecting Wednesday continues the search and removes the incompatible offer", () => {
-  render(<MemoryRouter><LandingPage /></MemoryRouter>);
-  fireEvent.click(screen.getByRole("button", { name: "Donnerstag bleibt wichtig" }));
-  expect(screen.getByText("Donnerstag bleibt gesetzt.")).toBeInTheDocument();
-  expect(screen.getByText(/Beispielraum in Stuttgart-West ist verworfen/)).toBeInTheDocument();
-  expect(screen.queryByText("Mittwochs, 19–22 Uhr")).not.toBeInTheDocument();
-});
-
-it("supports decision and FAQ interactions", () => {
-  render(<MemoryRouter><LandingPage /></MemoryRouter>);
-  fireEvent.click(screen.getByRole("button", { name: "Mittwoch passt" }));
-  expect(screen.getByText("Mittwoch passt auch.")).toBeInTheDocument();
-  const portalQuestion = screen.getByRole("button", { name: /Funktioniert das schon auf allen Portalen/ });
-  fireEvent.click(portalQuestion);
-  expect(portalQuestion).toHaveAttribute("aria-expanded", "true");
-  expect(screen.getByText(/kontrollierte Demo zeigt einen begrenzten Ablauf/)).toBeInTheDocument();
+  it("marks the scripted story and offer as examples without live claims", () => {
+    renderPage();
+    expect(screen.getByText("Interaktive Beispieldemo · synthetische Beispieldaten · es wird nichts versendet.")).toBeInTheDocument();
+    expect(screen.getByText("Beispielangebot")).toBeInTheDocument();
+    expect(screen.getByText("Beispielsuche · Ablauf verkürzt dargestellt")).toBeInTheDocument();
+    expect(screen.getByText("Aktuell: kontrollierte Demo. Keine Anfragen an fremde Anbieter.")).toBeInTheDocument();
+  });
 });

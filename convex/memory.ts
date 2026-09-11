@@ -413,6 +413,74 @@ export const deleteFact = mutation({
   },
 });
 
+export const updateFact = mutation({
+  args: { factId: v.id("memoryFacts"), value: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const ownerId = await requireUserId(ctx);
+    const fact = await ctx.db.get(args.factId);
+    if (fact === null || fact.ownerId !== ownerId || fact.status !== "active") {
+      throw new ConvexError({ code: "MEMORY_FACT_NOT_FOUND" });
+    }
+    const value = cleanText(args.value, 1_000, "value");
+    if (value === fact.value) return null;
+    const now = Date.now();
+    await Promise.all([
+      ctx.db.patch(fact._id, {
+        value,
+        source: "user_edit",
+        verification: "user_confirmed",
+        confidence: 1,
+        lastConfirmedAt: now,
+        embeddingState: "pending",
+        updatedAt: now,
+      }),
+      ctx.db.insert("memoryEvents", {
+        ownerId,
+        eventType: "fact_corrected",
+        entityId: fact.subjectEntityId,
+        factId: fact._id,
+        summary: `Corrected ${fact.predicate}`,
+        occurredAt: now,
+      }),
+    ]);
+    await bumpAndScheduleContext(ctx, ownerId);
+    await ctx.scheduler.runAfter(0, internal.memory.embedFact, { factId: fact._id });
+    return null;
+  },
+});
+
+export const confirmFact = mutation({
+  args: { factId: v.id("memoryFacts") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const ownerId = await requireUserId(ctx);
+    const fact = await ctx.db.get(args.factId);
+    if (fact === null || fact.ownerId !== ownerId || fact.status !== "active") {
+      throw new ConvexError({ code: "MEMORY_FACT_NOT_FOUND" });
+    }
+    const now = Date.now();
+    await Promise.all([
+      ctx.db.patch(fact._id, {
+        verification: "user_confirmed",
+        confidence: 1,
+        lastConfirmedAt: now,
+        updatedAt: now,
+      }),
+      ctx.db.insert("memoryEvents", {
+        ownerId,
+        eventType: "fact_confirmed",
+        entityId: fact.subjectEntityId,
+        factId: fact._id,
+        summary: `Confirmed ${fact.predicate}`,
+        occurredAt: now,
+      }),
+    ]);
+    await bumpAndScheduleContext(ctx, ownerId);
+    return null;
+  },
+});
+
 const profileProjectionValidator = v.object({
   factVersion: v.number(),
   contextVersion: v.number(),
@@ -932,7 +1000,7 @@ export const parseContextImport = action({
     facts: v.array(factCandidateValidator),
   }),
   handler: async (ctx, args) => {
-    const ownerId = await requireActionUserId(ctx);
+    await requireActionUserId(ctx);
     const text = args.text.trim();
     if (text.length < 20 || text.length > 50_000) {
       throw new ConvexError({ code: "INVALID_CONTEXT_IMPORT" });

@@ -198,6 +198,8 @@ interface AppHeaderProps
    * override them) but before `onClick`, which stays wired to `onAvatar`.
    */
   avatarProps?: React.ComponentProps<"button">
+  /** A complete accessible menu trigger when a screen owns its Radix menu. */
+  avatarSlot?: React.ReactNode
 }
 
 function AppHeader({
@@ -210,6 +212,7 @@ function AppHeader({
   avatarExpanded,
   avatarMenu,
   avatarProps,
+  avatarSlot,
   children,
   ...props
 }: AppHeaderProps) {
@@ -237,7 +240,7 @@ function AppHeader({
             data-slot="app-header-avatar"
             className="relative flex flex-none items-center"
           >
-            {onAvatar ? (
+            {avatarSlot ?? (onAvatar ? (
               <Avatar asChild interactive size={avatarSize}>
                 <button
                   type="button"
@@ -254,7 +257,7 @@ function AppHeader({
               <Avatar size={avatarSize} label={avatarLabel}>
                 {avatarInitials}
               </Avatar>
-            )}
+            ))}
             {avatarMenu}
           </div>
         </div>

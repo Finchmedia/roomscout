@@ -173,7 +173,7 @@ function BriefCard() {
           title={t("landing.brief.card.heading")}
           facts={facts}
         >
-          <Button asChild block size="md" className="mt-[18px]">
+          <Button asChild block size="md" className="mt-[18px] text-rs-white! hover:text-rs-white!">
             <a href={`#${SECTION_IDS.work}`}>{t("landing.brief.card.cta")}</a>
           </Button>
           <div className="mt-3 text-center text-[14px] leading-[1.5] text-rs-ink-4">

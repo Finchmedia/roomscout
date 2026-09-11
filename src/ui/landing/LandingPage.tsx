@@ -30,7 +30,27 @@ import { HowItWorks } from "./HowItWorks"
 import { LandingHeader } from "./LandingHeader"
 import { useReducedMotion } from "./useLandingScroll"
 
-export function LandingPage() {
+interface LandingPageProps {
+  demoHref?: string
+  startHref?: string
+  signInHref?: string
+  exploreHref?: string
+  signInLabel?: React.ReactNode
+  startLabel?: React.ReactNode
+  exploreLabel?: React.ReactNode
+  demoDisclosure?: React.ReactNode
+}
+
+export function LandingPage({
+  demoHref,
+  startHref,
+  signInHref,
+  exploreHref,
+  signInLabel,
+  startLabel,
+  exploreLabel,
+  demoDisclosure,
+}: LandingPageProps) {
   const reducedMotion = useReducedMotion()
 
   React.useEffect(() => {
@@ -47,16 +67,24 @@ export function LandingPage() {
     <div className="relative min-h-screen bg-rs-surface-page font-sans text-rs-ink">
       <StageBackground position="fixed" className="z-0" />
 
-      <LandingHeader />
+      <LandingHeader demoHref={demoHref} signInHref={signInHref} signInLabel={signInLabel} />
 
       <main className="relative z-2">
-        <Hero />
-        <HowItWorks />
+        <Hero demoHref={demoHref} demoDisclosure={demoDisclosure} />
+        <HowItWorks demoHref={demoHref} />
         <Bento />
         <Faq />
-        <ClosingCta />
+        <ClosingCta
+          primaryHref={startHref ?? demoHref}
+          primaryLabel={startLabel}
+          secondaryHref={exploreHref}
+          secondaryLabel={exploreLabel}
+          secondaryExternal={!exploreHref}
+        />
         <Footer />
       </main>
     </div>
   )
 }
+
+export type { LandingPageProps }

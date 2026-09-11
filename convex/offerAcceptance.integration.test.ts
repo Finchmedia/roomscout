@@ -126,6 +126,36 @@ describe("exact offer acceptance", () => {
     expect(await f.t.run((ctx) => ctx.db.query("actionExecutions").collect())).toHaveLength(1);
   });
 
+  it("reconciles an already stored outbound acceptance with provider-collapsed whitespace during inbox sync", async () => {
+    const f = await fixture(); const requestId = await f.prepare(); await f.approve(requestId); const claim = await f.claim(requestId);
+    const request = (await f.t.run((ctx) => ctx.db.get(requestId)))!;
+    if (request.payload.kind !== "platform_message") throw new Error("Expected platform message");
+    const approvedBody = request.payload.body;
+    await f.t.mutation(internal.externalActions.finishExecution, { ownerId: f.ownerId, executionId: claim.executionId, status: "unknown", error: "SUBMIT_RESULT_UNKNOWN" });
+    await f.t.run((ctx) => ctx.db.insert("platformMessages", { connectionId: f.connectionId, ownerId: f.ownerId, threadId: f.threadId,
+      providerMessageId: "observed-acceptance", direction: "outbound", bodyText: approvedBody.replace(" ", "  \n"), sentAt: Date.now(), createdAt: Date.now() }));
+    await f.t.mutation(internal.platformInbox.upsertReadOnlyBatch, { ownerId: f.ownerId, connectionId: f.connectionId, threads: [{
+      providerThreadId: "thread-1", participants: ["Test provider"], lastMessageAt: Date.now(), messages: [],
+    }] });
+    expect(await f.t.run((ctx) => ctx.db.get(requestId))).toMatchObject({ status: "executed" });
+    expect(await f.t.run((ctx) => ctx.db.get(f.conversationId))).toMatchObject({ acceptedOfferId: f.offerId, state: "closed" });
+    expect(await f.t.mutation(internal.externalActions.reconcileObservedPortalAcceptance, { ownerId: f.ownerId, connectionId: f.connectionId, threadId: f.threadId })).toBe(false);
+    expect(await f.t.run((ctx) => ctx.db.query("notifications").collect())).toHaveLength(1);
+  });
+
+  it("does not reconcile a different outbound body", async () => {
+    const f = await fixture(); const requestId = await f.prepare(); await f.approve(requestId); const claim = await f.claim(requestId);
+    const request = (await f.t.run((ctx) => ctx.db.get(requestId)))!;
+    if (request.payload.kind !== "platform_message") throw new Error("Expected platform message");
+    const approvedBody = request.payload.body;
+    await f.t.mutation(internal.externalActions.finishExecution, { ownerId: f.ownerId, executionId: claim.executionId, status: "unknown", error: "SUBMIT_RESULT_UNKNOWN" });
+    await f.t.run((ctx) => ctx.db.insert("platformMessages", { connectionId: f.connectionId, ownerId: f.ownerId, threadId: f.threadId,
+      providerMessageId: "unrelated-outbound", direction: "outbound", bodyText: approvedBody.replace("220", "221"), sentAt: Date.now(), createdAt: Date.now() }));
+    expect(await f.t.mutation(internal.externalActions.reconcileObservedPortalAcceptance, { ownerId: f.ownerId, connectionId: f.connectionId, threadId: f.threadId })).toBe(false);
+    expect(await f.t.run((ctx) => ctx.db.get(requestId))).toMatchObject({ status: "executing" });
+    expect((await f.t.run((ctx) => ctx.db.get(f.conversationId)))?.acceptedAt).toBeUndefined();
+  });
+
   it.each(["running", "unknown", "provider-started"] as const)("does not refresh a cancelled request with ambiguous %s execution history", async (history) => {
     const f = await fixture(); const requestId = await f.prepare(); await f.approve(requestId); const claim = await f.claim(requestId);
     if (history === "running") {

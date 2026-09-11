@@ -6,13 +6,29 @@
  * same gradient, radius and `rsBreathe` animation inline).
  */
 
+import type * as React from "react"
+
 import { Button } from "@/components/ui/button"
 import { ScoutBlob } from "@/components/ui/scout-blob"
 import { useCopy } from "@/ui/copy"
 
 import { DEMO_HREF, PROJECT_HREF } from "./demoData"
 
-export function ClosingCta() {
+interface ClosingCtaProps {
+  primaryHref?: string
+  primaryLabel?: React.ReactNode
+  secondaryHref?: string
+  secondaryLabel?: React.ReactNode
+  secondaryExternal?: boolean
+}
+
+export function ClosingCta({
+  primaryHref = DEMO_HREF,
+  primaryLabel,
+  secondaryHref = PROJECT_HREF,
+  secondaryLabel,
+  secondaryExternal = true,
+}: ClosingCtaProps) {
   const { t } = useCopy()
 
   return (
@@ -26,18 +42,20 @@ export function ClosingCta() {
       </h2>
 
       <div className="mt-[34px] flex flex-wrap items-center justify-center gap-[26px]">
-        <Button asChild size="lg" className="h-[58px] px-[34px] text-[17px]">
-          <a href={DEMO_HREF}>{t("landing.closing.cta.primary")}</a>
+        <Button asChild size="lg" className="h-[58px] px-[34px] text-[17px] text-rs-white! hover:text-rs-white!">
+          <a href={primaryHref}>{primaryLabel ?? t("landing.closing.cta.primary")}</a>
         </Button>
         <a
-          href={PROJECT_HREF}
-          target="_blank"
-          rel="noopener noreferrer"
+          href={secondaryHref}
+          target={secondaryExternal ? "_blank" : undefined}
+          rel={secondaryExternal ? "noopener noreferrer" : undefined}
           className="text-[16px] text-rs-ink no-underline transition-colors duration-[var(--duration-quick)] hover:text-rs-orange"
         >
-          {t("landing.closing.cta.secondary")}
+          {secondaryLabel ?? t("landing.closing.cta.secondary")}
         </a>
       </div>
     </section>
   )
 }
+
+export type { ClosingCtaProps }

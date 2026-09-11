@@ -16,6 +16,7 @@ const resultValidator = v.object({
 });
 
 const SUBJECT_PREFIX = "New message about ";
+const PORTAL_NOTIFICATION_SENDER = "roomscout-notifications@agentmail.to";
 const BODY_PREFIX = "You have a new RoomScout Community message.\n\n";
 const BODY_SUFFIX = "\n\nThe message itself is intentionally not copied into this notification.";
 const THREAD_URL = /\nSign in to read and reply:\n(https:\/\/roomscout\.dev\/inbox\/([A-Za-z0-9_-]+))\n/;
@@ -47,9 +48,11 @@ export const consumeOwnedMailboxHint = internalMutation({
     if (recipients.length !== 1 || recipients[0] !== mailboxAddress) return { triggered: false, reason: "bulk_message" as const };
     const sender = emailAddress(args.from);
     const senderDomain = sender.split("@")[1] ?? "";
+    // Keep legacy portal mail working during cutover; AgentMail is shared by other users.
+    const isPortalSender = senderDomain === "roomscout.dev" || sender === PORTAL_NOTIFICATION_SENDER;
     const body = args.body.replace(/\r\n/g, "\n");
     const urlMatch = body.match(THREAD_URL);
-    if (senderDomain !== "roomscout.dev" || !args.subject.startsWith(SUBJECT_PREFIX) || args.subject.length <= SUBJECT_PREFIX.length ||
+    if (!isPortalSender || !args.subject.startsWith(SUBJECT_PREFIX) || args.subject.length <= SUBJECT_PREFIX.length ||
       !body.startsWith(BODY_PREFIX) || !body.endsWith(BODY_SUFFIX) || !urlMatch || body.match(/https?:\/\//g)?.length !== 1) {
       return { triggered: false, reason: "unrelated" as const };
     }

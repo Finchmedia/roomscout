@@ -8,6 +8,7 @@ function conversation(): ComponentProps<typeof ProviderOfferPanel>["conversation
   return {
     conversationId: "conversation" as never, savedNeedId: "need" as never, signalId: "signal" as never,
     state: "needs_attention", revision: 1, updatedAt: 1,
+    assessmentFromProviderReply: true,
     mailThreadId: undefined, platformThreadId: undefined, errorCode: undefined, replyStatus: undefined,
     acceptanceStatus: undefined, acceptanceRequestId: undefined, acceptedOfferId: undefined, acceptedAt: undefined,
     offer: {

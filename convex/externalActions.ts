@@ -90,6 +90,12 @@ function cleanPayload(payload: Doc<"actionRequests">["payload"]): Doc<"actionReq
   return { ...payload, accountLabel: payload.accountLabel ? normalizeText(payload.accountLabel).slice(0, 160) : undefined };
 }
 
+/** Portal DOM readback may collapse layout whitespace. Preserve every
+ * non-whitespace character and compare no other transformation. */
+function normalizeProviderReadback(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
 function assertActionPayloadMatch(actionType: Doc<"actionRequests">["requestedActionType"], payload: Doc<"actionRequests">["payload"]): void {
   const valid =
     (actionType === "send_email" && payload.kind === "email_message") ||
@@ -148,10 +154,20 @@ const publicValidator = v.object({
 });
 
 export const listMine = query({
-  args: { limit: v.optional(v.number()) }, returns: v.array(publicValidator),
+  args: {
+    limit: v.optional(v.number()),
+    savedNeedId: v.optional(v.id("savedNeeds")),
+  }, returns: v.array(publicValidator),
   handler: async (ctx, args) => {
     const ownerId = await requireUserId(ctx);
-    const rows = await ctx.db.query("actionRequests").withIndex("by_owner_and_status_and_updated_at", (q) => q.eq("ownerId", ownerId)).order("desc").take(Math.max(1, Math.min(50, Math.floor(args.limit ?? 30))));
+    if (args.savedNeedId !== undefined) {
+      const need = await ctx.db.get(args.savedNeedId);
+      if (need?.ownerId !== ownerId) throw new ConvexError({ code: "NEED_NOT_FOUND" });
+    }
+    const limit = Math.max(1, Math.min(50, Math.floor(args.limit ?? 30)));
+    const rows = args.savedNeedId === undefined
+      ? await ctx.db.query("actionRequests").withIndex("by_owner_and_status_and_updated_at", (q) => q.eq("ownerId", ownerId)).order("desc").take(limit)
+      : await ctx.db.query("actionRequests").withIndex("by_owner_and_saved_need_and_updated_at", (q) => q.eq("ownerId", ownerId).eq("savedNeedId", args.savedNeedId)).order("desc").take(limit);
     return await Promise.all(rows.map(async (row) => {
       const [binding, executions] = await Promise.all([
         row.adapterBindingId ? ctx.db.get(row.adapterBindingId) : Promise.resolve(null),
@@ -1078,7 +1094,7 @@ export const finishExecution = internalMutation({
       const thread = receipt ? await ctx.db.get(receipt.threadId) : null;
       if (!receipt || receipt.ownerId !== args.ownerId || receipt.direction !== "outbound" ||
         request.payload.kind !== "platform_message" || receipt.threadId !== request.payload.threadId ||
-        receipt.bodyText !== request.payload.body || thread?.providerThreadId !== args.providerThreadId) {
+        normalizeProviderReadback(receipt.bodyText) !== normalizeProviderReadback(request.payload.body) || thread?.providerThreadId !== args.providerThreadId) {
         throw new ConvexError({ code: "ACCEPTANCE_RECEIPT_REQUIRED" });
       }
     }
@@ -1141,6 +1157,50 @@ export const finishExecution = internalMutation({
       occurredAt: now,
     });
     return null;
+  },
+});
+
+/** Reconciles only an exact provider readback for an acceptance whose submit
+ * outcome was unknown. It never sends or retries the external action. */
+export const reconcileObservedPortalAcceptance = internalMutation({
+  args: {
+    ownerId: v.id("users"),
+    connectionId: v.id("portalConnections"),
+    threadId: v.id("platformThreads"),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const thread = await ctx.db.get(args.threadId);
+    if (!thread || thread.ownerId !== args.ownerId || thread.connectionId !== args.connectionId) return false;
+    const conversation = await ctx.db.query("providerConversations").withIndex("by_platform_thread", (q) =>
+      q.eq("platformThreadId", thread._id),
+    ).unique();
+    if (!conversation || conversation.ownerId !== args.ownerId || !conversation.acceptanceRequestId || conversation.acceptedAt !== undefined) return false;
+    const request = await ctx.db.get(conversation.acceptanceRequestId);
+    if (!request || request.ownerId !== args.ownerId || request.status !== "executing" ||
+      request.providerActionKind !== "acceptance" || request.providerConversationId !== conversation._id ||
+      request.connectionId !== args.connectionId || request.payload.kind !== "platform_message" ||
+      request.payload.threadId !== thread._id || !request.executionIdempotencyKey ||
+      !["SUBMIT_RESULT_UNKNOWN", "EXECUTION_STALE_PROVIDER_OUTCOME_UNKNOWN"].includes(request.error ?? "")) return false;
+    const execution = await ctx.db.query("actionExecutions").withIndex("by_idempotency_key", (q) =>
+      q.eq("idempotencyKey", request.executionIdempotencyKey!),
+    ).unique();
+    if (!execution || execution.ownerId !== args.ownerId || execution.requestId !== request._id || execution.status !== "unknown") return false;
+    const messages = await ctx.db.query("platformMessages").withIndex("by_thread_and_sent_at", (q) =>
+      q.eq("threadId", thread._id).gte("sentAt", execution.startedAt),
+    ).order("desc").take(20);
+    const approvedBody = normalizeProviderReadback(request.payload.body);
+    const receipt = messages.find((message) => message.ownerId === args.ownerId && message.connectionId === args.connectionId &&
+      message.direction === "outbound" && normalizeProviderReadback(message.bodyText) === approvedBody);
+    if (!receipt) return false;
+    await ctx.runMutation(internal.externalActions.finishExecution, {
+      ownerId: args.ownerId,
+      executionId: execution._id,
+      status: "succeeded",
+      providerThreadId: thread.providerThreadId,
+      providerMessageId: receipt.providerMessageId,
+    });
+    return true;
   },
 });
 

@@ -356,6 +356,11 @@ export const upsertReadOnlyBatch = internalMutation({
         }
         messagesCreated += 1;
       }
+      await ctx.runMutation(internal.externalActions.reconcileObservedPortalAcceptance, {
+        ownerId: args.ownerId,
+        connectionId: connection._id,
+        threadId: thread._id,
+      });
     }
     return { threadsCreated, messagesCreated };
   },

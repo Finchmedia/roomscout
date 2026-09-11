@@ -31,7 +31,7 @@ export const SECTION_IDS = {
   control: "control",
 } as const
 
-/** Where every „Demo“ CTA points until the real app route exists (task brief). */
+/** Default for the design-gallery rendering; the public route overrides it explicitly. */
 export const DEMO_HREF = "/design/scout"
 
 /** LANDING_SCREENS §12: the closing secondary CTA and the footer link. */

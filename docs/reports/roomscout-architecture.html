@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RoomScout — Architektur & Ablauf</title>
+<style>
+:root{color-scheme:dark;--bg:#10100f;--panel:#1a1917;--ink:#f4eee5;--muted:#b9ada0;--line:#39342e;--orange:#ff782d;--green:#9bd6b5;--blue:#a8c7ef}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}a{color:var(--orange);text-underline-offset:4px}header,main,footer{max-width:1180px;margin:auto;padding:40px 28px}header{padding-top:72px;padding-bottom:28px}h1{font-size:clamp(40px,6vw,76px);line-height:1.03;letter-spacing:-.055em;max-width:850px;margin:24px 0}h2{font-size:32px;letter-spacing:-.035em;line-height:1.2;margin:0 0 16px}h3{font-size:20px;line-height:1.3;margin:0 0 10px}p{margin:10px 0;color:var(--muted)}strong{color:var(--ink)}code{font:13px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;color:#e2c7ab;overflow-wrap:anywhere}nav{display:flex;gap:10px;flex-wrap:wrap;margin-top:30px}nav a,button{border:1px solid var(--line);border-radius:24px;padding:9px 16px;background:transparent;color:var(--ink);font:inherit;text-decoration:none;cursor:pointer}a:focus-visible,button:focus-visible,summary:focus-visible{outline:2px solid var(--orange);outline-offset:4px}button:hover,nav a:hover{border-color:var(--orange)}.eyebrow{color:var(--orange);font:12px ui-monospace,monospace;text-transform:uppercase;letter-spacing:.16em}.intro{font-size:21px;max-width:850px}.tag{display:inline-block;padding:3px 9px;border:1px solid var(--line);border-radius:20px;font-size:12px;color:var(--muted);margin:0 6px 8px 0}.tag.live{color:var(--green);border-color:#3b614b}.section{padding:44px 0;border-top:1px solid var(--line);scroll-margin-top:20px}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.two{grid-template-columns:repeat(2,minmax(0,1fr))}.card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:24px}.card.accent{border-color:#835132}.callout{border-left:3px solid var(--orange);padding:16px 22px;background:#211a14;margin:24px 0;border-radius:0 12px 12px 0}.callout p{margin:0}.small{font-size:14px}.diagram{margin:24px 0;padding:24px;background:var(--panel);border:1px solid var(--line);border-radius:20px;overflow:auto}.diagram svg{width:100%;min-width:780px;display:block;height:auto}.diagram text{font-family:ui-sans-serif,system-ui,sans-serif}.diagram .title{font-size:17px;font-weight:650;fill:var(--ink)}.diagram .sub{font-size:13px;fill:var(--muted)}.diagram .node{fill:#23211d;stroke:#51473d;stroke-width:1.3}.diagram .core{fill:#302116;stroke:var(--orange)}.diagram .edge{fill:none;stroke:#aa8d72;stroke-width:1.5;marker-end:url(#arrow)}.diagram .feedback{stroke:var(--green);stroke-dasharray:5 5}.caption{font-size:13px;margin-top:12px}.steps{counter-reset:step;list-style:none;padding:0;display:grid;gap:10px}.steps li{counter-increment:step;padding:18px 20px 18px 62px;border:1px solid var(--line);border-radius:13px;position:relative;background:var(--panel)}.steps li:before{content:counter(step,decimal-leading-zero);position:absolute;left:20px;top:18px;color:var(--orange);font:15px/1.6 ui-monospace,monospace}.steps p{margin:3px 0}.flow{display:flex;align-items:stretch;gap:10px;margin:22px 0;overflow:auto}.flow .node{min-width:155px;flex:1;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;font-size:14px}.flow .arrow{align-self:center;color:var(--orange)}.flow strong{display:block}table{width:100%;border-collapse:collapse;margin:20px 0;font-size:14px}th{text-align:left;color:var(--ink);font-weight:600;background:#211f1c}th,td{padding:14px;border-bottom:1px solid var(--line);vertical-align:top}td{color:var(--muted)}.tablewrap{overflow:auto}ul{padding-left:22px;color:var(--muted)}li{margin:7px 0}details{border:1px solid var(--line);border-radius:14px;margin-top:14px;padding:18px 22px}summary{cursor:pointer;font-weight:600}footer{border-top:1px solid var(--line);font-size:13px;color:var(--muted)}.counter{font-size:42px;font-weight:600;letter-spacing:-.05em;color:var(--orange);line-height:1;margin-bottom:12px}.legend{display:flex;gap:20px;flex-wrap:wrap;font-size:13px;color:var(--muted)}.legend span:before{content:"";display:inline-block;width:22px;border-top:2px solid #aa8d72;margin:0 8px 4px 0}.legend span:last-child:before{border-color:var(--green);border-top-style:dashed}.print{margin-top:12px}.status-note{color:var(--green)}@media(max-width:760px){header,main,footer{padding:28px 18px}.grid,.two{grid-template-columns:1fr}h2{font-size:27px}.diagram{padding:12px}.flow{flex-direction:column}.flow .node{min-width:0}.flow .arrow{transform:rotate(90deg)}}@media print{:root{color-scheme:light;--bg:#fff;--panel:#f8f6f2;--ink:#171512;--muted:#514a43;--line:#d6cfc6;--orange:#a44300;--green:#25653b;--blue:#25547c}body{font-size:11pt}header,main,footer{max-width:none;padding:18px}nav,.print{display:none}.section{break-inside:avoid}.diagram .node{fill:#faf6ef}.diagram .core{fill:#fff0dd}.diagram svg{min-width:0}.callout{background:#faf2e9}.card{break-inside:avoid}h1{font-size:42pt}.flow{flex-direction:row}.flow .node{min-width:0}th{background:#eee8df}}
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">RoomScout / Engineering Brief / 10. September 2026</div>
+  <h1>Ein Scout.<br>Mehrere Systeme.<br>Eine gemeinsame Wahrheit.</h1>
+  <p class="intro">Wie Suche, Anbieterkommunikation, Chat und UI heute zusammenspielen — und wie sie sich zuverlässig auf denselben Stand bringen sollen.</p>
+  <span class="tag live">Ist: aus dem Repository geprüft</span><span class="tag">Keine Live-Daten / keine externen Skripte</span>
+  <nav aria-label="Berichtsabschnitte"><a href="#overview">Gesamtbild</a><a href="#flow">Happy Path</a><a href="#truth">Status & Wahrheit</a><a href="#failures">Technische Invarianten</a><a href="#files">Code-Landkarte</a></nav>
+  <button class="print" type="button" onclick="window.print()">Als PDF drucken</button>
+</header>
+<main>
+<section class="section" id="overview">
+  <div class="eyebrow">01 / Überblick</div><h2>Convex verbindet die Teile. Der Browser führt aus.</h2>
+  <p>RoomScout ist eine React/Vite-App mit Convex als Datenbank, Echtzeit-Backend und Job-Orchestrierung. Das separate <strong>roomscout.dev</strong> ist das Testportal: eigene Nutzer, eigene Anzeigen und eigene Nachrichten. Es ist <em>nicht</em> dieselbe Anwendung.</p>
+  <div class="diagram" role="img" aria-label="Architektur: Band nutzt React UI, die mit Convex kommuniziert. Convex verwaltet Suche, Match, Kommunikation und Ausführung. OpenAI interpretiert; Firecrawl entdeckt und bedient Formulare; Browserbase bedient das Login-Portal; AgentMail empfängt Antworten. Rückmeldungen aktualisieren Convex und danach UI sowie Chat.">
+  <svg viewBox="0 0 1080 555" xmlns="http://www.w3.org/2000/svg">
+    <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" fill="#aa8d72"/></marker></defs>
+    <text x="26" y="28" class="sub">BAND / PRODUKT</text><text x="373" y="28" class="sub">ROOMSCOUT / CONVEX</text><text x="800" y="28" class="sub">AUSFÜHRUNG / DIENSTE</text>
+    <rect x="20" y="60" width="265" height="108" rx="14" class="node"/><text x="40" y="91" class="title">React + shadcn UI</text><text x="40" y="116" class="sub">Chat · Voice · Suchkarte · Angebot</text><text x="40" y="142" class="sub">Settings · Betreiberansicht</text>
+    <rect x="355" y="60" width="360" height="392" rx="18" class="core"/><text x="376" y="92" class="title">Dauerhafter Produktzustand</text><text x="376" y="122" class="sub">Nutzer + Suchauftrag + Mandat</text><text x="376" y="166" class="sub">Quellen → Anzeigen → Matches</text><text x="376" y="210" class="sub">Anbieter-Thread → Bewertung → Angebot</text><text x="376" y="254" class="sub">Freigabe → ActionRequest → Execution</text><text x="376" y="305" class="title">Orchestrierung</text><text x="376" y="334" class="sub">Events · Scheduler · Workpools</text><text x="376" y="365" class="sub">Eingehende Antworten zuordnen</text><text x="376" y="400" class="sub">Ergebnis speichern → reaktive Queries</text><text x="376" y="429" class="sub">Chat-Kontext aus demselben Zustand</text>
+    <rect x="790" y="60" width="270" height="74" rx="12" class="node"/><text x="810" y="90" class="title">OpenAI</text><text x="810" y="116" class="sub">Text via Convex AI Gateway</text>
+    <rect x="790" y="155" width="270" height="74" rx="12" class="node"/><text x="810" y="185" class="title">Firecrawl</text><text x="810" y="211" class="sub">Discovery · Scrape · Interact</text>
+    <rect x="790" y="250" width="270" height="74" rx="12" class="node"/><text x="810" y="280" class="title">Browserbase / Stagehand v4</text><text x="810" y="306" class="sub">Login-Portal und Portal-Nachrichten</text>
+    <rect x="790" y="345" width="270" height="74" rx="12" class="node"/><text x="810" y="375" class="title">AgentMail</text><text x="810" y="401" class="sub">Eigene Band-Inbox + Webhooks</text>
+    <path d="M285 96 H355" class="edge"/><path d="M355 144 H285" class="edge feedback"/>
+    <path d="M715 97 H790" class="edge"/><path d="M790 117 H715" class="edge feedback"/><path d="M715 180 H790" class="edge"/><path d="M790 204 H715" class="edge feedback"/><path d="M715 276 H790" class="edge"/><path d="M790 302 H715" class="edge feedback"/><path d="M715 367 H790" class="edge"/><path d="M790 393 H715" class="edge feedback"/>
+    <rect x="20" y="230" width="265" height="127" rx="14" class="node"/><text x="40" y="261" class="title">Menschliche Entscheidung</text><text x="40" y="288" class="sub">Suchauftrag losschicken</text><text x="40" y="315" class="sub">Angebot + Nachricht prüfen</text><text x="40" y="342" class="sub">Verbindliche Zusage freigeben</text><path d="M285 285 H355" class="edge"/>
+    <path d="M925 419 V495 H535 V452" class="edge feedback"/><text x="638" y="524" class="sub">Antwort / Empfangsnachweis → zurück ins Produkt</text>
+  </svg>
+  <div class="legend"><span>Auftrag / Verarbeitung</span><span>Gespeicherte Rückmeldung</span></div>
+  </div>
+  <div class="grid">
+    <article class="card"><div class="counter">UI</div><h3>Zeigt den Zustand</h3><p>Liest reaktive Queries. Ein UI-Text ist weder ein Sendenachweis noch eine neue Anbieterantwort.</p></article>
+    <article class="card accent"><div class="counter">DB</div><h3>Hält den Zustand</h3><p>Speichert Suchrevisionen, Nachrichten, Angebotsbewertungen, Freigaben und Ausführungsergebnisse.</p></article>
+    <article class="card"><div class="counter">KI</div><h3>Interpretiert den Zustand</h3><p>Die KI erklärt, bewertet und schlägt Aktionen vor. Sie darf fehlende Fakten nicht durch Annahmen ersetzen.</p></article>
+  </div>
+  <p class="small">Modelle im aktuellen Setup: Scout-Text <code>openai/gpt-5.6-terra</code> über Convex AI Gateway; Embeddings über OpenAI; Voice über die bestehende Realtime-Verbindung. Stagehand <code>4.0.2</code> läuft in Node-Actions; der lokale Component hält Session-Metadaten.</p>
+</section>
+
+<section class="section" id="flow">
+  <div class="eyebrow">02 / Produktablauf</div><h2>Der Happy Path — vom Wunsch bis zur Zusage</h2>
+  <ol class="steps">
+    <li><strong>Band beschreibt ihren Bedarf.</strong><p>Text oder Voice aktualisiert <code>savedNeeds</code>. Längerfristiger Kontext kommt in die Memory. Die Suche hat eine Revision; Änderungen machen ältere Bewertungen gegebenenfalls ungültig.</p></li>
+    <li><strong>Scout sagt: „Der Suchauftrag ist bereit.“</strong><p>Das Readiness-Tool markiert die aktuelle Revision. Die UI öffnet die Suchkarte. Erst „Scout losschicken“ aktiviert den Auftrag und das zugehörige Mandat.</p></li>
+    <li><strong>Firecrawl findet beziehungsweise aktualisiert Anzeigen.</strong><p>Extraktion und Normalisierung erzeugen öffentliche <code>signals</code> mit Herkunft und offenen Fakten. Koordinaten + Radius, Preis und Anforderungen fließen ins Matching.</p></li>
+    <li><strong>Ein möglicher Treffer wird zur Anbieter-Gelegenheit.</strong><p>Fehlende Angaben sind zunächst Fragen — nicht automatisch ein Ausschluss. Die Anbieterbewertung bestimmt, was wirklich noch geklärt werden muss.</p></li>
+    <li><strong>Scout stellt die Rückfrage.</strong><p>Eine <code>actionRequest</code> beschreibt Empfänger und Inhalt. Browserbase bedient das Portal oder Firecrawl ein freigegebenes Formular. Für nicht bindende Kommunikation kann das aktive Mandat autorisieren.</p></li>
+    <li><strong>Die Antwort kommt zurück.</strong><p>Portal-Antworten werden gelesen und gespeichert. E-Mail-Antworten kommen über AgentMail-Webhooks. Beide Wege erzeugen ein Ereignis für dieselbe Anbieterbewertung.</p></li>
+    <li><strong>Scout bewertet erneut.</strong><p>Sind entscheidende Fragen offen, folgt eine konkrete Rückfrage. Sind Bedingungen passend und ausreichend geklärt, entsteht ein prüfbares Angebot. Eine Antwort allein bedeutet nicht automatisch „passt“.</p></li>
+    <li><strong>Die Band entscheidet.</strong><p>Aktuelles Angebot, Empfänger und finale Zusagenachricht werden geprüft. Die ausdrückliche Freigabe bezieht sich auf genau diese Version — nicht auf eine beliebige spätere Fassung.</p></li>
+    <li><strong>Die Zusage wird gesendet und bestätigt.</strong><p>Erst ein verifiziertes Ausführungsergebnis setzt den Abschluss. Ein Klick oder Timeout ist kein Sendenachweis. Ist das Ergebnis unklar, wird gelesen und abgeglichen, nicht blind erneut gesendet.</p></li>
+  </ol>
+  <div class="callout"><p><strong>Normalfall, kein Sonderfall:</strong> Anfrage → Anbieterantwort → Bewertung → passende Angebotskarte. Das muss ohne manuelles Aktualisieren und ohne erneute Erklärung der Anzeige im Chat funktionieren.</p></div>
+</section>
+
+<section class="section" id="truth">
+  <div class="eyebrow">03 / Gemeinsame Wahrheit</div><h2>Drei Ebenen, die nicht verwechselt werden dürfen</h2>
+  <div class="grid">
+    <article class="card"><h3>1. Nachricht</h3><p>Was wurde auf dem Portal oder per E-Mail tatsächlich geschrieben? Autor, Inhalt und externe Nachrichten-ID sind der Beleg.</p><code>platformMessages / mailMessages</code></article>
+    <article class="card"><h3>2. Bewertung</h3><p>Was bedeutet die Antwort für die Suche? Preis, Zeit, Ausstattung, offene Punkte und aktueller Angebotsstand.</p><code>providerConversations / offerRevisions</code></article>
+    <article class="card"><h3>3. Ausführung</h3><p>Wurde eine freigegebene Nachricht nur geplant, versucht oder nachweislich gesendet?</p><code>actionRequests / actionExecutions</code></article>
+  </div>
+  <div class="flow" aria-label="Gemeinsamer Ziel-Datenfluss"><div class="node"><strong>Beleg speichern</strong>Anbieterantwort oder Sendebeleg</div><div class="arrow">→</div><div class="node"><strong>Zustand fortschreiben</strong>Aktuelle Bewertung / Aktion</div><div class="arrow">→</div><div class="node"><strong>Zwei Leser</strong>UI und Scout-Chat</div><div class="arrow">→</div><div class="node"><strong>Gleiche Aussage</strong>Gleiches Angebot, gleicher Stand</div></div>
+  <div class="tablewrap"><table><thead><tr><th>Beobachtung</th><th>Richtige Aussage</th><th>Falsche Schlussfolgerung</th></tr></thead><tbody>
+    <tr><td>Keine einzelne Anzeige im Chat fokussiert</td><td>Aktuelle Suche und Anbieterfortschritt zusätzlich lesen.</td><td>„Es gibt keine Angebote.“</td></tr>
+    <tr><td>„Du hast eine neue Nachricht“-E-Mail</td><td>Ein Hinweis, dass das Portal gelesen werden muss.</td><td>„Die Verfügbarkeit ist bestätigt.“</td></tr>
+    <tr><td>Anbieter bestätigt nur den Dienstag</td><td>Termin bestätigt; andere entscheidende Fragen können offen sein.</td><td>„Alle Konditionen sind bestätigt.“</td></tr>
+    <tr><td>Auftrag <code>executing</code>, Ergebnis <code>unknown</code></td><td>Versand versucht, Bestätigung fehlt. Rückprüfung erforderlich.</td><td>„Wird gerade gesendet“ auf unbegrenzte Zeit.</td></tr>
+    <tr><td>Identische genehmigte Zusage im richtigen Portal-Thread nachgewiesen</td><td>Ausführung abschließen; UI und Chat aktualisieren.</td><td>Nochmal senden, um sicherzugehen.</td></tr>
+  </tbody></table></div>
+  <details open><summary>Warum weiß der Chat nicht automatisch alles, was der Anbieter-Scout getan hat?</summary><p>Das Gespräch mit der Band und die Verarbeitung der Anbieterantworten haben getrennte Agent-Threads. Beide laufen über <code>scoutRuntime.ts</code> und denselben Agent-/Modellpfad, teilen aber nicht automatisch den kompletten Gesprächsverlauf. Der normale Chat erhält den aktuellen Anbieterfortschritt über <code>providerConversations.getProgressContext</code>. Dieser gemeinsame Kontext ist die Brücke — nicht die Annahme, dass „derselbe Agent“ alles bereits weiß.</p><p>Deshalb müssen fokussierte Anzeige, Suchstatus und Anbieterfortschritt widerspruchsfrei zusammengesetzt werden. Die Anbieterantwort darf die Suchwünsche der Band nicht überschreiben, aber ihre geklärten Konditionen müssen im Chat bekannt sein.</p></details>
+  <details><summary>Welche Datensätze verbinden die Systeme?</summary><ul>
+    <li><code>ownerId</code>: RoomScout-Nutzer; trennt private Daten und Inboxen.</li>
+    <li><code>savedNeedId</code> + Suchrevision: aktueller Auftrag und seine Fassung.</li>
+    <li><code>signalId</code>: konkrete Anzeige; nicht bloß dieselbe Stadt oder derselbe Preis.</li>
+    <li><code>providerConversationId</code> + externer Thread: welche Anbieterkommunikation dazugehört.</li>
+    <li><code>offerId</code> + Hash: die geprüften Konditionen.</li>
+    <li><code>requestId</code> + Content-Hash + Execution: genau eine genehmigte Nachricht und ihr Ausführungsversuch.</li>
+  </ul><p>RoomScout-Login und Portal-Login sind getrennte Identitäten. Eine Browserbase-Sitzung ist wiederum nur eine Laufzeit; ein Context erhält Portal-Cookies über einzelne Sitzungen hinweg.</p></details>
+  <details><summary>Warum geht etwas lokal, aber nicht durch die Integration?</summary><p>Ein lokales Skript testet meist nur: Browser öffnen → Formular ausfüllen → klicken. Der Produktweg muss zusätzlich den richtigen Nutzer und Thread auswählen, Arbeit einplanen, das Ergebnis dauerhaft speichern und beide Leser aktualisieren. Das lokale Senden beweist den Browser-Schritt — nicht die vollständige Rückmeldung im Produkt.</p></details>
+</section>
+
+<section class="section" id="failures">
+  <div class="eyebrow">04 / Technische Invarianten</div><h2>Zustand und Sendebelege bleiben eindeutig</h2>
+  <div class="grid">
+    <article class="card"><h3>Text bleibt im Eingabefeld</h3><p>Der Composer wartete mit dem Leeren auf die gesamte asynchrone Antwort. Jetzt wird beim Senden geleert; Fehler stellen den Entwurf wieder her, ohne neu geschriebenen Text zu überschreiben.</p></article>
+    <article class="card"><h3>Settings animiert komplett</h3><p>Der nach URL wechselnde Key der Fehlergrenze montierte den ganzen gesunden Seitenbaum neu. Die Grenze setzt jetzt nur einen tatsächlichen Fehler zurück; die Inhaltsanimation bleibt im rechten Panel.</p></article>
+    <article class="card accent"><h3>Unklarer Versand bleibt unklar</h3><p>Ein Ausführungsversuch ohne verifizierten Erfolgsmarker darf nicht als gesendet gelten. Vor einem erneuten Versuch wird im richtigen Thread nach einem passenden ausgehenden Beleg gesucht; Inhaltsvergleiche verwenden eine definierte kanonische Darstellung.</p></article>
+  </div>
+  <p class="small">Ein Status wird nur aus dauerhaft gespeicherten, passenden Belegen abgeleitet. Ein unklarer Versuch darf nicht automatisch dupliziert werden. Keine fokussierte Anzeige ist außerdem nicht dasselbe wie kein Angebot: UI und Chat lesen deshalb einen gemeinsamen Fortschrittszustand, der auch unklare Versandversuche korrekt beschreibt.</p>
+  <details><summary>Hintergrundjobs: Auslöser, nicht überall starre Wartezeiten</summary><div class="tablewrap"><table><thead><tr><th>Job im Code</th><th>Intervall</th><th>Bedeutung</th></tr></thead><tbody>
+    <tr><td>Fällige Portal-Inboxen einplanen</td><td>1 Minute</td><td>Nur fällige Verbindungen. Webhook-Hinweise und manueller Sync können ebenfalls koordinierte Abrufe anfordern.</td></tr>
+    <tr><td>Mandate regelmäßig nachholen</td><td>10 Minuten</td><td>Zusätzlicher Hintergrunddurchlauf; ereignisgetriebene Verarbeitung existiert daneben.</td></tr>
+    <tr><td>Firecrawl-Monitor-Abgleich</td><td>15 Minuten</td><td>Abgleich der Monitor-Steuerung; nicht die Behauptung, jede Seite werde exakt dann gecrawlt.</td></tr>
+    <tr><td>Verwaiste Ausführungen prüfen</td><td>5 Minuten</td><td>Recovery, kein Beweis für einen erfolgreichen Versand.</td></tr>
+  </tbody></table></div><p>Quelle: <code>convex/crons.ts</code>. Ein Scheduler-Takt darf nicht mit einem pauschalen Benutzer-Ratelimit verwechselt werden.</p></details>
+</section>
+
+<section class="section" id="files">
+  <div class="eyebrow">05 / Orientierung im Repository</div><h2>Wo welcher Teil lebt</h2>
+  <div class="tablewrap"><table><thead><tr><th>Bereich</th><th>Wichtige Dateien</th><th>Verantwortung</th></tr></thead><tbody>
+    <tr><td>Live UI</td><td><code>src/routes/musician/ScoutPage.tsx<br>src/ui/scout/live/<br>src/ui/chat/ScoutChat.tsx</code></td><td>Reactive Queries, sichtbarer Zustand, Chat-Eingabe; keine Browser-Automation im Frontend.</td></tr>
+    <tr><td>Text-Scout</td><td><code>convex/scout.ts<br>convex/scoutCaseCards.ts<br>convex/scoutRuntime.ts</code></td><td>Gespräch, fokussierter Kontext, Tools, Suchkarte und gemeinsamer Agent-Laufzeitpfad.</td></tr>
+    <tr><td>Voice</td><td><code>convex/voice.ts<br>src/components/voice/</code></td><td>Realtime-Sitzung und bestehende Sprachsteuerung.</td></tr>
+    <tr><td>Suche + Matching</td><td><code>convex/savedNeeds.ts<br>convex/ingestion.ts<br>convex/matches.ts<br>convex/matchingCore.ts</code></td><td>Auftrag, normalisierte Anzeigen, Radius und Vergleich.</td></tr>
+    <tr><td>Autopilot</td><td><code>convex/mandates.ts<br>convex/mandateOrchestrator.ts</code></td><td>Welche nicht bindende Arbeit für welchen Nutzer gestartet werden darf.</td></tr>
+    <tr><td>Anbieterbewertung</td><td><code>convex/providerConversations.ts<br>convex/lib/providerAssessment.ts</code></td><td>Antwort-Ereignisse, offene Fragen, Angebotsrevisionen.</td></tr>
+    <tr><td>Freigabe + Versand</td><td><code>convex/offerAcceptance.ts<br>convex/externalActions.ts</code></td><td>Exaktes Angebot, exakter Inhalt, Ausführung und Nachweis.</td></tr>
+    <tr><td>Login-Portal</td><td><code>convex/browserbasePortal.ts<br>convex/portalInboxSync.ts</code></td><td>Stagehand-Aktionen, Portal-Sitzung, Inbox-Sync.</td></tr>
+    <tr><td>E-Mail</td><td><code>convex/agentmail.ts<br>convex/mailboxes.ts<br>convex/inbox.ts<br>convex/portalNotifications.ts</code></td><td>Eigene Inbox, Webhook-Eingang, Thread-Zuordnung und Portal-Hinweise.</td></tr>
+    <tr><td>Formulare</td><td><code>convex/firecrawlInteract.ts<br>convex/integrations/firecrawlInteractClient.ts</code></td><td>Vorbereiten, Felder eintragen, Absenden und sichtbaren Erfolg prüfen.</td></tr>
+    <tr><td>Infrastruktur</td><td><code>convex/convex.config.ts<br>convex/crons.ts<br>src/app/providers.tsx</code></td><td>Components, Hintergrundtakte, Auth und reaktive Verbindung.</td></tr>
+  </tbody></table></div>
+  <p><strong>Was zusammenbleiben sollte:</strong> Eine Anbieterbewertung für alle Kanäle, ein Ausführungsprotokoll für alle Transporte und ein gemeinsamer aktueller Status für UI und Chat. Jeder Transportweg nutzt denselben Scout-Kern.</p>
+</section>
+</main>
+<footer>Stand: 10.09.2026 · Aus dem lokalen RoomScout-Repository erstellt. Kein automatischer Live-Monitor. Beispiele und Diagramme enthalten keine Nutzer-IDs, Zugangsdaten oder privaten Nachrichten.</footer>
+</body></html>

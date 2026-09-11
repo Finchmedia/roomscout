@@ -341,11 +341,15 @@ export const turnCompleted = internalMutation({
 });
 
 export const listMine = query({
-  args: { limit: v.optional(v.number()) },
+  args: {
+    limit: v.optional(v.number()),
+    savedNeedId: v.optional(v.id("savedNeeds")),
+  },
   returns: v.array(v.object({
     conversationId: v.id("providerConversations"), savedNeedId: v.id("savedNeeds"), signalId: v.id("signals"),
     mailThreadId: v.optional(v.id("mailThreads")), platformThreadId: v.optional(v.id("platformThreads")),
     state: v.string(), revision: v.number(), updatedAt: v.number(), errorCode: v.optional(v.string()),
+    assessmentFromProviderReply: v.boolean(),
     replyStatus: v.optional(v.string()),
     acceptanceStatus: v.optional(v.string()), acceptanceRequestId: v.optional(v.id("actionRequests")),
     acceptedOfferId: v.optional(v.id("offerRevisions")), acceptedAt: v.optional(v.number()),
@@ -358,12 +362,20 @@ export const listMine = query({
     const ownerId = await requireUserId(ctx);
     const limit = args.limit ?? 30;
     if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new ConvexError({ code: "INVALID_LIMIT" });
-    const conversations = await ctx.db.query("providerConversations").withIndex("by_owner_and_updated_at", (q) => q.eq("ownerId", ownerId)).order("desc").take(limit);
+    if (args.savedNeedId !== undefined) {
+      const need = await ctx.db.get(args.savedNeedId);
+      if (need?.ownerId !== ownerId) throw new ConvexError({ code: "NEED_NOT_FOUND" });
+    }
+    const conversations = args.savedNeedId === undefined
+      ? await ctx.db.query("providerConversations").withIndex("by_owner_and_updated_at", (q) => q.eq("ownerId", ownerId)).order("desc").take(limit)
+      : await ctx.db.query("providerConversations").withIndex("by_need_and_updated_at", (q) => q.eq("savedNeedId", args.savedNeedId!)).order("desc").take(limit);
     return await Promise.all(conversations.map(async (conversation) => {
+      if (conversation.ownerId !== ownerId) return null;
       const [offer, need, signal] = await Promise.all([
         conversation.currentOfferId ? ctx.db.get(conversation.currentOfferId) : null,
         ctx.db.get(conversation.savedNeedId), ctx.db.get(conversation.signalId),
       ]);
+      const assessmentEvent = offer ? await ctx.db.get(offer.eventId) : null;
       const current = !!offer && !conversation.activeEventId && conversation.state !== "closed" && need?.ownerId === ownerId && need.status === "active" &&
         offer.ownerId === ownerId && offer.revision === conversation.revision &&
         offer.needRevision === (need.matchingRevision ?? 0) && !!signal && ["published", "stale"].includes(signal.status) && offer.signalRevision === await signalMatchRevision(signal);
@@ -373,8 +385,13 @@ export const listMine = query({
         conversationId: conversation._id, savedNeedId: conversation.savedNeedId, signalId: conversation.signalId,
         mailThreadId: conversation.mailThreadId, platformThreadId: conversation.platformThreadId,
         state: conversation.state, revision: conversation.revision, updatedAt: conversation.updatedAt, errorCode: conversation.lastErrorCode,
+        assessmentFromProviderReply: assessmentEvent?.kind === "mail_reply" || assessmentEvent?.kind === "portal_reply",
         replyStatus: reply?.ownerId === ownerId && reply.providerActionKind !== "acceptance" ? reply.status : undefined,
-        acceptanceStatus: acceptance?.ownerId === ownerId ? acceptance.status : undefined,
+        acceptanceStatus: acceptance?.ownerId === ownerId
+          ? acceptance.status === "executing" && ["SUBMIT_RESULT_UNKNOWN", "EXECUTION_STALE_PROVIDER_OUTCOME_UNKNOWN"].includes(acceptance.error ?? "")
+            ? "unknown"
+            : acceptance.status
+          : undefined,
         acceptanceRequestId: conversation.acceptanceRequestId, acceptedOfferId: conversation.acceptedOfferId, acceptedAt: conversation.acceptedAt,
         offer: offer?.ownerId === ownerId ? {
           offerId: offer._id, revision: offer.revision, current, ready: current && offer.ready,
@@ -382,7 +399,7 @@ export const listMine = query({
           blockers: current ? offer.blockers : ["The search, listing or provider conversation has changed. Reassessment is required.", ...offer.blockers],
         } : null,
       };
-    }));
+    })).then((rows) => rows.filter((row): row is NonNullable<typeof row> => row !== null));
   },
 });
 
@@ -401,21 +418,31 @@ export const getProgressContext = internalQuery({
       const [offer, need, signal] = await Promise.all([
         row.currentOfferId ? ctx.db.get(row.currentOfferId) : null, ctx.db.get(row.savedNeedId), ctx.db.get(row.signalId),
       ]);
-      const current = !!offer && row.state !== "closed" && offer.ownerId === args.ownerId && need?.status === "active" &&
+      const current = !!offer && !row.activeEventId && row.state !== "closed" && offer.ownerId === args.ownerId && need?.status === "active" &&
         offer.revision === row.revision && offer.needRevision === (need.matchingRevision ?? 0) &&
         !!signal && ["published", "stale"].includes(signal.status) && offer.signalRevision === await signalMatchRevision(signal);
       const reply = offer ? await ctx.db.query("actionRequests").withIndex("by_provider_offer", (q) => q.eq("providerOfferId", offer._id)).unique() : null;
+      const acceptance = row.acceptanceRequestId ? await ctx.db.get(row.acceptanceRequestId) : null;
+      const acceptanceStatus = row.acceptedOfferId && row.acceptedAt !== undefined
+        ? "sent"
+        : acceptance?.ownerId === args.ownerId && acceptance.providerActionKind === "acceptance"
+          ? acceptance.status === "executing" && ["SUBMIT_RESULT_UNKNOWN", "EXECUTION_STALE_PROVIDER_OUTCOME_UNKNOWN"].includes(acceptance.error ?? "")
+            ? "unknown_outcome"
+            : acceptance.status
+          : "not_requested";
       return {
         conversationId: row._id, signalId: row.signalId, state: row.state,
+        signalTitle: current && signal ? signal.title : null,
+        signalSummary: current && signal ? signal.summary : null,
         currentAssessment: current ? offer.assessment.summary : null,
         readyForReview: current && offer.ready,
-        nextStep: row.acceptedOfferId ? "acceptance_message_sent_search_paused" : current ? offer.assessment.nextAction : "reassessment_needed",
+        nextStep: row.acceptedOfferId && row.acceptedAt !== undefined ? "acceptance_message_sent_search_paused" : current ? offer.assessment.nextAction : "reassessment_needed",
         // A proposal is never evidence of a sent message.
         replyStatus: reply?.ownerId === args.ownerId && reply.providerActionKind !== "acceptance" ? reply.status : "not_drafted",
-        acceptanceStatus: row.acceptedOfferId ? "sent" : reply?.providerActionKind === "acceptance" ? reply.status : "not_requested",
+        acceptanceStatus,
         interpretationOnly: reply?.status !== "executed",
       };
     }));
-    return progress.length ? delimitUntrustedData("recent_provider_progress", JSON.stringify(progress.filter(Boolean))) : "";
+    return progress.length ? `${delimitUntrustedData("recent_provider_progress", JSON.stringify(progress.filter(Boolean)))}\nTRUSTED ACCEPTANCE RULE: Treat sent only as confirmed when acceptanceStatus is sent. For unknown_outcome, tell the user delivery needs checking; never claim it was sent and never accept, resend, or retry it from chat.` : "";
   },
 });

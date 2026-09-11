@@ -10,6 +10,7 @@ import {
   query,
   type ActionCtx,
   type MutationCtx,
+  type QueryCtx,
 } from "./_generated/server";
 import { requireActionUserId, requireUserId } from "./integrations/authz";
 import { distanceKm, scoreSignalMatch } from "./matchingCore";
@@ -30,6 +31,27 @@ const matchStatus = v.union(
   v.literal("dismissed"),
   v.literal("contacted"),
 );
+
+type ReadCtx = Pick<QueryCtx, "db">;
+
+async function signalIsExcludedForNeed(
+  ctx: ReadCtx,
+  savedNeedId: Id<"savedNeeds">,
+  signal: { sourceEntryId?: Id<"sourceEntries"> },
+): Promise<boolean> {
+  if (!signal.sourceEntryId) return false;
+  const entry = await ctx.db.get(signal.sourceEntryId);
+  const source = entry ? await ctx.db.get(entry.sourceId) : null;
+  if (!source?.platformId) return false;
+  const platformId = source.platformId;
+  const preference = await ctx.db
+    .query("searchSourcePreferences")
+    .withIndex("by_saved_need_and_platform", (q) =>
+      q.eq("savedNeedId", savedNeedId).eq("platformId", platformId),
+    )
+    .unique();
+  return preference?.preference === "exclude";
+}
 
 function embeddingInputForNeed(need: {
   title: string;
@@ -296,6 +318,13 @@ export const applyMatches = internalMutation({
       const value = { ...match, needRevision: args.needRevision, matchingRunId: args.matchingRunId, updatedAt: now };
       const opportunityFingerprint = `match:${args.savedNeedId}:${match.signalId}`;
       const opportunity = await ctx.db.query("opportunities").withIndex("by_saved_need_and_fingerprint", (q) => q.eq("savedNeedId", args.savedNeedId).eq("fingerprint", opportunityFingerprint)).unique();
+      if (await signalIsExcludedForNeed(ctx, args.savedNeedId, signal)) {
+        if (existing) await retireMatch(ctx, existing);
+        else if (opportunity && !["contacted", "dismissed", "converted"].includes(opportunity.status)) {
+          await ctx.db.patch(opportunity._id, { status: "expired", updatedAt: now });
+        }
+        continue;
+      }
       if (!match.eligible) {
         if (existing) await ctx.db.patch(existing._id, value);
         if (opportunity && !["contacted", "dismissed", "converted"].includes(opportunity.status)) {
@@ -664,7 +693,7 @@ export const listMine = query({
       if ((args.status && match.status !== args.status) || (!args.status && match.status === "dismissed") ||
         (args.savedNeedId && match.savedNeedId !== args.savedNeedId) || !await isCurrentMatch(ctx, match)) continue;
       const signal = await ctx.db.get(match.signalId);
-      if (!signal) continue;
+      if (!signal || await signalIsExcludedForNeed(ctx, match.savedNeedId, signal)) continue;
       result.push({
         _id: match._id,
         savedNeedId: match.savedNeedId,

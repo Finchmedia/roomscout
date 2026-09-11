@@ -22,9 +22,10 @@ import { useInView } from "./useLandingScroll"
 interface OfferBeatProps {
   /** §9: the „Donnerstag" branch leaves the offer permanently faded. */
   dimmed: boolean
+  demoHref?: string
 }
 
-export function OfferBeat({ dimmed }: OfferBeatProps) {
+export function OfferBeat({ dimmed, demoHref = DEMO_HREF }: OfferBeatProps) {
   const { t } = useCopy()
   const { ref, inView } = useInView<HTMLDivElement>({ rootMargin: "0px 0px -15% 0px" })
 
@@ -72,8 +73,8 @@ export function OfferBeat({ dimmed }: OfferBeatProps) {
             ))}
           </div>
 
-          <Button asChild size="base" className="mt-[26px] self-start px-[30px]">
-            <a href={DEMO_HREF}>{t("landing.offer.cta")}</a>
+          <Button asChild size="base" className="mt-[26px] self-start px-[30px] text-rs-white! hover:text-rs-white!">
+            <a href={demoHref}>{t("landing.offer.cta")}</a>
           </Button>
 
           <div className="mt-[14px] text-[14.5px] text-rs-ink-4">{t("landing.offer.note")}</div>

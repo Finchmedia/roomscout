@@ -1143,3 +1143,112 @@ remain configured and no existing user or inbox is removed.
 Verification: 622 tests pass across 101 files, with one opt-in local probe skipped;
 TypeScript, production build and scoped ESLint pass. Signup/OTP and the full
 provider-message round trip are still acceptance steps, not claimed successes.
+
+## 2026-09-10 — Live Scout UI connected to the Claude design port
+
+Replaced the live Scout dashboard with state-driven design-system scenes, not
+the scripted demo state machine. Current offer assessment and confirmed sent
+acceptance outrank stale outreach status. Search-scoped activity queries apply
+their indexes before result limits. No legacy telemetry panels were restored.
+
+Added shadcn message scrolling and message/bubble primitives, safe Markdown/GFM,
+older-history loading, multiline/IME-safe entry and draft preservation on failure.
+Voice uses the existing session engine with visible connection/mute/end controls;
+switching mode and leaving Scout disconnect the session. The offer acceptance
+dialog is restyled in German without changing its reviewed snapshot or approval
+contract. Exact message, recipient and conditions remain available before consent.
+
+Draft readiness is persisted against the search revision and exposed reactively.
+Text and voice can mark a useful draft ready; the UI opens the brief automatically
+and never activates it on the model's behalf. Editing invalidates readiness until
+the updated revision is marked ready again.
+
+The first local browser check exposed a frontend/backend deployment mismatch:
+the old deployed query rejected the new savedNeedId argument. Updating the
+development backend resolved the black screen. The signed-in browser then
+rendered the actual offer and chat history. No message or approval was submitted
+during these UI checks. The separate design previews remain untouched. Live
+Settings/Inbox/operator integration is not claimed by this checkpoint.
+
+Final verification: 678 tests passed across 112 passing test files, one opt-in
+test skipped; TypeScript, production build, scoped ESLint and diff check passed.
+Development backend and static frontend were updated at perceptive-antelope-445.
+The hosted Scout route serves the current compiled assets. Desktop and 390px
+mobile offer/chat layouts were checked in the existing authenticated browser;
+temporary viewport changes were reset. No production deployment or new
+fresh-account/provider round trip is claimed.
+
+## 2026-09-10 — Settings, operator and public landing connected
+
+Integrated three parallel Sol slices using the Claude Code design port as the
+visual authority. `/app/settings/:section?` now renders the live sidebar panel;
+`/ops/:section?` uses its operator equivalent. Legacy operator tools remain
+reachable under `/ops/tools/*` and their prior URLs. Existing `/app/profile`
+and the separate inbox remain available; they are not claimed as redesigned.
+
+Settings reads current user/search data and supports existing source, portal,
+AgentMail, mandate and memory operations. A narrowly scoped authenticated
+mutation persists only the display name. Unsaved profile navigation prompts
+before discarding. Missing notification preferences, billing and privacy
+self-service are explicitly unavailable, never simulated switches or saves.
+
+Operator checks distinguish configured, incomplete, disabled and client-only
+providers. Checks are explicit, not triggered on mount; queries skip unauthorized
+users. The profile menu exposes operator navigation only for the actual role.
+Unexpected render/query failures have a safe recovery view instead of black UI.
+
+The live landing reuses the ported composition, with separate demo/start/login
+destinations and synthetic-example disclosure. Browser inspection found the
+legacy unlayered anchor rule overriding button text; putting those defaults in
+the base layer restores the design-system cascade. CTA contrast was visually
+rechecked. Live profile, source and mandate panels loaded for the existing
+signed-in user; the operator route correctly denied that musician account.
+No profile save, provider probe, outbound message or approval was performed in
+the browser. Operator authorized rendering is covered by isolated tests.
+
+### 2026-09-10 — Sources design fidelity correction
+
+Replaced the simplified live sources cards with the original SourceRow layout,
+extracted as a data-independent surface shared with the design prototype.
+Restored title, source icon/status/switch/detail hierarchy, mailbox copy row,
+and separate connection management sheet. Only real sources are rendered.
+The global automatic-selection switch is explicitly read-only; individual
+source exclusions persist and now affect matches and new mandate outreach.
+Verified the signed-in live page visually and opened the management sheet
+without performing any external action. Eight focused UI tests, 23 source/
+orchestration tests, frontend build and backend typecheck passed. Dev backend
+deployed; production untouched. Initial HMR/backend rollout mismatch resolved
+by successful deployment and reload; both new public functions verified.
+
+### 2026-09-10 — Autonomy settings design fidelity
+
+Replaced the single mandate summary card with the original autonomy layout:
+mode radio cards, grouped permission switches, daily-limit stepper, expandable
+details and commitment boundary notice. Values are derived from the actual
+mandate, not design fixtures. Explicit save uses existing draft/activation APIs;
+review mode revokes standing permission. Unchanged permission subsets and
+scope are preserved. Parent navigation protects unsaved drafts. Nine focused
+tests and frontend build passed; signed-in browser screenshot reviewed against
+the supplied design. No live permissions were changed during verification.
+
+### 2026-09-10 — Billing and privacy settings surfaces
+
+Ported the account settings layouts using the existing Claude design tokens and
+settings primitives. Billing shows access, activity placeholders, payment/address
+rows and invoices. Privacy links to live knowledge, sources and Scout routes.
+Unavailable billing, export and deletion controls are native-disabled and dimmed;
+no payment or deletion backend was added. Missing usage totals are not fabricated.
+Added responsive stacking and truthful cloud-storage wording. Twelve focused tests,
+scoped ESLint and the frontend build pass. No live-route visual verification or
+deployment was performed for this change.
+
+### 2026-09-10 — Operator design alignment
+
+Aligned the live operator surface with the Claude reference: six navigation
+sections, provider identity tiles, activity tables, source rows, integrations,
+disabled feature-flag controls and diagnostics. Existing advanced tools remain
+reachable separately. Real source data uses the existing operator-gated query;
+unknown readiness and unavailable controls are explicit, not simulated.
+Compared the rendered surface with the reference using an isolated visual fixture.
+All 27 focused tests, frontend build and scoped ESLint pass. No backend deployment,
+role changes or authenticated live-admin verification were performed.

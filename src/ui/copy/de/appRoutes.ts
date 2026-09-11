@@ -1,0 +1,17 @@
+export const appRoutesDe = {
+  restoring: "Deine Sitzung wird geladen …",
+  checkingOperator: "Der Betreiberzugang wird geprüft …",
+  operatorTitle: "Nur für Betreiber.",
+  operatorDetail: "Mit deinem Konto kannst du den Scout nutzen. Die Betreiberansicht ist für freigeschaltete Konten vorgesehen.",
+  scout: "Zum Scout",
+  errorTitle: "Diese Ansicht konnte nicht geladen werden.",
+  errorDetail: "Versuche es erneut. Deine gespeicherten Daten bleiben erhalten.",
+  reload: "Erneut laden",
+  home: "Zur Startseite",
+  profileMenu: "Profilmenü",
+  settings: "Einstellungen",
+  messages: "Nachrichten",
+  operator: "Betreiberansicht",
+  signOut: "Abmelden",
+  signOutError: "Abmelden hat gerade nicht geklappt. Bitte versuche es erneut.",
+} as const;

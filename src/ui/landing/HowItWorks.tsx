@@ -20,7 +20,11 @@ import { OfferBeat } from "./OfferBeat"
 import { WorkBeat } from "./WorkBeat"
 import { SECTION_IDS, type ClarifyChoice } from "./demoData"
 
-export function HowItWorks() {
+interface HowItWorksProps {
+  demoHref?: string
+}
+
+export function HowItWorks({ demoHref }: HowItWorksProps) {
   const { t } = useCopy()
   const [clarifyChoice, setClarifyChoice] = React.useState<ClarifyChoice>(null)
 
@@ -58,7 +62,9 @@ export function HowItWorks() {
       <ConversationBeat />
       <WorkBeat />
       <ClarifyBeat choice={clarifyChoice} onChoose={setClarifyChoice} />
-      <OfferBeat dimmed={clarifyChoice === "thursday"} />
+      <OfferBeat dimmed={clarifyChoice === "thursday"} demoHref={demoHref} />
     </>
   )
 }
+
+export type { HowItWorksProps }

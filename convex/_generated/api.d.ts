@@ -106,6 +106,7 @@ import type * as scout from "../scout.js";
 import type * as scoutCaseCards from "../scoutCaseCards.js";
 import type * as scoutRuntime from "../scoutRuntime.js";
 import type * as searchSources from "../searchSources.js";
+import type * as settings from "../settings.js";
 import type * as signals from "../signals.js";
 import type * as sourceAdapters from "../sourceAdapters.js";
 import type * as sourceDiscovery from "../sourceDiscovery.js";
@@ -226,6 +227,7 @@ declare const fullApi: ApiFromModules<{
   scoutCaseCards: typeof scoutCaseCards;
   scoutRuntime: typeof scoutRuntime;
   searchSources: typeof searchSources;
+  settings: typeof settings;
   signals: typeof signals;
   sourceAdapters: typeof sourceAdapters;
   sourceDiscovery: typeof sourceDiscovery;

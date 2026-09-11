@@ -472,6 +472,26 @@ it("queues one controlled opportunity into the shared Agent without pre-authoriz
   expect(state.approvals).toEqual([]);
 });
 
+it("honors a current source exclusion even when the active mandate still contains the platform", async () => {
+  const t = convexTest(schema, modules);
+  agentTest.register(t); workpoolTest.register(t, "scoutWorkpool");
+  const f = await seedOrchestrationFixture(t);
+  await t.run(async (ctx) => {
+    await ctx.db.patch(f.platformId, { canonicalDomain: "roomscout.dev", slug: "roomscout-dev" });
+    await ctx.db.patch(f.sourceId, { baseUrl: "https://roomscout.dev/listings" });
+    await ctx.db.patch(f.entryId, { detailUrl: "https://roomscout.dev/listings/controlled" });
+    await ctx.db.insert("searchSourcePreferences", {
+      ownerId: f.ownerId, savedNeedId: f.needId, platformId: f.platformId,
+      preference: "exclude", createdAt: Date.now(), updatedAt: Date.now(),
+    });
+  });
+
+  expect(await t.mutation(internal.mandateOrchestrator.runForOwner, { ownerId: f.ownerId }))
+    .toMatchObject({ created: 0, scheduled: 0, skipped: 1 });
+  expect(await t.run(async (ctx) => ctx.db.query("providerTurns").collect())).toEqual([]);
+  expect(await t.run(async (ctx) => ctx.db.get(f.opportunityId))).toMatchObject({ status: "new" });
+});
+
 it("does not orchestrate revoked or expired mandates", async () => {
   const revokedTest = convexTest(schema, modules);
   const revoked = await seedOrchestrationFixture(revokedTest, {

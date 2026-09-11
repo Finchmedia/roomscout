@@ -43,8 +43,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   outline-offset: 3px;
 }
 
-a { color: var(--signal); text-decoration: none; }
-a:hover { color: var(--signal-hover); }
+/* Legacy link defaults must not override design-system button variants. */
+@layer base {
+  a { color: var(--signal); text-decoration: none; }
+  a:hover { color: var(--signal-hover); }
+}
 p { color: var(--gray-300); line-height: 1.65; }
 h1, h2, h3 { letter-spacing: -.025em; }
 hr { border: 0; border-top: 1px solid var(--gray-800); }

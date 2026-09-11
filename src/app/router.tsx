@@ -30,6 +30,11 @@ import {
   SignalDetailPage,
 } from "../routes";
 import { AuthRoute } from "./AuthRoute";
+import { LiveSettingsPage } from "../routes/musician/LiveSettingsPage";
+import { LiveOperatorPage } from "../routes/operator/LiveOperatorPage";
+import { RouteErrorBoundary } from "./RouteErrorBoundary";
+import { Button } from "../components/ui/button";
+import { useCopy } from "../ui/copy";
 import { VoiceSessionProvider } from "../components/voice/VoiceSessionProvider";
 import { DesignGalleryPage } from "../ui/gallery/DesignGalleryPage";
 // The ported design-system surfaces. Public, demo-data only, no Convex — they
@@ -45,12 +50,13 @@ function RouteState({ children }: { children: ReactNode }) {
 }
 
 function RequireAuth({ children }: { children: ReactNode }) {
+  const { t } = useCopy();
   const location = useLocation();
   const returnTo = `${location.pathname}${location.search}`;
 
   return (
     <>
-      <AuthLoading><RouteState>Restoring your session…</RouteState></AuthLoading>
+      <AuthLoading><RouteState>{t("appRoutes.restoring")}</RouteState></AuthLoading>
       <Unauthenticated>
         <Navigate replace to={`/sign-in?returnTo=${encodeURIComponent(returnTo)}`} />
       </Unauthenticated>
@@ -60,16 +66,16 @@ function RequireAuth({ children }: { children: ReactNode }) {
 }
 
 function RequireOperator({ children }: { children: ReactNode }) {
+  const { t } = useCopy();
   const currentUser = useQuery(api.users.current);
 
-  if (currentUser === undefined) return <RouteState>Checking operator access…</RouteState>;
+  if (currentUser === undefined) return <RouteState>{t("appRoutes.checkingOperator")}</RouteState>;
   if (currentUser?.role !== "operator") {
     return (
       <div className="rs-route-state rs-route-state--panel">
-        <span className="type t-scout">Protected workspace</span>
-        <h1>Operator access required</h1>
-        <p>Your account can use the musician workspace. The Ops cockpit is restricted server-side.</p>
-        <Link className="btn btn-p" to="/app/scout">Open your Scout</Link>
+        <h1>{t("appRoutes.operatorTitle")}</h1>
+        <p>{t("appRoutes.operatorDetail")}</p>
+        <Button asChild><Link to="/app/scout">{t("appRoutes.scout")}</Link></Button>
       </div>
     );
   }
@@ -99,11 +105,17 @@ function AppRoutes() {
         <Route element={<MySearchPage />} path="/app/search" />
         <Route element={<MusicianInboxPage />} path="/app/inbox" />
         <Route element={<ProfilePage />} path="/app/profile" />
-        <Route element={<ProfilePage />} path="/app/settings/:section?" />
+        <Route element={<LiveSettingsPage />} path="/app/settings/:section?" />
         <Route element={<BrowserRunPage />} path="/app/runs/:runId" />
       </Route>
 
-      <Route element={<RequireAuth><RequireOperator><OpsOverviewPage /></RequireOperator></RequireAuth>} path="/ops" />
+      <Route element={<RequireAuth><RequireOperator><LiveOperatorPage /></RequireOperator></RequireAuth>} path="/ops/:section?" />
+      <Route element={<RequireAuth><RequireOperator><OpsOverviewPage /></RequireOperator></RequireAuth>} path="/ops/tools" />
+      <Route element={<RequireAuth><RequireOperator><OpsSignalsPage /></RequireOperator></RequireAuth>} path="/ops/tools/signals" />
+      <Route element={<RequireAuth><RequireOperator><OpsSourcesPage /></RequireOperator></RequireAuth>} path="/ops/tools/sources" />
+      <Route element={<RequireAuth><RequireOperator><OpsOutreachPage /></RequireOperator></RequireAuth>} path="/ops/tools/outreach" />
+      <Route element={<RequireAuth><RequireOperator><OpsInboxPage /></RequireOperator></RequireAuth>} path="/ops/tools/inbox" />
+      <Route element={<RequireAuth><RequireOperator><OpsAuditPage /></RequireOperator></RequireAuth>} path="/ops/tools/audit" />
       <Route element={<RequireAuth><RequireOperator><OpsSignalsPage /></RequireOperator></RequireAuth>} path="/ops/signals" />
       <Route element={<RequireAuth><RequireOperator><OpsSourcesPage /></RequireOperator></RequireAuth>} path="/ops/sources" />
       <Route element={<RequireAuth><RequireOperator><OpsOutreachPage /></RequireOperator></RequireAuth>} path="/ops/outreach" />
@@ -118,7 +130,7 @@ function AppRoutes() {
 export function AppRouter() {
   return (
     <BrowserRouter>
-      <AppRoutes />
+      <RouteErrorBoundary><AppRoutes /></RouteErrorBoundary>
     </BrowserRouter>
   );
 }

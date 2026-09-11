@@ -1,11 +1,13 @@
 import { ConvexError, v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, query, type MutationCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { requireUserId } from "./integrations/authz";
 import { savedNeedLocationLabel, savedNeedLocationQuery } from "./lib/savedNeedLocation";
 
 const preferenceValidator = v.union(
   v.literal("include"), v.literal("prefer"), v.literal("neutral"), v.literal("exclude"),
 );
+const portalPreferenceValidator = v.union(v.literal("include"), v.literal("exclude"));
 const sourceItemValidator = v.object({
   platformId: v.id("sourcePlatforms"),
   name: v.string(),
@@ -83,17 +85,126 @@ export const setPreference = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const ownerId = await requireUserId(ctx);
-    const [need, platform] = await Promise.all([ctx.db.get(args.savedNeedId), ctx.db.get(args.platformId)]);
-    if (need === null || need.ownerId !== ownerId) throw new ConvexError({ code: "NEED_NOT_FOUND" });
-    if (platform === null || platform.status === "restricted") throw new ConvexError({ code: "PLATFORM_NOT_AVAILABLE" });
-    const existing = await ctx.db.query("searchSourcePreferences").withIndex("by_saved_need_and_platform", (q) => q.eq("savedNeedId", need._id).eq("platformId", platform._id)).unique();
-    const now = Date.now();
-    if (existing !== null) {
-      if (existing.ownerId !== ownerId) throw new ConvexError({ code: "FORBIDDEN" });
-      await ctx.db.patch(existing._id, { preference: args.preference, reason: args.reason?.trim().slice(0, 300), updatedAt: now });
-    } else {
-      await ctx.db.insert("searchSourcePreferences", { ownerId, savedNeedId: need._id, platformId: platform._id, preference: args.preference, reason: args.reason?.trim().slice(0, 300), createdAt: now, updatedAt: now });
+    await setPlatformPreference(ctx, { ...args, ownerId });
+    return null;
+  },
+});
+
+async function setPlatformPreference(
+  ctx: MutationCtx,
+  args: {
+    ownerId: Id<"users">;
+    savedNeedId: Id<"savedNeeds">;
+    platformId: Id<"sourcePlatforms">;
+    preference: "include" | "prefer" | "neutral" | "exclude";
+    reason?: string;
+  },
+) {
+  const [need, platform] = await Promise.all([
+    ctx.db.get(args.savedNeedId),
+    ctx.db.get(args.platformId),
+  ]);
+  if (need === null || need.ownerId !== args.ownerId) {
+    throw new ConvexError({ code: "NEED_NOT_FOUND" });
+  }
+  if (platform === null || platform.status === "restricted") {
+    throw new ConvexError({ code: "PLATFORM_NOT_AVAILABLE" });
+  }
+  const existing = await ctx.db
+    .query("searchSourcePreferences")
+    .withIndex("by_saved_need_and_platform", (q) =>
+      q.eq("savedNeedId", need._id).eq("platformId", platform._id),
+    )
+    .unique();
+  const now = Date.now();
+  if (existing !== null) {
+    if (existing.ownerId !== args.ownerId) throw new ConvexError({ code: "FORBIDDEN" });
+    await ctx.db.patch(existing._id, {
+      preference: args.preference,
+      reason: args.reason?.trim().slice(0, 300),
+      updatedAt: now,
+    });
+  } else {
+    await ctx.db.insert("searchSourcePreferences", {
+      ownerId: args.ownerId,
+      savedNeedId: need._id,
+      platformId: platform._id,
+      preference: args.preference,
+      reason: args.reason?.trim().slice(0, 300),
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+}
+
+export const getPortalPreferences = query({
+  args: { savedNeedId: v.id("savedNeeds") },
+  returns: v.array(v.object({
+    sourceId: v.id("sources"),
+    preference: portalPreferenceValidator,
+  })),
+  handler: async (ctx, args) => {
+    const ownerId = await requireUserId(ctx);
+    const need = await ctx.db.get(args.savedNeedId);
+    if (need === null || need.ownerId !== ownerId) {
+      throw new ConvexError({ code: "NEED_NOT_FOUND" });
     }
+    const connections = await ctx.db
+      .query("portalConnections")
+      .withIndex("by_owner", (q) => q.eq("ownerId", ownerId))
+      .take(100);
+    const result: Array<{ sourceId: Id<"sources">; preference: "include" | "exclude" }> = [];
+    const seen = new Set<string>();
+    for (const connection of connections) {
+      if (seen.has(String(connection.sourceId))) continue;
+      const source = await ctx.db.get(connection.sourceId);
+      const platformId = connection.platformId ?? source?.platformId;
+      if (!platformId || (connection.platformId && source?.platformId && connection.platformId !== source.platformId)) continue;
+      const platform = await ctx.db.get(platformId);
+      if (platform === null) continue;
+      const stored = await ctx.db
+        .query("searchSourcePreferences")
+        .withIndex("by_saved_need_and_platform", (q) =>
+          q.eq("savedNeedId", need._id).eq("platformId", platformId),
+        )
+        .unique();
+      seen.add(String(connection.sourceId));
+      result.push({
+        sourceId: connection.sourceId,
+        preference: platform.status === "restricted" || stored?.preference === "exclude" ? "exclude" : "include",
+      });
+    }
+    return result;
+  },
+});
+
+export const setPortalPreference = mutation({
+  args: {
+    savedNeedId: v.id("savedNeeds"),
+    sourceId: v.id("sources"),
+    preference: portalPreferenceValidator,
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const ownerId = await requireUserId(ctx);
+    const connection = await ctx.db
+      .query("portalConnections")
+      .withIndex("by_owner_and_source", (q) =>
+        q.eq("ownerId", ownerId).eq("sourceId", args.sourceId),
+      )
+      .unique();
+    if (connection === null) throw new ConvexError({ code: "PORTAL_NOT_FOUND" });
+    const source = await ctx.db.get(connection.sourceId);
+    const platformId = connection.platformId ?? source?.platformId;
+    if (!platformId || (connection.platformId && source?.platformId && connection.platformId !== source.platformId)) {
+      throw new ConvexError({ code: "PLATFORM_NOT_AVAILABLE" });
+    }
+    await setPlatformPreference(ctx, {
+      ownerId,
+      savedNeedId: args.savedNeedId,
+      platformId,
+      preference: args.preference,
+    });
     return null;
   },
 });

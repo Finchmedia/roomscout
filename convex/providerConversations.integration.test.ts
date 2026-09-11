@@ -76,6 +76,10 @@ describe("provider conversation and offer lifecycle", () => {
     expect(await f.t.mutation(internal.providerConversations.recordAssessment, f.recordArgs)).toBe(offerId);
     const duringTurn = await f.t.withIdentity({ subject: f.ownerId }).query(api.providerConversations.listMine, {});
     expect(duringTurn[0]?.offer).toMatchObject({ offerId, current: false, ready: false });
+    expect(duringTurn[0]?.assessmentFromProviderReply).toBe(true);
+    await f.t.run((ctx) => ctx.db.patch(f.eventId, { kind: "opportunity" }));
+    expect((await f.t.withIdentity({ subject: f.ownerId }).query(api.providerConversations.listMine, {}))[0]?.assessmentFromProviderReply).toBe(false);
+    await f.t.run((ctx) => ctx.db.patch(f.eventId, { kind: "mail_reply" }));
     await f.t.mutation(internal.providerConversations.turnCompleted, {
       workId: "test-work" as never, context: { eventId: f.eventId }, result: { kind: "success", returnValue: null },
     });

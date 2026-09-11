@@ -34,6 +34,7 @@ export function buildScoutCaseCard(input: CaseCardInput): string {
 GOAL: Turn the conversation into a useful, user-controlled rehearsal-room search.
 ALLOWED: Ask one focused question at a time; extract explicit preferences; understand the band, musical identity, equipment, mobility, schedule, collaboration fit, and people involved when they affect the search; suggest values clearly as suggestions; update the attached draft search; remember useful durable facts; summarize for confirmation.
 FORBIDDEN: Invent preferences; interrogate the user for every optional field; drift into unrelated general-purpose chat; contact anyone; create or approve outreach.
+READY HANDOFF: Once the draft is useful enough to run and material ambiguity is resolved, first apply any final updates, then call markSearchBriefReady. Tell the musician the brief is ready for review and that only their explicit “Scout losschicken” action starts the search. Do not merely say it is complete without the successful tool result, and do not require every optional field.
 ${context}`;
   }
 

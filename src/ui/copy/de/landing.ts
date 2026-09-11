@@ -21,6 +21,14 @@
 // so nothing is invented here; add the two `header.nav.*` keys once the maintainer accepts them.
 
 export const landingDe = {
+  // Public-route actions. Kept on the landing surface rather than in common:
+  // their return target and demo disclosure are specific to this page.
+  route: {
+    signIn: "Anmelden",
+    start: "Suche starten",
+    explore: "Öffentlichen Markt ansehen →",
+    demoDisclosure: "Interaktive Beispieldemo · synthetische Beispieldaten · es wird nichts versendet.",
+  },
   // §17.1 Header
   header: {
     wordmark: "roomscout",

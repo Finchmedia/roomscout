@@ -15,6 +15,8 @@
  * sections — see the surface's open questions.
  */
 
+import type * as React from "react"
+
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useCopy } from "@/ui/copy"
@@ -22,7 +24,12 @@ import { useCopy } from "@/ui/copy"
 import { DEMO_HREF, HERO_PREVIEW_SRC, SECTION_IDS } from "./demoData"
 import { useInView, useReducedMotion } from "./useLandingScroll"
 
-export function Hero() {
+interface HeroProps {
+  demoHref?: string
+  demoDisclosure?: React.ReactNode
+}
+
+export function Hero({ demoHref = DEMO_HREF, demoDisclosure }: HeroProps) {
   const { t } = useCopy()
   const reducedMotion = useReducedMotion()
   const { ref: tiltRef, inView: untilted } = useInView<HTMLDivElement>({
@@ -48,8 +55,8 @@ export function Hero() {
       </p>
 
       <div className="mt-[34px] flex flex-wrap items-center justify-center gap-[26px]">
-        <Button asChild size="lg" className="text-[17px]">
-          <a href={DEMO_HREF}>{t("landing.hero.cta.primary")}</a>
+        <Button asChild size="lg" className="text-[17px] text-rs-white! hover:text-rs-white!">
+          <a href={demoHref}>{t("landing.hero.cta.primary")}</a>
         </Button>
         <a
           href={`#${SECTION_IDS.how}`}
@@ -60,7 +67,7 @@ export function Hero() {
         </a>
       </div>
 
-      <div className="mt-5 text-[13.5px] text-rs-ink-6">{t("landing.hero.disclaimer")}</div>
+      <div className="mt-5 text-[13.5px] text-rs-ink-6">{demoDisclosure ?? t("landing.hero.disclaimer")}</div>
 
       <div className="mt-11 w-[min(1120px,100%)] [perspective:1600px] [perspective-origin:50%_0%]">
         <div
@@ -91,3 +98,5 @@ export function Hero() {
     </section>
   )
 }
+
+export type { HeroProps }
