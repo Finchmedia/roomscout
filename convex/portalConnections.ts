@@ -1094,15 +1094,22 @@ export const finishRun = internalMutation({
     const contextReady = args.contextReady === true && contextMatchesRun &&
       (runProvider === "browserbase" ||
         firecrawlProbeVerified);
+    const firecrawlAuthenticationMissingProof = runProvider === "firecrawl" && run.kind === "authenticate" &&
+      args.status === "completed" && !contextReady;
+    const terminalStatus = firecrawlAuthenticationMissingProof ? "failed" as const : args.status;
+    const terminalErrorCode = firecrawlAuthenticationMissingProof
+      ? "CONTEXT_PROFILE_NOT_READY"
+      : args.errorCode?.slice(0, 100);
+    const reauthRequired = args.reauthRequired === true || firecrawlAuthenticationMissingProof;
     await ctx.db.patch(run._id, {
-      status: args.status,
+      status: terminalStatus,
       resultCount: args.resultCount,
-      errorCode: args.errorCode?.slice(0, 100),
+      errorCode: terminalErrorCode,
       endedAt: now,
       onboardingStage:
         run.onboardingStage === undefined
           ? undefined
-          : args.status === "completed"
+          : terminalStatus === "completed"
             ? "completed"
             : "failed",
       updatedAt: now,
@@ -1110,15 +1117,15 @@ export const finishRun = internalMutation({
     await ctx.db.insert("browserRunEvents", {
       runId: run._id,
       ownerId: run.ownerId,
-      kind: args.status === "completed" ? "completed" : args.status === "stopped" ? "stopped" : "failed",
-      message: args.errorCode?.slice(0, 100),
+      kind: terminalStatus === "completed" ? "completed" : terminalStatus === "stopped" ? "stopped" : "failed",
+      message: terminalErrorCode,
       createdAt: now,
     });
     if (context && contextMatchesRun) {
       await ctx.db.patch(context._id, {
         status: contextReady
           ? "ready"
-          : args.reauthRequired
+          : reauthRequired
             ? "reauth_required"
             : "ready",
         activeRunId: undefined,
@@ -1127,7 +1134,7 @@ export const finishRun = internalMutation({
       });
     }
     if (connection !== null) {
-      const failureCount = args.status === "failed" ? connection.failureCount + 1 : 0;
+      const failureCount = terminalStatus === "failed" ? connection.failureCount + 1 : 0;
       const failureBackoffMs = Math.min(
         connection.pollIntervalMinutes * 60_000,
         5 * 60_000 * 2 ** Math.min(Math.max(failureCount - 1, 0), 4),
@@ -1136,23 +1143,23 @@ export const finishRun = internalMutation({
         status:
           contextReady
             ? "active"
-            : args.reauthRequired
+            : reauthRequired
               ? "reauth_required"
               : connection.status,
         failureCount,
         circuitOpenUntil: undefined,
-        lastSuccessAt: args.status === "completed" ? now : connection.lastSuccessAt,
-        lastErrorCode: args.status === "failed" ? args.errorCode?.slice(0, 100) : undefined,
+        lastSuccessAt: terminalStatus === "completed" ? now : connection.lastSuccessAt,
+        lastErrorCode: terminalStatus === "failed" ? terminalErrorCode : undefined,
         nextPollAt:
-          args.status === "completed" && connection.allowInboxPolling
+          terminalStatus === "completed" && connection.allowInboxPolling
             ? now + connection.pollIntervalMinutes * 60_000
-            : args.status === "failed" && connection.allowInboxPolling && !args.reauthRequired
+            : terminalStatus === "failed" && connection.allowInboxPolling && !reauthRequired
               ? now + failureBackoffMs
               : undefined,
         updatedAt: now,
       });
     }
-    if (args.status === "completed" && contextReady) {
+    if (terminalStatus === "completed" && contextReady) {
       await ctx.scheduler.runAfter(0, internal.mandateOrchestrator.runForOwner, {
         ownerId: run.ownerId,
       });

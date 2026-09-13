@@ -78,7 +78,11 @@ it("requires a successful new-session Firecrawl probe before finishRun activates
     browserEngine: "firecrawl", humanRequired: false,
   });
   await t.mutation(internal.portalConnections.finishRun, { runId, status: "completed", contextReady: true });
-  expect(await t.run((ctx) => ctx.db.get(connectionId))).toMatchObject({ status: "needs_auth" });
+  expect(await t.run((ctx) => ctx.db.get(runId))).toMatchObject({ status: "failed", errorCode: "CONTEXT_PROFILE_NOT_READY" });
+  const unprovedContext = await t.run((ctx) => ctx.db.get(attached.contextId!));
+  expect(unprovedContext).toMatchObject({ status: "reauth_required" });
+  expect(unprovedContext).not.toHaveProperty("lastVerifiedAt");
+  expect(await t.run((ctx) => ctx.db.get(connectionId))).toMatchObject({ status: "reauth_required", lastErrorCode: "CONTEXT_PROFILE_NOT_READY" });
 
   const secondRunId = await t.mutation(internal.portalConnections.reserveRun, {
     ownerId, connectionId, kind: "authenticate", browserProvider: "firecrawl",
@@ -93,6 +97,23 @@ it("requires a successful new-session Firecrawl probe before finishRun activates
   });
   await t.mutation(internal.portalConnections.finishRun, { runId: secondRunId, status: "completed", contextReady: true });
   expect(await t.run((ctx) => ctx.db.get(connectionId))).toMatchObject({ status: "active" });
+});
+
+it("does not apply the missing-auth-proof failure rule to Firecrawl recon runs", async () => {
+  vi.stubEnv("PORTAL_BROWSER_ENGINE", "firecrawl");
+  const { t, ownerId, connectionId } = await fixture("firecrawl");
+  const { contextId, runId } = await t.run(async (ctx) => {
+    const now = Date.now();
+    const contextId = await ctx.db.insert("browserContexts", { connectionId, ownerId, providerContextId: "ready-profile", browserProvider: "firecrawl", status: "ready", lastVerifiedAt: now - 10_000, createdAt: now - 20_000, updatedAt: now });
+    const runId = await ctx.db.insert("browserRuns", { connectionId, ownerId, contextId, browserProvider: "firecrawl", browserEngine: "firecrawl", kind: "recon", status: "running", startedAt: now, expiresAt: now + 60_000, createdAt: now, updatedAt: now });
+    await ctx.db.patch(contextId, { activeRunId: runId });
+    return { contextId, runId };
+  });
+  await t.mutation(internal.portalConnections.finishRun, { runId, status: "completed", resultCount: 2 });
+  expect(await t.run((ctx) => ctx.db.get(runId))).toMatchObject({ status: "completed", resultCount: 2 });
+  const context = await t.run((ctx) => ctx.db.get(contextId));
+  expect(context).toMatchObject({ status: "ready" });
+  expect(context).not.toHaveProperty("activeRunId");
 });
 
 it("rejects stale-provider business continuations while allowing recorded-provider cleanup", async () => {

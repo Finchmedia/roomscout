@@ -1313,3 +1313,21 @@ were unchanged. The separate roomscout.dev portal, listings, external inboxes an
 remote authentication profiles were untouched. Use a fresh band identity for the
 manual test. No registration, provider message or binding acceptance was sent by
 this release procedure; live end-to-end acceptance remains unproved.
+
+### 2026-09-13 — Fix inconsistent portal runtime and authentication status
+
+The first manual test revealed that the imported generated environment object
+could be stale in Node actions. The registration action defaulted to Browserbase
+while V8 reservations labelled its run and context Firecrawl. Stagehand component
+execution logs confirmed the actual provider; Clerk verification alone did not
+prove a reusable Firecrawl profile.
+
+Provider selection now reads the current runtime environment. Browserbase callers
+explicitly pin reservations and attachments, rejecting disagreement before browser
+allocation. Firecrawl authentication cannot complete without same-run fresh-session
+proof. Completed-but-unverified UI offers the existing profile inspection/recovery,
+not signup, and returns to `/app/settings/sources`. Existing accounts are preserved.
+Three Sol agents implemented the runtime, state and UI slices. The final full suite
+passes 843 tests with one skipped; build and app/backend lint pass. The new internal
+sanitized Node probe confirms Firecrawl on dev. Live profile recovery and release
+checks follow; no new signup or external message has been sent by this fix.

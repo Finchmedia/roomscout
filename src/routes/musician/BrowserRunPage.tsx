@@ -29,6 +29,9 @@ export function BrowserRunPage() {
   const providerMismatch = Boolean(storedRun && connection &&
     (storedRun.browserProvider !== connection.browserProvider || connection.providerMismatch || connection.providerConfigurationError));
   const canOperateRun = Boolean(storedRun && !providerMismatch);
+  const firecrawlRecoveryRequired = Boolean(storedRun && connection &&
+    storedRun.browserProvider === "firecrawl" && storedRun.kind === "authenticate" &&
+    storedRun.status === "completed" && (connection.status !== "active" || connection.contextStatus !== "ready"));
 
   const run: BrowserRun | null = storedRun && connection ? {
     id: storedRun._id,
@@ -36,18 +39,18 @@ export function BrowserRunPage() {
     sourceDomain: (() => { try { return new URL(connection.baseUrl).hostname; } catch { return undefined; } })(),
     searchTitle: storedRun.kind === "authenticate" ? storedRun.onboardingStage ? "Scout-assisted portal registration" : "Connect portal account" : storedRun.kind === "inbox_sync" ? "Sync portal inbox" : "Review portal source",
     mandateLabel: "Policy-reviewed portal run",
-    state: liveView && storedRun.status === "human_required" ? "human_controlling" : storedRun.status === "running" ? "agent_running" : storedRun.status === "expired" ? "failed" : storedRun.status,
+    state: firecrawlRecoveryRequired ? "approval_required" : liveView && storedRun.status === "human_required" ? "human_controlling" : storedRun.status === "running" ? "agent_running" : storedRun.status === "expired" ? "failed" : storedRun.status,
     liveViewUrl: liveView?.url,
     humanPrompt: storedRun.status === "human_required" ? "The controlled automation stopped before an ambiguous or human-only step. Open Live View to review it; RoomScout will not accept terms, solve CAPTCHA, or guess a code." : undefined,
     steps: storedRun.onboardingStage ? [
       { id: "reserved", label: `Open isolated ${storedRun.browserProvider === "firecrawl" ? "Firecrawl profile" : "Browserbase Context"}`, state: storedRun.status === "queued" ? "active" : "done" },
       { id: "signup", label: "Register with personal AgentMail address", state: storedRun.onboardingStage === "opening_signup" ? "active" : "done" },
       { id: "mail", label: "Receive and parse Clerk verification mail", state: storedRun.onboardingStage === "waiting_verification" ? "active" : storedRun.onboardingStage === "opening_signup" ? "pending" : storedRun.status === "failed" ? "blocked" : "done" },
-      { id: "verify", label: "Verify authentication in a new profile session", state: storedRun.onboardingStage === "submitting_verification" ? "active" : storedRun.status === "completed" ? "done" : storedRun.status === "human_required" || storedRun.status === "failed" ? "blocked" : "pending" },
+      { id: "verify", label: "Verify authentication in a new profile session", state: firecrawlRecoveryRequired ? "active" : storedRun.onboardingStage === "submitting_verification" ? "active" : storedRun.status === "completed" ? "done" : storedRun.status === "human_required" || storedRun.status === "failed" ? "blocked" : "pending" },
     ] : [
       { id: "reserved", label: "Session reserved", state: storedRun.status === "queued" ? "active" : "done" },
       { id: "human", label: "Human authentication", state: storedRun.status === "human_required" ? "active" : storedRun.status === "completed" ? "done" : "pending" },
-      { id: "persist", label: `Verify persistent ${storedRun.browserProvider === "firecrawl" ? "Firecrawl profile" : "Browserbase Context"}`, state: storedRun.status === "completed" ? "done" : storedRun.status === "failed" ? "blocked" : "pending" },
+      { id: "persist", label: `Verify persistent ${storedRun.browserProvider === "firecrawl" ? "Firecrawl profile" : "Browserbase Context"}`, state: firecrawlRecoveryRequired ? "active" : storedRun.status === "completed" ? "done" : storedRun.status === "failed" ? "blocked" : "pending" },
     ],
   } : null;
 
@@ -87,7 +90,7 @@ export function BrowserRunPage() {
       setSignedInConfirmed(false);
       setLiveView(undefined);
       if (next.runId) navigate(`/app/runs/${next.runId}`, { replace: true });
-      else if ("status" in next && next.status === "completed") navigate("/app/profile?tab=connections", { replace: true });
+      else if ("status" in next && next.status === "completed") navigate("/app/settings/sources", { replace: true });
       else setError(next.status === "auth_needed"
         ? "This saved Firecrawl profile needs a manual sign-in, which is not supported here. Review or reconnect the portal account."
         : "The saved Firecrawl profile needs review before automation can continue.");
@@ -131,10 +134,11 @@ export function BrowserRunPage() {
           onStop={working || !canOperateRun || !storedRun || !["queued", "running", "human_required"].includes(storedRun.status) ? undefined : stop}
           onTakeControl={working || !storedRun?.canResume || !canOperateRun ? undefined : takeControl}
           providerMismatch={providerMismatch}
+          recoveryRequired={firecrawlRecoveryRequired}
           run={run}
         />
         <p className="mono">Requested run: {runId ?? "none"}</p>
-        <Link className="btn btn-s" to="/app/profile?tab=connections">Back to connections</Link>
+        <Link className="btn btn-s" to="/app/settings/sources">Back to connections</Link>
       </div>
     </WorkspaceShell>
   );

@@ -28,7 +28,7 @@ read-only. No production rollout or external messages in this verification.
 - **Auth:** Convex Auth
 - **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-realtime-2.1`
 - **Started:** 2026-08-26T13:55:26Z
-- **Last updated:** 2026-09-13T20:43:16Z
+- **Last updated:** 2026-09-13T21:13:00Z
 
 ## Log
 
@@ -296,3 +296,14 @@ app and component data, including authentication, chat and queues; post-reset
 exports show 132 non-hosting tables empty in each environment. The separate
 controlled portal and external provider accounts were not changed. Live
 registration and message round-trip acceptance remain for the manual test.
+
+### 2026-09-13 — working tree: portal runtime selection correction
+
+The manual test exposed a stale Node environment reference: Browserbase ran
+while the database labelled the registration Firecrawl. Read the selector at
+invocation time and explicitly pin Browserbase reservations and attachments.
+Authentication completion now requires fresh profile proof; unverified runs offer
+profile recovery and return to current settings. All 843 tests pass, with one
+skipped; build and app/backend lint pass. Dev runtime selection confirms Firecrawl.
+Existing provider sessions are not transferable; this is not a live Firecrawl
+registration or message round-trip proof.

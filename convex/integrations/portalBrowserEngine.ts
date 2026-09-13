@@ -1,5 +1,4 @@
 import { ConvexError, v } from "convex/values";
-import { env } from "../_generated/server";
 import { envValue } from "./env";
 
 export type PortalBrowserProvider = "firecrawl" | "browserbase";
@@ -11,8 +10,9 @@ export const portalBrowserProviderValidator = v.union(
 
 type ReadEnv = (name: string) => string | undefined;
 
-const defaultReadEnv: ReadEnv = (name) =>
-  name === "PORTAL_BROWSER_ENGINE" ? env.PORTAL_BROWSER_ENGINE : envValue(name);
+// Convex may replace the Node runtime's process.env object between invocations.
+// Read dynamically instead of retaining the generated module's original object.
+const defaultReadEnv: ReadEnv = (name) => envValue(name);
 
 export function resolvePortalBrowserProvider(
   readEnv: ReadEnv = defaultReadEnv,

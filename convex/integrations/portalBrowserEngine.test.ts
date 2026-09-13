@@ -29,4 +29,16 @@ describe("portal browser provider selection", () => {
     expect(requirePortalBrowserProviderConfiguration("firecrawl", reader({ FIRECRAWL_API_KEY: "key" })))
       .toBe("firecrawl");
   });
+
+  it("reads the current Node environment after its object is replaced", () => {
+    const original = process.env;
+    const current = resolvePortalBrowserProvider();
+    const replacement = current === "firecrawl" ? "browserbase" : "firecrawl";
+    try {
+      process.env = { ...original, PORTAL_BROWSER_ENGINE: replacement };
+      expect(resolvePortalBrowserProvider()).toBe(replacement);
+    } finally {
+      process.env = original;
+    }
+  });
 });

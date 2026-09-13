@@ -10,9 +10,10 @@ type BrowserRunWorkspaceProps = {
   onRetry?: () => void;
   browserProvider?: "firecrawl" | "browserbase";
   providerMismatch?: boolean;
+  recoveryRequired?: boolean;
 };
 
-export function BrowserRunWorkspace({ run, onTakeControl, onReturnControl, onStop, onRetry, browserProvider = "browserbase", providerMismatch = false }: BrowserRunWorkspaceProps) {
+export function BrowserRunWorkspace({ run, onTakeControl, onReturnControl, onStop, onRetry, browserProvider = "browserbase", providerMismatch = false, recoveryRequired = false }: BrowserRunWorkspaceProps) {
   if (!run) {
     return <EmptyState body="No authorized browser session was found. RoomScout does not create a fake Live View when no provider session exists." title="Browser run unavailable" />;
   }
@@ -37,14 +38,19 @@ export function BrowserRunWorkspace({ run, onTakeControl, onReturnControl, onSto
         <section className="rs-live-view">
           {run.liveViewUrl ? (
             <iframe allow="clipboard-read; clipboard-write" referrerPolicy="no-referrer" src={run.liveViewUrl} title={`Live browser session for ${run.sourceName}`} />
-          ) : <EmptyState body="The run exists, but no provider Live View URL is available. The Scout remains unable to claim browser progress visually." title="Live View not connected" />}
+          ) : <EmptyState
+            body={browserProvider === "firecrawl" && ["completed", "approval_required", "stopped", "failed"].includes(run.state)
+              ? "Firecrawl Live View is available only while its interactive browser session is active. This terminal run has no session to display."
+              : "The run exists, but no provider Live View URL is available. The Scout remains unable to claim browser progress visually."}
+            title={browserProvider === "firecrawl" && ["completed", "approval_required", "stopped", "failed"].includes(run.state) ? "Firecrawl session closed" : "Live View not connected"}
+          />}
         </section>
         <LedgerCard className="rs-run-rail" header={<span className="type">Run plan</span>}>
           <ol>{run.steps.map((step) => <li className={`rs-run-step rs-run-step--${step.state}`} key={step.id}><span />{step.label}</li>)}</ol>
           <div className="rs-run-controls">
             {needsHuman && onTakeControl ? <button className="btn btn-p" onClick={onTakeControl} type="button"><Hand aria-hidden="true" size={14} />Take control</button> : null}
             {humanControlling ? <button className="btn btn-p" disabled={!onReturnControl} onClick={onReturnControl} type="button"><Play aria-hidden="true" size={14} />Return control to Scout</button> : null}
-            {(failed || (needsHuman && !onTakeControl)) ? <button className="btn btn-s" disabled={!onRetry} onClick={onRetry} type="button"><RotateCcw aria-hidden="true" size={14} />{needsHuman ? "Open a new session" : "Retry safely"}</button> : null}
+            {(failed || recoveryRequired || (needsHuman && !onTakeControl)) ? <button className="btn btn-s" disabled={!onRetry} onClick={onRetry} type="button"><RotateCcw aria-hidden="true" size={14} />{recoveryRequired ? "Verify saved profile" : needsHuman ? "Open a new session" : "Retry safely"}</button> : null}
           </div>
           <p className="hint">Returning control is explicit. The Scout may not resume merely because the browser becomes idle.</p>
         </LedgerCard>

@@ -251,6 +251,50 @@ describe("exclusive controlled-portal provider isolation", () => {
     expect(events).toEqual(["registration-open", "registration-stop", "proof-open"]);
   });
 
+  it("dispatches the exported compatibility registration entrypoint through Firecrawl proof", async () => {
+    vi.stubEnv("PORTAL_BROWSER_ENGINE", "firecrawl");
+    const fixture = await portalFixture("firecrawl");
+    await fixture.t.run((ctx) => ctx.db.patch(fixture.connectionId, { status: "needs_auth" }));
+    const registrationSession = {
+      scrapeId: "registration-exported", profileName: "profile", openedAt: 1, primitives: {},
+      stop: vi.fn(async () => undefined), liveView: vi.fn(), runProgram: vi.fn(),
+    };
+    const proofSession = {
+      scrapeId: "proof-exported", profileName: "profile", openedAt: 2, primitives: {},
+      stop: vi.fn(async () => undefined), liveView: vi.fn(), runProgram: vi.fn(),
+    };
+    providerSpies.firecrawlCreateSession.mockResolvedValueOnce(registrationSession).mockResolvedValueOnce(proofSession);
+    providerSpies.register.mockResolvedValueOnce({ outcome: "authenticated" });
+    providerSpies.verify.mockResolvedValueOnce(true);
+
+    await expect(fixture.owner.action(api.browserbasePortal.startAgentRegistration, { connectionId: fixture.connectionId }))
+      .resolves.toMatchObject({ status: "completed" });
+    expect(providerSpies.firecrawlCreateSession).toHaveBeenCalledTimes(2);
+    expect(providerSpies.browserbaseLaunch).not.toHaveBeenCalled();
+    const { connection, context } = await fixture.t.run(async (ctx) => {
+      const [connection, context] = await Promise.all([
+        ctx.db.get(fixture.connectionId),
+        ctx.db.query("browserContexts").withIndex("by_connection", (q) => q.eq("connectionId", fixture.connectionId)).unique(),
+      ]);
+      return { connection, context };
+    });
+    expect(connection).toMatchObject({ status: "active" });
+    expect(context).toMatchObject({ status: "ready", probeAttempts: 1 });
+    expect(context?.lastVerifiedAt).toEqual(expect.any(Number));
+  });
+
+  it("rejects a Browserbase producer attaching to a Firecrawl-stamped run", async () => {
+    vi.stubEnv("PORTAL_BROWSER_ENGINE", "firecrawl");
+    const fixture = await portalFixture("firecrawl");
+    const runId = await fixture.t.mutation(internal.portalConnections.reserveRun, {
+      ownerId: fixture.ownerId, connectionId: fixture.connectionId, kind: "authenticate", browserProvider: "firecrawl",
+    });
+    await expect(fixture.t.mutation(internal.portalConnections.attachProviderRun, {
+      ownerId: fixture.ownerId, runId, providerSessionId: "browserbase-session",
+      providerContextId: "browserbase-context", browserProvider: "browserbase", humanRequired: false,
+    })).rejects.toThrow("PORTAL_BROWSER_PROVIDER_MISMATCH");
+  });
+
   it("keeps a confirmed send succeeded but blocks the profile when the writable profile cannot be safely stopped", async () => {
     vi.stubEnv("PORTAL_BROWSER_ENGINE", "firecrawl");
     const fixture = await portalFixture("firecrawl");

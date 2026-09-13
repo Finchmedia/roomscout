@@ -55,6 +55,21 @@ import { scheduleProviderCleanup } from "./portalBrowserCleanup";
 
 const reconItemValidator = v.object({ title: v.string(), url: v.string() });
 
+/** Sanitized Node-runtime selector probe for post-deploy V8/Node consistency checks. */
+export const getRuntimeProviderConfiguration = internalAction({
+  args: {},
+  returns: v.object({
+    browserProvider: v.union(v.literal("firecrawl"), v.literal("browserbase")),
+    firecrawlConfigured: v.boolean(),
+    browserbaseConfigured: v.boolean(),
+  }),
+  handler: async () => ({
+    browserProvider: resolvePortalBrowserProvider(),
+    firecrawlConfigured: Boolean(envValue("FIRECRAWL_API_KEY")?.trim()),
+    browserbaseConfigured: Boolean(envValue("BROWSERBASE_API_KEY")?.trim()),
+  }),
+});
+
 type WorkerConnection = {
   connectionId: Id<"portalConnections">;
   sourceId: Id<"sources">;
@@ -503,6 +518,7 @@ async function reserveRun(
     ownerId,
     connectionId,
     kind,
+    browserProvider: "browserbase",
   });
 }
 
@@ -819,6 +835,7 @@ export const runRecon = action({
         ownerId,
         providerSessionId: browser.sessionId,
         providerContextId: connection.providerContextId,
+        browserProvider: "browserbase",
         humanRequired: false,
       });
       const pages = await browser.context.pages();
@@ -907,6 +924,7 @@ export const startAuthentication = action({
         ownerId,
         providerSessionId,
         providerContextId,
+        browserProvider: "browserbase",
         humanRequired: true,
       });
       return { runId, status: "human_required" as const };
@@ -1025,6 +1043,7 @@ export async function startAgentRegistrationForOwner(
           providerSessionId: stagehandSessionId,
           providerContextId,
           browserEngine,
+          browserProvider: "browserbase",
           humanRequired: false,
         });
         startStage = null;
@@ -1146,6 +1165,7 @@ export async function startAgentRegistrationForOwner(
         providerSessionId: browser.sessionId,
         providerContextId,
         browserEngine,
+        browserProvider: "browserbase",
         humanRequired: false,
       });
       startStage = null;
@@ -1971,6 +1991,7 @@ async function syncInboxForOwner(
         providerSessionId: stagehandSessionId,
         providerContextId: connection.providerContextId,
         browserEngine,
+        browserProvider: "browserbase",
         humanRequired: false,
       });
       const threads: SafeInboxThread[] = sanitizeInboxThreads(
@@ -2004,6 +2025,7 @@ async function syncInboxForOwner(
       providerSessionId: browser.sessionId,
       providerContextId: connection.providerContextId,
       browserEngine,
+      browserProvider: "browserbase",
       humanRequired: false,
     });
     const pages = await browser.context.pages();
