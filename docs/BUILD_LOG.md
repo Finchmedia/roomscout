@@ -1331,3 +1331,12 @@ Three Sol agents implemented the runtime, state and UI slices. The final full su
 passes 843 tests with one skipped; build and app/backend lint pass. The new internal
 sanitized Node probe confirms Firecrawl on dev. Live profile recovery and release
 checks follow; no new signup or external message has been sent by this fix.
+The maintainer chose a fresh-band manual test, so recovery of the existing
+account was deliberately skipped and its data remains unchanged.
+
+Released as 255a820 on ui-port. Both backends and environment-specific static
+frontends are deployed. Live Node probes select Firecrawl on dev and production;
+HTTP checks confirm current assets, correct backend URLs and the recovery UI.
+The initial production asset upload failed at the network layer and was cleaned
+up by the hosting tool; a retry published all 23 files successfully. No existing
+account, connection, search, listing or message was modified by the rollout.

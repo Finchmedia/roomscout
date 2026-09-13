@@ -307,3 +307,11 @@ profile recovery and return to current settings. All 843 tests pass, with one
 skipped; build and app/backend lint pass. Dev runtime selection confirms Firecrawl.
 Existing provider sessions are not transferable; this is not a live Firecrawl
 registration or message round-trip proof.
+
+### 2026-09-13 — 255a820 runtime fix rollout
+
+Pushed the fix and deployed functions and frontend to dev and production.
+Both live Node probes select Firecrawl; hosted bundles point to their matching
+backend and contain the recovery UI. Retried a failed production asset upload
+successfully. The maintainer will test with a fresh band; existing accounts and
+data remain unchanged, and no registration or message was sent during rollout.
