@@ -34,7 +34,7 @@ export function ProviderReadinessPanel({
   const providers = readiness
     ? [
         {
-          name: "Firecrawl",
+          name: "Firecrawl discovery & monitors",
           status: readiness.firecrawl.status,
           checks: [
             mark(readiness.firecrawl.apiKeyConfigured, "Key"),
@@ -64,10 +64,15 @@ export function ProviderReadinessPanel({
           reasons: readiness.agentmail.reasons,
         },
         {
-          name: "Browserbase",
-          status: readiness.browserbase.status,
-          checks: [mark(readiness.browserbase.apiKeyConfigured, "Key presence")],
-          reasons: readiness.browserbase.reasons,
+          name: `Portal browser · ${readiness.portalBrowser.selectedProvider}`,
+          status: readiness.portalBrowser.status,
+          checks: [
+            mark(readiness.portalBrowser.selectionExplicit, "Explicit selection"),
+            mark(readiness.portalBrowser.selectedCredentialConfigured, "Selected key"),
+            mark(!readiness.portalBrowser.fallbackEnabled, "Fallback disabled"),
+            mark(readiness.portalBrowser.liveFlowVerified, "Live flow proof"),
+          ],
+          reasons: readiness.portalBrowser.reasons,
         },
         {
           name: "Mapbox server",
@@ -132,6 +137,11 @@ export function ProviderReadinessPanel({
             {readiness.configuredProviders} of {readiness.serverProviderCount} server providers configured.
             The browser Mapbox token is evaluated separately in this deployed frontend.
           </div>
+          <p className="hint">
+            Portal browser selection is deployment-wide and exclusive. Changing it
+            requires draining active work and reconnecting with a provider-specific
+            profile; RoomScout never falls back automatically.
+          </p>
           <div className="rs-provider-readiness__list">
             {providers.map((provider) => (
               <section className="rs-provider-readiness__item" key={provider.name}>
@@ -140,7 +150,7 @@ export function ProviderReadinessPanel({
                   <span className={`pill ${statusTone(provider.status)}`}>{provider.status.replaceAll("_", " ")}</span>
                 </div>
                 <div className="rs-provider-readiness__checks">{provider.checks}</div>
-                {provider.reasons.map((reason) => <p className="hint" key={reason}>{reason}</p>)}
+                {provider.reasons.map((reason: string) => <p className="hint" key={reason}>{reason}</p>)}
               </section>
             ))}
           </div>

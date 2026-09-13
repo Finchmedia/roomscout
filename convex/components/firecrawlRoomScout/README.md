@@ -116,15 +116,17 @@ state. Firecrawl reuses it for later calls with the same ID.
 
 ```ts
 const result = await firecrawl.interact(ctx, scrapeId, {
-  code: `
-    await page.getByLabel("Your email").fill(approvedFrom);
-    await page.getByLabel("Message").fill(approvedBody);
-    return await page.screenshot({ encoding: "base64" });
-  `,
+  code: buildFirecrawlProgram(`
+    await page.getByLabel("Your email").fill(vars.approvedFrom);
+    await page.getByLabel("Message").fill(vars.approvedBody);
+    return { submitted: false };
+  `, { approvedFrom, approvedBody }),
   language: "node",
   timeout: 60,
   mutating: true,
+  allowUnsuccessfulBody: true,
 });
+const structured = parseInteractEnvelope(result);
 ```
 
 Rules enforced at the component boundary:
@@ -135,6 +137,14 @@ Rules enforced at the component boundary:
 - timeout clamped to Firecrawl's documented 1–300 second range;
 - provider IDs are URI-encoded before becoming URL path segments;
 - `mutating: true` disables automatic request replay.
+- `allowUnsuccessfulBody: true` returns HTTP-200 unsuccessful envelopes so
+  application code can evaluate `success`, `exitCode`, and `killed` together.
+
+Node programs should be built with the application-side
+`buildFirecrawlProgram` helper. It JSON-encodes values and wraps code in an
+async IIFE, avoiding persistent-REPL declaration collisions and invalid
+top-level returns. `parseInteractEnvelope` exposes only a conclusively
+successful structured `result`; it maps provider failures to fixed error codes.
 
 `mutating` is deliberately required. RoomScout must set it to true for any
 program which might click, type, submit, purchase, register, log in, or make
@@ -160,3 +170,5 @@ wrappers remain responsible for:
 Native Monitor mutations and mutating Interact calls use zero transport retries
 to avoid duplicate monitor creation, duplicate manual checks, or duplicate form
 submissions. Read-only requests keep the upstream transient retry policy.
+Interactive scrape/session creation through `startInteractiveScrape` also uses
+one attempt because an uncertain response may already have allocated a session.

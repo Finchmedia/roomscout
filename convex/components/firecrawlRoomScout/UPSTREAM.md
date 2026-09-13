@@ -22,7 +22,8 @@ intact:
 - `http.ts` and `signature.ts`: signed webhook route and constant-time HMAC
   verification;
 - `lib.ts` and `validators.ts`: scrape/map/search requests and validators;
-- `api.ts`: official transport, origin label, errors, and retry policy;
+- `api.ts`: official transport and origin label, with RoomScout's sanitized
+  fixed-code error boundary and retry controls;
 - `upstreamClient.ts`: full official application-side client and types;
 - upstream tests for crawl, lib, signature, and setup.
 
@@ -42,6 +43,13 @@ The only shared transport changes in `api.ts` are:
 1. support for `PATCH`, required by monitor updates;
 2. a per-request `maxRetries` override;
 3. extension mutations can set `maxRetries: 0`.
+4. Interact may opt in to receiving HTTP-200 unsuccessful envelopes, which are
+   stripped of provider diagnostics before crossing the component boundary.
+
+`client.ts` routes interactive scrape/session creation through the existing
+single-attempt scrape action. This intentionally differs from upstream's
+default transient retry behavior because a lost response may still have
+allocated a billable browser session.
 
 The official `origin: "firecrawl-convex"` attribution is unchanged.
 
@@ -61,4 +69,3 @@ mounted during evaluation.
 
 Do not copy provider credentials, browser profiles, session URLs, or application
 approval state into this directory.
-

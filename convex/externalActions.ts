@@ -13,6 +13,12 @@ import { requireUserId } from "./integrations/authz";
 import { isDefaultAutopilotMandate } from "./mandates";
 import { isUserResetTombstoned } from "./devUserReset";
 import {
+  portalBrowserProviderValidator,
+  resolvePortalBrowserProvider,
+  storedPortalBrowserProvider,
+  type PortalBrowserProvider,
+} from "./integrations/portalBrowserEngine";
+import {
   authorizeFromMandate,
   containsBindingCommitment,
   countUniqueAttemptedRequests,
@@ -125,6 +131,7 @@ function actionPublic(
   row: Doc<"actionRequests">,
   executor?: "firecrawl" | "browserbase" | "agentmail" | "direct_api" | "manual",
   execution?: Doc<"actionExecutions"> | null,
+  browserProvider?: PortalBrowserProvider,
 ) {
   return {
     _id: row._id, savedNeedId: row.savedNeedId, mandateId: row.mandateId,
@@ -135,7 +142,9 @@ function actionPublic(
     payload: row.payload, contentVersion: row.contentVersion, contentHash: row.contentHash,
     status: row.status, error: row.error, expiresAt: row.expiresAt,
     executor,
-    execution: execution ? { id: execution._id, status: execution.status, error: execution.error, updatedAt: execution.updatedAt } : undefined,
+    browserProvider,
+    execution: execution ? { id: execution._id, status: execution.status, error: execution.error,
+      browserProvider: execution.browserProvider, updatedAt: execution.updatedAt } : undefined,
     createdAt: row.createdAt, updatedAt: row.updatedAt,
   };
 }
@@ -150,7 +159,8 @@ const publicValidator = v.object({
   contentVersion: v.number(), contentHash: v.string(), status: statusValidator,
   error: v.optional(v.string()), expiresAt: v.optional(v.number()), createdAt: v.number(), updatedAt: v.number(),
   executor: v.optional(v.union(v.literal("firecrawl"), v.literal("browserbase"), v.literal("agentmail"), v.literal("direct_api"), v.literal("manual"))),
-  execution: v.optional(v.object({ id: v.id("actionExecutions"), status: v.union(v.literal("claimed"), v.literal("running"), v.literal("succeeded"), v.literal("failed"), v.literal("unknown")), error: v.optional(v.string()), updatedAt: v.number() })),
+  browserProvider: v.optional(portalBrowserProviderValidator),
+  execution: v.optional(v.object({ id: v.id("actionExecutions"), status: v.union(v.literal("claimed"), v.literal("running"), v.literal("succeeded"), v.literal("failed"), v.literal("unknown")), error: v.optional(v.string()), browserProvider: v.optional(portalBrowserProviderValidator), updatedAt: v.number() })),
 });
 
 export const listMine = query({
@@ -169,11 +179,15 @@ export const listMine = query({
       ? await ctx.db.query("actionRequests").withIndex("by_owner_and_status_and_updated_at", (q) => q.eq("ownerId", ownerId)).order("desc").take(limit)
       : await ctx.db.query("actionRequests").withIndex("by_owner_and_saved_need_and_updated_at", (q) => q.eq("ownerId", ownerId).eq("savedNeedId", args.savedNeedId)).order("desc").take(limit);
     return await Promise.all(rows.map(async (row) => {
-      const [binding, executions] = await Promise.all([
+      const [binding, executions, connection] = await Promise.all([
         row.adapterBindingId ? ctx.db.get(row.adapterBindingId) : Promise.resolve(null),
         ctx.db.query("actionExecutions").withIndex("by_request", (q) => q.eq("requestId", row._id)).order("desc").take(1),
+        row.connectionId ? ctx.db.get(row.connectionId) : Promise.resolve(null),
       ]);
-      return actionPublic(row, binding?.executor, executions[0]);
+      const browserProvider = binding?.executor === "browserbase"
+        ? storedPortalBrowserProvider(executions[0]?.browserProvider ?? connection?.browserProvider)
+        : undefined;
+      return actionPublic(row, binding?.executor, executions[0], browserProvider);
     }));
   },
 });
@@ -705,6 +719,7 @@ const claimedActionValidator = v.object({
     v.object({ kind: v.literal("manual"), instructionKey: v.string() }),
   ),
   humanPresenceRequired: v.boolean(),
+  browserProvider: v.optional(portalBrowserProviderValidator),
 });
 
 /**
@@ -719,6 +734,10 @@ export const claimForExecutor = internalMutation({
   },
   returns: claimedActionValidator,
   handler: async (ctx, args) => {
+    if (args.executor === "browserbase") {
+      const maintenance = await ctx.db.query("portalBrowserMaintenance").withIndex("by_key", (q) => q.eq("key", "controlled_portal")).unique();
+      if (maintenance?.paused) throw new ConvexError({ code: "PORTAL_BROWSER_MAINTENANCE_PAUSED" });
+    }
     const request = await ctx.db.get(args.requestId);
     if (
       request === null ||
@@ -790,6 +809,10 @@ export const claimForExecutor = internalMutation({
       request.connectionId ? ctx.db.get(request.connectionId) : Promise.resolve(null),
     ]);
     const flow = actionFlow(request.requestedActionType, request.payload);
+    const isPortalExecution = args.executor === "browserbase" && connection !== null;
+    const browserProvider: PortalBrowserProvider | undefined = isPortalExecution
+      ? resolvePortalBrowserProvider()
+      : undefined;
     if (
       approval === null ||
       approval.ownerId !== args.ownerId ||
@@ -824,6 +847,33 @@ export const claimForExecutor = internalMutation({
       (connection === null || connection.ownerId !== args.ownerId || connection.status !== "active" || connection.policyDecision !== "allowed")
     ) {
       throw new ConvexError({ code: "PORTAL_CONNECTION_NOT_ACTIVE" });
+    }
+    if (isPortalExecution && connection) {
+      if (storedPortalBrowserProvider(connection.browserProvider) !== browserProvider) {
+        throw new ConvexError({ code: "PORTAL_BROWSER_PROVIDER_RECONNECT_REQUIRED" });
+      }
+      const portalContext = await ctx.db.query("browserContexts").withIndex("by_connection", (q) =>
+        q.eq("connectionId", connection._id),
+      ).order("desc").first();
+      if (browserProvider === "firecrawl") {
+        let samePendingWrite = false;
+        if (portalContext?.status === "creating" && portalContext.pendingWriteExecutionId !== undefined &&
+          portalContext.writeProofGeneration !== undefined &&
+          connection.activeWriteExecutionId === portalContext.pendingWriteExecutionId &&
+          (connection.activeWriteDeadlineAt ?? 0) > Date.now()) {
+          const pendingExecution = await ctx.db.get(portalContext.pendingWriteExecutionId);
+          samePendingWrite = pendingExecution !== null &&
+            pendingExecution.ownerId === args.ownerId &&
+            pendingExecution.requestId === request._id &&
+            pendingExecution.connectionId === connection._id &&
+            storedPortalBrowserProvider(pendingExecution.browserProvider) === "firecrawl" &&
+            ["claimed", "running"].includes(pendingExecution.status);
+        }
+        if (!portalContext || storedPortalBrowserProvider(portalContext.browserProvider) !== browserProvider ||
+          (portalContext.status !== "ready" && !samePendingWrite)) {
+          throw new ConvexError({ code: "PORTAL_CONTEXT_NOT_READY" });
+        }
+      }
     }
 
     if (request.providerActionKind === "acceptance") {
@@ -927,6 +977,9 @@ export const claimForExecutor = internalMutation({
       q.eq("idempotencyKey", idempotencyKey),
     ).unique();
     if (existing !== null) {
+      if (browserProvider !== undefined && storedPortalBrowserProvider(existing.browserProvider) !== browserProvider) {
+        throw new ConvexError({ code: "PORTAL_BROWSER_PROVIDER_MISMATCH" });
+      }
       return {
         executionId: existing._id,
         executionStatus: existing.status,
@@ -941,6 +994,7 @@ export const claimForExecutor = internalMutation({
         adapterVersion: binding.adapterVersion,
         adapterConfig: binding.config,
         humanPresenceRequired: policy.humanPresenceRequired,
+        browserProvider,
       };
     }
     const now = Date.now();
@@ -966,6 +1020,7 @@ export const claimForExecutor = internalMutation({
       platformId: platform._id,
       connectionId: request.connectionId,
       adapterBindingId: binding._id,
+      browserProvider,
       status: "claimed",
       idempotencyKey,
       startedAt: now,
@@ -1009,6 +1064,7 @@ export const claimForExecutor = internalMutation({
       adapterVersion: binding.adapterVersion,
       adapterConfig: binding.config,
       humanPresenceRequired: policy.humanPresenceRequired,
+      browserProvider,
     };
   },
 });
@@ -1025,6 +1081,19 @@ export const attachProviderExecution = internalMutation({
     const execution = await ctx.db.get(args.executionId);
     if (execution === null || execution.ownerId !== args.ownerId || (execution.status !== "claimed" && execution.status !== "running")) {
       throw new ConvexError({ code: "EXECUTION_NOT_CLAIMED" });
+    }
+    if (execution.browserProvider !== undefined) {
+      const selectedProvider = resolvePortalBrowserProvider();
+      if (storedPortalBrowserProvider(execution.browserProvider) !== selectedProvider) {
+        throw new ConvexError({ code: "PORTAL_BROWSER_PROVIDER_MISMATCH" });
+      }
+      if (args.browserRunId) {
+        const run = await ctx.db.get(args.browserRunId);
+        if (!run || run.ownerId !== args.ownerId || run.connectionId !== execution.connectionId ||
+          storedPortalBrowserProvider(run.browserProvider) !== selectedProvider) {
+          throw new ConvexError({ code: "PORTAL_BROWSER_PROVIDER_MISMATCH" });
+        }
+      }
     }
     await ctx.db.patch(execution._id, {
       status: "running",
@@ -1048,6 +1117,7 @@ export const getBrowserExecutionForOwner = internalQuery({
       status: v.literal("running"),
       requestId: v.id("actionRequests"),
       connectionId: v.id("portalConnections"),
+      browserProvider: portalBrowserProviderValidator,
     }),
     v.null(),
   ),
@@ -1068,6 +1138,7 @@ export const getBrowserExecutionForOwner = internalQuery({
       status: "running" as const,
       requestId: execution.requestId,
       connectionId: execution.connectionId,
+      browserProvider: storedPortalBrowserProvider(execution.browserProvider),
     };
   },
 });
@@ -1204,6 +1275,96 @@ export const reconcileObservedPortalAcceptance = internalMutation({
   },
 });
 
+/** Reconciles one ordinary platform write only from an exact imported provider
+ * receipt. Ambiguous or incomplete evidence remains unknown and is never sent
+ * again by this mutation. */
+export const reconcileObservedPortalMessage = internalMutation({
+  args: {
+    ownerId: v.id("users"),
+    connectionId: v.id("portalConnections"),
+    threadId: v.id("platformThreads"),
+    providerMessageId: v.string(),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const providerMessageId = args.providerMessageId.trim().slice(0, 500);
+    if (!providerMessageId) return false;
+    const thread = await ctx.db.get(args.threadId);
+    if (!thread || thread.ownerId !== args.ownerId || thread.connectionId !== args.connectionId) return false;
+    const receipt = await ctx.db.query("platformMessages")
+      .withIndex("by_connection_and_provider_message_id", (q) =>
+        q.eq("connectionId", args.connectionId).eq("providerMessageId", providerMessageId),
+      ).unique();
+    if (!receipt || receipt.ownerId !== args.ownerId || receipt.threadId !== thread._id || receipt.direction !== "outbound") return false;
+
+    const unknown = await ctx.db.query("actionExecutions")
+      .withIndex("by_owner_and_status_and_updated_at", (q) =>
+        q.eq("ownerId", args.ownerId).eq("status", "unknown"),
+      ).take(101);
+    // Refuse to choose when the bounded candidate set cannot prove uniqueness.
+    if (unknown.length > 100) return false;
+    const matches: Array<{ execution: Doc<"actionExecutions">; request: Doc<"actionRequests"> }> = [];
+    for (const execution of unknown) {
+      if (execution.connectionId !== args.connectionId || receipt.sentAt < execution.startedAt) continue;
+      if (execution.providerThreadId !== undefined && execution.providerThreadId !== thread.providerThreadId) continue;
+      const request = await ctx.db.get(execution.requestId);
+      if (!request || request.ownerId !== args.ownerId || request.status !== "executing" ||
+        request.connectionId !== args.connectionId || request.providerActionKind === "acceptance" ||
+        request.payload.kind !== "platform_message" ||
+        !["SUBMIT_RESULT_UNKNOWN", "EXECUTION_STALE_PROVIDER_OUTCOME_UNKNOWN"].includes(request.error ?? "") ||
+        normalizeProviderReadback(request.payload.body) !== normalizeProviderReadback(receipt.bodyText)) continue;
+      let destinationMatches = request.payload.threadId === thread._id;
+      if (!destinationMatches && request.payload.threadId === undefined && request.payload.targetPath && request.matchingSignalId) {
+        const signal = await ctx.db.get(request.matchingSignalId);
+        const entry = signal?.sourceEntryId ? await ctx.db.get(signal.sourceEntryId) : null;
+        const listingUrl = (() => {
+          try {
+            return entry ? new URL(entry.canonicalUrl) : null;
+          } catch {
+            return null;
+          }
+        })();
+        destinationMatches = Boolean(
+          signal && entry && listingUrl?.origin === "https://roomscout.dev" &&
+          listingUrl.pathname === request.payload.targetPath &&
+          /^\/listings\/[A-Za-z0-9_-]{1,200}$/.test(listingUrl.pathname) &&
+          normalizeProviderReadback(thread.subject ?? "") === normalizeProviderReadback(`Re: ${signal.title}`),
+        );
+      }
+      if (!destinationMatches) continue;
+      matches.push({ execution, request });
+      if (matches.length > 1) return false;
+    }
+    if (matches.length !== 1) return false;
+    await ctx.runMutation(internal.externalActions.finishExecution, {
+      ownerId: args.ownerId,
+      executionId: matches[0]!.execution._id,
+      status: "succeeded",
+      providerThreadId: thread.providerThreadId,
+      providerMessageId: receipt.providerMessageId,
+    });
+    return true;
+  },
+});
+
+async function claimedPortalExecutionMayHaveRun(
+  ctx: MutationCtx,
+  execution: Doc<"actionExecutions">,
+): Promise<boolean> {
+  if (execution.status !== "claimed" || !execution.connectionId) return false;
+  const connection = await ctx.db.get(execution.connectionId);
+  if (!connection || connection.ownerId !== execution.ownerId) return false;
+  const context = await ctx.db.query("browserContexts")
+    .withIndex("by_connection", (q) => q.eq("connectionId", connection._id))
+    .order("desc")
+    .first();
+  const firecrawlEvidence = execution.browserProvider === "firecrawl" ||
+    connection.browserProvider === "firecrawl" || context?.browserProvider === "firecrawl";
+  if (!firecrawlEvidence) return false;
+  return connection.activeWriteExecutionId === execution._id ||
+    (context?.pendingWriteExecutionId === execution._id && context.writeProofGeneration !== undefined);
+}
+
 /** Releases only a claim that provably never attached a provider operation. */
 export const cancelUnstartedForUserReset = internalMutation({
   args: { ownerId: v.id("users"), requestId: v.id("actionRequests") },
@@ -1217,6 +1378,7 @@ export const cancelUnstartedForUserReset = internalMutation({
     ).unique();
     if (!execution || execution.ownerId !== args.ownerId || execution.status !== "claimed" ||
       execution.providerActionId || execution.providerThreadId || execution.providerMessageId) return false;
+    if (await claimedPortalExecutionMayHaveRun(ctx, execution)) return false;
     const now = Date.now();
     await ctx.db.patch(execution._id, { status: "failed", completedAt: now, error: "USER_RESET_IN_PROGRESS", updatedAt: now });
     await ctx.db.patch(request._id, { status: "failed", error: "USER_RESET_IN_PROGRESS", updatedAt: now });
@@ -1266,7 +1428,8 @@ export const reapStaleExecutions = internalMutation({
       const request = await ctx.db.get(execution.requestId);
       if (request === null) continue;
       const now = Date.now();
-      const providerMayHaveRun = execution.status === "running" || Boolean(execution.providerActionId);
+      const providerMayHaveRun = execution.status === "running" || Boolean(execution.providerActionId) ||
+        await claimedPortalExecutionMayHaveRun(ctx, execution);
       const status = providerMayHaveRun ? "unknown" as const : "failed" as const;
       const error = providerMayHaveRun
         ? "EXECUTION_STALE_PROVIDER_OUTCOME_UNKNOWN"

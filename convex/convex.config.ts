@@ -20,8 +20,11 @@ const app = defineApp({
     FIRECRAWL_MONITOR_WEBHOOK_BEARER: v.optional(v.string()),
     AGENTMAIL_API_KEY: v.string(),
     AGENTMAIL_BASE_URL: v.optional(v.string()),
-    BROWSERBASE_API_KEY: v.string(),
-    BROWSERBASE_PROJECT_ID: v.string(),
+    BROWSERBASE_API_KEY: v.optional(v.string()),
+    BROWSERBASE_PROJECT_ID: v.optional(v.string()),
+    PORTAL_BROWSER_ENGINE: v.optional(
+      v.union(v.literal("firecrawl"), v.literal("browserbase")),
+    ),
     OPENAI_API_KEY: v.string(),
     BROWSERBASE_MODEL: v.optional(v.string()),
   },

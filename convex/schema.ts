@@ -1421,6 +1421,7 @@ export default defineSchema({
     allowedPaths: v.array(v.string()),
     inboxPath: v.optional(v.string()),
     adapterKey: v.optional(v.string()),
+    browserProvider: v.optional(v.union(v.literal("firecrawl"), v.literal("browserbase"))),
     status: v.union(
       v.literal("draft"),
       v.literal("needs_auth"),
@@ -1443,6 +1444,11 @@ export default defineSchema({
     inboxSyncActiveGeneration: v.optional(v.number()),
     inboxSyncDeadlineAt: v.optional(v.number()),
     inboxSyncLastReceiptKey: v.optional(v.string()),
+    inboxSyncRequestedThreadIds: v.optional(v.array(v.string())),
+    inboxSyncCursor: v.optional(v.number()),
+    inboxSyncLastPartial: v.optional(v.boolean()),
+    inboxSyncLastTruncated: v.optional(v.boolean()),
+    inboxSyncLastTimedOut: v.optional(v.boolean()),
     activeWriteExecutionId: v.optional(v.id("actionExecutions")),
     activeWriteDeadlineAt: v.optional(v.number()),
     failureCount: v.number(),
@@ -1457,10 +1463,37 @@ export default defineSchema({
     .index("by_source", ["sourceId"])
     .index("by_status_and_next_poll_at", ["status", "nextPollAt"]),
 
+  portalBrowserMaintenance: defineTable({
+    key: v.literal("controlled_portal"),
+    paused: v.boolean(),
+    drainingProvider: v.optional(v.union(v.literal("firecrawl"), v.literal("browserbase"))),
+    pausedBy: v.optional(v.id("users")),
+    pausedAt: v.optional(v.number()),
+    drainedAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
+  providerCleanupLeases: defineTable({
+    ownerId: v.id("users"),
+    connectionId: v.id("portalConnections"),
+    contextId: v.id("browserContexts"),
+    provider: v.union(v.literal("firecrawl"), v.literal("browserbase")),
+    providerSessionId: v.string(),
+    purpose: v.union(v.literal("write_proof"), v.literal("profile_proof"), v.literal("recovery")),
+    generation: v.number(),
+    status: v.union(v.literal("pending"), v.literal("completed"), v.literal("exhausted")),
+    deadlineAt: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_context_and_generation", ["contextId", "generation"])
+    .index("by_status_and_deadline_at", ["status", "deadlineAt"]),
+
   browserContexts: defineTable({
     connectionId: v.id("portalConnections"),
     ownerId: v.id("users"),
     providerContextId: v.string(),
+    browserProvider: v.optional(v.union(v.literal("firecrawl"), v.literal("browserbase"))),
     status: v.union(
       v.literal("creating"),
       v.literal("ready"),
@@ -1471,6 +1504,15 @@ export default defineSchema({
     ),
     activeRunId: v.optional(v.id("browserRuns")),
     lastVerifiedAt: v.optional(v.number()),
+    probeAttempts: v.optional(v.number()),
+    probeDeadlineAt: v.optional(v.number()),
+    probeLastAttemptAt: v.optional(v.number()),
+    probeErrorCode: v.optional(v.string()),
+    writeProofGeneration: v.optional(v.number()),
+    recoveryGeneration: v.optional(v.number()),
+    cleanupGeneration: v.optional(v.number()),
+    recoveryOutcome: v.optional(v.union(v.literal("awaiting_verification"), v.literal("auth_needed"), v.literal("review"))),
+    pendingWriteExecutionId: v.optional(v.id("actionExecutions")),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -1483,8 +1525,9 @@ export default defineSchema({
     ownerId: v.id("users"),
     contextId: v.optional(v.id("browserContexts")),
     providerSessionId: v.optional(v.string()),
+    browserProvider: v.optional(v.union(v.literal("firecrawl"), v.literal("browserbase"))),
     browserEngine: v.optional(
-      v.union(v.literal("stagehand"), v.literal("legacy")),
+      v.union(v.literal("stagehand"), v.literal("legacy"), v.literal("firecrawl")),
     ),
     kind: v.union(
       v.literal("recon"),
@@ -1502,6 +1545,7 @@ export default defineSchema({
     ),
     startedAt: v.optional(v.number()),
     expiresAt: v.number(),
+    inactivityDeadlineAt: v.optional(v.number()),
     endedAt: v.optional(v.number()),
     resultCount: v.optional(v.number()),
     errorCode: v.optional(v.string()),
@@ -1525,6 +1569,7 @@ export default defineSchema({
     .index("by_owner", ["ownerId"])
     .index("by_connection", ["connectionId"])
     .index("by_status", ["status"])
+    .index("by_browser_provider_and_status", ["browserProvider", "status"])
     .index("by_provider_session_id", ["providerSessionId"]),
 
   browserRunEvents: defineTable({
@@ -1880,6 +1925,7 @@ export default defineSchema({
     connectionId: v.optional(v.id("portalConnections")),
     adapterBindingId: v.optional(v.id("sourceAdapterBindings")),
     browserRunId: v.optional(v.id("browserRuns")),
+    browserProvider: v.optional(v.union(v.literal("firecrawl"), v.literal("browserbase"))),
     status: v.union(
       v.literal("claimed"),
       v.literal("running"),
@@ -1900,6 +1946,8 @@ export default defineSchema({
     .index("by_request", ["requestId"])
     .index("by_idempotency_key", ["idempotencyKey"])
     .index("by_status_and_updated_at", ["status", "updatedAt"])
+    .index("by_browser_provider_and_status", ["browserProvider", "status"])
+    .index("by_owner_and_status_and_updated_at", ["ownerId", "status", "updatedAt"])
     .index("by_owner_and_created_at", ["ownerId", "createdAt"]),
 
   auditEvents: defineTable({

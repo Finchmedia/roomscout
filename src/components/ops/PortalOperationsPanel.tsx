@@ -9,19 +9,34 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 
 type ConnectionId = Id<"portalConnections">;
 type RunId = Id<"browserRuns">;
+type Provider = "firecrawl" | "browserbase";
+type PortalConnectionRow = {
+  _id: ConnectionId; label: string; status: "draft" | "needs_auth" | "active" | "paused" | "reauth_required" | "disabled";
+  policyDecision: "pending" | "allowed" | "restricted" | "prohibited"; browserProvider: Provider;
+  contextStatus?: "creating" | "ready" | "reauth_required" | "deleting" | "deleted" | "failed";
+  providerMismatch: boolean; providerConfigurationError?: string; allowReadOnlyRecon: boolean; allowInboxPolling: boolean;
+  pollIntervalMinutes: number; lastSuccessAt?: number; nextPollAt?: number; circuitOpenUntil?: number; lastErrorCode?: string;
+};
+type PortalRunRow = {
+  _id: RunId; kind: "recon" | "authenticate" | "inbox_sync";
+  status: "queued" | "running" | "human_required" | "completed" | "failed" | "stopped" | "expired";
+  browserProvider: Provider; canResume: boolean; resultCount?: number; errorCode?: string; createdAt: number;
+};
 
 function safeError(error: unknown) {
-  return error instanceof Error ? error.message : "The Browserbase operation failed.";
+  return error instanceof Error ? error.message : "The portal provider operation failed.";
 }
 
+const providerName = (provider: Provider) => provider === "firecrawl" ? "Firecrawl" : "Browserbase";
+
 export function PortalOperationsPanel() {
-  const connections = useQuery(api.portalConnections.listMine, {});
+  const connections = useQuery(api.portalConnections.listMine, {}) as PortalConnectionRow[] | undefined;
   const [selectedId, setSelectedId] = useState<ConnectionId>();
   const selected = connections?.find((connection) => connection._id === selectedId) ?? connections?.[0];
   const runs = useQuery(
     api.portalConnections.listRunsMine,
     selected ? { connectionId: selected._id } : "skip",
-  );
+  ) as PortalRunRow[] | undefined;
   const [working, setWorking] = useState("");
   const [notice, setNotice] = useState("");
   const [liveView, setLiveView] = useState<{ runId: RunId; url: string; expiresAt: number }>();
@@ -36,7 +51,7 @@ export function PortalOperationsPanel() {
   const disableConnection = useAction(api.browserbasePortal.disableConnection);
 
   const latestHumanRun = useMemo(
-    () => runs?.find((run) => run.status === "human_required"),
+    () => runs?.find((run) => run.canResume),
     [runs],
   );
 
@@ -71,7 +86,7 @@ export function PortalOperationsPanel() {
     <LedgerCard
       header={
         <>
-          <span className="type">Browserbase portal operations</span>
+          <span className="type">Portal provider operations</span>
           <span className="mono">Operator-owned test connections only</span>
         </>
       }
@@ -83,9 +98,9 @@ export function PortalOperationsPanel() {
         </p>
       </div>
       {connections === undefined ? (
-        <EmptyState body="Reading user-owned Browserbase contexts and runs." title="Loading portal connections…" />
+        <EmptyState body="Reading user-owned provider profiles and runs." title="Loading portal connections…" />
       ) : connections.length === 0 ? (
-        <EmptyState body="Create a portal connection from Profile after a source has passed review. No Browserbase context is implied when this list is empty." title="No portal connections" />
+        <EmptyState body="Create a portal connection from Profile after a source has passed review. No provider profile is implied when this list is empty." title="No portal connections" />
       ) : (
         <div className="rs-portal-ops-grid">
           <div className="rs-queue-list">
@@ -108,6 +123,8 @@ export function PortalOperationsPanel() {
             <div className="stack">
               <Table className="facts"><TableBody>
                 <TableRow><TableCell>Status</TableCell><TableCell>{titleCase(selected.status)}</TableCell></TableRow>
+                <TableRow><TableCell>Browser provider</TableCell><TableCell>{providerName(selected.browserProvider)}</TableCell></TableRow>
+                <TableRow><TableCell>Profile readiness</TableCell><TableCell>{selected.contextStatus ? titleCase(selected.contextStatus) : "Not established"}</TableCell></TableRow>
                 <TableRow><TableCell>Policy</TableCell><TableCell>{titleCase(selected.policyDecision)}</TableCell></TableRow>
                 <TableRow><TableCell>Read-only recon</TableCell><TableCell>{selected.allowReadOnlyRecon ? "Allowed" : "Disabled"}</TableCell></TableRow>
                 <TableRow><TableCell>Inbox polling</TableCell><TableCell>{selected.allowInboxPolling ? `${selected.pollIntervalMinutes} min` : "Disabled"}</TableCell></TableRow>
@@ -115,27 +132,29 @@ export function PortalOperationsPanel() {
                 <TableRow><TableCell>Circuit breaker</TableCell><TableCell>{selected.circuitOpenUntil ? `Recorded until ${new Date(selected.circuitOpenUntil).toLocaleTimeString()} (${formatAge(selected.circuitOpenUntil)})` : "Closed"}</TableCell></TableRow>
               </TableBody></Table>
               {selected.lastErrorCode ? <p className="fitline"><ShieldAlert aria-hidden="true" size={14} />{selected.lastErrorCode}</p> : null}
+              {selected.providerConfigurationError ? <p className="rs-form-error" role="alert"><ShieldAlert aria-hidden="true" size={14} />{selected.providerConfigurationError}</p> : null}
+              {selected.providerMismatch ? <p className="rs-form-error" role="alert"><ShieldAlert aria-hidden="true" size={14} />Reconnect required: this identity belongs to {providerName(selected.browserProvider)}, not the deployment&apos;s selected provider.</p> : null}
               <div className="actionsrow">
-                {selected.allowReadOnlyRecon && selected.status === "active" ? <button className="btn btn-s btn-sm" disabled={Boolean(working)} onClick={() => void run("Read-only recon", () => runRecon({ connectionId: selected._id }))} type="button"><Play aria-hidden="true" size={12} />Run recon</button> : null}
-                {(selected.status === "needs_auth" || selected.status === "reauth_required") ? <button className="btn btn-p btn-sm" disabled={Boolean(working)} onClick={() => void run("Authentication session", () => startAuthentication({ connectionId: selected._id }))} type="button"><LogIn aria-hidden="true" size={12} />Start human login</button> : null}
-                {selected.allowInboxPolling && selected.status === "active" ? <button className="btn btn-s btn-sm" disabled={Boolean(working)} onClick={() => void run("Inbox sync", () => syncInbox({ connectionId: selected._id }))} type="button"><RefreshCw aria-hidden="true" size={12} />Sync inbox</button> : null}
+                {selected.allowReadOnlyRecon && selected.status === "active" ? <button className="btn btn-s btn-sm" disabled={Boolean(working) || selected.providerMismatch || Boolean(selected.providerConfigurationError)} onClick={() => void run("Read-only recon", () => runRecon({ connectionId: selected._id }))} type="button"><Play aria-hidden="true" size={12} />Run recon</button> : null}
+                {(selected.status === "needs_auth" || selected.status === "reauth_required") ? <button className="btn btn-p btn-sm" disabled={Boolean(working) || selected.providerMismatch || Boolean(selected.providerConfigurationError) || selected.contextStatus === "creating"} onClick={() => void run("Authentication session", () => startAuthentication({ connectionId: selected._id }))} type="button"><LogIn aria-hidden="true" size={12} />Start human login</button> : null}
+                {selected.allowInboxPolling && selected.status === "active" ? <button className="btn btn-s btn-sm" disabled={Boolean(working) || selected.providerMismatch || Boolean(selected.providerConfigurationError)} onClick={() => void run("Inbox sync", () => syncInbox({ connectionId: selected._id }))} type="button"><RefreshCw aria-hidden="true" size={12} />Sync inbox</button> : null}
                 {selected.status !== "disabled" && selected.status !== "paused" ? <button className="btn btn-g btn-sm" disabled={Boolean(working)} onClick={() => void run("Connection pause", () => pause({ connectionId: selected._id }))} type="button"><Pause aria-hidden="true" size={12} />Pause</button> : null}
                 {selected.status !== "disabled" ? <button className="btn btn-g btn-sm" disabled={Boolean(working)} onClick={() => void run("Connection disable", () => disableConnection({ connectionId: selected._id }))} type="button"><Trash2 aria-hidden="true" size={12} />Delete context & disable</button> : null}
               </div>
               <div>
                 <h3>Recent browser runs</h3>
-                {runs === undefined ? <p className="hint">Loading runs…</p> : runs.length === 0 ? <p className="hint">No Browserbase run has been reserved for this connection.</p> : (
+                {runs === undefined ? <p className="hint">Loading runs…</p> : runs.length === 0 ? <p className="hint">No provider run has been reserved for this connection.</p> : (
                   <div className="lcard rs-review-table-wrap">
                     <Table className="q rs-review-table"><TableHeader><TableRow><TableHead>Kind</TableHead><TableHead>Status</TableHead><TableHead>Result</TableHead><TableHead>Created</TableHead><TableHead /></TableRow></TableHeader><TableBody>
                       {runs.map((browserRun) => (
                         <TableRow key={browserRun._id}>
-                          <TableCell>{titleCase(browserRun.kind)}</TableCell>
+                          <TableCell>{titleCase(browserRun.kind)}<br /><span className="mono">{providerName(browserRun.browserProvider)}</span></TableCell>
                           <TableCell><span className={`pill ${toneForStatus(browserRun.status)}`}>{titleCase(browserRun.status)}</span></TableCell>
                           <TableCell>{browserRun.resultCount ?? browserRun.errorCode ?? "—"}</TableCell>
                           <TableCell className="mono">{formatAge(browserRun.createdAt)}</TableCell>
                           <TableCell><div className="actionsrow">
-                            {browserRun.status === "human_required" ? <button className="btn btn-s btn-sm" disabled={Boolean(working)} onClick={() => void loadLiveView(browserRun._id)} type="button">Live View</button> : null}
-                            {browserRun.status === "human_required" ? <button className="btn btn-p btn-sm" disabled={Boolean(working)} onClick={() => void run("Authentication confirmation", () => resumeAuthentication({ runId: browserRun._id }))} type="button">Confirm complete</button> : null}
+                            {browserRun.canResume ? <button className="btn btn-s btn-sm" disabled={Boolean(working)} onClick={() => void loadLiveView(browserRun._id)} type="button">Live View</button> : null}
+                            {browserRun.canResume ? <button className="btn btn-p btn-sm" disabled={Boolean(working)} onClick={() => void run("Authentication confirmation", () => resumeAuthentication({ runId: browserRun._id }))} type="button">Confirm complete</button> : null}
                             {browserRun.status === "queued" || browserRun.status === "running" || browserRun.status === "human_required" ? <button className="btn btn-g btn-sm" disabled={Boolean(working)} onClick={() => void run("Run stop", () => stopRun({ runId: browserRun._id }))} type="button"><CircleStop aria-hidden="true" size={12} /></button> : null}
                           </div></TableCell>
                         </TableRow>
@@ -144,8 +163,8 @@ export function PortalOperationsPanel() {
                   </div>
                 )}
               </div>
-              {latestHumanRun && liveView?.runId === latestHumanRun._id ? (
-                <a className="btn btn-p" href={liveView.url} rel="noreferrer" target="_blank">Open short-lived Browserbase Live View <ExternalLink aria-hidden="true" size={13} /></a>
+              {latestHumanRun && liveView && liveView.runId === latestHumanRun._id ? (
+                <a className="btn btn-p" href={liveView.url} rel="noreferrer" target="_blank">Open short-lived {providerName(latestHumanRun.browserProvider)} Live View <ExternalLink aria-hidden="true" size={13} /></a>
               ) : null}
             </div>
           ) : null}

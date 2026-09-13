@@ -27,6 +27,7 @@ export const scrape = action({
     url: v.string(),
     options: v.optional(scrapeOptionsValidator),
     maxRetries: v.optional(v.number()),
+    requestTimeoutMs: v.optional(v.number()),
   },
   returns: v.any(),
   handler: async (_ctx, args) => {
@@ -35,6 +36,7 @@ export const scrape = action({
       maxRetries: args.maxRetries === undefined
         ? undefined
         : Math.max(0, Math.min(3, Math.floor(args.maxRetries))),
+      requestTimeoutMs: args.requestTimeoutMs,
     });
     return body.data ?? {};
   },

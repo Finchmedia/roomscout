@@ -34,14 +34,15 @@ type Env = {
   readonly AGENTMAIL_BASE_URL: string | undefined;
   readonly AUTH_JWKS: string;
   readonly AUTH_PRIVATE_KEY: string;
-  readonly BROWSERBASE_API_KEY: string;
+  readonly BROWSERBASE_API_KEY: string | undefined;
   readonly BROWSERBASE_MODEL: string | undefined;
-  readonly BROWSERBASE_PROJECT_ID: string;
+  readonly BROWSERBASE_PROJECT_ID: string | undefined;
   readonly FIRECRAWL_API_KEY: string;
   readonly FIRECRAWL_API_URL: string | undefined;
   readonly FIRECRAWL_MONITOR_WEBHOOK_BEARER: string | undefined;
   readonly FIRECRAWL_WEBHOOK_SECRET: string | undefined;
   readonly OPENAI_API_KEY: string;
+  readonly PORTAL_BROWSER_ENGINE: "firecrawl" | "browserbase" | undefined;
 };
 
 /**

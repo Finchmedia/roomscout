@@ -42,6 +42,14 @@ describe("provider readiness", () => {
       status: "configured",
       credentialPresenceOnly: true,
     });
+    expect(result.portalBrowser).toMatchObject({
+      status: "configured",
+      selectedProvider: "browserbase",
+      selectionExplicit: false,
+      selectedCredentialConfigured: true,
+      fallbackEnabled: false,
+      liveFlowVerified: false,
+    });
     expect(result.openaiDirect).toMatchObject({
       status: "configured",
       realtimeOriginsValid: true,
@@ -119,6 +127,48 @@ describe("provider readiness", () => {
     });
     expect(result.agentmail.reasons).toContain(
       "No custom mailbox domain is configured; the provider default will be used.",
+    );
+  });
+
+  it("does not require Browserbase credentials when Firecrawl is selected", () => {
+    const result = deriveProviderReadiness(reader({
+      PORTAL_BROWSER_ENGINE: "firecrawl",
+      FIRECRAWL_API_KEY: "configured",
+      FIRECRAWL_WEBHOOK_SECRET: "configured",
+      FIRECRAWL_MONITOR_WEBHOOK_BEARER: "configured",
+      FIRECRAWL_WEBHOOK_URL: "https://roomscout.example/api/webhooks/firecrawl",
+      FIRECRAWL_MONITORS_ENABLED: "true",
+      AGENTMAIL_API_KEY: "configured",
+      AGENTMAIL_WEBHOOK_SECRET: "configured",
+      AGENTMAIL_ADDRESS_SALT: "configured",
+      MAPBOX_SECRET_TOKEN: "configured",
+      OPENAI_API_KEY: "configured",
+      REALTIME_ALLOWED_ORIGINS: "https://roomscout.example",
+    }));
+    expect(result.portalBrowser).toMatchObject({
+      status: "configured",
+      selectedProvider: "firecrawl",
+      selectedCredentialConfigured: true,
+      browserbaseApiKeyConfigured: false,
+      fallbackEnabled: false,
+    });
+    expect(result.overallStatus).toBe("configured");
+    expect(result.configuredProviders).toBe(5);
+  });
+
+  it("reports an invalid nonempty portal selector without silently defaulting", () => {
+    const result = deriveProviderReadiness(reader({
+      PORTAL_BROWSER_ENGINE: "automatic",
+      FIRECRAWL_API_KEY: "configured",
+      BROWSERBASE_API_KEY: "configured",
+    }));
+    expect(result.portalBrowser).toMatchObject({
+      status: "incomplete",
+      selectedProvider: "invalid",
+      selectedCredentialConfigured: false,
+    });
+    expect(result.portalBrowser.reasons).toContain(
+      "PORTAL_BROWSER_ENGINE must be firecrawl or browserbase.",
     );
   });
 });

@@ -12,8 +12,12 @@ import {
   type ControlledRegistrationEvidence,
 } from "./controlledPortalPolicy";
 import { z, type ZodType } from "zod";
+import {
+  REVIEWED_PORTAL_ORIGIN,
+  reviewedPortalPath,
+} from "./reviewedPortalUrl";
 
-const REVIEWED_ORIGIN = "https://roomscout.dev";
+const REVIEWED_ORIGIN = REVIEWED_PORTAL_ORIGIN;
 const REVIEWED_ADAPTER = "roomscout-dev-v1";
 const MAX_OBSERVED_ACTIONS = 4;
 const CAPTCHA_POLL_ATTEMPTS = 16;
@@ -101,13 +105,22 @@ async function fillReviewedField(input: {
     selector: input.selector,
     role: input.role,
   });
-  if (!validFieldForRole(before, input.role) || !input.client.actInstruction) {
+  if (!validFieldForRole(before, input.role)) {
     return false;
   }
-  await input.client.actInstruction({
-    instruction: input.instruction,
-    variables: { [input.variable]: input.value },
-  });
+  if (input.client.actInstruction) {
+    await input.client.actInstruction({
+      instruction: input.instruction,
+      variables: { [input.variable]: input.value },
+    });
+  } else if (input.client.fillSelector) {
+    await input.client.fillSelector({
+      selector: input.selector,
+      value: input.value,
+    });
+  } else {
+    return false;
+  }
   await assertCurrentScope(input.client);
   const after = await input.client.inspectForm({
     selector: input.selector,
@@ -236,9 +249,7 @@ function assertReviewedScope(input: { baseUrl: string; adapterKey: string }): vo
 }
 
 function portalUrl(path: string): string {
-  const url = new URL(path, REVIEWED_ORIGIN);
-  if (url.origin !== REVIEWED_ORIGIN) throw new Error("PORTAL_URL_NOT_ALLOWED");
-  return url.toString();
+  return reviewedPortalPath(path);
 }
 
 async function assertCurrentScope(client: StagehandPortalPrimitives): Promise<void> {

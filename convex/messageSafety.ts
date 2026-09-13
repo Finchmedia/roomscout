@@ -5,6 +5,7 @@ import { internalAction, internalMutation, internalQuery } from "./_generated/se
 import { generateRoomScoutObject, ROOMSCOUT_MODEL_ID } from "./ai";
 import { delimitUntrustedData } from "./lib/privacy";
 import { MESSAGE_SAFETY_VERSION, messageSafetyContext, messageSafetyInstructions, messageSafetySchema, messageSafetyValidator } from "./lib/messageSafety";
+import { resolvePortalBrowserProvider, storedPortalBrowserProvider } from "./integrations/portalBrowserEngine";
 
 export const getInput = internalQuery({
   args: { requestId: v.id("actionRequests") },
@@ -43,7 +44,21 @@ export const recordAndAuthorize = internalMutation({
       const binding = request.adapterBindingId ? await ctx.db.get(request.adapterBindingId) : null;
       // Enqueue one provider attempt transactionally with authorization. No AI
       // workpool retries enclose an external write or an ambiguous browser result.
-      if (binding?.executor === "browserbase") await ctx.scheduler.runAfter(0, internal.browserbasePortal.executeApprovedWriteWorker, { ownerId: request.ownerId, requestId: request._id });
+      if (binding?.executor === "browserbase") {
+        const connection = request.connectionId ? await ctx.db.get(request.connectionId) : null;
+        const selectedProvider = resolvePortalBrowserProvider();
+        if (!connection || connection.ownerId !== request.ownerId ||
+          storedPortalBrowserProvider(connection.browserProvider) !== selectedProvider) {
+          await ctx.db.patch(request._id, {
+            status: "expired", error: "PORTAL_BROWSER_PROVIDER_RECONNECT_REQUIRED", updatedAt: Date.now(),
+          });
+          return false;
+        }
+        const worker = selectedProvider === "firecrawl"
+          ? internal.firecrawlPortal.executeApprovedWriteWorker
+          : internal.browserbasePortal.executeApprovedWriteWorker;
+        await ctx.scheduler.runAfter(0, worker, { ownerId: request.ownerId, requestId: request._id });
+      }
       else if (binding?.executor === "firecrawl") await ctx.scheduler.runAfter(0, internal.firecrawlInteract.executeApprovedWorker, { ownerId: request.ownerId, requestId: request._id });
       else if (binding?.executor === "agentmail" && binding.config.kind === "agentmail" && binding.config.purpose === "reply") await ctx.scheduler.runAfter(0, internal.agentmail.executeApprovedReply, { ownerId: request.ownerId, requestId: request._id });
     }

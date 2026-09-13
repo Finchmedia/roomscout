@@ -339,8 +339,8 @@ export const upsertReadOnlyBatch = internalMutation({
               .eq("providerMessageId", inputMessage.providerMessageId),
           )
           .unique();
-        if (existing !== null) continue;
-        const messageId = await ctx.db.insert("platformMessages", {
+        let messageId = existing?._id;
+        if (existing === null) messageId = await ctx.db.insert("platformMessages", {
           connectionId: connection._id,
           ownerId: args.ownerId,
           threadId: thread._id,
@@ -351,10 +351,18 @@ export const upsertReadOnlyBatch = internalMutation({
           sentAt: inputMessage.sentAt,
           createdAt: now,
         });
-        if (inputMessage.direction === "inbound") {
-          await ctx.runMutation(internal.providerConversations.enqueuePlatformReply, { messageId });
+        if (existing === null && inputMessage.direction === "inbound") {
+          await ctx.runMutation(internal.providerConversations.enqueuePlatformReply, { messageId: messageId! });
         }
-        messagesCreated += 1;
+        if (existing === null) messagesCreated += 1;
+        if (inputMessage.direction === "outbound") {
+          await ctx.runMutation(internal.externalActions.reconcileObservedPortalMessage, {
+            ownerId: args.ownerId,
+            connectionId: connection._id,
+            threadId: thread._id,
+            providerMessageId: inputMessage.providerMessageId,
+          });
+        }
       }
       await ctx.runMutation(internal.externalActions.reconcileObservedPortalAcceptance, {
         ownerId: args.ownerId,

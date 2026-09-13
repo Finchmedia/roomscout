@@ -12,6 +12,22 @@ import {
 } from "./stagehandPortalDriver";
 
 describe("ensureControlledPortalRegistration", () => {
+  it("uses the exact selector fallback when instruction-based act is absent", async () => {
+    const mock = client({ getUrl: vi.fn(async () => "https://roomscout.dev/sign-up") });
+    mock.actInstruction = undefined;
+    await expect(ensureControlledPortalRegistration({
+      client: mock,
+      email: "musician@example.test",
+      password: "ephemeral-password",
+    })).resolves.toEqual({ outcome: "awaiting_code" });
+    expect(mock.fillSelector).toHaveBeenCalledWith({
+      selector: 'input[name="emailAddress"]', value: "musician@example.test",
+    });
+    expect(mock.fillSelector).toHaveBeenCalledWith({
+      selector: 'input[name="password"]', value: "ephemeral-password",
+    });
+  });
+
   it("reports only a fixed failing stage when a provider primitive throws", async () => {
     const mock = client({ navigate: vi.fn(async () => { throw new Error("sensitive provider detail"); }) });
     const error = await ensureControlledPortalRegistration({

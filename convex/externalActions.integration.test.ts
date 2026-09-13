@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import { actionPayloadHash } from "./integrations/contentHash";
@@ -307,4 +307,39 @@ it("reaps abandoned claims but treats stale running provider calls as unknown", 
     firstRequest: (await ctx.db.get(fixture.firstRequestId))?.status,
     secondRequest: (await ctx.db.get(fixture.secondRequestId))?.status,
   }))).toEqual({ claimed: "failed", running: "unknown", firstRequest: "failed", secondRequest: "executing" });
+});
+
+it("treats a claimed Firecrawl write lock as possibly dispatched and persists its scrape id before work", async () => {
+  vi.stubEnv("PORTAL_BROWSER_ENGINE", "firecrawl");
+  const t = convexTest(schema, modules);
+  const f = await t.run(async (ctx) => {
+    const old = Date.now() - 60 * 60 * 1_000;
+    const ownerId = await ctx.db.insert("users", { username: "firecrawl-crash", role: "musician", createdAt: old, lastSeenAt: old });
+    const sourceId = await ctx.db.insert("sources", { slug: "firecrawl-crash", name: "Controlled", baseUrl: "https://roomscout.dev", side: "both", accessMode: "authenticated", automationReview: "approved", status: "active", health: "healthy", createdAt: old, updatedAt: old });
+    const connectionId = await ctx.db.insert("portalConnections", { ownerId, sourceId, label: "Controlled", allowedDomains: ["roomscout.dev"], allowedPaths: ["/inbox"], browserProvider: "firecrawl", status: "active", policyDecision: "allowed", allowReadOnlyRecon: true, allowInboxPolling: true, pollIntervalMinutes: 60, failureCount: 0, createdAt: old, updatedAt: old });
+    const payload = { kind: "platform_message" as const, recipients: ["Provider"], body: "Exact write" };
+    const requestId = await ctx.db.insert("actionRequests", { ownerId, connectionId, automationMode: "exact_once", requestedActionType: "send_platform_dm", personalDataScopes: [], payload, contentVersion: 1, contentHash: "firecrawl-crash", status: "executing", executionIdempotencyKey: "firecrawl-crash", createdAt: old, updatedAt: old });
+    const approvalId = await ctx.db.insert("actionApprovals", { requestId, ownerId, contentVersion: 1, contentHash: "firecrawl-crash", payloadSnapshot: payload, decision: "approved", decidedAt: old });
+    const executionId = await ctx.db.insert("actionExecutions", { requestId, ownerId, approvalId, connectionId, browserProvider: "firecrawl", status: "claimed", idempotencyKey: "firecrawl-crash", startedAt: old, createdAt: old, updatedAt: old });
+    await ctx.db.patch(connectionId, { activeWriteExecutionId: executionId, activeWriteDeadlineAt: old + 1_000 });
+    await ctx.db.insert("browserContexts", { connectionId, ownerId, providerContextId: "profile-firecrawl", browserProvider: "firecrawl", status: "creating", writeProofGeneration: 1, pendingWriteExecutionId: executionId, createdAt: old, updatedAt: old });
+    await ctx.db.insert("devUserResets", { targetUserId: ownerId, targetUsername: "firecrawl-crash", status: "scheduled", stage: 0, deletedDocumentCount: 0, providerInboxResult: "not_present", providerContextCount: 0, authUsernameReleased: false, createdAt: old, updatedAt: old });
+    return { ownerId, requestId, executionId };
+  });
+
+  expect(await t.mutation(internal.externalActions.cancelUnstartedForUserReset, { ownerId: f.ownerId, requestId: f.requestId })).toBe(false);
+  expect(await t.mutation(internal.externalActions.reapStaleExecutions, { olderThanMs: 15 * 60_000, limit: 10 }))
+    .toEqual({ failedBeforeProvider: 0, unknownProviderOutcome: 1 });
+  expect(await t.run((ctx) => ctx.db.get(f.executionId))).toMatchObject({ status: "unknown", error: "EXECUTION_STALE_PROVIDER_OUTCOME_UNKNOWN" });
+
+  const attached = await t.run(async (ctx) => {
+    const execution = await ctx.db.get(f.executionId);
+    await ctx.db.patch(f.executionId, { status: "claimed", providerActionId: undefined, updatedAt: Date.now() });
+    return execution;
+  });
+  expect(attached).not.toBeNull();
+  await t.mutation(internal.externalActions.attachProviderExecution, { ownerId: f.ownerId, executionId: f.executionId, providerActionId: "firecrawl-scrape-id" });
+  expect(await t.query(internal.externalActions.getBrowserExecutionForOwner, { ownerId: f.ownerId, executionId: f.executionId }))
+    .toMatchObject({ providerSessionId: "firecrawl-scrape-id", status: "running", browserProvider: "firecrawl" });
+  vi.unstubAllEnvs();
 });

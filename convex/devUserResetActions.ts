@@ -18,6 +18,10 @@ type Preflight = {
   username: string;
   providerInboxId?: string;
   providerContextIds: string[];
+  providerContexts: Array<{
+    providerContextId: string;
+    browserProvider: "firecrawl" | "browserbase";
+  }>;
   portalConnectionCount: number;
 };
 
@@ -26,6 +30,8 @@ type ResetSelectedTestUserResult = {
   status: "scheduled";
   providerInboxResult: "not_present" | "deleted" | "already_absent";
   providerContextCount: number;
+  providerBrowserbaseContextDeletedCount: number;
+  providerFirecrawlProfileRetainedCount: number;
   portalAccountDeletion: "unsupported_by_controlled_portal";
   authCredentialCleanup: "orphaned_password_and_sessions_unsupported";
 };
@@ -36,21 +42,35 @@ export type ProviderCleanupOperations = {
 };
 
 export async function deleteProviderResources(
-  plan: Pick<Preflight, "providerInboxId" | "providerContextIds">,
+  plan: Pick<Preflight, "providerInboxId" | "providerContextIds"> & Partial<Pick<Preflight, "providerContexts">>,
   operations: ProviderCleanupOperations,
 ): Promise<{
   providerInboxResult: "not_present" | "deleted" | "already_absent";
   providerContextCount: number;
+  providerBrowserbaseContextDeletedCount: number;
+  providerFirecrawlProfileRetainedCount: number;
 }> {
   const providerInboxResult = plan.providerInboxId
     ? await operations.deleteInbox(plan.providerInboxId)
     : "not_present";
-  for (const contextId of plan.providerContextIds) {
-    await operations.deleteBrowserContext(contextId);
+  const providerContexts = plan.providerContexts ?? plan.providerContextIds.map(
+    (providerContextId) => ({ providerContextId, browserProvider: "browserbase" as const }),
+  );
+  let providerBrowserbaseContextDeletedCount = 0;
+  let providerFirecrawlProfileRetainedCount = 0;
+  for (const context of providerContexts) {
+    if (context.browserProvider === "firecrawl") {
+      providerFirecrawlProfileRetainedCount += 1;
+      continue;
+    }
+    await operations.deleteBrowserContext(context.providerContextId);
+    providerBrowserbaseContextDeletedCount += 1;
   }
   return {
     providerInboxResult,
-    providerContextCount: plan.providerContextIds.length,
+    providerContextCount: providerContexts.length,
+    providerBrowserbaseContextDeletedCount,
+    providerFirecrawlProfileRetainedCount,
   };
 }
 
@@ -97,6 +117,8 @@ export const resetSelectedTestUser = internalAction({
       v.literal("already_absent"),
     ),
     providerContextCount: v.number(),
+    providerBrowserbaseContextDeletedCount: v.number(),
+    providerFirecrawlProfileRetainedCount: v.number(),
     portalAccountDeletion: v.literal("unsupported_by_controlled_portal"),
     authCredentialCleanup: v.literal("orphaned_password_and_sessions_unsupported"),
   }),
@@ -107,13 +129,15 @@ export const resetSelectedTestUser = internalAction({
     });
     const plan = await preflight(ctx, args);
     const apiKey = envValue("BROWSERBASE_API_KEY");
-    if (plan.providerContextIds.length > 0 && !apiKey) {
+    if (plan.providerContexts.some((context) => context.browserProvider === "browserbase") && !apiKey) {
       throw new ConvexError({ code: "DEV_USER_RESET_BROWSERBASE_NOT_CONFIGURED" });
     }
     const browserbase = apiKey ? new Browserbase({ apiKey }) : null;
     let providerResult: {
       providerInboxResult: "not_present" | "deleted" | "already_absent";
       providerContextCount: number;
+      providerBrowserbaseContextDeletedCount: number;
+      providerFirecrawlProfileRetainedCount: number;
     };
     try {
       providerResult = await deleteProviderResources(plan, {
@@ -126,15 +150,18 @@ export const resetSelectedTestUser = internalAction({
           await deleteBrowserbaseContext(browserbase, contextId);
         },
       });
-    } catch (error) {
+    } catch {
       throw new ConvexError({
         code: "DEV_USER_RESET_PROVIDER_DELETE_FAILED",
-        message: error instanceof Error ? error.message.slice(0, 200) : "Provider cleanup failed.",
       });
     }
     const resetId: Id<"devUserResets"> = await ctx.runMutation(
       internal.devUserReset.authorizeCleanup,
-      { ...args, ...providerResult },
+      {
+        ...args,
+        providerInboxResult: providerResult.providerInboxResult,
+        providerContextCount: providerResult.providerContextCount,
+      },
     );
     return {
       resetId,
@@ -178,21 +205,29 @@ export const beginExactFleetUserReset = internalAction({
       if (!paused.ready) throw new ConvexError({ code: "FLEET_USER_RESET_IN_FLIGHT_WORK" });
     }
     const apiKey = envValue("BROWSERBASE_API_KEY");
-    if (preview.some((target) => target.providerContextIds.length > 0) && !apiKey) throw new ConvexError({ code: "FLEET_USER_RESET_BROWSERBASE_NOT_CONFIGURED" });
+    if (preview.some((target: { providerContexts: Array<{ browserProvider: "firecrawl" | "browserbase" }> }) =>
+      target.providerContexts.some((context: { browserProvider: "firecrawl" | "browserbase" }) => context.browserProvider === "browserbase")) && !apiKey) {
+      throw new ConvexError({ code: "FLEET_USER_RESET_BROWSERBASE_NOT_CONFIGURED" });
+    }
     const browserbase = apiKey ? new Browserbase({ apiKey }) : null;
     const result = [];
     for (const target of preview) {
-      const providerResult = await deleteProviderResources(target, {
-        deleteInbox: async (inboxId) => await ctx.runAction(internal.agentmailComponent.deleteInbox, { inboxId }),
-        deleteBrowserContext: async (contextId) => {
-          if (!browserbase) throw new Error("Browserbase is not configured.");
-          await deleteBrowserbaseContext(browserbase, contextId);
-        },
-      });
+      let providerResult: Awaited<ReturnType<typeof deleteProviderResources>>;
+      try {
+        providerResult = await deleteProviderResources(target, {
+          deleteInbox: async (inboxId) => await ctx.runAction(internal.agentmailComponent.deleteInbox, { inboxId }),
+          deleteBrowserContext: async (contextId) => {
+            if (!browserbase) throw new Error("Browserbase is not configured.");
+            await deleteBrowserbaseContext(browserbase, contextId);
+          },
+        });
+      } catch {
+        throw new ConvexError({ code: "FLEET_USER_RESET_PROVIDER_DELETE_FAILED" });
+      }
       for (const threadId of target.agentThreadIds) {
         await ctx.runAction(components.agent.threads.deleteAllForThreadIdSync, { threadId: threadId as never });
       }
-      const resetId: Id<"devUserResets"> = await ctx.runMutation(internal.devUserReset.authorizeFleetCleanup, { userId: target.userId, username: target.username, confirmation: args.confirmation, ...providerResult });
+      const resetId: Id<"devUserResets"> = await ctx.runMutation(internal.devUserReset.authorizeFleetCleanup, { userId: target.userId, username: target.username, confirmation: args.confirmation, providerInboxResult: providerResult.providerInboxResult, providerContextCount: providerResult.providerContextCount });
       result.push({ userId: target.userId, resetId, authCredentialCleanup: "username_tombstoned_core_credentials_unsupported" as const });
     }
     return result;

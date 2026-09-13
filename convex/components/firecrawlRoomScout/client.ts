@@ -162,21 +162,30 @@ export class FirecrawlRoomScoutClient extends FirecrawlClient {
       language?: "node" | "python" | "bash";
       timeout?: number;
       mutating: boolean;
+      allowUnsuccessfulBody?: boolean;
+      /** Firecrawl API HTTP deadline in milliseconds (not program timeout). */
+      requestTimeoutMs?: number;
     },
   ) {
     return ctx.runAction(this.component.interact.execute, { jobId, ...args });
   }
 
-  stopInteraction(ctx: ActionCtx, jobId: string) {
-    return ctx.runAction(this.component.interact.stop, { jobId });
+  stopInteraction(ctx: ActionCtx, jobId: string, requestTimeoutMs?: number) {
+    return ctx.runAction(this.component.interact.stop, { jobId, requestTimeoutMs });
   }
 
   /** One billable scrape attempt with provider retries explicitly disabled. */
-  async scrapeOnce(ctx: ActionCtx, url: string, options?: ScrapeOptions) {
+  async scrapeOnce(
+    ctx: ActionCtx,
+    url: string,
+    options?: ScrapeOptions,
+    requestTimeoutMs?: number,
+  ) {
     return await ctx.runAction(this.component.lib.scrape, {
       url,
       options,
       maxRetries: 0,
+      requestTimeoutMs,
     });
   }
 
@@ -186,7 +195,7 @@ export class FirecrawlRoomScoutClient extends FirecrawlClient {
     url: string,
     options?: ScrapeOptions,
   ) {
-    return this.scrape(ctx, url, options);
+    return this.scrapeOnce(ctx, url, options);
   }
 }
 

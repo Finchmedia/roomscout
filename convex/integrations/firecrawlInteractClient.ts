@@ -3,8 +3,21 @@
 import { components } from "../_generated/api";
 import type { ActionCtx } from "../_generated/server";
 import { FirecrawlRoomScoutClient } from "../components/firecrawlRoomScout/client";
+import {
+  buildFirecrawlProgram,
+  parseInteractEnvelope,
+} from "./firecrawlProgram";
 
 const firecrawl = new FirecrawlRoomScoutClient(components.firecrawlRoomScout);
+
+/** Provider program timeouts are seconds; transport deadlines are milliseconds. */
+export const FIRECRAWL_PUBLIC_FORM_TIMEOUTS = {
+  prepareSeconds: 60,
+  submitSeconds: 60,
+  previewSeconds: 15,
+  requestMs: 65_000,
+  stopRequestMs: 15_000,
+} as const;
 
 export type FormPreparationField = {
   key: string;
@@ -160,9 +173,8 @@ function safePreparationFields(fields: FormPreparationField[]) {
 }
 
 export function buildPreparationCode(fields: FormPreparationField[]): string {
-  const serialized = JSON.stringify(safePreparationFields(fields));
-  return `
-const fields = ${serialized};
+  return buildFirecrawlProgram(`
+const fields = vars.fields;
 const filled = [];
 const missing = [];
 const escapeRegex = (value) => value.replace(/[.*+?^\${}()|[\\]\\\\]/g, "\\\\$&");
@@ -190,14 +202,13 @@ for (const field of fields) {
 const possibleSubmitControls = await page
   .locator('button[type="submit"], input[type="submit"]')
   .allTextContents();
-console.log(JSON.stringify({
+return {
   url: page.url(),
   filled,
   missing,
   possibleSubmitControls,
   submitted: false,
-}));
-`;
+};`, { fields: safePreparationFields(fields) });
 }
 
 function resolveApprovedFields(
@@ -251,14 +262,14 @@ export function buildApprovedSubmissionCode(args: {
   forceHumanPresence?: boolean;
 }): string {
   const fieldPlans = resolveApprovedFields(args.workflow, args.fields);
-  const serialized = JSON.stringify({
+  const programVars = {
     fieldPlans,
     submit: args.workflow.submit,
     success: args.workflow.success,
     forceHumanPresence: args.forceHumanPresence === true,
-  });
-  return `
-const workflow = ${serialized};
+  };
+  return buildFirecrawlProgram(`
+const workflow = vars.workflow;
 const filled = [];
 const missing = [];
 const blockers = [];
@@ -294,13 +305,13 @@ const anyVisibleText = async (pattern) => {
   }
   return false;
 };
-const output = (state, reasonCode) => console.log(JSON.stringify({
+const output = (state, reasonCode) => ({
   state,
   reasonCode,
   filled,
   missing,
   blockers,
-}));
+});
 
 // Credentials, OTPs, terms, payment and contracts are never agent actions.
 if (await anyVisible('input[type="password"]')) blockers.push("password");
@@ -309,16 +320,13 @@ if (await anyVisible('input[type="checkbox"][name*="terms" i], input[type="check
 if (await anyVisible('label:has(input[type="checkbox"])') && await anyVisibleText(/accept.*terms|agree.*terms|terms and conditions|nutzungsbedingungen|allgemeine geschäftsbedingungen|vertrag.*akzeptieren|vereinbarung.*akzeptieren/i)) blockers.push("terms_acceptance");
 if (await anyVisible('input[autocomplete="cc-number"], input[name*="card" i], input[name*="iban" i], [data-payment], [data-contract]') || await anyVisibleText(/payment details|credit card|zahlungsmittel|zahlungsdaten|vertrag (abschließen|unterzeichnen)/i)) blockers.push("payment_or_contract");
 if (blockers.includes("password") || blockers.includes("two_factor_authentication")) {
-  output("human_required", "AUTHENTICATION_REQUIRED");
-  return;
+  return output("human_required", "AUTHENTICATION_REQUIRED");
 }
 if (blockers.includes("terms_acceptance")) {
-  output("human_required", "TERMS_ACCEPTANCE_REQUIRED");
-  return;
+  return output("human_required", "TERMS_ACCEPTANCE_REQUIRED");
 }
 if (blockers.includes("payment_or_contract")) {
-  output("human_required", "PAYMENT_OR_CONTRACT_CONTROL_PRESENT");
-  return;
+  return output("human_required", "PAYMENT_OR_CONTRACT_CONTROL_PRESENT");
 }
 
 for (const field of workflow.fieldPlans) {
@@ -332,32 +340,27 @@ for (const field of workflow.fieldPlans) {
   filled.push(field.key);
 }
 if (missing.length > 0) {
-  output("human_required", "MISSING_REQUIRED_FIELDS");
-  return;
+  return output("human_required", "MISSING_REQUIRED_FIELDS");
 }
 
 if (await anyVisible('iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], iframe[src*="turnstile" i], [class*="captcha" i], [id*="captcha" i], textarea[name="g-recaptcha-response"], textarea[name="h-captcha-response"], input[name="cf-turnstile-response"]')) {
   blockers.push("captcha");
-  output("human_required", "CAPTCHA_REQUIRED");
-  return;
+  return output("human_required", "CAPTCHA_REQUIRED");
 }
 if (workflow.forceHumanPresence) {
   blockers.push("policy_requires_human_presence");
-  output("human_required", "HUMAN_PRESENCE_REQUIRED");
-  return;
+  return output("human_required", "HUMAN_PRESENCE_REQUIRED");
 }
 
 const submit = await firstVisible([workflow.submit.locator]);
 if (!submit) {
   blockers.push("submit_control_missing");
-  output("human_required", "SUBMIT_CONTROL_MISMATCH");
-  return;
+  return output("human_required", "SUBMIT_CONTROL_MISMATCH");
 }
 const submitLabel = ((await submit.getAttribute("value")) || (await submit.innerText()) || "").trim();
 if (!exactRegex(workflow.submit.expectedAccessibleName).test(submitLabel) || /(pay|purchase|buy|book|accept|agree|sign|zahlung|kaufen|buchen|akzeptieren|unterschreiben)/i.test(submitLabel)) {
   blockers.push("submit_control_mismatch");
-  output("human_required", "SUBMIT_CONTROL_MISMATCH");
-  return;
+  return output("human_required", "SUBMIT_CONTROL_MISMATCH");
 }
 
 const beforeUrl = page.url();
@@ -376,32 +379,23 @@ if (!successObserved) {
     if (await candidate.count() && await candidate.first().isVisible()) { successObserved = true; break; }
   }
 }
-output(successObserved ? "submitted_verified" : "verification_unknown", successObserved ? "SUCCESS_SIGNAL_OBSERVED" : "SUCCESS_SIGNAL_NOT_OBSERVED");
-`;
-}
-
-function safeResultOutput(result: {
-  output?: string;
-  stdout?: string;
-  result?: string;
-}): string {
-  return (result.output || result.stdout || result.result || "").slice(0, 20_000);
+return output(successObserved ? "submitted_verified" : "verification_unknown", successObserved ? "SUCCESS_SIGNAL_OBSERVED" : "SUCCESS_SIGNAL_NOT_OBSERVED");`, { workflow: programVars });
 }
 
 export function parseApprovedSubmissionOutput(
-  value: string,
+  value: unknown,
 ): Omit<
   FirecrawlSubmissionResult,
   "jobId" | "liveViewUrl" | "interactiveLiveViewUrl"
 > {
-  const lines = value
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .reverse();
-  for (const line of lines) {
-    try {
-      const parsed = JSON.parse(line) as Record<string, unknown>;
+  const candidate =
+    typeof value === "string"
+      ? (() => {
+          try { return JSON.parse(value) as unknown; } catch { return null; }
+        })()
+      : value;
+  if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+      const parsed = candidate as Record<string, unknown>;
       const validStates = new Set([
         "submitted_verified",
         "human_required",
@@ -424,7 +418,7 @@ export function parseApprovedSubmissionOutput(
         typeof parsed.reasonCode !== "string" ||
         !validReasons.has(parsed.reasonCode)
       ) {
-        continue;
+        throw new Error("FIRECRAWL_SUBMISSION_RESULT_INVALID");
       }
       const stringArray = (input: unknown) =>
         Array.isArray(input)
@@ -440,9 +434,6 @@ export function parseApprovedSubmissionOutput(
         missing: stringArray(parsed.missing),
         blockers: stringArray(parsed.blockers),
       };
-    } catch {
-      // Provider stdout may contain non-JSON diagnostic lines.
-    }
   }
   throw new Error("FIRECRAWL_SUBMISSION_RESULT_INVALID");
 }
@@ -453,7 +444,7 @@ export async function prepareFormWithFirecrawl(args: {
   fields: FormPreparationField[];
   profileName?: string;
 }): Promise<FirecrawlFormPreview> {
-  const document = await firecrawl.startInteractiveScrape(args.ctx, args.url, {
+  const document = await firecrawl.scrapeOnce(args.ctx, args.url, {
     formats: ["markdown"],
     onlyMainContent: true,
     maxAge: 0,
@@ -461,7 +452,7 @@ export async function prepareFormWithFirecrawl(args: {
     ...(args.profileName
       ? { extra: { profile: { name: args.profileName, saveChanges: false } } }
       : {}),
-  });
+  }, FIRECRAWL_PUBLIC_FORM_TIMEOUTS.requestMs);
   const scrapeId = document.metadata?.scrapeId;
   const jobId = typeof scrapeId === "string" ? scrapeId : undefined;
   if (!jobId) {
@@ -470,17 +461,17 @@ export async function prepareFormWithFirecrawl(args: {
   const result = await firecrawl.interact(args.ctx, jobId, {
     code: buildPreparationCode(args.fields),
     language: "node",
-    timeout: 60,
+    timeout: FIRECRAWL_PUBLIC_FORM_TIMEOUTS.prepareSeconds,
+    requestTimeoutMs: FIRECRAWL_PUBLIC_FORM_TIMEOUTS.requestMs,
     mutating: false,
+    allowUnsuccessfulBody: true,
   });
-  if (!result.success || (result.exitCode ?? 0) !== 0) {
-    await firecrawl.stopInteraction(args.ctx, jobId).catch(() => undefined);
-    throw new Error(
-      (result.error || result.stderr || "Firecrawl form preparation failed").slice(
-        0,
-        1_000,
-      ),
-    );
+  let structured: unknown;
+  try {
+    structured = parseInteractEnvelope(result);
+  } catch {
+    await firecrawl.stopInteraction(args.ctx, jobId, FIRECRAWL_PUBLIC_FORM_TIMEOUTS.stopRequestMs).catch(() => undefined);
+    throw new Error("FIRECRAWL_FORM_PREPARATION_FAILED");
   }
   return {
     jobId,
@@ -488,7 +479,7 @@ export async function prepareFormWithFirecrawl(args: {
     ...(result.interactiveLiveViewUrl
       ? { interactiveLiveViewUrl: result.interactiveLiveViewUrl }
       : {}),
-    output: safeResultOutput(result),
+    output: JSON.stringify(structured).slice(0, 20_000),
   };
 }
 
@@ -513,7 +504,7 @@ export async function submitApprovedFormWithFirecrawl(args: {
       fields: args.fields,
       forceHumanPresence: args.forceHumanPresence,
     });
-    const document = await firecrawl.startInteractiveScrape(args.ctx, args.url, {
+    const document = await firecrawl.scrapeOnce(args.ctx, args.url, {
       formats: ["markdown"],
       onlyMainContent: true,
       maxAge: 0,
@@ -521,7 +512,7 @@ export async function submitApprovedFormWithFirecrawl(args: {
       ...(args.profileName
         ? { extra: { profile: { name: args.profileName, saveChanges: false } } }
         : {}),
-    });
+    }, FIRECRAWL_PUBLIC_FORM_TIMEOUTS.requestMs);
     const scrapeId = document.metadata?.scrapeId;
     jobId = typeof scrapeId === "string" ? scrapeId : null;
     if (!jobId) {
@@ -532,21 +523,23 @@ export async function submitApprovedFormWithFirecrawl(args: {
     const result = await firecrawl.interact(args.ctx, jobId, {
       code,
       language: "node",
-      timeout: 60,
+      timeout: FIRECRAWL_PUBLIC_FORM_TIMEOUTS.submitSeconds,
+      requestTimeoutMs: FIRECRAWL_PUBLIC_FORM_TIMEOUTS.requestMs,
       mutating: true,
+      allowUnsuccessfulBody: true,
     });
-    if (!result.success || (result.exitCode ?? 0) !== 0) {
+    let structured: unknown;
+    try {
+      structured = parseInteractEnvelope(result);
+    } catch {
       throw new FirecrawlSubmissionError(
-        (result.error || result.stderr || "FIRECRAWL_SUBMISSION_FAILED").slice(
-          0,
-          1_000,
-        ),
+        "FIRECRAWL_SUBMISSION_FAILED",
         true,
       );
     }
-    const parsed = parseApprovedSubmissionOutput(safeResultOutput(result));
+    const parsed = parseApprovedSubmissionOutput(structured);
     if (parsed.state === "submitted_verified") {
-      await firecrawl.stopInteraction(args.ctx, jobId).catch(() => undefined);
+      await firecrawl.stopInteraction(args.ctx, jobId, FIRECRAWL_PUBLIC_FORM_TIMEOUTS.stopRequestMs).catch(() => undefined);
       return { jobId, ...parsed };
     }
     if (
@@ -554,7 +547,7 @@ export async function submitApprovedFormWithFirecrawl(args: {
       !result.liveViewUrl &&
       !result.interactiveLiveViewUrl
     ) {
-      await firecrawl.stopInteraction(args.ctx, jobId).catch(() => undefined);
+      await firecrawl.stopInteraction(args.ctx, jobId, FIRECRAWL_PUBLIC_FORM_TIMEOUTS.stopRequestMs).catch(() => undefined);
       throw new FirecrawlSubmissionError(
         "FIRECRAWL_HUMAN_HANDOFF_UNAVAILABLE",
         false,
@@ -570,11 +563,13 @@ export async function submitApprovedFormWithFirecrawl(args: {
     };
   } catch (error) {
     if (jobId) {
-      await firecrawl.stopInteraction(args.ctx, jobId).catch(() => undefined);
+      await firecrawl.stopInteraction(args.ctx, jobId, FIRECRAWL_PUBLIC_FORM_TIMEOUTS.stopRequestMs).catch(() => undefined);
     }
     if (error instanceof FirecrawlSubmissionError) throw error;
     throw new FirecrawlSubmissionError(
-      error instanceof Error ? error.message.slice(0, 1_000) : "FIRECRAWL_SUBMISSION_FAILED",
+      error instanceof FirecrawlSubmissionError
+        ? error.message
+        : "FIRECRAWL_SUBMISSION_FAILED",
       mutatingProgramDispatched,
     );
   }
@@ -588,12 +583,16 @@ export async function resumeFirecrawlInteractionPreview(args: {
   interactiveLiveViewUrl?: string;
 }> {
   const result = await firecrawl.interact(args.ctx, args.jobId, {
-    code: 'console.log(JSON.stringify({ state: "preview_only" }));',
+    code: buildFirecrawlProgram('return { state: "preview_only" };', {}),
     language: "node",
-    timeout: 15,
+    timeout: FIRECRAWL_PUBLIC_FORM_TIMEOUTS.previewSeconds,
+    requestTimeoutMs: FIRECRAWL_PUBLIC_FORM_TIMEOUTS.requestMs,
     mutating: false,
+    allowUnsuccessfulBody: true,
   });
-  if (!result.success || (result.exitCode ?? 0) !== 0) {
+  try {
+    parseInteractEnvelope(result);
+  } catch {
     throw new Error("FIRECRAWL_INTERACTION_NOT_AVAILABLE");
   }
   return {
@@ -608,5 +607,5 @@ export async function stopFirecrawlInteraction(args: {
   ctx: ActionCtx;
   jobId: string;
 }): Promise<void> {
-  await firecrawl.stopInteraction(args.ctx, args.jobId);
+  await firecrawl.stopInteraction(args.ctx, args.jobId, FIRECRAWL_PUBLIC_FORM_TIMEOUTS.stopRequestMs);
 }

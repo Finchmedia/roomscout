@@ -106,6 +106,7 @@ export function ProfilePage() {
   const recoverFailedRegistration = useMutation(
     api.portalConnections.recoverFailedRegistration,
   );
+  const recoverFirecrawlProfile = useAction(api.firecrawlPortal.recoverProfile);
   const [importOpen, setImportOpen] = useState(false);
   const [importedCount, setImportedCount] = useState<number>();
   const [forgetFactId, setForgetFactId] = useState<Id<"memoryFacts">>();
@@ -188,8 +189,14 @@ export function ProfilePage() {
       domain: domainFromUrl(connection.baseUrl),
       status: portalUiStatus(connection.status, connection.policyDecision),
       policyReady: connection.policyDecision === "allowed",
+      browserProvider: connection.browserProvider,
+      contextStatus: connection.contextStatus,
+      providerMismatch: connection.providerMismatch || Boolean(connection.providerConfigurationError),
       canAuthenticate:
         connection.policyDecision === "allowed" &&
+        !connection.providerMismatch &&
+        !connection.providerConfigurationError &&
+        connection.contextStatus !== "creating" &&
         (connection.status === "needs_auth" ||
           connection.status === "reauth_required" ||
           connection.status === "paused"),
@@ -205,6 +212,9 @@ export function ProfilePage() {
           ) === true),
       canSync:
         connection.policyDecision === "allowed" &&
+        !connection.providerMismatch &&
+        !connection.providerConfigurationError &&
+        (connection.browserProvider === "browserbase" || connection.contextStatus === "ready") &&
         connection.status === "active" &&
         connection.allowInboxPolling,
       scopes: [
@@ -220,7 +230,15 @@ export function ProfilePage() {
           ? connection.label
           : undefined,
       note:
-        connection.policyDecision !== "allowed"
+        connection.providerConfigurationError
+          ? "Portal browser provider configuration is invalid. No browser work can start."
+          : connection.providerMismatch
+            ? `Reconnect required for the selected provider. This identity belongs to ${connection.browserProvider === "firecrawl" ? "Firecrawl" : "Browserbase"}.`
+            : connection.contextStatus === "creating"
+              ? "A new-session authentication proof is still pending."
+              : connection.contextStatus === "failed"
+                ? connection.contextProbeErrorCode ?? "The saved authentication profile is not ready. Retry is available."
+                : connection.policyDecision !== "allowed"
           ? `Platform policy: ${connection.policyDecision}.`
           : connection.lastErrorCode
             ? `Last connection error: ${connection.lastErrorCode}.`
@@ -282,6 +300,22 @@ export function ProfilePage() {
     setConnectionError("");
     setConnectionSuccess("");
     try {
+      const connection = portalRows?.find((row) => row._id === connectionId);
+      if (connection?.browserProvider === "firecrawl") {
+        const result = await recoverFirecrawlProfile({
+          connectionId: connectionId as Id<"portalConnections">,
+        });
+        if (result.runId) {
+          navigate(`/app/runs/${result.runId}`);
+        } else if (result.status === "completed") {
+          setConnectionSuccess("The existing Firecrawl profile was verified and restored.");
+        } else {
+          setConnectionError(result.status === "auth_needed"
+            ? "The saved Firecrawl profile needs a manual sign-in, which is not supported here. Review or reconnect the portal account."
+            : "The saved Firecrawl profile needs review before automation can continue.");
+        }
+        return;
+      }
       await recoverFailedRegistration({
         connectionId: connectionId as Id<"portalConnections">,
       });

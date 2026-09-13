@@ -136,14 +136,19 @@ describe("poll mode", () => {
     const t = initConvexTest();
     mockFetch([{ status: 401, body: { success: false, error: "bad key" } }]);
 
-    await expect(
-      t.action(api.crawl.start, { url: "https://a.com", mode: "poll" }),
-    ).rejects.toThrow(/bad key/);
+    const error = await t.action(
+      api.crawl.start,
+      { url: "https://a.com", mode: "poll" },
+    ).catch((value: unknown) => value);
+    expect(String(error)).toContain("firecrawl_request_failed");
+    expect(String(error)).toContain("401");
+    expect(String(error)).not.toContain("bad key");
 
     const crawls = await t.query(api.crawl.listCrawls, {});
     expect(crawls).toHaveLength(1);
     expect(crawls[0]).toMatchObject({ status: "failed", finalized: true });
-    expect(crawls[0].error).toMatch(/bad key/);
+    expect(crawls[0].error).toBe("Firecrawl request failed.");
+    expect(JSON.stringify(crawls[0])).not.toContain("bad key");
   });
 
   test("reports a failed crawl from the status endpoint", async () => {

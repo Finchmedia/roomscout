@@ -39,6 +39,7 @@ vi.mock("../../../convex/_generated/api", () => ({
       syncInboxNow: "browserbasePortal.syncInboxNow",
       disableConnection: "browserbasePortal.disableConnection",
     },
+    firecrawlPortal: { recoverProfile: "firecrawlPortal.recoverProfile" },
     savedNeeds: { listMine: "savedNeeds.listMine" },
     searchSources: {
       listForNeed: "searchSources.listForNeed",

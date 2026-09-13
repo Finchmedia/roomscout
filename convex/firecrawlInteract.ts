@@ -21,6 +21,20 @@ function firecrawlKey(): string {
   return key;
 }
 
+export function assertPublicFormTargetNotControlledPortal(targetUrl: string): void {
+  let url: URL;
+  try {
+    url = new URL(targetUrl);
+  } catch {
+    throw new ConvexError({ code: "INVALID_FORM_URL" });
+  }
+  if (url.protocol === "https:" && url.hostname === "roomscout.dev" && url.port === "") {
+    throw new ConvexError({
+      code: "CONTROLLED_PORTAL_REQUIRES_SELECTED_BROWSER_ENGINE",
+    });
+  }
+}
+
 export const prepareApprovedForm = action({
   args: { requestId: v.id("actionRequests") },
   returns: v.object({
@@ -44,6 +58,7 @@ export const prepareApprovedForm = action({
     const ownerId = await requireActionUserId(ctx);
     const form = await ctx.runQuery(internal.externalActions.getApprovedContactForm, { ownerId, requestId: args.requestId });
     if (form === null) throw new ConvexError({ code: "APPROVED_FORM_NOT_FOUND" });
+    assertPublicFormTargetNotControlledPortal(form.targetUrl);
     firecrawlKey();
     const result = await prepareFormWithFirecrawl({
       ctx,
@@ -226,6 +241,20 @@ async function executeApprovedForOwner(
     throw new ConvexError({ code: "FIRECRAWL_ACTION_SHAPE_MISMATCH" });
   }
 
+  try {
+    assertPublicFormTargetNotControlledPortal(claim.payload.targetUrl);
+  } catch {
+    await ctx.runMutation(internal.externalActions.finishExecution, {
+      ownerId,
+      executionId: claim.executionId,
+      status: "failed",
+      error: "CONTROLLED_PORTAL_REQUIRES_SELECTED_BROWSER_ENGINE",
+    });
+    throw new ConvexError({
+      code: "CONTROLLED_PORTAL_REQUIRES_SELECTED_BROWSER_ENGINE",
+    });
+  }
+
   const workflow = resolveReviewedSubmitWorkflow({
     adapterKey: claim.adapterKey,
     extractionProfileKey: claim.adapterConfig.extractionProfileKey,
@@ -244,7 +273,7 @@ async function executeApprovedForOwner(
     const result = await submitApprovedFormWithFirecrawl({
       ctx,
       url: claim.payload.targetUrl,
-      fields: claim.payload.fields.map((field) => ({
+      fields: claim.payload.fields.map((field: { name: string; value: string }) => ({
         name: field.name,
         value: field.value,
       })),

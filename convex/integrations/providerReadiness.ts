@@ -120,6 +120,37 @@ export function deriveProviderReadiness(readEnv: ReadEnv) {
     ? "configured"
     : "incomplete";
 
+  const configuredPortalProvider = readEnv("PORTAL_BROWSER_ENGINE")?.trim().toLowerCase();
+  const selectedPortalProvider: "firecrawl" | "browserbase" | "invalid" = !configuredPortalProvider
+    ? "browserbase" as const
+    : configuredPortalProvider === "firecrawl" || configuredPortalProvider === "browserbase"
+      ? configuredPortalProvider
+      : "invalid" as const;
+  const portalSelectedCredentialConfigured = selectedPortalProvider === "firecrawl"
+    ? firecrawlApiKeyConfigured
+    : selectedPortalProvider === "browserbase"
+      ? browserbaseApiKeyConfigured
+      : false;
+  const portalBrowserReasons: string[] = [];
+  if (selectedPortalProvider === "invalid") {
+    portalBrowserReasons.push("PORTAL_BROWSER_ENGINE must be firecrawl or browserbase.");
+  } else {
+    if (!portalSelectedCredentialConfigured) {
+      portalBrowserReasons.push(
+        selectedPortalProvider === "firecrawl"
+          ? "The selected Firecrawl portal engine is missing FIRECRAWL_API_KEY."
+          : "The selected Browserbase portal engine is missing BROWSERBASE_API_KEY.",
+      );
+    }
+    portalBrowserReasons.push(
+      "Selection and credential presence only; saved-profile reuse and the complete controlled flow still require live proof.",
+    );
+  }
+  const portalBrowserStatus: ProviderReadinessStatus =
+    selectedPortalProvider !== "invalid" && portalSelectedCredentialConfigured
+      ? "configured"
+      : "incomplete";
+
   const mapboxServerTokenConfigured = present(readEnv("MAPBOX_SECRET_TOKEN"));
   const mapboxReasons = mapboxServerTokenConfigured
     ? ["Server credential presence only; geocoding access is verified by a controlled live proof."]
@@ -147,7 +178,7 @@ export function deriveProviderReadiness(readEnv: ReadEnv) {
   const configuredProviders = [
     firecrawlStatus,
     agentmailStatus,
-    browserbaseStatus,
+    portalBrowserStatus,
     mapboxStatus,
     openaiStatus,
   ].filter((status) => status === "configured").length;
@@ -180,6 +211,17 @@ export function deriveProviderReadiness(readEnv: ReadEnv) {
       apiKeyConfigured: browserbaseApiKeyConfigured,
       credentialPresenceOnly: true,
       reasons: browserbaseReasons,
+    },
+    portalBrowser: {
+      status: portalBrowserStatus,
+      selectedProvider: selectedPortalProvider,
+      selectionExplicit: Boolean(configuredPortalProvider),
+      selectedCredentialConfigured: portalSelectedCredentialConfigured,
+      firecrawlApiKeyConfigured,
+      browserbaseApiKeyConfigured,
+      fallbackEnabled: false as const,
+      liveFlowVerified: false as const,
+      reasons: portalBrowserReasons,
     },
     mapbox: {
       status: mapboxStatus,

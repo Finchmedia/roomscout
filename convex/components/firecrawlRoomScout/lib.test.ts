@@ -44,13 +44,15 @@ describe("scrape", () => {
     expect(init?.headers?.Authorization).toBe(`Bearer ${TEST_API_KEY}`);
   });
 
-  test("surfaces API errors with status and message", async () => {
+  test("surfaces fixed API errors with status but not provider content", async () => {
     const t = initConvexTest();
     mockFetch([{ status: 402, body: { success: false, error: "Insufficient credits" } }]);
 
-    await expect(
-      t.action(api.lib.scrape, { url: "https://a.com" }),
-    ).rejects.toThrow(/Firecrawl \/v2\/scrape failed \(402\): Insufficient credits/);
+    const error = await t.action(api.lib.scrape, { url: "https://a.com" })
+      .catch((value: unknown) => value);
+    expect(String(error)).toContain("firecrawl_request_failed");
+    expect(String(error)).toContain("402");
+    expect(String(error)).not.toContain("Insufficient credits");
   });
 
   test("retries a 429 and succeeds", async () => {
@@ -72,9 +74,11 @@ describe("scrape", () => {
       { status: 400, body: { success: false, error: "bad url" } },
     ]);
 
-    await expect(
-      t.action(api.lib.scrape, { url: "not-a-url" }),
-    ).rejects.toThrow(/bad url/);
+    const error = await t.action(api.lib.scrape, { url: "not-a-url" })
+      .catch((value: unknown) => value);
+    expect(String(error)).toContain("firecrawl_request_failed");
+    expect(String(error)).toContain("400");
+    expect(String(error)).not.toContain("bad url");
     expect(calls).toHaveLength(1);
   });
 });

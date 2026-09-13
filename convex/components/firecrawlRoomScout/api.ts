@@ -2,6 +2,7 @@ import { ConvexError } from "convex/values";
 import { env } from "./_generated/server.js";
 
 const DEFAULT_API_URL = "https://api.firecrawl.dev";
+const MAX_REQUEST_TIMEOUT_MS = 600_000;
 
 /**
  * Sent as `origin` on every request body so Firecrawl can attribute traffic to
@@ -35,11 +36,12 @@ function apiKey(): string {
 }
 
 function fail(path: string, status: number, message: string): never {
+  void path;
+  void message;
   throw new ConvexError({
     code: "firecrawl_request_failed",
     status,
-    path,
-    message: `Firecrawl ${path} failed (${status}): ${message}`,
+    message: "Firecrawl request failed.",
   });
 }
 
@@ -77,7 +79,23 @@ export type RequestInitLike = {
   absoluteUrl?: string;
   /** Override retry count. Mutating Interact programs must set this to 0. */
   maxRetries?: number;
+  /** Return an HTTP 2xx envelope even when its `success` field is false. */
+  allowUnsuccessfulBody?: boolean;
+  /** Bound the whole HTTP/retry operation in milliseconds. Omit for legacy callers. */
+  requestTimeoutMs?: number;
 };
+
+function normalizeRequestTimeoutMs(value: number | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const timeout = Math.floor(value);
+  if (!Number.isFinite(timeout) || timeout < 1 || timeout > MAX_REQUEST_TIMEOUT_MS) {
+    throw new ConvexError({
+      code: "firecrawl_invalid_request_timeout",
+      message: "Firecrawl request timeout must be between 1 and 600000 milliseconds.",
+    });
+  }
+  return timeout;
+}
 
 /**
  * Call the Firecrawl API, retrying transient failures, and return the parsed
@@ -102,19 +120,33 @@ export async function firecrawlRequest(
 
   let lastError = "";
   const maxRetries = Math.max(0, init.maxRetries ?? RETRY.attempts);
+  const requestTimeoutMs = normalizeRequestTimeoutMs(init.requestTimeoutMs);
+  const deadlineAt = requestTimeoutMs === undefined ? undefined : Date.now() + requestTimeoutMs;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     let response: Response;
+    let text: string;
+    const remainingMs = deadlineAt === undefined ? undefined : deadlineAt - Date.now();
+    if (remainingMs !== undefined && remainingMs <= 0) fail(path, 0, lastError || "request timed out");
+    const controller = new AbortController();
+    const timer = remainingMs === undefined ? undefined : setTimeout(() => controller.abort(), remainingMs);
     try {
-      response = await fetch(url, { method, headers, body: payload });
+      response = await fetch(url, {
+        method,
+        headers,
+        body: payload,
+        signal: controller.signal,
+      });
+      text = await response.text();
     } catch (error) {
       // Network-level failure: worth another attempt.
       lastError = error instanceof Error ? error.message : String(error);
       if (attempt === maxRetries) fail(path, 0, lastError);
-      await sleep(retryDelayMs(attempt, null));
+      await sleep(Math.min(retryDelayMs(attempt, null), Math.max(0, (deadlineAt ?? Infinity) - Date.now())));
       continue;
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
     }
 
-    const text = await response.text();
     let body: unknown = null;
     if (text.length > 0) {
       try {
@@ -124,7 +156,12 @@ export async function firecrawlRequest(
       }
     }
 
-    if (response.ok && body && (body as Record<string, unknown>).success !== false) {
+    if (
+      response.ok &&
+      body &&
+      (init.allowUnsuccessfulBody ||
+        (body as Record<string, unknown>).success !== false)
+    ) {
       return body as Record<string, any>;
     }
 
@@ -137,10 +174,13 @@ export async function firecrawlRequest(
       fail(path, response.status, message);
     }
     lastError = message;
-    await sleep(retryDelayMs(attempt, response.headers.get("retry-after")));
+    await sleep(Math.min(
+      retryDelayMs(attempt, response.headers.get("retry-after")),
+      Math.max(0, (deadlineAt ?? Infinity) - Date.now()),
+    ));
   }
 
   fail(path, 0, lastError || "exhausted retries");
 }
 
-export const _test = { retryDelayMs, errorMessage };
+export const _test = { retryDelayMs, errorMessage, normalizeRequestTimeoutMs };

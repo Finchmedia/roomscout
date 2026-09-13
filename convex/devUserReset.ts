@@ -10,6 +10,10 @@ import {
   type QueryCtx,
 } from "./_generated/server";
 import { envValue } from "./integrations/env";
+import {
+  portalBrowserProviderValidator,
+  storedPortalBrowserProvider,
+} from "./integrations/portalBrowserEngine";
 
 export const DEV_RESET_CONFIRMATION =
   "DELETE_EXACT_DEVELOPMENT_TEST_USER_AND_PROVIDER_DATA" as const;
@@ -31,6 +35,10 @@ const providerInboxResultValidator = v.union(
   v.literal("deleted"),
   v.literal("already_absent"),
 );
+const providerContextValidator = v.object({
+  providerContextId: v.string(),
+  browserProvider: portalBrowserProviderValidator,
+});
 
 const stages = [
   "demoSourceCheckRequests",
@@ -157,7 +165,7 @@ const exactTargetValidator = v.object({ userId: v.id("users"), username: v.strin
 
 export const previewExactTargets = internalQuery({
   args: { targets: v.array(exactTargetValidator), confirmation: v.union(confirmationValidator, v.literal(FLEET_RESET_CONFIRMATION)) },
-  returns: v.array(v.object({ userId: v.id("users"), username: v.string(), providerInboxId: v.optional(v.string()), providerContextIds: v.array(v.string()), agentThreadIds: v.array(v.string()), inFlightBrowserRuns: v.number() })),
+  returns: v.array(v.object({ userId: v.id("users"), username: v.string(), providerInboxId: v.optional(v.string()), providerContextIds: v.array(v.string()), providerContexts: v.array(providerContextValidator), agentThreadIds: v.array(v.string()), inFlightBrowserRuns: v.number() })),
   handler: async (ctx, args) => {
     fleetGuard();
     if (args.targets.length === 0 || args.targets.length > 20) throw new ConvexError({ code: "DEV_USER_RESET_INVALID_TARGET_COUNT" });
@@ -176,7 +184,7 @@ export const previewExactTargets = internalQuery({
       ]);
       if (contexts.length > MAX_PROVIDER_CONTEXTS) throw new ConvexError({ code: "DEV_USER_RESET_TOO_MANY_CONTEXTS" });
       if (runs.length > 100 || conversations.length > 100) throw new ConvexError({ code: "FLEET_USER_RESET_PREFLIGHT_OVERFLOW" });
-      result.push({ ...target, providerInboxId: mailbox?.providerInboxId, providerContextIds: contexts.map((row) => row.providerContextId), agentThreadIds: [...new Set([scoutContext?.threadId, ...conversations.map((row) => row.agentThreadId)].filter((value): value is string => Boolean(value)))], inFlightBrowserRuns: runs.filter((run) => ["queued", "running", "human_required"].includes(run.status)).length });
+      result.push({ ...target, providerInboxId: mailbox?.providerInboxId, providerContextIds: contexts.map((row) => row.providerContextId), providerContexts: contexts.map((row) => ({ providerContextId: row.providerContextId, browserProvider: storedPortalBrowserProvider(row.browserProvider) })), agentThreadIds: [...new Set([scoutContext?.threadId, ...conversations.map((row) => row.agentThreadId)].filter((value): value is string => Boolean(value)))], inFlightBrowserRuns: runs.filter((run) => ["queued", "running", "human_required"].includes(run.status)).length });
     }
     return result;
   },
@@ -218,6 +226,7 @@ export const preflight = internalQuery({
     username: v.string(),
     providerInboxId: v.optional(v.string()),
     providerContextIds: v.array(v.string()),
+    providerContexts: v.array(providerContextValidator),
     portalConnectionCount: v.number(),
   }),
   handler: async (ctx, args) => {
@@ -254,6 +263,10 @@ export const preflight = internalQuery({
       username: user.username,
       providerInboxId: mailbox?.providerInboxId,
       providerContextIds: contexts.map((context) => context.providerContextId),
+      providerContexts: contexts.map((context) => ({
+        providerContextId: context.providerContextId,
+        browserProvider: storedPortalBrowserProvider(context.browserProvider),
+      })),
       portalConnectionCount: connections.length,
     };
   },

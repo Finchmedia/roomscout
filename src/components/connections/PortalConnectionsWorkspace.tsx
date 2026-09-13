@@ -35,7 +35,14 @@ export type PortalUiConnection = {
   lastVerifiedLabel?: string;
   identityLabel?: string;
   note?: string;
+  browserProvider?: "firecrawl" | "browserbase";
+  contextStatus?: "creating" | "ready" | "reauth_required" | "deleting" | "deleted" | "failed";
+  providerMismatch?: boolean;
 };
+
+function providerName(provider: PortalUiConnection["browserProvider"]) {
+  return provider === "firecrawl" ? "Firecrawl" : "Browserbase";
+}
 
 export type AvailablePortal = {
   id: string;
@@ -82,12 +89,12 @@ const STATUS_COPY: Record<PortalUiStatus, { label: string; description: string; 
   },
   connected: {
     label: "Connected",
-    description: "The saved Browserbase Context can be reused for allowed searches and inbox checks on this portal.",
+    description: "The saved provider profile can be reused for allowed searches and inbox checks on this portal.",
     warning: false,
   },
   reauth_required: {
     label: "Reauthentication required",
-    description: "This portal ended or invalidated its login. Reconnect in Live View to refresh only this portal Context.",
+    description: "This portal ended or invalidated its login. Reconnect to refresh only this portal profile.",
     warning: true,
   },
   paused: {
@@ -97,7 +104,7 @@ const STATUS_COPY: Record<PortalUiStatus, { label: string; description: string; 
   },
   disabled: {
     label: "Disabled",
-    description: "The remote Browserbase Context was deleted and this portal identity can no longer be used.",
+    description: "This portal identity is disabled. Any retained remote authentication state depends on the selected provider.",
     warning: false,
   },
 };
@@ -162,8 +169,8 @@ export function PortalConnectionsWorkspace({
       <div className={styles.safety}>
         <ShieldCheck aria-hidden="true" size={16} />
         <div>
-          <strong>One isolated Browserbase Context per portal identity</strong>
-          <p>Browserbase persists each site&apos;s cookies/session in its own Context. On the controlled roomscout.dev demo portal, the Scout may create an account with its AgentMail address and inject the received email code. Passwords are ephemeral; CAPTCHA, terms and ambiguous verification always hand control to you.</p>
+          <strong>One isolated provider profile per portal identity</strong>
+          <p>The deployment uses either Firecrawl or Browserbase for the complete controlled-portal flow. On roomscout.dev, the Scout may create an account with its AgentMail address and inject the received email code. Firecrawl cannot solve CAPTCHA; terms, credentials and ambiguous verification always stop for you.</p>
         </div>
       </div>
 
@@ -180,11 +187,14 @@ export function PortalConnectionsWorkspace({
             {portals.map((portal) => {
               const status = STATUS_COPY[portal.status];
               const busy = workingId === portal.id;
+              const profilePending = portal.browserProvider === "firecrawl" && portal.contextStatus === "creating";
+              const blockedByProvider = portal.providerMismatch === true;
               return (
                 <article className={styles.portal} key={portal.id}>
                   <div className={styles.portalHead}>
                     <div className={styles.portalTitle}>
                       <strong>{portal.name}</strong>
+                      <span className="mono">{providerName(portal.browserProvider)} provider</span>
                       {portal.domain ? <a href={`https://${portal.domain}`} rel="noreferrer" target="_blank">{portal.domain}<ExternalLink aria-hidden="true" size={12} /></a> : null}
                       <p>{status.description}</p>
                     </div>
@@ -194,8 +204,8 @@ export function PortalConnectionsWorkspace({
                   <div className={styles.context}>
                     <KeyRound aria-hidden="true" size={15} />
                     <div>
-                      <strong>{portal.status === "connected" ? "Persistent Context ready" : portal.status === "disabled" ? "Persistent Context deleted" : "Persistent Context scoped to this portal"}</strong>
-                      <p>{portal.identityLabel ? `Portal identity: ${portal.identityLabel}. ` : ""}This Context is not shared with your other connected sites.{portal.note ? ` ${portal.note}` : ""}</p>
+                      <strong>{blockedByProvider ? "Reconnect required for the selected provider" : profilePending ? "Authentication profile verification pending" : portal.status === "connected" ? "Persistent profile ready" : portal.status === "disabled" ? "Local connection disabled" : "Persistent profile scoped to this portal"}</strong>
+                      <p>{portal.identityLabel ? `Portal identity: ${portal.identityLabel}. ` : ""}This {providerName(portal.browserProvider)} profile is not shared with other connected sites.{portal.note ? ` ${portal.note}` : ""}</p>
                     </div>
                   </div>
 
@@ -208,24 +218,24 @@ export function PortalConnectionsWorkspace({
                   <div className={styles.actions}>
                     {portal.status === "login_needed" ? (
                       <>
-                        <button className="btn btn-p btn-sm" disabled={busy || !portal.canAuthenticate || !onAgentRegister || mailbox?.status !== "active"} onClick={() => onAgentRegister?.(portal.id)} type="button"><Mail aria-hidden="true" size={13} />Let Scout register</button>
-                        <button className="btn btn-s btn-sm" disabled={busy || !portal.canAuthenticate || !onAuthenticate} onClick={() => onAuthenticate?.(portal.id)} type="button"><Link2 aria-hidden="true" size={13} />Open secure setup</button>
+                        <button className="btn btn-p btn-sm" disabled={busy || blockedByProvider || profilePending || !portal.canAuthenticate || !onAgentRegister || mailbox?.status !== "active"} onClick={() => onAgentRegister?.(portal.id)} type="button"><Mail aria-hidden="true" size={13} />Let Scout register</button>
+                        <button className="btn btn-s btn-sm" disabled={busy || blockedByProvider || profilePending || !portal.canAuthenticate || !onAuthenticate} onClick={() => onAuthenticate?.(portal.id)} type="button"><Link2 aria-hidden="true" size={13} />Open secure setup</button>
                         {portal.canRecoverRegistration ? (
                           <button className="btn btn-s btn-sm" disabled={busy || !onRecoverRegistration} onClick={() => onRecoverRegistration?.(portal.id)} type="button"><RotateCcw aria-hidden="true" size={13} />Reset failed setup</button>
                         ) : null}
                       </>
                     ) : null}
                     {portal.status === "reauth_required" || portal.status === "paused" ? (
-                      <button className="btn btn-p btn-sm" disabled={busy || !portal.canAuthenticate || !onAuthenticate} onClick={() => onAuthenticate?.(portal.id)} type="button"><RotateCcw aria-hidden="true" size={13} />{portal.status === "paused" ? "Reconnect portal" : "Reauthenticate"}</button>
+                      <button className="btn btn-p btn-sm" disabled={busy || blockedByProvider || profilePending || !portal.canAuthenticate || !onAuthenticate} onClick={() => onAuthenticate?.(portal.id)} type="button"><RotateCcw aria-hidden="true" size={13} />{portal.status === "paused" ? "Reconnect portal" : "Reauthenticate"}</button>
                     ) : null}
                     {portal.status === "connected" && portal.canSync ? (
-                      <button className="btn btn-s btn-sm" disabled={busy || !onSync} onClick={() => onSync?.(portal.id)} type="button"><RefreshCcw aria-hidden="true" size={13} />Sync inbox</button>
+                      <button className="btn btn-s btn-sm" disabled={busy || blockedByProvider || profilePending || !onSync} onClick={() => onSync?.(portal.id)} type="button"><RefreshCcw aria-hidden="true" size={13} />Sync inbox</button>
                     ) : null}
                     {portal.status === "connected" ? (
                       <button className="btn btn-g btn-sm" disabled={busy || !onPause} onClick={() => onPause?.(portal.id)} type="button"><Pause aria-hidden="true" size={13} />Pause</button>
                     ) : null}
                     {portal.status !== "disabled" ? (
-                      <button className={`btn btn-g btn-sm ${styles.danger}`} disabled={busy || !onDisable} onClick={() => onDisable?.(portal.id)} type="button"><Unplug aria-hidden="true" size={13} />Disable & delete Context</button>
+                      <button className={`btn btn-g btn-sm ${styles.danger}`} disabled={busy || !onDisable} onClick={() => onDisable?.(portal.id)} type="button"><Unplug aria-hidden="true" size={13} />Disable connection</button>
                     ) : null}
                   </div>
                 </article>

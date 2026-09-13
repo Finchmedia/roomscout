@@ -4,6 +4,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, mutation, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { requireUserId } from "./integrations/authz";
 import { opportunityMatchIsCurrent } from "./lib/matchValidity";
+import { resolvePortalBrowserProvider } from "./integrations/portalBrowserEngine";
 
 const resultValidator = v.object({ checked: v.number(), created: v.number(), scheduled: v.number(), skipped: v.number(), expired: v.number() });
 type Result = { checked: number; created: number; scheduled: number; skipped: number; expired: number };
@@ -110,17 +111,22 @@ async function scheduleControlledRegistration(
   const connectionId = await eligibleControlledRegistration(ctx, mandate);
   if (!connectionId) return false;
   let runId: Id<"browserRuns">;
+  const browserProvider = resolvePortalBrowserProvider();
   try {
     runId = await ctx.runMutation(internal.portalConnections.reserveRun, {
       ownerId: mandate.ownerId,
       connectionId,
       kind: "authenticate",
+      browserProvider,
     });
   } catch {
     // An already queued/running onboarding run is the idempotent success case.
     return false;
   }
-  await ctx.scheduler.runAfter(0, internal.browserbasePortal.runScheduledAgentRegistration, {
+  const scheduledRegistration = browserProvider === "firecrawl"
+    ? internal.firecrawlPortal.runScheduledAgentRegistration
+    : internal.browserbasePortal.runScheduledAgentRegistration;
+  await ctx.scheduler.runAfter(0, scheduledRegistration, {
     ownerId: mandate.ownerId,
     mandateId: mandate._id,
     connectionId,
@@ -204,6 +210,10 @@ export const validateScheduledRegistration = internalQuery({
       !run || run.ownerId !== args.ownerId || run.connectionId !== args.connectionId ||
       run.kind !== "authenticate" || run.status !== "queued"
     ) return false;
+    const selectedProvider = resolvePortalBrowserProvider();
+    const connection = await ctx.db.get(args.connectionId);
+    if (!connection || (run.browserProvider ?? "browserbase") !== selectedProvider ||
+      (connection.browserProvider ?? "browserbase") !== selectedProvider) return false;
     return await eligibleControlledRegistration(ctx, mandate, args.connectionId) !== null;
   },
 });

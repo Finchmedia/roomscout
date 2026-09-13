@@ -28,7 +28,7 @@ read-only. No production rollout or external messages in this verification.
 - **Auth:** Convex Auth
 - **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-realtime-2.1`
 - **Started:** 2026-08-26T13:55:26Z
-- **Last updated:** 2026-09-11T11:26:01Z
+- **Last updated:** 2026-09-11T15:25:13Z
 
 ## Log
 
@@ -271,3 +271,18 @@ Convex functions and the production-built SPA through Convex Static Hosting.
 Hosted landing, Scout, settings and operator routes return the current build;
 referenced entry assets are available. App/backend lint passes. This HTTP smoke
 does not replace authenticated operator checks or a fresh-band end-to-end run.
+
+### 2026-09-11 — working tree: exclusive portal-engine decision
+
+Decided to evaluate Firecrawl as an alternative portal browser engine, motivated
+by its sponsor role. Each deployment selects Firecrawl OR Browserbase for the
+controlled portal; no automatic provider fallback or mixed browser flow.
+Firecrawl must prove registration, persisted login, outbound evidence and reply
+import end to end before activation. If it cannot, retain Browserbase as the
+selected engine. AgentMail remains the email provider. Three Sol subagents have
+locally integrated provider selection, registration, profile proof, messaging,
+inbox reads and maintenance guards. Combined verification passes 835 tests with
+one skipped; build and app/backend lint pass. Cleanup/reconciliation fixes are
+locally verified; live acceptance remains open. A code-generation command attempted a dev upload;
+a subsequent read-only function listing showed no new portal-engine functions.
+No provider switch or live message was performed; this is not a proven live release.

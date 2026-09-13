@@ -83,6 +83,7 @@ export const consumeOwnedMailboxHint = internalMutation({
     const requested: { status: "queued" | "coalesced" | "ignored" } = await ctx.runMutation(internal.portalInboxSync.requestSync, {
       ownerId: args.ownerId, connectionId: connection._id,
       reason: "notification", receiptKey: `agentmail:${args.providerMessageId}`,
+      providerThreadId: urlMatch[2]!,
     });
     return requested.status === "queued"
       ? { triggered: true, reason: "scheduled" as const }

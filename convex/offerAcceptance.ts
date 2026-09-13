@@ -8,6 +8,7 @@ import { messageSafetyContext } from "./lib/messageSafety";
 import { acceptanceMessage, assertAcceptanceCurrent, currentAcceptableOffer } from "./lib/offerAcceptance";
 import { portalDestinationHash, resolveControlledPortal } from "./lib/providerPortal";
 import { providerAssessmentValidator } from "./lib/providerAssessment";
+import { resolvePortalBrowserProvider, storedPortalBrowserProvider } from "./integrations/portalBrowserEngine";
 
 export const prepare = mutation({
   args: { offerId: v.id("offerRevisions"), expectedOfferHash: v.string() }, returns: v.id("actionRequests"),
@@ -153,7 +154,14 @@ export const approveAndSend = mutation({
     await ctx.db.patch(need._id, { acceptanceRequestId: request._id });
     await ctx.db.insert("auditEvents", { eventKey: `acceptance:${request._id}:approved`, actorType: "user", actorUserId: ownerId,
       entityKey: `action:${request._id}`, eventType: "offer.acceptance_approved", actionRequestId: request._id, afterHash: request.contentHash, occurredAt: now });
-    await ctx.scheduler.runAfter(0, internal.browserbasePortal.executeApprovedWriteWorker, { ownerId, requestId: request._id });
+    const browserProvider = resolvePortalBrowserProvider();
+    if (storedPortalBrowserProvider(target.connection.browserProvider) !== browserProvider) {
+      throw new ConvexError({ code: "PORTAL_BROWSER_PROVIDER_RECONNECT_REQUIRED" });
+    }
+    const worker = browserProvider === "firecrawl"
+      ? internal.firecrawlPortal.executeApprovedWriteWorker
+      : internal.browserbasePortal.executeApprovedWriteWorker;
+    await ctx.scheduler.runAfter(0, worker, { ownerId, requestId: request._id });
     return { requestId: request._id, status: "approved" };
   },
 });

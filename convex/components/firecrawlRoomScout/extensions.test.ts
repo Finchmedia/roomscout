@@ -109,14 +109,83 @@ describe("Interact extension", () => {
       { body: { success: true, result: "would be a duplicate submission" } },
     ]);
 
+    const failure = await t.action(api.interact.execute, {
+      jobId: "job-1",
+      prompt: "Submit the approved form",
+      mutating: true,
+    }).catch((error: unknown) => error);
+    expect(String(failure)).toContain("Firecrawl request failed");
+    expect(String(failure)).not.toContain("rate limited");
+
+    expect(calls).toHaveLength(1);
+  });
+
+  test("does not replay a mutating program after a transport failure", async () => {
+    const t = initConvexTest();
+    const fetch = vi.fn()
+      .mockRejectedValueOnce(new Error("synthetic-secret transport detail"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true })));
+    vi.stubGlobal("fetch", fetch);
+
+    const failure = await t.action(api.interact.execute, {
+      jobId: "job-1",
+      code: "return { ok: true };",
+      mutating: true,
+    }).catch((error: unknown) => error);
+    expect(String(failure)).toContain("Firecrawl request failed");
+    expect(String(failure)).not.toContain("synthetic-secret");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  test("aborts a mutating Interact HTTP request at the millisecond deadline without replay", async () => {
+    const t = initConvexTest();
+    const fetch = vi.fn((_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      }));
+    vi.stubGlobal("fetch", fetch);
+
+    const failure = await t.action(api.interact.execute, {
+      jobId: "job-1",
+      code: "return { ok: true };",
+      timeout: 30,
+      requestTimeoutMs: 5,
+      mutating: true,
+    }).catch((error: unknown) => error);
+
+    expect(String(failure)).toContain("Firecrawl request failed");
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  test("keeps the HTTP deadline active while consuming the response body", async () => {
+    const t = initConvexTest();
+    const fetch = vi.fn((_url: string, init?: RequestInit) => Promise.resolve({
+      text: () => new Promise<string>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      }),
+    } as Response));
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(t.action(api.interact.execute, {
+      jobId: "job-1",
+      code: "return { ok: true };",
+      requestTimeoutMs: 5,
+      mutating: true,
+    })).rejects.toThrow("Firecrawl request failed");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  test("optionally returns HTTP 200 unsuccessful envelopes for safe parsing", async () => {
+    const t = initConvexTest();
+    mockFetch([{ body: { success: false, error: "synthetic-secret" } }]);
     await expect(
       t.action(api.interact.execute, {
         jobId: "job-1",
-        prompt: "Submit the approved form",
+        code: "return { ok: true };",
         mutating: true,
+        allowUnsuccessfulBody: true,
       }),
-    ).rejects.toThrow();
-
-    expect(calls).toHaveLength(1);
+    ).resolves.toEqual({ success: false });
   });
 });

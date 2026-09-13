@@ -11,6 +11,11 @@ import {
 import { Browserbase } from "@browserbasehq/sdk";
 import { z, type ZodType } from "zod";
 import { readPortalDomEvidenceFromPage } from "./portalDomEvidence";
+import { inspectPortalFormOnPage } from "./portalFormInspection";
+import {
+  REVIEWED_PORTAL_ORIGIN,
+  reviewedPortalUrl,
+} from "./reviewedPortalUrl";
 import type {
   PortalDomEvidence,
   PortalFormInspection,
@@ -19,7 +24,6 @@ import type {
   StagehandPortalPrimitives,
 } from "./stagehandPortalDriver";
 
-const REVIEWED_PORTAL_ORIGIN = "https://roomscout.dev";
 const DEFAULT_OPERATION_TIMEOUT_MS = 120_000;
 const MIN_PROVIDER_TIMEOUT_SECONDS = 60;
 const MAX_PROVIDER_TIMEOUT_SECONDS = 21_600;
@@ -92,23 +96,6 @@ function providerTimeoutSeconds(timeoutMs: number): number {
   );
 }
 
-function reviewedPortalUrl(rawUrl: string): string {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    throw new Error("STAGEHAND_V4_URL_NOT_ALLOWED");
-  }
-  if (
-    parsed.origin !== REVIEWED_PORTAL_ORIGIN ||
-    parsed.username ||
-    parsed.password
-  ) {
-    throw new Error("STAGEHAND_V4_URL_NOT_ALLOWED");
-  }
-  return parsed.toString();
-}
-
 function asAction(action: StagehandObservedAction): Action {
   return {
     selector: action.selector,
@@ -116,74 +103,6 @@ function asAction(action: StagehandObservedAction): Action {
     ...(action.method ? { method: action.method } : {}),
     ...(action.arguments ? { arguments: action.arguments } : {}),
   };
-}
-
-async function inspectFormOnPage(
-  page: Page,
-  input: { selector: string; role: PortalFormRole },
-): Promise<PortalFormInspection> {
-  const serializedInput = JSON.stringify(input).replace(/</g, "\\u003c");
-  const expression = `(() => {
-      const { selector, role } = ${serializedInput};
-      const select = () => {
-        if (selector.startsWith("xpath=")) {
-          const snapshot = document.evaluate(
-            selector.slice("xpath=".length),
-            document,
-            null,
-            XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
-            null,
-          );
-          return Array.from({ length: snapshot.snapshotLength }, (_, index) =>
-            snapshot.snapshotItem(index),
-          ).filter((value) => value instanceof Element);
-        }
-        try {
-          return Array.from(document.querySelectorAll(selector));
-        } catch {
-          return [];
-        }
-      };
-      const elements = select();
-      const element = elements[0];
-      const formControl = element;
-      const style = element ? window.getComputedStyle(element) : null;
-      const visible = Boolean(
-        element &&
-          !element.hidden &&
-          style?.display !== "none" &&
-          style?.visibility !== "hidden" &&
-          element.getClientRects().length > 0,
-      );
-      const isFormControl = Boolean(
-        element &&
-          (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement),
-      );
-      const contentEditable = element?.isContentEditable === true;
-      const editable = role !== "submit" && Boolean(
-          element &&
-          visible &&
-          ((isFormControl && !formControl.disabled && !formControl.readOnly) ||
-            contentEditable),
-      );
-      const form = isFormControl
-        ? formControl.form
-        : element instanceof HTMLButtonElement
-          ? element.form
-          : element?.closest("form") ?? null;
-      return {
-        count: elements.length,
-        visible,
-        editable,
-        name: element?.getAttribute("name") ?? null,
-        type: element?.getAttribute("type") ?? null,
-        autocomplete: element?.getAttribute("autocomplete") ?? null,
-        required: isFormControl ? formControl.required : false,
-        value: isFormControl ? formControl.value : null,
-        formValid: form ? form.checkValidity() : null,
-      };
-    })()`;
-  return await page.evaluate<PortalFormInspection>(expression);
 }
 
 export function createStagehandV4Primitives(input: {
@@ -194,7 +113,7 @@ export function createStagehandV4Primitives(input: {
   const timeout = primitiveTimeout(input.timeoutMs);
   return {
     async navigate({ url }) {
-      await input.page.goto(reviewedPortalUrl(url));
+      await input.page.goto(reviewedPortalUrl(url, "STAGEHAND_V4_URL_NOT_ALLOWED"));
       const current = new URL(await input.page.url());
       if (current.origin !== REVIEWED_PORTAL_ORIGIN) {
         throw new Error("STAGEHAND_V4_NAVIGATION_ESCAPED");
@@ -256,7 +175,7 @@ export function createStagehandV4Primitives(input: {
       }, kind);
     },
     async inspectForm(formInput) {
-      return await inspectFormOnPage(input.page, formInput);
+      return await inspectPortalFormOnPage(input.page, formInput);
     },
     async wait(milliseconds) {
       await input.page.waitForTimeout(milliseconds);
@@ -368,7 +287,7 @@ export async function createStagehandV4Session(
   validateSharedConfig(config);
   const apiKey = required(config.apiKey, "STAGEHAND_V4_API_KEY_MISSING");
   const timeoutMs = operationTimeout(config.timeoutMs);
-  const url = reviewedPortalUrl(config.url);
+  const url = reviewedPortalUrl(config.url, "STAGEHAND_V4_URL_NOT_ALLOWED");
   if (config.persistContext && !config.contextId) {
     throw new Error("STAGEHAND_V4_CONTEXT_ID_MISSING");
   }

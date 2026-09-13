@@ -281,11 +281,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "action",
         "internal",
         {
+          allowUnsuccessfulBody?: boolean;
           code?: string;
           jobId: string;
           language?: "node" | "python" | "bash";
           mutating: boolean;
           prompt?: string;
+          requestTimeoutMs?: number;
           timeout?: number;
         },
         any,
@@ -294,7 +296,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       stop: FunctionReference<
         "action",
         "internal",
-        { jobId: string },
+        { jobId: string; requestTimeoutMs?: number },
         any,
         Name
       >;
@@ -378,6 +380,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             waitFor?: number;
             zeroDataRetention?: boolean;
           };
+          requestTimeoutMs?: number;
           url: string;
         },
         any,

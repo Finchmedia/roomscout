@@ -77,6 +77,30 @@ it("stops provider cleanup at the first failure", async () => {
   expect(deleted).toEqual(["inbox-1", "context-1"]);
 });
 
+it("deletes Browserbase contexts but truthfully retains Firecrawl profiles", async () => {
+  const deleted: string[] = [];
+  await expect(deleteProviderResources(
+    {
+      providerInboxId: undefined,
+      providerContextIds: ["browserbase-context", "firecrawl-profile"],
+      providerContexts: [
+        { providerContextId: "browserbase-context", browserProvider: "browserbase" },
+        { providerContextId: "firecrawl-profile", browserProvider: "firecrawl" },
+      ],
+    },
+    {
+      deleteInbox: async () => "deleted",
+      deleteBrowserContext: async (id) => { deleted.push(id); },
+    },
+  )).resolves.toEqual({
+    providerInboxResult: "not_present",
+    providerContextCount: 2,
+    providerBrowserbaseContextDeletedCount: 1,
+    providerFirecrawlProfileRetainedCount: 1,
+  });
+  expect(deleted).toEqual(["browserbase-context"]);
+});
+
 it("deletes owned rows in bounded scheduled pages and removes the user last", async () => {
   vi.useFakeTimers();
   const t = convexTest(schema, modules);

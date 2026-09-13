@@ -10,6 +10,7 @@ type PortalAuthenticationGuideProps = {
   signedInConfirmed: boolean;
   onSignedInConfirmedChange: (confirmed: boolean) => void;
   onEnsureMailbox?: () => void;
+  browserProvider?: "firecrawl" | "browserbase";
 };
 
 export function PortalAuthenticationGuide({
@@ -20,6 +21,7 @@ export function PortalAuthenticationGuide({
   signedInConfirmed,
   onSignedInConfirmedChange,
   onEnsureMailbox,
+  browserProvider = "browserbase",
 }: PortalAuthenticationGuideProps) {
   const [copied, setCopied] = useState(false);
 
@@ -35,7 +37,7 @@ export function PortalAuthenticationGuide({
         <ShieldCheck aria-hidden="true" size={17} />
         <div>
           <strong>You control this one-time {portalName} setup</strong>
-          <p>The Live View is a direct window into an isolated Browserbase session. Type passwords, OTPs and 2FA only there. RoomScout does not ask for, receive or store them, and Browserbase CAPTCHA solving is disabled.</p>
+          <p>The Live View is a direct window into an isolated {browserProvider === "firecrawl" ? "Firecrawl" : "Browserbase"} session. Type passwords, OTPs and 2FA only there. RoomScout does not ask for, receive or store them. {browserProvider === "firecrawl" ? "Firecrawl has no CAPTCHA-solving path; a challenge stops the run." : "Browserbase CAPTCHA solving is disabled for this setup."}</p>
         </div>
       </div>
 
@@ -59,7 +61,7 @@ export function PortalAuthenticationGuide({
 
       <label className={styles.check}>
         <input checked={signedInConfirmed} disabled={!liveViewOpen} onChange={(event) => onSignedInConfirmedChange(event.target.checked)} type="checkbox" />
-        <span><strong>I can see that {portalName} is signed in</strong><br />This confirmation saves the authenticated Context for later approved runs. It does not authorize RoomScout to send messages, accept terms, book, or pay.</span>
+        <span><strong>I can see that {portalName} is signed in</strong><br />This confirmation starts verification of the persistent {browserProvider === "firecrawl" ? "Firecrawl profile" : "Browserbase Context"} in a new session. The connection is not active until that proof succeeds, and this does not authorize RoomScout to send messages, accept terms, book, or pay.</span>
       </label>
       {!liveViewOpen ? <p className="hint"><KeyRound aria-hidden="true" size={12} /> Open the Live View before confirming the portal session.</p> : null}
     </section>

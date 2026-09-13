@@ -46,7 +46,10 @@ describe("portal notification hints", () => {
   it("coalesces an exact controlled notification into the normal due-inbox coordinator", async () => {
     const f = await fixture();
     expect(await f.consume()).toEqual({ triggered: true, reason: "scheduled" });
-    expect((await f.t.run((ctx) => ctx.db.get(f.connectionId)))?.inboxSyncActiveGeneration).toBe(1);
+    const connection = await f.t.run((ctx) => ctx.db.get(f.connectionId));
+    expect(connection?.inboxSyncActiveGeneration).toBe(1);
+    expect(connection?.inboxSyncRequestedThreadIds).toEqual(["thread_123"]);
+    expect(JSON.stringify(connection)).not.toContain("https://roomscout.dev/inbox/thread_123");
     expect(await f.consume({ providerMessageId: "mail-2" })).toEqual({ triggered: false, reason: "coalesced" });
   });
 

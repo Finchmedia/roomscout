@@ -12,6 +12,7 @@ afterEach(() => {
   vi.clearAllTimers();
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 async function fixture(count = 1) {
@@ -46,7 +47,7 @@ describe("portal inbox sync coordinator", () => {
       })).toEqual({ status: "queued" });
       await f.t.mutation(internal.portalInboxSync.syncCompleted, {
         workId: `work-${generation}` as never,
-        context: { ownerId: f.ownerId, connectionId, generation },
+        context: { ownerId: f.ownerId, connectionId, generation, browserProvider: "browserbase" },
         result: { kind: "success", returnValue: null },
       });
     }
@@ -81,7 +82,7 @@ describe("portal inbox sync coordinator", () => {
     await f.t.mutation(internal.portalInboxSync.requestSync, { ownerId: f.ownerId, connectionId, reason: "poll" });
     await f.t.mutation(internal.portalInboxSync.requestSync, { ownerId: f.ownerId, connectionId, reason: "notification", receiptKey: "new-hint" });
     await f.t.mutation(internal.portalInboxSync.syncCompleted, { workId: "work-1" as never,
-      context: { ownerId: f.ownerId, connectionId, generation: 1 }, result: { kind: "success", returnValue: null } });
+      context: { ownerId: f.ownerId, connectionId, generation: 1, browserProvider: "browserbase" }, result: { kind: "success", returnValue: null } });
     expect(await f.t.run((ctx) => ctx.db.get(connectionId))).toMatchObject({ inboxSyncGeneration: 2, inboxSyncActiveGeneration: 2 });
   });
 
@@ -89,7 +90,7 @@ describe("portal inbox sync coordinator", () => {
     const f = await fixture(); const connectionId = f.connectionIds[0]!; const before = Date.now();
     await f.t.mutation(internal.portalInboxSync.requestSync, { ownerId: f.ownerId, connectionId, reason: "poll" });
     await f.t.mutation(internal.portalInboxSync.syncCompleted, { workId: "work-1" as never,
-      context: { ownerId: f.ownerId, connectionId, generation: 1 }, result: { kind: "failed", error: "sanitized" } });
+      context: { ownerId: f.ownerId, connectionId, generation: 1, browserProvider: "browserbase" }, result: { kind: "failed", error: "sanitized" } });
     const connection = await f.t.run((ctx) => ctx.db.get(connectionId));
     expect(connection?.inboxSyncActiveGeneration).toBeUndefined();
     expect(connection?.nextPollAt).toBeGreaterThanOrEqual(before + 5 * 60_000);
@@ -111,18 +112,105 @@ describe("portal inbox sync coordinator", () => {
     expect(await f.t.mutation(internal.portalInboxSync.requestSync, { ownerId: f.ownerId, connectionId, reason: "manual" })).toEqual({ status: "ignored" });
   });
 
+  it("blocks new, manual, and already-queued worker admission during provider maintenance", async () => {
+    const f = await fixture(); const connectionId = f.connectionIds[0]!;
+    await f.t.run(async (ctx) => {
+      await ctx.db.insert("portalBrowserMaintenance", {
+        key: "controlled_portal", paused: true, drainingProvider: "browserbase",
+        pausedBy: f.ownerId, pausedAt: Date.now(), updatedAt: Date.now(),
+      });
+      await ctx.db.patch(connectionId, {
+        inboxSyncGeneration: 7, inboxSyncActiveGeneration: 7,
+        inboxSyncDeadlineAt: Date.now() + 60_000,
+      });
+    });
+    await expect(f.t.mutation(internal.portalInboxSync.requestSync, {
+      ownerId: f.ownerId, connectionId, reason: "poll",
+    })).resolves.toEqual({ status: "ignored" });
+    await expect(f.t.mutation(internal.portalInboxSync.beginManualSync, {
+      ownerId: f.ownerId, connectionId,
+    })).resolves.toBeNull();
+    await expect(f.t.mutation(internal.portalInboxSync.claimWorker, {
+      ownerId: f.ownerId, connectionId, generation: 7, browserProvider: "browserbase",
+    })).resolves.toBeNull();
+  });
+
   it("rechecks pause, policy, generation, and deadline immediately before browser work", async () => {
     const f = await fixture(); const connectionId = f.connectionIds[0]!;
     await f.t.mutation(internal.portalInboxSync.requestSync, { ownerId: f.ownerId, connectionId, reason: "poll" });
-    expect(await f.t.mutation(internal.portalInboxSync.claimWorker, { ownerId: f.ownerId, connectionId, generation: 1 })).toBe(true);
+    expect(await f.t.mutation(internal.portalInboxSync.claimWorker, { ownerId: f.ownerId, connectionId, generation: 1, browserProvider: "browserbase" })).toEqual({ requestedThreadIds: [], startOffset: 0 });
     await f.t.run((ctx) => ctx.db.patch(connectionId, { status: "paused" }));
-    expect(await f.t.mutation(internal.portalInboxSync.claimWorker, { ownerId: f.ownerId, connectionId, generation: 1 })).toBe(false);
+    expect(await f.t.mutation(internal.portalInboxSync.claimWorker, { ownerId: f.ownerId, connectionId, generation: 1, browserProvider: "browserbase" })).toBeNull();
     await f.t.run((ctx) => ctx.db.patch(connectionId, { status: "active", policyDecision: "restricted" }));
-    expect(await f.t.mutation(internal.portalInboxSync.claimWorker, { ownerId: f.ownerId, connectionId, generation: 1 })).toBe(false);
+    expect(await f.t.mutation(internal.portalInboxSync.claimWorker, { ownerId: f.ownerId, connectionId, generation: 1, browserProvider: "browserbase" })).toBeNull();
     await f.t.run((ctx) => ctx.db.patch(connectionId, { policyDecision: "allowed", inboxSyncActiveGeneration: 2 }));
-    expect(await f.t.mutation(internal.portalInboxSync.claimWorker, { ownerId: f.ownerId, connectionId, generation: 1 })).toBe(false);
+    expect(await f.t.mutation(internal.portalInboxSync.claimWorker, { ownerId: f.ownerId, connectionId, generation: 1, browserProvider: "browserbase" })).toBeNull();
     await f.t.run((ctx) => ctx.db.patch(connectionId, { inboxSyncActiveGeneration: 2, inboxSyncDeadlineAt: 1 }));
-    expect(await f.t.mutation(internal.portalInboxSync.claimWorker, { ownerId: f.ownerId, connectionId, generation: 2 })).toBe(false);
+    expect(await f.t.mutation(internal.portalInboxSync.claimWorker, { ownerId: f.ownerId, connectionId, generation: 2, browserProvider: "browserbase" })).toBeNull();
+  });
+
+  it("rejects stale-provider claims after an engine switch", async () => {
+    const f = await fixture(); const connectionId = f.connectionIds[0]!;
+    await f.t.mutation(internal.portalInboxSync.requestSync, {
+      ownerId: f.ownerId, connectionId, reason: "poll",
+    });
+    vi.stubEnv("PORTAL_BROWSER_ENGINE", "firecrawl");
+    expect(await f.t.mutation(internal.portalInboxSync.claimWorker, {
+      ownerId: f.ownerId, connectionId, generation: 1,
+      browserProvider: "browserbase",
+    })).toBeNull();
+    await f.t.run(async (ctx) => {
+      const context = await ctx.db.query("browserContexts")
+        .withIndex("by_connection", (q) => q.eq("connectionId", connectionId)).unique();
+      await ctx.db.patch(connectionId, { browserProvider: "firecrawl" });
+      await ctx.db.patch(context!._id, { browserProvider: "firecrawl" });
+    });
+    expect(await f.t.mutation(internal.portalInboxSync.claimWorker, {
+      ownerId: f.ownerId, connectionId, generation: 1,
+      browserProvider: "browserbase",
+    })).toBeNull();
+    expect(await f.t.mutation(internal.portalInboxSync.claimWorker, {
+      ownerId: f.ownerId, connectionId, generation: 1,
+      browserProvider: "firecrawl",
+    })).toEqual({ requestedThreadIds: [], startOffset: 0 });
+  });
+
+  it("prioritizes bounded notification hints and advances the persisted cursor", async () => {
+    const f = await fixture(); const connectionId = f.connectionIds[0]!;
+    const existingThreadId = await f.t.run((ctx) => ctx.db.insert("platformThreads", {
+      connectionId, ownerId: f.ownerId, providerThreadId: "thread_existing",
+      subject: "Existing thread", participants: ["Owner"], lastMessageAt: 1,
+      status: "open", createdAt: Date.now(), updatedAt: Date.now(),
+    }));
+    await f.t.mutation(internal.portalInboxSync.requestSync, {
+      ownerId: f.ownerId, connectionId, reason: "notification",
+      receiptKey: "receipt-priority", providerThreadId: "thread_17",
+    });
+    expect(await f.t.mutation(internal.portalInboxSync.claimWorker, {
+      ownerId: f.ownerId, connectionId, generation: 1,
+      browserProvider: "browserbase",
+    })).toEqual({ requestedThreadIds: ["thread_17"], startOffset: 0 });
+    expect(await f.t.mutation(internal.portalInboxSync.recordReadProgress, {
+      ownerId: f.ownerId, connectionId, generation: 1,
+      browserProvider: "browserbase", nextOffset: 10,
+      remainingRequestedThreadIds: [], partial: true, truncated: true,
+      timedOut: false,
+    })).toBe(true);
+    expect(await f.t.run((ctx) => ctx.db.get(connectionId))).toMatchObject({
+      inboxSyncCursor: 10,
+      inboxSyncRequestedThreadIds: [],
+      inboxSyncLastPartial: true,
+      inboxSyncLastTruncated: true,
+      inboxSyncLastTimedOut: false,
+    });
+    expect(await f.t.run((ctx) => ctx.db.get(existingThreadId))).toMatchObject({
+      providerThreadId: "thread_existing",
+      status: "open",
+    });
+    expect(await f.t.mutation(internal.portalInboxSync.claimWorker, {
+      ownerId: f.ownerId, connectionId, generation: 1,
+      browserProvider: "browserbase",
+    })).toEqual({ requestedThreadIds: [], startOffset: 10 });
   });
 
   it("atomically excludes write-after-read and read-after-write on the same connection", async () => {

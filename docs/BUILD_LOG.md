@@ -1263,3 +1263,31 @@ official Static Hosting deployment command. Hosted route HTML matches the local
 production build and entry assets return HTTP 200. No user data was deleted,
 roles changed, messages sent or approvals exercised during release checks.
 Authenticated user/admin and fresh-band round-trip acceptance remain separate.
+
+### 2026-09-11 — Explicit Firecrawl OR Browserbase decision
+
+The user chose one portal browser provider per deployment, not a fallback chain.
+Firecrawl is preferred for sponsor alignment only if the complete controlled
+portal flow is reliable with Clerk bot protection disabled. Browserbase remains
+the separately selectable implementation; failures must never silently switch
+providers. The choice covers registration, writes, reads and live-view/resume
+behavior; Firecrawl discovery and AgentMail email remain independent services.
+No per-connection override in v1. Provider profiles are not transferable; existing
+connections with the other provider must stop until explicitly reconnected.
+The revised implementation plan addresses profile-readiness proof, closed-session
+timeouts, scheduled registration reservations and sanitized diagnostics. Code
+implementation is assigned to GPT-5.6-Sol slices with integration review and
+end-to-end acceptance gates. No integration, deployment or provider setting was
+changed by recording this decision.
+
+Implementation checkpoint: three GPT-5.6-Sol slices locally integrated sanitized
+code-only transport, exclusive provider selection, registration and OTP lifecycle,
+fresh-session authentication proof, approved writes, bounded inbox reads and
+maintenance/drain guards. Combined verification passes 835 tests with one skipped;
+production build and scoped app/backend ESLint pass. Final review added tested
+durable cleanup of write/probe sessions and uncertain first-contact reconciliation.
+Live provider acceptance remains open; automated tests do not prove Clerk/profile
+persistence or a real message round trip. No provider setting or live message was
+changed. A subagent's code-generation command attempted a dev function upload;
+the subsequent read-only dev function listing contained no new portal-engine
+functions. No production rollout was performed in this block.

@@ -30,6 +30,17 @@ const readiness = {
     credentialPresenceOnly: true,
     reasons: ["Credential presence only; provider acceptance requires a controlled live proof."],
   },
+  portalBrowser: {
+    status: "configured" as const,
+    selectedProvider: "firecrawl" as const,
+    selectionExplicit: true,
+    selectedCredentialConfigured: true,
+    firecrawlApiKeyConfigured: true,
+    browserbaseApiKeyConfigured: true,
+    fallbackEnabled: false as const,
+    liveFlowVerified: false as const,
+    reasons: ["Selection and credential presence only; the complete controlled flow still requires live proof."],
+  },
   mapbox: {
     status: "incomplete" as const,
     serverTokenConfigured: false,
@@ -68,6 +79,10 @@ describe("ProviderReadinessPanel", () => {
     expect(screen.getByText(/backend cannot inspect the vite build-time browser token/i)).toBeInTheDocument();
     expect(screen.getByText(/globe and map cannot render/i)).toBeInTheDocument();
     expect(screen.getByText("Monitors: missing")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /portal browser · firecrawl/i })).toBeInTheDocument();
+    expect(screen.getByText("Fallback disabled: set")).toBeInTheDocument();
+    expect(screen.getByText("Live flow proof: missing")).toBeInTheDocument();
+    expect(screen.getByText(/never falls back automatically/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     expect(onRefresh).toHaveBeenCalledOnce();
   });

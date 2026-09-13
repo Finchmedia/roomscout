@@ -4,6 +4,7 @@ import {
   buildPreparationCode,
   parseApprovedSubmissionOutput,
   resolveReviewedSubmitWorkflow,
+  FIRECRAWL_PUBLIC_FORM_TIMEOUTS,
 } from "./firecrawlInteractClient";
 
 function bandnetWorkflow() {
@@ -23,6 +24,15 @@ const approvedFields = [
 ];
 
 describe("Firecrawl Interact safety boundary", () => {
+  it("keeps provider execution seconds distinct from HTTP deadline milliseconds", () => {
+    expect(FIRECRAWL_PUBLIC_FORM_TIMEOUTS).toEqual({
+      prepareSeconds: 60,
+      submitSeconds: 60,
+      previewSeconds: 15,
+      requestMs: 65_000,
+      stopRequestMs: 15_000,
+    });
+  });
   it("contains no submission primitive in the prepare-only implementation", () => {
     const code = buildPreparationCode([
       { key: "message", value: "Hello", aliases: ["Nachricht"] },
@@ -141,9 +151,13 @@ describe("Firecrawl Interact safety boundary", () => {
 
   it("parses only the bounded structured provider result", () => {
     expect(
-      parseApprovedSubmissionOutput(
-        'diagnostic\n{"state":"human_required","reasonCode":"CAPTCHA_REQUIRED","filled":["message"],"missing":[],"blockers":["captcha"]}',
-      ),
+      parseApprovedSubmissionOutput({
+        state: "human_required",
+        reasonCode: "CAPTCHA_REQUIRED",
+        filled: ["message"],
+        missing: [],
+        blockers: ["captcha"],
+      }),
     ).toEqual({
       state: "human_required",
       reasonCode: "CAPTCHA_REQUIRED",
@@ -156,5 +170,22 @@ describe("Firecrawl Interact safety boundary", () => {
         '{"state":"submitted_verified","reasonCode":"made_up"}',
       ),
     ).toThrow("FIRECRAWL_SUBMISSION_RESULT_INVALID");
+  });
+
+  it("uses async IIFEs with structured returns instead of stdout", () => {
+    const preparation = buildPreparationCode(approvedFields.map((field) => ({
+      key: field.name,
+      value: field.value,
+      aliases: [],
+    })));
+    const submission = buildApprovedSubmissionCode({
+      workflow: bandnetWorkflow(),
+      fields: approvedFields,
+    });
+    for (const code of [preparation, submission]) {
+      expect(code).toMatch(/^\(async \(\) => \{/);
+      expect(code).not.toContain("console.log");
+      expect(code).toMatch(/\}\)\(\)$/);
+    }
   });
 });

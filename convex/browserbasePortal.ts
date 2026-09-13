@@ -5,12 +5,14 @@ import type { SessionCreateParams } from "@browserbasehq/sdk/resources/sessions/
 import { browserbase, Stagehand, type Page, type StagehandBrowser } from "@browserbasehq/stagehand";
 import { ConvexError, v } from "convex/values";
 import { z } from "zod";
-import { components, internal } from "./_generated/api";
+import { api, components, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { action, internalAction, type ActionCtx } from "./_generated/server";
 import { generateRoomScoutObject } from "./ai";
 import { requireActionUserId } from "./integrations/authz";
 import { envValue } from "./integrations/env";
+import { resolvePortalBrowserProvider } from "./integrations/portalBrowserEngine";
+import { FirecrawlRoomScoutClient } from "./components/firecrawlRoomScout/client";
 import {
   createStagehandV4Session,
   connectStagehandV4Session,
@@ -49,6 +51,7 @@ import {
   isRelevantPortalVerificationMessage,
 } from "./integrations/portalVerification";
 import { delimitUntrustedData } from "./lib/privacy";
+import { scheduleProviderCleanup } from "./portalBrowserCleanup";
 
 const reconItemValidator = v.object({ title: v.string(), url: v.string() });
 
@@ -787,8 +790,10 @@ export const runRecon = action({
     runId: v.id("browserRuns"),
     items: v.array(reconItemValidator),
   }),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{ runId: Id<"browserRuns">; items: Array<{ title: string; url: string }> }> => {
+    if (resolvePortalBrowserProvider() === "firecrawl") return await ctx.runAction(api.firecrawlPortal.runRecon, args);
     const ownerId = await requireActionUserId(ctx);
+    const apiKey = browserbaseApiKey();
     const connection = await getWorkerConnection(ctx, ownerId, args.connectionId);
     if (!connection.allowReadOnlyRecon) {
       throw new ConvexError({ code: "RECON_NOT_ALLOWED" });
@@ -803,7 +808,7 @@ export const runRecon = action({
     let browser: StagehandBrowser | undefined;
     try {
       browser = await launchReadOnlyBrowser({
-        apiKey: browserbaseApiKey(),
+        apiKey,
         allowedDomains: connection.allowedDomains,
         providerContextId: connection.providerContextId,
         timeoutMs: PORTAL_RUN_TTLS_MS.recon,
@@ -863,12 +868,15 @@ export const startAuthentication = action({
   }),
   handler: async (ctx, args) => {
     const ownerId = await requireActionUserId(ctx);
+    if (resolvePortalBrowserProvider() === "firecrawl") {
+      throw new ConvexError({ code: "FIRECRAWL_AGENT_REGISTRATION_REQUIRED" });
+    }
+    const apiKey = browserbaseApiKey();
     const connection = await getWorkerConnection(ctx, ownerId, args.connectionId);
     if (connection.accessMode !== "authenticated") {
       throw new ConvexError({ code: "AUTHENTICATED_SOURCE_REQUIRED" });
     }
     const runId = await reserveRun(ctx, ownerId, connection.connectionId, "authenticate");
-    const apiKey = browserbaseApiKey();
     const client = createBrowserbaseClient(apiKey);
     let providerContextId = connection.providerContextId;
     let createdContext = false;
@@ -934,6 +942,22 @@ export async function startAgentRegistrationForOwner(
   connectionId: Id<"portalConnections">,
   preReservedRunId?: Id<"browserRuns">,
 ): Promise<AgentRegistrationResult> {
+    const selectedProvider = resolvePortalBrowserProvider();
+    if (preReservedRunId) {
+      const valid = await ctx.runQuery(internal.portalConnections.validateRunProvider, {
+        ownerId, runId: preReservedRunId, browserProvider: selectedProvider,
+      });
+      if (!valid) {
+        await ctx.runMutation(internal.portalConnections.failReservedRun, { runId: preReservedRunId, errorCode: "PORTAL_BROWSER_PROVIDER_MISMATCH" });
+        throw new ConvexError({ code: "PORTAL_BROWSER_PROVIDER_MISMATCH" });
+      }
+    }
+    if (selectedProvider === "firecrawl") {
+      return await ctx.runAction(internal.firecrawlPortal.startAgentRegistrationForOwnerAction, {
+        ownerId, connectionId, ...(preReservedRunId ? { runId: preReservedRunId } : {}),
+      });
+    }
+    const apiKey = browserbaseApiKey();
     if (!await ctx.runQuery(internal.devUserReset.userMayRunWork, { userId: ownerId })) {
       throw new ConvexError({ code: "USER_RESET_IN_PROGRESS" });
     }
@@ -962,7 +986,6 @@ export async function startAgentRegistrationForOwner(
     const runId = preReservedRunId ?? await reserveRun(
       ctx, ownerId, connection.connectionId, "authenticate",
     );
-    const apiKey = browserbaseApiKey();
     const client = createBrowserbaseClient(apiKey);
     let providerContextId = connection.providerContextId;
     let createdContext = false;
@@ -1363,6 +1386,9 @@ export const probeControlledRegistrationLaunch = internalAction({
     await ctx.runQuery(internal.controlledPersonalInboxProof.resolveActors, {
       confirmation: args.confirmation,
     });
+    if (resolvePortalBrowserProvider() === "firecrawl") {
+      throw new ConvexError({ code: "FIRECRAWL_PROFILE_PROOF_REQUIRED" });
+    }
     const apiKey = browserbaseApiKey();
     const client = createBrowserbaseClient(apiKey);
     let contextId: string | undefined;
@@ -1412,6 +1438,14 @@ export const continueAgentRegistration = internalAction({
   args: { ownerId: v.id("users"), runId: v.id("browserRuns") },
   returns: v.null(),
   handler: async (ctx, args) => {
+    const providerRun = await ctx.runQuery(internal.portalConnections.getRunForOwner, args);
+    if (providerRun?.browserProvider === "firecrawl") {
+      await ctx.runAction(internal.firecrawlPortal.continueAgentRegistration, args);
+      return null;
+    }
+    if (providerRun && !await ctx.runQuery(internal.portalConnections.validateRunProvider, {
+      ownerId: args.ownerId, runId: args.runId, browserProvider: "browserbase",
+    })) return null;
     const run = await ctx.runQuery(internal.portalConnections.getRunForOwner, {
       ownerId: args.ownerId,
       runId: args.runId,
@@ -1427,7 +1461,9 @@ export const continueAgentRegistration = internalAction({
     ) {
       return null;
     }
-    const runEngine = resolvePersistedPortalBrowserEngine(run.browserEngine);
+    const runEngine = resolvePersistedPortalBrowserEngine(
+      run.browserEngine === "firecrawl" ? undefined : run.browserEngine,
+    );
     const client = runEngine === "legacy"
       ? createBrowserbaseClient(browserbaseApiKey())
       : undefined;
@@ -1680,6 +1716,9 @@ export const smokeExistingControlledContext = internalAction({
     await ctx.runQuery(internal.controlledPersonalInboxProof.resolveActors, {
       confirmation: CONTROLLED_PROOF_CONFIRMATION,
     });
+    if (resolvePortalBrowserProvider() === "firecrawl") {
+      throw new ConvexError({ code: "FIRECRAWL_PROFILE_PROOF_REQUIRED" });
+    }
     if (!/^[-A-Za-z0-9_]{1,200}$/.test(args.contextId)) {
       throw new Error("STAGEHAND_V4_CONTEXT_ID_INVALID");
     }
@@ -1726,6 +1765,10 @@ export const getLiveView = action({
       ownerId,
       runId: args.runId,
     });
+    if (run?.browserProvider === "firecrawl") throw new ConvexError({ code: "LIVE_VIEW_NOT_AVAILABLE" });
+    if (run && !await ctx.runQuery(internal.portalConnections.validateRunProvider, { ownerId, runId: run.runId, browserProvider: "browserbase" })) {
+      throw new ConvexError({ code: "PORTAL_BROWSER_PROVIDER_MISMATCH" });
+    }
     if (
       run === null ||
       run.kind !== "authenticate" ||
@@ -1735,9 +1778,14 @@ export const getLiveView = action({
     ) {
       throw new ConvexError({ code: "LIVE_VIEW_NOT_AVAILABLE" });
     }
+    const activity = await ctx.runMutation(internal.portalConnections.touchBrowserbaseHumanRun, {
+      ownerId, runId: run.runId, providerSessionId: run.providerSessionId,
+    });
+    if (!activity) throw new ConvexError({ code: "LIVE_VIEW_NOT_AVAILABLE" });
+    const liveDeadlineAt = Math.min(activity.expiresAt, activity.inactivityDeadlineAt);
     const ttlSeconds = Math.max(
       1,
-      Math.min(60, Math.floor((run.expiresAt - Date.now()) / 1_000)),
+      Math.min(60, Math.floor((liveDeadlineAt - Date.now()) / 1_000)),
     );
     const links: { debuggerFullscreenUrl: string } = await createBrowserbaseClient(
       browserbaseApiKey(),
@@ -1761,6 +1809,10 @@ export const resumeAuthentication = action({
       ownerId,
       runId: args.runId,
     });
+    if (run?.browserProvider === "firecrawl") throw new ConvexError({ code: "AUTH_RUN_NOT_RESUMABLE" });
+    if (run && !await ctx.runQuery(internal.portalConnections.validateRunProvider, { ownerId, runId: run.runId, browserProvider: "browserbase" })) {
+      throw new ConvexError({ code: "PORTAL_BROWSER_PROVIDER_MISMATCH" });
+    }
     if (
       run === null ||
       run.kind !== "authenticate" ||
@@ -1770,6 +1822,10 @@ export const resumeAuthentication = action({
     ) {
       throw new ConvexError({ code: "AUTH_RUN_NOT_RESUMABLE" });
     }
+    const activity = await ctx.runMutation(internal.portalConnections.touchBrowserbaseHumanRun, {
+      ownerId, runId: run.runId, providerSessionId: run.providerSessionId,
+    });
+    if (!activity) throw new ConvexError({ code: "AUTH_RUN_NOT_RESUMABLE" });
     if (run.browserEngine === "stagehand") {
       const connection = await getWorkerConnection(ctx, ownerId, run.connectionId);
       const session = await reconnectStagehandSession(run.providerSessionId);
@@ -1837,16 +1893,21 @@ export const stopRun = action({
       runId: args.runId,
     });
     if (run === null) throw new ConvexError({ code: "RUN_NOT_FOUND" });
+    if (run.browserProvider === "firecrawl") {
+      const valid = await ctx.runQuery(internal.portalConnections.validateRunProvider, { ownerId, runId: run.runId, browserProvider: "firecrawl", requireSelectedProvider: false });
+      if (valid && run.providerSessionId) {
+        try { await new FirecrawlRoomScoutClient(components.firecrawlRoomScout).stopInteraction(ctx, run.providerSessionId, 30_000); }
+        catch { await scheduleProviderCleanup(ctx, { ownerId, runId: run.runId, provider: "firecrawl", providerSessionId: run.providerSessionId }); }
+      }
+      await ctx.runMutation(internal.portalConnections.finishRun, { runId: run.runId, status: "stopped" });
+      return null;
+    }
     if (run.providerSessionId) {
-      if (run.browserEngine === "stagehand") {
-        await endStagehandSession(ctx, run.providerSessionId).catch(
-          () => undefined,
-        );
-      } else {
-        await releaseProviderSession(
-          createBrowserbaseClient(browserbaseApiKey()),
-          run.providerSessionId,
-        );
+      try {
+        if (run.browserEngine === "stagehand") await endStagehandSession(ctx, run.providerSessionId);
+        else await createBrowserbaseClient(browserbaseApiKey()).sessions.update(run.providerSessionId, { status: "REQUEST_RELEASE" });
+      } catch {
+        await scheduleProviderCleanup(ctx, { ownerId, runId: run.runId, provider: "browserbase", providerSessionId: run.providerSessionId });
       }
     }
     await ctx.runMutation(internal.portalConnections.finishRun, {
@@ -2123,17 +2184,19 @@ export const syncInboxNow = action({
     threadsCreated: v.number(),
     messagesCreated: v.number(),
   }),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{ runId: Id<"browserRuns">; threadsCreated: number; messagesCreated: number }> => {
     const ownerId = await requireActionUserId(ctx);
-    const generation = await ctx.runMutation(internal.portalInboxSync.beginManualSync, { ownerId, connectionId: args.connectionId });
+    const generation: { generation: number; browserProvider: "firecrawl" | "browserbase" } | null = await ctx.runMutation(internal.portalInboxSync.beginManualSync, { ownerId, connectionId: args.connectionId });
     if (generation === null) throw new ConvexError({ code: "INBOX_SYNC_ALREADY_ACTIVE" });
     let failed = true;
     try {
-      const result = await syncInboxForOwner(ctx, ownerId, args.connectionId);
+      const result = generation.browserProvider === "firecrawl"
+        ? await ctx.runAction(internal.firecrawlPortal.syncInboxForOwnerAction, { ownerId, connectionId: args.connectionId })
+        : await syncInboxForOwner(ctx, ownerId, args.connectionId);
       failed = false;
       return result;
     } finally {
-      await ctx.runMutation(internal.portalInboxSync.finishManualSync, { ownerId, connectionId: args.connectionId, generation, failed });
+      await ctx.runMutation(internal.portalInboxSync.finishManualSync, { ownerId, connectionId: args.connectionId, generation: generation.generation, browserProvider: generation.browserProvider, failed });
     }
   },
 });
@@ -2143,7 +2206,7 @@ export const syncInboxCoordinatedWorker = internalAction({
   returns: v.null(),
   handler: async (ctx, args) => {
     if (!await ctx.runQuery(internal.devUserReset.userMayRunWork, { userId: args.ownerId })) return null;
-    const claimed = await ctx.runMutation(internal.portalInboxSync.claimWorker, args);
+    const claimed = await ctx.runMutation(internal.portalInboxSync.claimWorker, { ...args, browserProvider: "browserbase" });
     if (!claimed) return null;
     await syncInboxForOwner(ctx, args.ownerId, args.connectionId);
     return null;
@@ -2202,6 +2265,9 @@ async function executeApprovedWriteForOwner(
   ownerId: Id<"users">,
   requestId: Id<"actionRequests">,
 ): Promise<ApprovedWriteResult> {
+  if (resolvePortalBrowserProvider() === "firecrawl") {
+    return await ctx.runAction(internal.firecrawlPortal.executeApprovedWriteForOwner, { ownerId, requestId });
+  }
   if (!await ctx.runQuery(internal.devUserReset.userMayRunWork, { userId: ownerId })) {
     throw new ConvexError({ code: "USER_RESET_IN_PROGRESS" });
   }
@@ -2577,6 +2643,9 @@ export const executeApprovedWriteWorker = internalAction({
   },
   returns: writeResultValidator,
   handler: async (ctx, args): Promise<ApprovedWriteResult> => {
+    if (resolvePortalBrowserProvider() === "firecrawl") {
+      return await ctx.runAction(internal.firecrawlPortal.executeApprovedWriteForOwner, { ownerId: args.ownerId, requestId: args.requestId });
+    }
     if (!await ctx.runQuery(internal.devUserReset.userMayRunWork, { userId: args.ownerId })) {
       await ctx.runMutation(internal.externalActions.cancelUnstartedForUserReset, {
         ownerId: args.ownerId,
@@ -2614,6 +2683,8 @@ export const getApprovedWriteLiveView = action({
     if (execution === null) {
       throw new ConvexError({ code: "WRITE_LIVE_VIEW_NOT_AVAILABLE" });
     }
+    if (execution.browserProvider === "firecrawl") throw new ConvexError({ code: "WRITE_LIVE_VIEW_NOT_AVAILABLE" });
+    if (resolvePortalBrowserProvider() !== execution.browserProvider) throw new ConvexError({ code: "PORTAL_BROWSER_PROVIDER_MISMATCH" });
     const expiresAt = execution.startedAt + PORTAL_WRITE_TTL_MS;
     const remainingMs = expiresAt - Date.now();
     if (remainingMs <= 0) {
@@ -2640,6 +2711,11 @@ export const stopApprovedWrite = action({
       { ownerId, executionId: args.executionId },
     );
     if (execution === null) throw new ConvexError({ code: "WRITE_SESSION_NOT_FOUND" });
+    if (execution.browserProvider === "firecrawl") {
+      await finishBrowserExecution(ctx, { ownerId, executionId: args.executionId, status: "failed", error: "USER_STOPPED_BROWSER_WRITE" });
+      if (execution.connectionId) await ctx.runMutation(internal.portalConnections.releaseWriteSession, { ownerId, connectionId: execution.connectionId, executionId: args.executionId });
+      return null;
+    }
     await releaseProviderSession(
       createBrowserbaseClient(browserbaseApiKey()),
       execution.providerSessionId,
@@ -2673,6 +2749,8 @@ export const completeApprovedWriteHumanStep = action({
     if (execution === null || execution.requestId !== args.requestId) {
       throw new ConvexError({ code: "WRITE_SESSION_NOT_FOUND" });
     }
+    if (execution.browserProvider === "firecrawl") throw new ConvexError({ code: "WRITE_SESSION_NOT_FOUND" });
+    if (resolvePortalBrowserProvider() !== execution.browserProvider) throw new ConvexError({ code: "PORTAL_BROWSER_PROVIDER_MISMATCH" });
     // Cleanup is best-effort and never changes the user's completion choice.
     // The internal mutation below is the authoritative, audited transition.
     await releaseProviderSession(
@@ -2702,6 +2780,10 @@ export const disableConnection = action({
       connectionId: args.connectionId,
     });
     if (context !== null) {
+      if (context.browserProvider === "firecrawl") {
+        await ctx.runMutation(internal.portalConnections.disableConnectionRecord, { ownerId, connectionId: args.connectionId, contextId: context.contextId });
+        return null;
+      }
       try {
         await createBrowserbaseClient(browserbaseApiKey()).contexts.delete(
           context.providerContextId,

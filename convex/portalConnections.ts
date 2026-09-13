@@ -11,6 +11,12 @@ import {
 import { requireOperatorId, requireUserId } from "./integrations/authz";
 import { PORTAL_RUN_TTLS_MS, normalizeHostname } from "./integrations/portalSafety";
 import { PORTAL_WRITE_TTL_MS } from "./integrations/portalWriteAdapters";
+import {
+  portalBrowserProviderValidator,
+  resolvePortalBrowserProvider,
+  storedPortalBrowserProvider,
+  type PortalBrowserProvider,
+} from "./integrations/portalBrowserEngine";
 
 const connectionStatusValidator = v.union(
   v.literal("draft"),
@@ -20,6 +26,8 @@ const connectionStatusValidator = v.union(
   v.literal("reauth_required"),
   v.literal("disabled"),
 );
+const BROWSERBASE_HUMAN_INACTIVITY_MS = 5 * 60_000;
+const PROVIDER_CLEANUP_LEASE_MAX_MS = 2 * 60_000;
 
 const policyDecisionValidator = v.union(
   v.literal("pending"),
@@ -56,6 +64,7 @@ const onboardingStageValidator = v.union(
 const browserEngineValidator = v.union(
   v.literal("stagehand"),
   v.literal("legacy"),
+  v.literal("firecrawl"),
 );
 
 const publicConnectionValidator = v.object({
@@ -67,6 +76,16 @@ const publicConnectionValidator = v.object({
   platformName: v.optional(v.string()),
   status: connectionStatusValidator,
   policyDecision: policyDecisionValidator,
+  browserProvider: portalBrowserProviderValidator,
+  contextStatus: v.optional(v.union(
+    v.literal("creating"), v.literal("ready"), v.literal("reauth_required"),
+    v.literal("deleting"), v.literal("deleted"), v.literal("failed"),
+  )),
+  contextProbeAttempts: v.optional(v.number()),
+  contextProbeDeadlineAt: v.optional(v.number()),
+  contextProbeErrorCode: v.optional(v.string()),
+  providerMismatch: v.boolean(),
+  providerConfigurationError: v.optional(v.string()),
   allowReadOnlyRecon: v.boolean(),
   allowInboxPolling: v.boolean(),
   pollIntervalMinutes: v.number(),
@@ -89,6 +108,8 @@ const publicRunValidator = v.object({
   resultCount: v.optional(v.number()),
   errorCode: v.optional(v.string()),
   onboardingStage: v.optional(onboardingStageValidator),
+  browserProvider: portalBrowserProviderValidator,
+  canResume: v.boolean(),
   createdAt: v.number(),
   updatedAt: v.number(),
 });
@@ -105,6 +126,7 @@ function toPublicConnection(connection: {
   label: string;
   status: "draft" | "needs_auth" | "active" | "paused" | "reauth_required" | "disabled";
   policyDecision: "pending" | "allowed" | "restricted" | "prohibited";
+  browserProvider?: PortalBrowserProvider;
   allowReadOnlyRecon: boolean;
   allowInboxPolling: boolean;
   pollIntervalMinutes: number;
@@ -114,7 +136,12 @@ function toPublicConnection(connection: {
   circuitOpenUntil?: number;
   createdAt: number;
   updatedAt: number;
-}, metadata: { sourceName: string; baseUrl: string; platformName?: string }) {
+}, metadata: {
+  sourceName: string; baseUrl: string; platformName?: string;
+  contextStatus?: "creating" | "ready" | "reauth_required" | "deleting" | "deleted" | "failed";
+  contextProbeAttempts?: number; contextProbeDeadlineAt?: number; contextProbeErrorCode?: string;
+  providerMismatch: boolean; providerConfigurationError?: string;
+}) {
   return {
     _id: connection._id,
     sourceId: connection.sourceId,
@@ -122,6 +149,13 @@ function toPublicConnection(connection: {
     ...metadata,
     status: connection.status,
     policyDecision: connection.policyDecision,
+    browserProvider: storedPortalBrowserProvider(connection.browserProvider),
+    contextStatus: metadata.contextStatus,
+    contextProbeAttempts: metadata.contextProbeAttempts,
+    contextProbeDeadlineAt: metadata.contextProbeDeadlineAt,
+    contextProbeErrorCode: metadata.contextProbeErrorCode,
+    providerMismatch: metadata.providerMismatch,
+    providerConfigurationError: metadata.providerConfigurationError,
     allowReadOnlyRecon: connection.allowReadOnlyRecon,
     allowInboxPolling: connection.allowInboxPolling,
     pollIntervalMinutes: connection.pollIntervalMinutes,
@@ -134,20 +168,32 @@ function toPublicConnection(connection: {
   };
 }
 
+function selectedProviderForUi(): { provider?: PortalBrowserProvider; error?: string } {
+  try {
+    return { provider: resolvePortalBrowserProvider() };
+  } catch {
+    return { error: "PORTAL_BROWSER_ENGINE_INVALID" };
+  }
+}
+
 function toPublicRun(run: {
   _id: Id<"browserRuns">;
   connectionId: Id<"portalConnections">;
+  providerSessionId?: string;
   kind: "recon" | "authenticate" | "inbox_sync";
   status: "queued" | "running" | "human_required" | "completed" | "failed" | "stopped" | "expired";
   startedAt?: number;
   expiresAt: number;
+  inactivityDeadlineAt?: number;
   endedAt?: number;
   resultCount?: number;
   errorCode?: string;
   onboardingStage?: "opening_signup" | "waiting_verification" | "submitting_verification" | "human_required" | "completed" | "failed";
+  browserProvider?: PortalBrowserProvider;
   createdAt: number;
   updatedAt: number;
-}) {
+}, selectedProvider?: PortalBrowserProvider) {
+  const runProvider = storedPortalBrowserProvider(run.browserProvider);
   return {
     _id: run._id,
     connectionId: run.connectionId,
@@ -159,6 +205,10 @@ function toPublicRun(run: {
     resultCount: run.resultCount,
     errorCode: run.errorCode,
     onboardingStage: run.onboardingStage,
+    browserProvider: runProvider,
+    canResume: runProvider === "browserbase" && selectedProvider === runProvider &&
+      run.status === "human_required" && run.expiresAt > Date.now() &&
+      (run.inactivityDeadlineAt ?? run.expiresAt) > Date.now() && run.providerSessionId !== undefined,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
   };
@@ -174,13 +224,23 @@ export const listMine = query({
       .withIndex("by_owner", (q) => q.eq("ownerId", ownerId))
       .order("desc")
       .take(50);
+    const selected = selectedProviderForUi();
     return await Promise.all(rows.map(async (row) => {
       const source = await ctx.db.get(row.sourceId);
       const platform = row.platformId ? await ctx.db.get(row.platformId) : source?.platformId ? await ctx.db.get(source.platformId) : null;
+      const context = await ctx.db.query("browserContexts").withIndex("by_connection", (q) => q.eq("connectionId", row._id)).order("desc").first();
+      const provider = storedPortalBrowserProvider(row.browserProvider);
+      const matchingContext = context && storedPortalBrowserProvider(context.browserProvider) === provider ? context : null;
       return toPublicConnection(row, {
         sourceName: source?.name ?? row.label,
         baseUrl: source?.baseUrl ?? "",
         platformName: platform?.name,
+        contextStatus: matchingContext?.status,
+        contextProbeAttempts: matchingContext?.probeAttempts,
+        contextProbeDeadlineAt: matchingContext?.probeDeadlineAt,
+        contextProbeErrorCode: matchingContext?.probeErrorCode,
+        providerMismatch: selected.provider !== undefined && selected.provider !== provider,
+        providerConfigurationError: selected.error,
       });
     }));
   },
@@ -195,10 +255,20 @@ export const getMine = query({
     if (connection === null || connection.ownerId !== ownerId) return null;
     const source = await ctx.db.get(connection.sourceId);
     const platform = connection.platformId ? await ctx.db.get(connection.platformId) : source?.platformId ? await ctx.db.get(source.platformId) : null;
+    const context = await ctx.db.query("browserContexts").withIndex("by_connection", (q) => q.eq("connectionId", connection._id)).order("desc").first();
+    const selected = selectedProviderForUi();
+    const provider = storedPortalBrowserProvider(connection.browserProvider);
+    const matchingContext = context && storedPortalBrowserProvider(context.browserProvider) === provider ? context : null;
     return toPublicConnection(connection, {
       sourceName: source?.name ?? connection.label,
       baseUrl: source?.baseUrl ?? "",
       platformName: platform?.name,
+      contextStatus: matchingContext?.status,
+      contextProbeAttempts: matchingContext?.probeAttempts,
+      contextProbeDeadlineAt: matchingContext?.probeDeadlineAt,
+      contextProbeErrorCode: matchingContext?.probeErrorCode,
+      providerMismatch: selected.provider !== undefined && selected.provider !== provider,
+      providerConfigurationError: selected.error,
     });
   },
 });
@@ -241,7 +311,7 @@ export const listRunsMine = query({
       .withIndex("by_connection", (q) => q.eq("connectionId", args.connectionId))
       .order("desc")
       .take(30);
-    return rows.map(toPublicRun);
+    return rows.map((run) => toPublicRun(run, selectedProviderForUi().provider));
   },
 });
 
@@ -251,7 +321,7 @@ export const getRunMine = query({
   handler: async (ctx, args) => {
     const ownerId = await requireUserId(ctx);
     const run = await ctx.db.get(args.runId);
-    return run?.ownerId === ownerId ? toPublicRun(run) : null;
+    return run?.ownerId === ownerId ? toPublicRun(run, selectedProviderForUi().provider) : null;
   },
 });
 
@@ -279,6 +349,7 @@ export async function requestConnectionForOwner(
     ownerId: input.ownerId,
     sourceId: source._id,
     label: cleanLabel(input.label),
+    browserProvider: resolvePortalBrowserProvider(),
     status: "draft",
     policyDecision: "pending",
     allowReadOnlyRecon: false,
@@ -490,14 +561,16 @@ export const pauseMine = mutation({
   },
 });
 
-async function expireStaleRuns(ctx: MutationCtx, now: number): Promise<void> {
-  for (const status of ["queued", "running", "human_required"] as const) {
-    const rows = await ctx.db
-      .query("browserRuns")
-      .withIndex("by_status", (q) => q.eq("status", status))
-      .take(10);
-    for (const run of rows) {
-      if (run.expiresAt > now) continue;
+async function expireStaleRunsForConnection(
+  ctx: MutationCtx,
+  connectionId: Id<"portalConnections">,
+  now: number,
+): Promise<void> {
+  const rows = await ctx.db.query("browserRuns").withIndex("by_connection", (q) =>
+    q.eq("connectionId", connectionId),
+  ).order("desc").take(50);
+  for (const run of rows) {
+    if (!["queued", "running", "human_required"].includes(run.status) || run.expiresAt > now) continue;
       await ctx.db.patch(run._id, {
         status: "expired",
         errorCode: "RUN_TTL_EXPIRED",
@@ -511,7 +584,12 @@ async function expireStaleRuns(ctx: MutationCtx, now: number): Promise<void> {
         message: "RUN_TTL_EXPIRED",
         createdAt: now,
       });
-    }
+      if (run.contextId) {
+        const context = await ctx.db.get(run.contextId);
+        if (context?.activeRunId === run._id) {
+          await ctx.db.patch(context._id, { activeRunId: undefined, updatedAt: now });
+        }
+      }
   }
 }
 
@@ -520,15 +598,30 @@ export const reserveRun = internalMutation({
     ownerId: v.id("users"),
     connectionId: v.id("portalConnections"),
     kind: runKindValidator,
+    browserProvider: v.optional(portalBrowserProviderValidator),
   },
   returns: v.id("browserRuns"),
   handler: async (ctx, args) => {
+    const maintenance = await ctx.db.query("portalBrowserMaintenance").withIndex("by_key", (q) => q.eq("key", "controlled_portal")).unique();
+    if (maintenance?.paused) throw new ConvexError({ code: "PORTAL_BROWSER_MAINTENANCE_PAUSED" });
+    const selectedProvider = resolvePortalBrowserProvider();
+    if (args.browserProvider !== undefined && args.browserProvider !== selectedProvider) {
+      throw new ConvexError({ code: "PORTAL_BROWSER_PROVIDER_MISMATCH" });
+    }
     const connection = await ctx.db.get(args.connectionId);
     if (connection === null || connection.ownerId !== args.ownerId) {
       throw new ConvexError({ code: "CONNECTION_NOT_FOUND" });
     }
     if (connection.policyDecision !== "allowed" || connection.status === "disabled") {
       throw new ConvexError({ code: "PORTAL_POLICY_REQUIRED" });
+    }
+    const existingContext = await ctx.db.query("browserContexts").withIndex("by_connection", (q) =>
+      q.eq("connectionId", connection._id),
+    ).order("desc").first();
+    const establishedProvider = connection.browserProvider ?? existingContext?.browserProvider ??
+      (existingContext ? "browserbase" : undefined);
+    if (establishedProvider !== undefined && establishedProvider !== selectedProvider) {
+      throw new ConvexError({ code: "PORTAL_BROWSER_PROVIDER_RECONNECT_REQUIRED" });
     }
     if (args.kind === "recon" && !connection.allowReadOnlyRecon) {
       throw new ConvexError({ code: "RECON_NOT_ALLOWED" });
@@ -540,7 +633,7 @@ export const reserveRun = internalMutation({
     if (connection.activeWriteExecutionId && (connection.activeWriteDeadlineAt ?? 0) > now) {
       throw new ConvexError({ code: "BROWSER_SESSION_BUSY" });
     }
-    await expireStaleRuns(ctx, now);
+    await expireStaleRunsForConnection(ctx, connection._id, now);
     const connectionRuns = await ctx.db.query("browserRuns").withIndex("by_connection", (q) =>
       q.eq("connectionId", connection._id),
     ).order("desc").take(20);
@@ -550,12 +643,16 @@ export const reserveRun = internalMutation({
     const runId = await ctx.db.insert("browserRuns", {
       connectionId: connection._id,
       ownerId: args.ownerId,
+      browserProvider: selectedProvider,
       kind: args.kind,
       status: "queued",
       expiresAt: now + PORTAL_RUN_TTLS_MS[args.kind],
       createdAt: now,
       updatedAt: now,
     });
+    if (connection.browserProvider === undefined) {
+      await ctx.db.patch(connection._id, { browserProvider: selectedProvider, updatedAt: now });
+    }
     await ctx.db.insert("browserRunEvents", {
       runId,
       ownerId: args.ownerId,
@@ -568,17 +665,25 @@ export const reserveRun = internalMutation({
 });
 
 export const claimWriteSession = internalMutation({
-  args: { ownerId: v.id("users"), connectionId: v.id("portalConnections"), executionId: v.id("actionExecutions") },
+  args: {
+    ownerId: v.id("users"), connectionId: v.id("portalConnections"),
+    executionId: v.id("actionExecutions"), browserProvider: v.optional(portalBrowserProviderValidator),
+  },
   returns: v.boolean(),
   handler: async (ctx, args) => {
     const now = Date.now();
+    const selectedProvider = args.browserProvider ?? resolvePortalBrowserProvider();
     const [connection, execution, context] = await Promise.all([
       ctx.db.get(args.connectionId),
       ctx.db.get(args.executionId),
       ctx.db.query("browserContexts").withIndex("by_connection", (q) => q.eq("connectionId", args.connectionId)).order("desc").first(),
     ]);
     if (!connection || connection.ownerId !== args.ownerId || connection.status !== "active" || connection.policyDecision !== "allowed" ||
-      !execution || execution.ownerId !== args.ownerId || execution.connectionId !== connection._id || execution.status !== "claimed") return false;
+      !execution || execution.ownerId !== args.ownerId || execution.connectionId !== connection._id || execution.status !== "claimed" ||
+      storedPortalBrowserProvider(connection.browserProvider) !== selectedProvider ||
+      storedPortalBrowserProvider(execution.browserProvider) !== selectedProvider) return false;
+    if (selectedProvider === "firecrawl" &&
+      (!context || context.status !== "ready" || storedPortalBrowserProvider(context.browserProvider) !== selectedProvider)) return false;
     if (connection.inboxSyncActiveGeneration !== undefined && (connection.inboxSyncDeadlineAt ?? 0) > now) return false;
     if (context?.activeRunId) {
       const activeRun = await ctx.db.get(context.activeRunId);
@@ -587,6 +692,119 @@ export const claimWriteSession = internalMutation({
     if (connection.activeWriteExecutionId && connection.activeWriteExecutionId !== execution._id && (connection.activeWriteDeadlineAt ?? 0) > now) return false;
     await ctx.db.patch(connection._id, { activeWriteExecutionId: execution._id, activeWriteDeadlineAt: now + PORTAL_WRITE_TTL_MS, updatedAt: now });
     return true;
+  },
+});
+
+export const validateRunProvider = internalQuery({
+  args: {
+    ownerId: v.id("users"),
+    runId: v.id("browserRuns"),
+    browserProvider: portalBrowserProviderValidator,
+    requireReadyContext: v.optional(v.boolean()),
+    requireSelectedProvider: v.optional(v.boolean()),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (!run || run.ownerId !== args.ownerId || storedPortalBrowserProvider(run.browserProvider) !== args.browserProvider) return false;
+    const connection = await ctx.db.get(run.connectionId);
+    if (!connection || connection.ownerId !== args.ownerId ||
+      storedPortalBrowserProvider(connection.browserProvider) !== args.browserProvider) return false;
+    if (args.requireSelectedProvider !== false && resolvePortalBrowserProvider() !== args.browserProvider) return false;
+    if (args.requireReadyContext) {
+      if (!run.contextId) return false;
+      const context = await ctx.db.get(run.contextId);
+      if (!context || context.connectionId !== connection._id || context.status !== "ready" ||
+        storedPortalBrowserProvider(context.browserProvider) !== args.browserProvider) return false;
+    }
+    return true;
+  },
+});
+
+export const validateProviderCleanup = internalQuery({
+  args: { ownerId: v.id("users"), runId: v.id("browserRuns"), provider: portalBrowserProviderValidator, providerSessionId: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    return run !== null && run.ownerId === args.ownerId &&
+      storedPortalBrowserProvider(run.browserProvider) === args.provider &&
+      run.providerSessionId === args.providerSessionId;
+  },
+});
+
+export const validateExecutionProviderCleanup = internalQuery({
+  args: { ownerId: v.id("users"), executionId: v.id("actionExecutions"), provider: portalBrowserProviderValidator, providerSessionId: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const execution = await ctx.db.get(args.executionId);
+    return execution !== null && execution.ownerId === args.ownerId && execution.providerActionId === args.providerSessionId &&
+      storedPortalBrowserProvider(execution.browserProvider) === args.provider;
+  },
+});
+
+const cleanupPurposeValidator = v.union(v.literal("write_proof"), v.literal("profile_proof"), v.literal("recovery"));
+
+export const registerProviderCleanupLease = internalMutation({
+  args: {
+    ownerId: v.id("users"), connectionId: v.id("portalConnections"), contextId: v.id("browserContexts"),
+    provider: portalBrowserProviderValidator, providerSessionId: v.string(), purpose: cleanupPurposeValidator,
+    deadlineAt: v.number(),
+  },
+  returns: v.object({ cleanupId: v.id("providerCleanupLeases"), generation: v.number() }),
+  handler: async (ctx, args) => {
+    const [connection, context] = await Promise.all([ctx.db.get(args.connectionId), ctx.db.get(args.contextId)]);
+    const now = Date.now();
+    if (!connection || connection.ownerId !== args.ownerId || storedPortalBrowserProvider(connection.browserProvider) !== args.provider ||
+      !context || context.ownerId !== args.ownerId || context.connectionId !== connection._id ||
+      storedPortalBrowserProvider(context.browserProvider) !== args.provider || !args.providerSessionId.trim() ||
+      !Number.isFinite(args.deadlineAt) || args.deadlineAt <= now || args.deadlineAt > now + PROVIDER_CLEANUP_LEASE_MAX_MS) throw new ConvexError({ code: "PORTAL_PROVIDER_CLEANUP_LEASE_REJECTED" });
+    const generation = (context.cleanupGeneration ?? 0) + 1;
+    await ctx.db.patch(context._id, { cleanupGeneration: generation, updatedAt: now });
+    const cleanupId = await ctx.db.insert("providerCleanupLeases", {
+      ownerId: args.ownerId, connectionId: connection._id, contextId: context._id, provider: args.provider,
+      providerSessionId: args.providerSessionId, purpose: args.purpose, generation, status: "pending",
+      deadlineAt: args.deadlineAt, createdAt: now, updatedAt: now,
+    });
+    return { cleanupId, generation };
+  },
+});
+
+export const validateCleanupLease = internalQuery({
+  args: { cleanupId: v.id("providerCleanupLeases"), provider: portalBrowserProviderValidator, providerSessionId: v.string(), deadlineAt: v.number() },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const lease = await ctx.db.get(args.cleanupId);
+    if (!lease || lease.status !== "pending" || lease.provider !== args.provider || lease.providerSessionId !== args.providerSessionId ||
+      lease.deadlineAt !== args.deadlineAt || lease.deadlineAt <= Date.now()) return false;
+    const context = await ctx.db.get(lease.contextId);
+    return context !== null && context.ownerId === lease.ownerId && context.connectionId === lease.connectionId &&
+      storedPortalBrowserProvider(context.browserProvider) === lease.provider;
+  },
+});
+
+export const finishCleanupLease = internalMutation({
+  args: { cleanupId: v.id("providerCleanupLeases"), provider: portalBrowserProviderValidator, providerSessionId: v.string(), outcome: v.union(v.literal("completed"), v.literal("exhausted")) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const lease = await ctx.db.get(args.cleanupId);
+    if (!lease || lease.status !== "pending" || lease.provider !== args.provider || lease.providerSessionId !== args.providerSessionId) return null;
+    await ctx.db.patch(lease._id, { status: args.outcome, updatedAt: Date.now() });
+    return null;
+  },
+});
+
+export const touchBrowserbaseHumanRun = internalMutation({
+  args: { ownerId: v.id("users"), runId: v.id("browserRuns"), providerSessionId: v.string() },
+  returns: v.union(v.object({ expiresAt: v.number(), inactivityDeadlineAt: v.number() }), v.null()),
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    const now = Date.now();
+    if (!run || run.ownerId !== args.ownerId || storedPortalBrowserProvider(run.browserProvider) !== "browserbase" ||
+      run.providerSessionId !== args.providerSessionId || run.status !== "human_required" || run.expiresAt <= now ||
+      (run.inactivityDeadlineAt ?? run.expiresAt) <= now || resolvePortalBrowserProvider() !== "browserbase") return null;
+    const inactivityDeadlineAt = Math.min(run.expiresAt, now + BROWSERBASE_HUMAN_INACTIVITY_MS);
+    await ctx.db.patch(run._id, { inactivityDeadlineAt, updatedAt: now });
+    return { expiresAt: run.expiresAt, inactivityDeadlineAt };
   },
 });
 
@@ -622,6 +840,14 @@ export const getConnectionForWorker = internalQuery({
       allowReadOnlyRecon: v.boolean(),
       allowInboxPolling: v.boolean(),
       providerContextId: v.optional(v.string()),
+      browserProvider: portalBrowserProviderValidator,
+      contextStatus: v.optional(v.union(
+        v.literal("creating"), v.literal("ready"), v.literal("reauth_required"),
+        v.literal("deleting"), v.literal("deleted"), v.literal("failed"),
+      )),
+      contextProbeAttempts: v.optional(v.number()),
+      contextProbeDeadlineAt: v.optional(v.number()),
+      contextProbeErrorCode: v.optional(v.string()),
     }),
     v.null(),
   ),
@@ -644,6 +870,10 @@ export const getConnectionForWorker = internalQuery({
       .withIndex("by_connection", (q) => q.eq("connectionId", connection._id))
       .order("desc")
       .first();
+    const connectionProvider = storedPortalBrowserProvider(connection.browserProvider);
+    const matchingContext = context && storedPortalBrowserProvider(context.browserProvider) === connectionProvider
+      ? context
+      : null;
     return {
       connectionId: connection._id,
       sourceId: source._id,
@@ -657,8 +887,13 @@ export const getConnectionForWorker = internalQuery({
       accessMode: source.accessMode,
       allowReadOnlyRecon: connection.allowReadOnlyRecon,
       allowInboxPolling: connection.allowInboxPolling,
+      browserProvider: connectionProvider,
+      contextStatus: matchingContext?.status,
+      contextProbeAttempts: matchingContext?.probeAttempts,
+      contextProbeDeadlineAt: matchingContext?.probeDeadlineAt,
+      contextProbeErrorCode: matchingContext?.probeErrorCode,
       providerContextId:
-        context?.status === "ready" ? context.providerContextId : undefined,
+        matchingContext?.status === "ready" ? matchingContext.providerContextId : undefined,
     };
   },
 });
@@ -671,10 +906,12 @@ export const getRunForOwner = internalQuery({
       connectionId: v.id("portalConnections"),
       contextId: v.optional(v.id("browserContexts")),
       providerSessionId: v.optional(v.string()),
+      browserProvider: portalBrowserProviderValidator,
       browserEngine: v.optional(browserEngineValidator),
       kind: runKindValidator,
       status: runStatusValidator,
       expiresAt: v.number(),
+      inactivityDeadlineAt: v.optional(v.number()),
       onboardingStage: v.optional(onboardingStageValidator),
       onboardingMailboxId: v.optional(v.id("userMailboxes")),
       verificationMessageId: v.optional(v.id("mailboxMessages")),
@@ -691,10 +928,12 @@ export const getRunForOwner = internalQuery({
       connectionId: run.connectionId,
       contextId: run.contextId,
       providerSessionId: run.providerSessionId,
+      browserProvider: storedPortalBrowserProvider(run.browserProvider),
       browserEngine: run.browserEngine,
       kind: run.kind,
       status: run.status,
       expiresAt: run.expiresAt,
+      inactivityDeadlineAt: run.inactivityDeadlineAt,
       onboardingStage: run.onboardingStage,
       onboardingMailboxId: run.onboardingMailboxId,
       verificationMessageId: run.verificationMessageId,
@@ -757,6 +996,7 @@ export const attachProviderRun = internalMutation({
     providerSessionId: v.string(),
     providerContextId: v.optional(v.string()),
     browserEngine: v.optional(browserEngineValidator),
+    browserProvider: v.optional(portalBrowserProviderValidator),
     humanRequired: v.boolean(),
   },
   returns: v.object({ contextId: v.optional(v.id("browserContexts")) }),
@@ -766,6 +1006,11 @@ export const attachProviderRun = internalMutation({
       throw new ConvexError({ code: "RUN_NOT_RESERVABLE" });
     }
     const now = Date.now();
+    const runProvider = storedPortalBrowserProvider(run.browserProvider);
+    const requestedProvider = args.browserProvider ?? runProvider;
+    if (requestedProvider !== runProvider) {
+      throw new ConvexError({ code: "PORTAL_BROWSER_PROVIDER_MISMATCH" });
+    }
     let contextId: Id<"browserContexts"> | undefined;
     if (args.providerContextId) {
       const existing = await ctx.db
@@ -774,10 +1019,14 @@ export const attachProviderRun = internalMutation({
         .order("desc")
         .first();
       if (existing) {
+        if (storedPortalBrowserProvider(existing.browserProvider) !== requestedProvider) {
+          throw new ConvexError({ code: "PORTAL_BROWSER_PROVIDER_RECONNECT_REQUIRED" });
+        }
         contextId = existing._id;
         await ctx.db.patch(existing._id, {
           providerContextId: args.providerContextId,
-          status: args.humanRequired ? "creating" : existing.status,
+          browserProvider: requestedProvider,
+          status: requestedProvider === "firecrawl" || args.humanRequired ? "creating" : existing.status,
           activeRunId: run._id,
           updatedAt: now,
         });
@@ -786,7 +1035,8 @@ export const attachProviderRun = internalMutation({
           connectionId: run.connectionId,
           ownerId: args.ownerId,
           providerContextId: args.providerContextId,
-          status: args.humanRequired ? "creating" : "ready",
+          browserProvider: requestedProvider,
+          status: requestedProvider === "firecrawl" || args.humanRequired ? "creating" : "ready",
           activeRunId: run._id,
           createdAt: now,
           updatedAt: now,
@@ -797,9 +1047,13 @@ export const attachProviderRun = internalMutation({
     await ctx.db.patch(run._id, {
       contextId,
       providerSessionId: args.providerSessionId,
-      browserEngine: args.browserEngine ?? "legacy",
+      browserProvider: requestedProvider,
+      browserEngine: requestedProvider === "firecrawl" ? "firecrawl" : args.browserEngine ?? "legacy",
       status,
       startedAt: now,
+      inactivityDeadlineAt: requestedProvider === "browserbase" && args.humanRequired
+        ? Math.min(run.expiresAt, now + BROWSERBASE_HUMAN_INACTIVITY_MS)
+        : undefined,
       updatedAt: now,
     });
     if (args.humanRequired) {
@@ -832,6 +1086,14 @@ export const finishRun = internalMutation({
     }
     const connection = await ctx.db.get(run.connectionId);
     const now = Date.now();
+    const context = run.contextId ? await ctx.db.get(run.contextId) : null;
+    const runProvider = storedPortalBrowserProvider(run.browserProvider);
+    const contextMatchesRun = context !== null && storedPortalBrowserProvider(context.browserProvider) === runProvider;
+    const firecrawlProbeVerified = context?.lastVerifiedAt !== undefined &&
+      context.lastVerifiedAt >= (run.startedAt ?? run.createdAt);
+    const contextReady = args.contextReady === true && contextMatchesRun &&
+      (runProvider === "browserbase" ||
+        firecrawlProbeVerified);
     await ctx.db.patch(run._id, {
       status: args.status,
       resultCount: args.resultCount,
@@ -852,15 +1114,15 @@ export const finishRun = internalMutation({
       message: args.errorCode?.slice(0, 100),
       createdAt: now,
     });
-    if (run.contextId) {
-      await ctx.db.patch(run.contextId, {
-        status: args.contextReady
+    if (context && contextMatchesRun) {
+      await ctx.db.patch(context._id, {
+        status: contextReady
           ? "ready"
           : args.reauthRequired
             ? "reauth_required"
             : "ready",
         activeRunId: undefined,
-        lastVerifiedAt: args.contextReady ? now : undefined,
+        lastVerifiedAt: contextReady ? context.lastVerifiedAt ?? now : context.lastVerifiedAt,
         updatedAt: now,
       });
     }
@@ -872,7 +1134,7 @@ export const finishRun = internalMutation({
       );
       await ctx.db.patch(connection._id, {
         status:
-          args.contextReady
+          contextReady
             ? "active"
             : args.reauthRequired
               ? "reauth_required"
@@ -890,11 +1152,240 @@ export const finishRun = internalMutation({
         updatedAt: now,
       });
     }
-    if (args.status === "completed" && args.contextReady) {
+    if (args.status === "completed" && contextReady) {
       await ctx.scheduler.runAfter(0, internal.mandateOrchestrator.runForOwner, {
         ownerId: run.ownerId,
       });
     }
+    return null;
+  },
+});
+
+export const recordContextProbeResult = internalMutation({
+  args: {
+    ownerId: v.id("users"),
+    connectionId: v.id("portalConnections"),
+    contextId: v.id("browserContexts"),
+    runId: v.id("browserRuns"),
+    browserProvider: portalBrowserProviderValidator,
+    success: v.boolean(),
+    errorCode: v.optional(v.string()),
+    attempt: v.number(),
+    deadlineAt: v.optional(v.number()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const [connection, context, run] = await Promise.all([
+      ctx.db.get(args.connectionId), ctx.db.get(args.contextId), ctx.db.get(args.runId),
+    ]);
+    if (!connection || !context || !run || connection.ownerId !== args.ownerId ||
+      context.ownerId !== args.ownerId || run.ownerId !== args.ownerId ||
+      context.connectionId !== connection._id || run.connectionId !== connection._id ||
+      run.contextId !== context._id || storedPortalBrowserProvider(connection.browserProvider) !== args.browserProvider ||
+      storedPortalBrowserProvider(context.browserProvider) !== args.browserProvider ||
+      storedPortalBrowserProvider(run.browserProvider) !== args.browserProvider) {
+      throw new ConvexError({ code: "PORTAL_BROWSER_PROVIDER_MISMATCH" });
+    }
+    if (!Number.isInteger(args.attempt) || args.attempt < 1 || args.attempt < (context.probeAttempts ?? 0)) {
+      throw new ConvexError({ code: "INVALID_CONTEXT_PROBE_ATTEMPT" });
+    }
+    const now = Date.now();
+    const exhausted = !args.success && args.deadlineAt !== undefined && args.deadlineAt <= now;
+    await ctx.db.patch(context._id, {
+      status: args.success ? "creating" : exhausted ? "failed" : "creating",
+      probeAttempts: args.attempt,
+      probeDeadlineAt: args.deadlineAt ?? context.probeDeadlineAt,
+      probeLastAttemptAt: now,
+      probeErrorCode: args.success ? undefined : args.errorCode?.slice(0, 100) ?? "CONTEXT_PROBE_FAILED",
+      lastVerifiedAt: args.success ? now : context.lastVerifiedAt,
+      updatedAt: now,
+    });
+    if (exhausted) {
+      await ctx.db.patch(connection._id, {
+        lastErrorCode: args.errorCode?.slice(0, 100) ?? "CONTEXT_PROFILE_NOT_READY",
+        updatedAt: now,
+      });
+    }
+    return null;
+  },
+});
+
+export const markContextPendingAfterWrite = internalMutation({
+  args: {
+    ownerId: v.id("users"),
+    connectionId: v.id("portalConnections"),
+    executionId: v.id("actionExecutions"),
+    browserProvider: v.literal("firecrawl"),
+  },
+  returns: v.object({
+    contextId: v.id("browserContexts"),
+    profileName: v.string(),
+    generation: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    if (resolvePortalBrowserProvider() !== args.browserProvider) {
+      throw new ConvexError({ code: "PORTAL_BROWSER_PROVIDER_MISMATCH" });
+    }
+    const [connection, execution, context] = await Promise.all([
+      ctx.db.get(args.connectionId),
+      ctx.db.get(args.executionId),
+      ctx.db.query("browserContexts").withIndex("by_connection", (q) =>
+        q.eq("connectionId", args.connectionId),
+      ).order("desc").first(),
+    ]);
+    if (!connection || !execution || !context || connection.ownerId !== args.ownerId ||
+      execution.ownerId !== args.ownerId || execution.connectionId !== connection._id ||
+      context.ownerId !== args.ownerId || context.connectionId !== connection._id ||
+      connection.activeWriteExecutionId !== execution._id ||
+      (connection.activeWriteDeadlineAt ?? 0) <= Date.now() ||
+      !["claimed", "running"].includes(execution.status) || context.status !== "ready" ||
+      storedPortalBrowserProvider(connection.browserProvider) !== args.browserProvider ||
+      storedPortalBrowserProvider(context.browserProvider) !== args.browserProvider ||
+      storedPortalBrowserProvider(execution.browserProvider) !== args.browserProvider) {
+      throw new ConvexError({ code: "PORTAL_WRITE_CONTEXT_NOT_CLAIMED" });
+    }
+    const generation = (context.writeProofGeneration ?? 0) + 1;
+    await ctx.db.patch(context._id, {
+      status: "creating",
+      writeProofGeneration: generation,
+      pendingWriteExecutionId: execution._id,
+      probeAttempts: 0,
+      probeDeadlineAt: undefined,
+      probeLastAttemptAt: undefined,
+      probeErrorCode: undefined,
+      updatedAt: Date.now(),
+    });
+    return { contextId: context._id, profileName: context.providerContextId, generation };
+  },
+});
+
+export const recordWriteContextProbe = internalMutation({
+  args: {
+    ownerId: v.id("users"),
+    connectionId: v.id("portalConnections"),
+    contextId: v.id("browserContexts"),
+    executionId: v.id("actionExecutions"),
+    browserProvider: v.literal("firecrawl"),
+    generation: v.number(),
+    success: v.boolean(),
+    errorCode: v.optional(v.string()),
+    attempt: v.number(),
+    deadlineAt: v.optional(v.number()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const [connection, context, execution] = await Promise.all([
+      ctx.db.get(args.connectionId), ctx.db.get(args.contextId), ctx.db.get(args.executionId),
+    ]);
+    if (!connection || !context || !execution || connection.ownerId !== args.ownerId ||
+      context.ownerId !== args.ownerId || execution.ownerId !== args.ownerId ||
+      context.connectionId !== connection._id || execution.connectionId !== connection._id ||
+      context.pendingWriteExecutionId !== execution._id || context.writeProofGeneration !== args.generation ||
+      storedPortalBrowserProvider(connection.browserProvider) !== args.browserProvider ||
+      storedPortalBrowserProvider(context.browserProvider) !== args.browserProvider ||
+      storedPortalBrowserProvider(execution.browserProvider) !== args.browserProvider) {
+      throw new ConvexError({ code: "PORTAL_WRITE_PROBE_STALE" });
+    }
+    if (!Number.isInteger(args.attempt) || args.attempt < 1 || args.attempt < (context.probeAttempts ?? 0)) {
+      throw new ConvexError({ code: "INVALID_CONTEXT_PROBE_ATTEMPT" });
+    }
+    const now = Date.now();
+    const exhausted = !args.success && args.deadlineAt !== undefined && args.deadlineAt <= now;
+    await ctx.db.patch(context._id, {
+      status: args.success ? "ready" : exhausted ? "failed" : "creating",
+      pendingWriteExecutionId: args.success || exhausted ? undefined : execution._id,
+      lastVerifiedAt: args.success ? now : context.lastVerifiedAt,
+      probeAttempts: args.attempt,
+      probeDeadlineAt: args.deadlineAt ?? context.probeDeadlineAt,
+      probeLastAttemptAt: now,
+      probeErrorCode: args.success ? undefined : args.errorCode?.slice(0, 100) ?? "CONTEXT_PROFILE_NOT_READY",
+      updatedAt: now,
+    });
+    if (!args.success) {
+      await ctx.db.patch(connection._id, {
+        status: exhausted ? "reauth_required" : connection.status,
+        lastErrorCode: args.errorCode?.slice(0, 100) ?? "CONTEXT_PROFILE_NOT_READY",
+        nextPollAt: undefined,
+        updatedAt: now,
+      });
+    }
+    return null;
+  },
+});
+
+export const validatePendingWriteProfileProof = internalQuery({
+  args: {
+    ownerId: v.id("users"), connectionId: v.id("portalConnections"), contextId: v.id("browserContexts"),
+    executionId: v.id("actionExecutions"), generation: v.number(), browserProvider: v.literal("firecrawl"),
+  },
+  returns: v.union(v.object({ profileName: v.string() }), v.null()),
+  handler: async (ctx, args) => {
+    const maintenance = await ctx.db.query("portalBrowserMaintenance").withIndex("by_key", (q) => q.eq("key", "controlled_portal")).unique();
+    if (maintenance?.paused || resolvePortalBrowserProvider() !== args.browserProvider) return null;
+    const [connection, context, execution] = await Promise.all([
+      ctx.db.get(args.connectionId), ctx.db.get(args.contextId), ctx.db.get(args.executionId),
+    ]);
+    if (!connection || connection.ownerId !== args.ownerId || connection.browserProvider !== args.browserProvider ||
+      !context || context.ownerId !== args.ownerId || context.connectionId !== connection._id || context.browserProvider !== args.browserProvider ||
+      context.status !== "creating" || context.pendingWriteExecutionId !== execution?._id || context.writeProofGeneration !== args.generation ||
+      !execution || execution.ownerId !== args.ownerId || execution.connectionId !== connection._id || execution.browserProvider !== args.browserProvider) return null;
+    return { profileName: context.providerContextId };
+  },
+});
+
+export const prepareProfileRecovery = internalMutation({
+  args: { ownerId: v.id("users"), connectionId: v.id("portalConnections"), browserProvider: v.literal("firecrawl") },
+  returns: v.object({ contextId: v.id("browserContexts"), profileName: v.string(), generation: v.number(), baseUrl: v.string(), adapterKey: v.string(), latestVerificationEmailId: v.optional(v.id("mailboxMessages")), latestVerificationMailboxId: v.optional(v.id("userMailboxes")), latestVerificationRequestedAt: v.optional(v.number()) }),
+  handler: async (ctx, args) => {
+    const maintenance = await ctx.db.query("portalBrowserMaintenance").withIndex("by_key", (q) => q.eq("key", "controlled_portal")).unique();
+    if (maintenance?.paused || resolvePortalBrowserProvider() !== args.browserProvider) throw new ConvexError({ code: "PORTAL_PROFILE_RECOVERY_NOT_AVAILABLE" });
+    const connection = await ctx.db.get(args.connectionId);
+    const source = connection ? await ctx.db.get(connection.sourceId) : null;
+    const context = connection ? await ctx.db.query("browserContexts").withIndex("by_connection", (q) => q.eq("connectionId", connection._id)).order("desc").first() : null;
+    if (!connection || connection.ownerId !== args.ownerId || connection.browserProvider !== args.browserProvider || !source || !connection.adapterKey ||
+      !context || context.ownerId !== args.ownerId || context.browserProvider !== args.browserProvider || !["creating", "failed", "reauth_required"].includes(context.status) ||
+      (connection.activeWriteExecutionId && (connection.activeWriteDeadlineAt ?? 0) > Date.now()) ||
+      (connection.inboxSyncActiveGeneration !== undefined && (connection.inboxSyncDeadlineAt ?? 0) > Date.now())) throw new ConvexError({ code: "PORTAL_PROFILE_RECOVERY_NOT_AVAILABLE" });
+    const recentRuns = await ctx.db.query("browserRuns").withIndex("by_connection", (q) => q.eq("connectionId", connection._id)).order("desc").take(20);
+    if (recentRuns.some((run) => ["queued", "running", "human_required"].includes(run.status))) throw new ConvexError({ code: "BROWSER_SESSION_BUSY" });
+    const latest = recentRuns.find((run) => run.kind === "authenticate");
+    const generation = (context.recoveryGeneration ?? 0) + 1;
+    const now = Date.now();
+    await ctx.db.patch(context._id, { status: "creating", recoveryGeneration: generation, recoveryOutcome: undefined, probeErrorCode: undefined, updatedAt: now });
+    return { contextId: context._id, profileName: context.providerContextId, generation, baseUrl: source.baseUrl, adapterKey: connection.adapterKey, latestVerificationEmailId: latest?.verificationMessageId, latestVerificationMailboxId: latest?.onboardingMailboxId, latestVerificationRequestedAt: latest?.verificationRequestedAt };
+  },
+});
+
+export const recordProfileRecoveryProbe = internalMutation({
+  args: { ownerId: v.id("users"), connectionId: v.id("portalConnections"), contextId: v.id("browserContexts"), browserProvider: v.literal("firecrawl"), generation: v.number(), outcome: v.union(v.literal("ready"), v.literal("awaiting_verification"), v.literal("auth_needed"), v.literal("review")), errorCode: v.optional(v.string()) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const [connection, context] = await Promise.all([ctx.db.get(args.connectionId), ctx.db.get(args.contextId)]);
+    if (!connection || connection.ownerId !== args.ownerId || connection.browserProvider !== args.browserProvider || !context || context.connectionId !== connection._id || context.ownerId !== args.ownerId || context.browserProvider !== args.browserProvider || context.recoveryGeneration !== args.generation || context.status !== "creating") throw new ConvexError({ code: "PORTAL_PROFILE_RECOVERY_STALE" });
+    const now = Date.now();
+    if (args.outcome === "ready") {
+      await ctx.db.patch(context._id, { status: "ready", recoveryOutcome: undefined, probeErrorCode: undefined, lastVerifiedAt: now, updatedAt: now });
+      await ctx.db.patch(connection._id, { status: "active", lastErrorCode: undefined, lastSuccessAt: now, updatedAt: now });
+    } else {
+      await ctx.db.patch(context._id, { status: args.outcome === "awaiting_verification" ? "creating" : args.outcome === "auth_needed" ? "reauth_required" : "failed", recoveryOutcome: args.outcome, probeErrorCode: args.errorCode?.slice(0, 100), updatedAt: now });
+      await ctx.db.patch(connection._id, { status: args.outcome === "awaiting_verification" ? "needs_auth" : "reauth_required", lastErrorCode: args.errorCode?.slice(0, 100), updatedAt: now });
+    }
+    return null;
+  },
+});
+
+export const failReservedRun = internalMutation({
+  args: { runId: v.id("browserRuns"), errorCode: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (!run || run.status !== "queued") return null;
+    const now = Date.now();
+    const errorCode = args.errorCode.slice(0, 100);
+    await ctx.db.patch(run._id, { status: "failed", errorCode, endedAt: now, updatedAt: now });
+    await ctx.db.insert("browserRunEvents", {
+      runId: run._id, ownerId: run.ownerId, kind: "failed", message: errorCode, createdAt: now,
+    });
     return null;
   },
 });
@@ -1046,6 +1537,14 @@ export const getContextForOwner = internalQuery({
     v.object({
       contextId: v.id("browserContexts"),
       providerContextId: v.string(),
+      browserProvider: portalBrowserProviderValidator,
+      status: v.union(
+        v.literal("creating"), v.literal("ready"), v.literal("reauth_required"),
+        v.literal("deleting"), v.literal("deleted"), v.literal("failed"),
+      ),
+      probeAttempts: v.optional(v.number()),
+      probeDeadlineAt: v.optional(v.number()),
+      probeErrorCode: v.optional(v.string()),
     }),
     v.null(),
   ),
@@ -1058,7 +1557,15 @@ export const getContextForOwner = internalQuery({
       .order("desc")
       .first();
     if (context === null || context.status === "deleted") return null;
-    return { contextId: context._id, providerContextId: context.providerContextId };
+    return {
+      contextId: context._id,
+      providerContextId: context.providerContextId,
+      browserProvider: storedPortalBrowserProvider(context.browserProvider),
+      status: context.status,
+      probeAttempts: context.probeAttempts,
+      probeDeadlineAt: context.probeDeadlineAt,
+      probeErrorCode: context.probeErrorCode,
+    };
   },
 });
 

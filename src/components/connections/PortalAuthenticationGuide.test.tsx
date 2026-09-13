@@ -32,4 +32,18 @@ describe("PortalAuthenticationGuide", () => {
     expect(onConfirmed).toHaveBeenCalledWith(true);
     expect(screen.getByText(/does not authorize roomscout to send messages/i)).toBeInTheDocument();
   });
+
+  it("describes Firecrawl CAPTCHA and new-session proof truthfully", () => {
+    render(
+      <PortalAuthenticationGuide
+        browserProvider="firecrawl"
+        liveViewOpen
+        onSignedInConfirmedChange={vi.fn()}
+        portalName="Controlled portal"
+        signedInConfirmed={false}
+      />,
+    );
+    expect(screen.getByText(/firecrawl has no captcha-solving path/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/starts verification.*in a new session/i).at(-1)).toHaveTextContent("Firecrawl profile");
+  });
 });

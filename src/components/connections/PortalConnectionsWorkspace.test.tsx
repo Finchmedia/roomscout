@@ -78,7 +78,7 @@ describe("PortalConnectionsWorkspace", () => {
     expect(screen.getByText("Reauthentication required")).toBeInTheDocument();
     expect(screen.getByText("Paused")).toBeInTheDocument();
     expect(screen.getByText("Disabled")).toBeInTheDocument();
-    expect(screen.getByText(/one isolated browserbase context per portal identity/i)).toBeInTheDocument();
+    expect(screen.getByText(/one isolated provider profile per portal identity/i)).toBeInTheDocument();
     expect(screen.getByText("scout@agentmail.to")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /open secure setup/i }));
@@ -93,7 +93,7 @@ describe("PortalConnectionsWorkspace", () => {
     expect(onSync).toHaveBeenCalledWith("active");
     expect(onPause).toHaveBeenCalledWith("active");
 
-    const disableButtons = screen.getAllByRole("button", { name: /disable & delete context/i });
+    const disableButtons = screen.getAllByRole("button", { name: /disable connection/i });
     expect(disableButtons).toHaveLength(4);
     fireEvent.click(disableButtons[0]!);
     expect(onDisable).toHaveBeenCalledWith("login");
@@ -128,5 +128,24 @@ describe("PortalConnectionsWorkspace", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /create address/i }));
     expect(onEnsureMailbox).toHaveBeenCalledOnce();
+  });
+
+  it("shows Firecrawl profile proof and blocks work on a provider mismatch", () => {
+    render(
+      <PortalConnectionsWorkspace
+        mailbox={{ status: "active", emailAddress: "scout@agentmail.to" }}
+        onAgentRegister={vi.fn()}
+        onAuthenticate={vi.fn()}
+        portals={[{
+          id: "firecrawl", name: "Controlled portal", status: "login_needed",
+          policyReady: true, canAuthenticate: true, canSync: false, scopes: [],
+          browserProvider: "firecrawl", contextStatus: "creating", providerMismatch: true,
+        }]}
+      />,
+    );
+    expect(screen.getByText("Firecrawl provider")).toBeInTheDocument();
+    expect(screen.getByText(/reconnect required for the selected provider/i)).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /let scout register/i }).at(-1)).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: /open secure setup/i }).at(-1)).toBeDisabled();
   });
 });

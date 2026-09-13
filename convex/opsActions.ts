@@ -72,6 +72,21 @@ export const providerReadiness = action({
       credentialPresenceOnly: v.boolean(),
       reasons,
     }),
+    portalBrowser: v.object({
+      status: providerStatus,
+      selectedProvider: v.union(
+        v.literal("firecrawl"),
+        v.literal("browserbase"),
+        v.literal("invalid"),
+      ),
+      selectionExplicit: v.boolean(),
+      selectedCredentialConfigured: v.boolean(),
+      firecrawlApiKeyConfigured: v.boolean(),
+      browserbaseApiKeyConfigured: v.boolean(),
+      fallbackEnabled: v.literal(false),
+      liveFlowVerified: v.literal(false),
+      reasons,
+    }),
     mapbox: v.object({
       status: providerStatus,
       serverTokenConfigured: v.boolean(),
