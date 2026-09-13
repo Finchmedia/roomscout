@@ -95,6 +95,14 @@ const publicConnectionValidator = v.object({
   circuitOpenUntil: v.optional(v.number()),
   createdAt: v.number(),
   updatedAt: v.number(),
+  latestAuthenticationRun: v.optional(v.object({
+    runId: v.id("browserRuns"),
+    status: runStatusValidator,
+    onboardingStage: v.optional(onboardingStageValidator),
+    errorCode: v.optional(v.string()),
+    browserProvider: portalBrowserProviderValidator,
+    updatedAt: v.number(),
+  })),
 });
 
 const publicRunValidator = v.object({
@@ -141,6 +149,14 @@ function toPublicConnection(connection: {
   contextStatus?: "creating" | "ready" | "reauth_required" | "deleting" | "deleted" | "failed";
   contextProbeAttempts?: number; contextProbeDeadlineAt?: number; contextProbeErrorCode?: string;
   providerMismatch: boolean; providerConfigurationError?: string;
+  latestAuthenticationRun?: {
+    runId: Id<"browserRuns">;
+    status: "queued" | "running" | "human_required" | "completed" | "failed" | "stopped" | "expired";
+    onboardingStage?: "opening_signup" | "waiting_verification" | "submitting_verification" | "human_required" | "completed" | "failed";
+    errorCode?: string;
+    browserProvider: PortalBrowserProvider;
+    updatedAt: number;
+  };
 }) {
   return {
     _id: connection._id,
@@ -165,6 +181,7 @@ function toPublicConnection(connection: {
     circuitOpenUntil: connection.circuitOpenUntil,
     createdAt: connection.createdAt,
     updatedAt: connection.updatedAt,
+    latestAuthenticationRun: metadata.latestAuthenticationRun,
   };
 }
 
@@ -229,6 +246,8 @@ export const listMine = query({
       const source = await ctx.db.get(row.sourceId);
       const platform = row.platformId ? await ctx.db.get(row.platformId) : source?.platformId ? await ctx.db.get(source.platformId) : null;
       const context = await ctx.db.query("browserContexts").withIndex("by_connection", (q) => q.eq("connectionId", row._id)).order("desc").first();
+      const recentRuns = await ctx.db.query("browserRuns").withIndex("by_connection", (q) => q.eq("connectionId", row._id)).order("desc").take(30);
+      const latestAuthentication = recentRuns.find((run) => run.kind === "authenticate");
       const provider = storedPortalBrowserProvider(row.browserProvider);
       const matchingContext = context && storedPortalBrowserProvider(context.browserProvider) === provider ? context : null;
       return toPublicConnection(row, {
@@ -241,6 +260,14 @@ export const listMine = query({
         contextProbeErrorCode: matchingContext?.probeErrorCode,
         providerMismatch: selected.provider !== undefined && selected.provider !== provider,
         providerConfigurationError: selected.error,
+        latestAuthenticationRun: latestAuthentication ? {
+          runId: latestAuthentication._id,
+          status: latestAuthentication.status,
+          onboardingStage: latestAuthentication.onboardingStage,
+          errorCode: latestAuthentication.errorCode,
+          browserProvider: storedPortalBrowserProvider(latestAuthentication.browserProvider),
+          updatedAt: latestAuthentication.updatedAt,
+        } : undefined,
       });
     }));
   },

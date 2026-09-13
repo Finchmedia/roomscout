@@ -52,6 +52,24 @@ it("pins an unbound connection and expires its own stale run even behind unrelat
   expect(await t.run((ctx) => ctx.db.get(connectionId))).toMatchObject({ browserProvider: "firecrawl" });
 });
 
+it("projects the latest persisted authentication phase without exposing provider session state", async () => {
+  vi.stubEnv("PORTAL_BROWSER_ENGINE", "firecrawl");
+  const { t, ownerId, connectionId } = await fixture("firecrawl");
+  await t.run(async (ctx) => {
+    const now = Date.now();
+    await ctx.db.insert("browserRuns", {
+      connectionId, ownerId, browserProvider: "firecrawl", kind: "authenticate", status: "running",
+      onboardingStage: "waiting_verification", providerSessionId: "private-scrape-id",
+      expiresAt: now + 60_000, createdAt: now, updatedAt: now,
+    });
+  });
+  const [connection] = await t.withIdentity({ subject: ownerId }).query(api.portalConnections.listMine, {});
+  expect(connection.latestAuthenticationRun).toMatchObject({
+    status: "running", onboardingStage: "waiting_verification", browserProvider: "firecrawl",
+  });
+  expect(connection.latestAuthenticationRun).not.toHaveProperty("providerSessionId");
+});
+
 it("never overwrites a Browserbase context with Firecrawl state", async () => {
   vi.stubEnv("PORTAL_BROWSER_ENGINE", "firecrawl");
   const { t, ownerId, connectionId } = await fixture("browserbase");

@@ -41,6 +41,11 @@ export function LiveSourcesSection(props: Props) {
   const publicSources = props.sources.filter((s) => !domains.has(s.domain));
   const status = (portal: Portal) => portal.status === "active"
     ? t("settings.sources.status.connected")
+    : portal.latestAuthenticationRun?.status === "queued" ? t("liveSettings.registrationQueued")
+    : portal.latestAuthenticationRun?.status === "running" && portal.latestAuthenticationRun.onboardingStage === "opening_signup" ? t("liveSettings.registrationOpening")
+    : portal.latestAuthenticationRun?.status === "running" && portal.latestAuthenticationRun.onboardingStage === "waiting_verification" ? t("liveSettings.registrationWaitingVerification")
+    : portal.latestAuthenticationRun?.status === "running" && portal.latestAuthenticationRun.onboardingStage === "submitting_verification" ? t("liveSettings.registrationSubmittingVerification")
+    : portal.latestAuthenticationRun?.status === "failed" || portal.latestAuthenticationRun?.onboardingStage === "failed" ? t("liveSettings.registrationFailed")
     : t(portal.status === "paused" ? "liveSettings.portalStatusPaused" : portal.status === "disabled" ? "liveSettings.portalStatusDisabled" : "liveSettings.portalStatusNeedsAuth");
 
   return <>

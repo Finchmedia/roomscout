@@ -172,7 +172,7 @@ describe("Firecrawl Interact safety boundary", () => {
     ).toThrow("FIRECRAWL_SUBMISSION_RESULT_INVALID");
   });
 
-  it("uses async IIFEs with structured returns instead of stdout", () => {
+  it("uses awaited async IIFEs with marker-delimited structured output", () => {
     const preparation = buildPreparationCode(approvedFields.map((field) => ({
       key: field.name,
       value: field.value,
@@ -183,8 +183,8 @@ describe("Firecrawl Interact safety boundary", () => {
       fields: approvedFields,
     });
     for (const code of [preparation, submission]) {
-      expect(code).toMatch(/^\(async \(\) => \{/);
-      expect(code).not.toContain("console.log");
+      expect(code).toMatch(/^await \(async \(\) => \{/);
+      expect(code).toContain('console.log("__ROOMSCOUT_RESULT__"');
       expect(code).toMatch(/\}\)\(\)$/);
     }
   });

@@ -29,7 +29,9 @@ describe("firecrawlPortalRuntime", () => {
     });
     await session.primitives.navigate({ url: "https://roomscout.dev/inbox" });
 
-    expect(scrapeOnce).toHaveBeenCalledWith(expect.anything(), "https://roomscout.dev/inbox", expect.objectContaining({ timeout: 30_000 }), 30_000);
+    expect(scrapeOnce).toHaveBeenCalledWith(expect.anything(), "https://roomscout.dev/inbox", expect.objectContaining({
+      timeout: 30_000, maxAge: 0, storeInCache: false,
+    }), 30_000);
     expect(interact).toHaveBeenCalledWith(expect.anything(), "scrape_1", expect.objectContaining({
       timeout: 30,
       requestTimeoutMs: 30_000,
@@ -84,6 +86,27 @@ describe("firecrawlPortalRuntime", () => {
     }
   });
 
+  it("coerces protected-page DOM evidence to a boolean auth result", async () => {
+    let extractProgram = "";
+    const session = await createFirecrawlPortalSession({
+      transport: {
+        scrape: async () => ({ metadata: { scrapeId: "scrape_1" } }),
+        interact: async (_id, options) => {
+          extractProgram = options.code;
+          return successful({ authenticated: false, stage: "sign_in", blocker: null });
+        },
+        stop: async () => ({}),
+      },
+      url: "https://roomscout.dev/sign-in", profileName: "profile_1", saveChanges: false,
+    });
+    await session.primitives.extract({
+      instruction: "classify",
+      schema: { parse: (value: unknown) => value } as never,
+    });
+    expect(extractProgram).toContain("const auth = Boolean(");
+    expect(extractProgram).toContain("document.querySelector");
+  });
+
   it("shares one absolute deadline and refuses a later primitive before dispatch", async () => {
     let now = 1_000;
     const interact = vi.fn(async () => successful({ url: "https://roomscout.dev/inbox" }));
@@ -122,6 +145,6 @@ describe("firecrawlPortalRuntime", () => {
         interact: vi.fn(), stop: vi.fn(),
       },
       url: "https://roomscout.dev", profileName: "profile_1", saveChanges: false,
-    })).rejects.toThrow("FIRECRAWL_PORTAL_SCRAPE_FAILED");
+    })).rejects.toThrow("FIRECRAWL_PORTAL_SCRAPE_TRANSPORT_FAILED");
   });
 });

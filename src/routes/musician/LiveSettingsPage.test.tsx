@@ -7,11 +7,20 @@ import { LiveSettingsPage } from "./LiveSettingsPage";
 
 const useQuery = vi.fn();
 const mutation = vi.fn(async () => null);
+const recoverProfile = vi.fn(async () => ({ status: "completed" }));
+const startAuthentication = vi.fn(async () => ({ runId: "auth-run" }));
+const startRegistration = vi.fn(async () => ({ runId: "registration-run" }));
 
 vi.mock("convex/react", () => ({
   useQuery: (...args: unknown[]) => useQuery(...args),
   useMutation: () => mutation,
-  useAction: () => mutation,
+  useAction: (reference: Parameters<typeof getFunctionName>[0]) => {
+    const name = getFunctionName(reference);
+    if (name === "firecrawlPortal:recoverProfile") return recoverProfile;
+    if (name === "browserbasePortal:startAuthentication") return startAuthentication;
+    if (name === "browserbasePortal:startAgentRegistration") return startRegistration;
+    return mutation;
+  },
 }));
 
 vi.mock("../../ui/copy", () => ({
@@ -58,12 +67,16 @@ function queryFixture(portals: unknown[] = [], connectable: unknown[] = [], sele
 function renderRoute(section: string) {
   return render(<MemoryRouter initialEntries={[`/app/settings/${section}`]}><Routes>
     <Route path="/app/settings/:section" element={<LiveSettingsPage />} />
+    <Route path="/app/runs/:runId" element={<p>Run route</p>} />
     <Route path="/app/scout" element={<p>Scout route</p>} />
   </Routes></MemoryRouter>);
 }
 
 describe("LiveSettingsPage", () => {
-  beforeEach(() => { queryFixture(); mutation.mockClear(); });
+  beforeEach(() => {
+    queryFixture(); mutation.mockClear(); recoverProfile.mockClear();
+    startAuthentication.mockClear(); startRegistration.mockClear();
+  });
 
   it("keeps the design photo, gradient and grain stage behind settings", () => {
     const { container } = renderRoute("sources");
@@ -108,6 +121,61 @@ describe("LiveSettingsPage", () => {
     expect(screen.getByRole("button", { name: "settings.sources.detail.manageConnection" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "liveSettings.remove" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "liveSettings.include" })).not.toBeInTheDocument();
+  });
+
+  it("shows persisted Firecrawl registration progress and opens its actual run", () => {
+    queryFixture([{
+      _id: "portal", sourceId: "source", sourceName: "roomscout.dev", baseUrl: "https://roomscout.dev",
+      status: "needs_auth", contextStatus: "creating", browserProvider: "firecrawl", policyDecision: "allowed",
+      allowInboxPolling: false, latestAuthenticationRun: {
+        runId: "run-waiting", status: "running", onboardingStage: "waiting_verification",
+        browserProvider: "firecrawl", updatedAt: 1,
+      },
+    }]);
+    renderRoute("sources");
+    expect(screen.getByText("liveSettings.registrationWaitingVerification")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "settings.sources.detail.manageConnection" }));
+    expect(screen.getByRole("button", { name: "liveSettings.viewRegistrationProgress" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "liveSettings.authenticate" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "liveSettings.registerScout" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "liveSettings.viewRegistrationProgress" }));
+    expect(screen.getByText("Run route")).toBeVisible();
+  });
+
+  it.each([
+    ["queued", undefined, "liveSettings.registrationQueued"],
+    ["running", "opening_signup", "liveSettings.registrationOpening"],
+    ["running", "submitting_verification", "liveSettings.registrationSubmittingVerification"],
+    ["failed", "failed", "liveSettings.registrationFailed"],
+  ])("projects persisted authentication phase %s/%s", (status, onboardingStage, expected) => {
+    queryFixture([{
+      _id: "portal", sourceId: "source", sourceName: "roomscout.dev", baseUrl: "https://roomscout.dev",
+      status: "needs_auth", contextStatus: "creating", browserProvider: "firecrawl", policyDecision: "allowed",
+      allowInboxPolling: false, latestAuthenticationRun: {
+        runId: "run-phase", status, onboardingStage, browserProvider: "firecrawl", updatedAt: 1,
+      },
+    }]);
+    renderRoute("sources");
+    expect(screen.getByText(expected)).toBeVisible();
+  });
+
+  it("uses Firecrawl profile recovery and never calls generic manual authentication", async () => {
+    queryFixture([{
+      _id: "portal", sourceId: "source", sourceName: "roomscout.dev", baseUrl: "https://roomscout.dev",
+      status: "needs_auth", contextStatus: "creating", browserProvider: "firecrawl", policyDecision: "allowed",
+      allowInboxPolling: false, latestAuthenticationRun: {
+        runId: "run-completed", status: "completed", onboardingStage: "completed",
+        browserProvider: "firecrawl", updatedAt: 1,
+      },
+    }]);
+    renderRoute("sources");
+    expect(screen.getByText("liveSettings.portalStatusNeedsAuth")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "settings.sources.detail.manageConnection" }));
+    expect(screen.getByText("liveSettings.firecrawlManualLoginUnsupported")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "liveSettings.recoverFirecrawlProfile" }));
+    expect(recoverProfile).toHaveBeenCalledWith({ connectionId: "portal" });
+    expect(startAuthentication).not.toHaveBeenCalled();
+    expect(startRegistration).not.toHaveBeenCalled();
   });
 
   it("shows facts from the Scout-selected search instead of a different saved search", () => {

@@ -3,10 +3,30 @@ import { action } from "./_generated/server.js";
 import { firecrawlRequest } from "./api.js";
 import { firecrawlId, normalizeInteractArgs } from "./contracts.js";
 
+const RESULT_MARKER = "__ROOMSCOUT_RESULT__";
+
+function safeMarkerResult(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const markerIndex = value.lastIndexOf(RESULT_MARKER);
+  if (markerIndex < 0) return undefined;
+  return value.slice(markerIndex + RESULT_MARKER.length).split(/\r?\n/, 1)[0];
+}
+
+function safeNativeResult(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  try {
+    JSON.parse(value);
+    return value;
+  } catch {
+    return undefined;
+  }
+}
+
 function safeInteractEnvelope(value: Record<string, any>) {
+  const result = safeNativeResult(value.result) ?? safeMarkerResult(value.output) ?? safeMarkerResult(value.stdout);
   return {
     success: value.success === true,
-    ...(value.result !== undefined ? { result: value.result } : {}),
+    ...(result !== undefined ? { result } : {}),
     ...(typeof value.exitCode === "number" ? { exitCode: value.exitCode } : {}),
     ...(typeof value.killed === "boolean" ? { killed: value.killed } : {}),
     ...(typeof value.liveViewUrl === "string"
@@ -52,6 +72,7 @@ export const execute = action({
         method: "POST",
         body,
         maxRetries: args.mutating ? 0 : undefined,
+        retryConflict: !args.mutating,
         allowUnsuccessfulBody: args.allowUnsuccessfulBody === true,
         requestTimeoutMs: args.requestTimeoutMs,
       },
@@ -64,9 +85,17 @@ export const execute = action({
 export const stop = action({
   args: { jobId: v.string(), requestTimeoutMs: v.optional(v.number()) },
   returns: v.any(),
-  handler: async (_ctx, args) =>
-    await firecrawlRequest(
-      `/v2/scrape/${firecrawlId(args.jobId, "job_id")}/interact`,
-      { method: "DELETE", requestTimeoutMs: args.requestTimeoutMs },
-    ),
+  handler: async (_ctx, args) => {
+    try {
+      return await firecrawlRequest(
+        `/v2/scrape/${firecrawlId(args.jobId, "job_id")}/interact`,
+        { method: "DELETE", requestTimeoutMs: args.requestTimeoutMs, maxRetries: 0 },
+      );
+    } catch (error) {
+      if (error instanceof ConvexError && typeof error.data === "object" && error.data !== null && "status" in error.data && error.data.status === 404) {
+        return { success: true, alreadyStopped: true };
+      }
+      throw error;
+    }
+  },
 });

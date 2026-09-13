@@ -32,6 +32,20 @@ const WRITE_PROFILE_PROOF_DEADLINE_MS = 120_000;
 const ONBOARDING_POLL_MS = 5_000;
 const ONBOARDING_MAX_POLLS = 60;
 const RUN_TEARDOWN_RESERVE_MS = 5_000;
+type RegistrationPhase = "mailbox" | "session_open" | "run_attach" | "progress" | "driver" | "session_stop" | "profile_proof";
+
+function firecrawlRegistrationFailureCode(error: unknown, phase: RegistrationPhase): string {
+  const message = error instanceof Error ? error.message : "";
+  if (/^CONTROLLED_REGISTRATION_[A-Z_]+_FAILED$/.test(message)) return message.slice(0, 100);
+  if (/^FIRECRAWL_PORTAL_(SCRAPE_(AUTH_FAILED|TIMED_OUT|RATE_LIMITED|UNAVAILABLE|REQUEST_REJECTED|TRANSPORT_FAILED)|SCRAPE_ID_MISSING|PROFILE_INVALID|TIMEOUT_INVALID|DEADLINE_EXCEEDED|INTERACT_(AUTH_FAILED|TIMED_OUT|RATE_LIMITED|UNAVAILABLE|REQUEST_REJECTED|TRANSPORT_FAILED))$/.test(message)) {
+    return message;
+  }
+  if (error instanceof ConvexError && typeof error.data === "object" && error.data !== null && "code" in error.data) {
+    const code = error.data.code;
+    if (code === "AGENTMAIL_PROVISIONING" || code === "AGENTMAIL_NOT_CONFIGURED" || code === "FIRECRAWL_RUN_DEADLINE_EXCEEDED") return code;
+  }
+  return `FIRECRAWL_REGISTRATION_${phase.toUpperCase()}_FAILED`;
+}
 
 export type FirecrawlPortalContext = {
   baseUrl: string;
@@ -59,6 +73,11 @@ const recoveryPageStateSchema = z.object({
   stage: z.enum(["authenticated", "sign_in", "sign_up", "verification", "unknown"]),
   blocker: z.enum(["captcha", "terms", "payment", "contract", "two_factor", "password", "policy_human_presence"]).nullable(),
 });
+
+const registrationPreflightResultValidator = v.union(
+  v.object({ status: v.literal("ready"), stage: v.union(v.literal("authenticated"), v.literal("sign_in"), v.literal("sign_up"), v.literal("verification"), v.literal("unknown")) }),
+  v.object({ status: v.literal("failed"), phase: v.union(v.literal("session_open"), v.literal("get_url"), v.literal("inspect"), v.literal("stop")), errorCode: v.string() }),
+);
 
 export type FirecrawlProfileRecoveryInspection =
   | { outcome: "authenticated" }
@@ -254,6 +273,48 @@ export async function inspectFirecrawlProfileForRecovery(
     });
   }
 }
+
+/** Read-only deployment preflight: creates no portal account and submits nothing. */
+export const registrationPreflight = internalAction({
+  args: { ownerId: v.id("users"), connectionId: v.id("portalConnections") },
+  returns: registrationPreflightResultValidator,
+  handler: async (ctx, args) => {
+    requireSelectedFirecrawl();
+    const connection = await ctx.runQuery(internal.portalConnections.getConnectionForWorker, args);
+    if (!connection || connection.browserProvider !== "firecrawl" || connection.adapterKey !== "roomscout-dev-v1") {
+      return { status: "failed" as const, phase: "session_open" as const, errorCode: "FIRECRAWL_PREFLIGHT_NOT_AVAILABLE" };
+    }
+    let phase: "session_open" | "get_url" | "inspect" | "stop" = "session_open";
+    let session: FirecrawlPortalSession | undefined;
+    try {
+      session = await openFirecrawlPortalSession(ctx, {
+        baseUrl: connection.baseUrl, adapterKey: connection.adapterKey,
+        profileName: `preflight_${crypto.randomUUID().replaceAll("-", "")}`,
+        path: "/sign-up", saveChanges: false, timeoutMs: 30_000,
+      });
+      phase = "get_url";
+      await session.primitives.getUrl();
+      phase = "inspect";
+      const state = await session.primitives.extract({
+        instruction: "Classify only the current reviewed portal page without interacting with any form.",
+        schema: recoveryPageStateSchema,
+      });
+      if (state.stage === "unknown") throw new Error("FIRECRAWL_PREFLIGHT_STAGE_UNKNOWN");
+      phase = "stop";
+      await session.stop();
+      session = undefined;
+      return { status: "ready" as const, stage: state.stage };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      const errorCode = /^FIRECRAWL_[A-Z0-9_]{1,90}$/.test(message)
+        ? message
+        : `FIRECRAWL_PREFLIGHT_${phase.toUpperCase()}_FAILED`;
+      return { status: "failed" as const, phase, errorCode };
+    } finally {
+      await session?.stop().catch(() => undefined);
+    }
+  },
+});
 
 export async function readFirecrawlInbox(
   ctx: ActionCtx,
@@ -752,13 +813,18 @@ export async function startAgentRegistrationForOwner(ctx: ActionCtx, ownerId: Id
   const deadlineAt = reservedRun.expiresAt;
   const profileName = connection.providerContextId ?? `roomscout_${connectionId}`;
   let session: FirecrawlPortalSession | undefined;
+  let phase: RegistrationPhase = "mailbox";
   try {
     remainingRunMs(deadlineAt);
     const mailbox = await ctx.runAction(internal.mailboxes.ensureForOwner, { ownerId });
     if (mailbox.status !== "active") throw new ConvexError({ code: mailbox.status === "pending" ? "AGENTMAIL_PROVISIONING" : "AGENTMAIL_NOT_CONFIGURED" });
+    phase = "session_open";
     session = await openFirecrawlPortalSession(ctx, { baseUrl: connection.baseUrl, adapterKey: connection.adapterKey, profileName, path: "/sign-up", saveChanges: true, timeoutMs: Math.min(45_000, remainingRunMs(deadlineAt)) });
+    phase = "run_attach";
     await ctx.runMutation(internal.portalConnections.attachProviderRun, { runId, ownerId, providerSessionId: session.scrapeId, providerContextId: profileName, browserProvider: "firecrawl", humanRequired: false });
+    phase = "progress";
     await ctx.runMutation(internal.portalConnections.markAgentOnboardingState, { ownerId, runId, stage: "opening_signup", mailboxId: mailbox.mailboxId, pollAttempt: 0, humanRequired: false, eventMessage: "AGENT_SIGNUP_OPENED" });
+    phase = "driver";
     const access = await ensureControlledPortalRegistration({ client: session.primitives, email: mailbox.emailAddress, password: `Rs!${crypto.randomUUID().replaceAll("-", "")}aA1` });
     remainingRunMs(deadlineAt);
     if (access.outcome === "human_required") {
@@ -766,17 +832,20 @@ export async function startAgentRegistrationForOwner(ctx: ActionCtx, ownerId: Id
       return { runId, status: "human_required" as const };
     }
     if (access.outcome === "authenticated") {
+      phase = "session_stop";
       await stopRegistrationSession(ctx, session, { ownerId, runId });
       session = undefined;
+      phase = "profile_proof";
       return await finishRegistrationWithProof(ctx, { ownerId, runId, connectionId, baseUrl: connection.baseUrl, adapterKey: connection.adapterKey, profileName, deadlineAt });
     }
     const verificationRequestedAt = Date.now() - 5_000;
     await ctx.runMutation(internal.portalConnections.markAgentOnboardingState, { ownerId, runId, stage: "waiting_verification", mailboxId: mailbox.mailboxId, verificationRequestedAt, pollAttempt: 0, humanRequired: false, eventMessage: "WAITING_FOR_AGENTMAIL_VERIFICATION" });
     await ctx.scheduler.runAfter(Math.min(ONBOARDING_POLL_MS, remainingRunMs(deadlineAt)), internal.firecrawlPortal.continueAgentRegistration, { ownerId, runId });
     return { runId, status: "waiting_verification" as const };
-  } catch {
-    await ctx.runMutation(internal.portalConnections.finishRun, { runId, status: "failed", errorCode: "FIRECRAWL_REGISTRATION_FAILED" });
-    throw new ConvexError({ code: "FIRECRAWL_REGISTRATION_FAILED" });
+  } catch (error) {
+    const errorCode = firecrawlRegistrationFailureCode(error, phase);
+    await ctx.runMutation(internal.portalConnections.finishRun, { runId, status: "failed", errorCode });
+    throw new ConvexError({ code: errorCode });
   } finally {
     if (session) await stopRegistrationSession(ctx, session, { ownerId, runId }).catch(() => undefined);
   }
@@ -847,14 +916,30 @@ export const continueAgentRegistration = internalAction({
     }
     const code = extractPortalVerificationCode(`${message.subject}\n${message.body}`);
     if (!code) { await ctx.runMutation(internal.portalConnections.markAgentOnboardingState, { ownerId: args.ownerId, runId: run.runId, stage: "human_required", mailboxId: run.onboardingMailboxId, verificationMessageId: message.messageId, humanRequired: true, eventMessage: "VERIFICATION_CODE_AMBIGUOUS" }); return null; }
-    remainingRunMs(run.expiresAt);
-    const access = await runFirecrawlRegistrationStep(ctx, {
-      baseUrl: connection.baseUrl, adapterKey: connection.adapterKey ?? "", profileName: context.providerContextId,
-      verificationCode: code, deadlineAt: run.expiresAt,
-      cleanup: { ownerId: args.ownerId, connectionId: run.connectionId, contextId: context.contextId },
+    await ctx.runMutation(internal.portalConnections.markAgentOnboardingState, {
+      ownerId: args.ownerId, runId: run.runId, stage: "submitting_verification",
+      mailboxId: run.onboardingMailboxId, verificationMessageId: message.messageId,
+      humanRequired: false, eventMessage: "VERIFICATION_CODE_RECEIVED",
     });
-    if (access.outcome !== "authenticated") { await ctx.runMutation(internal.portalConnections.finishRun, { runId: run.runId, status: "failed", errorCode: "VERIFICATION_REQUIRES_HUMAN", reauthRequired: true }); return null; }
-    await finishRegistrationWithProof(ctx, { ownerId: args.ownerId, runId: run.runId, connectionId: run.connectionId, baseUrl: connection.baseUrl, adapterKey: connection.adapterKey ?? "", profileName: context.providerContextId, deadlineAt: run.expiresAt });
+    try {
+      remainingRunMs(run.expiresAt);
+      const access = await runFirecrawlRegistrationStep(ctx, {
+        baseUrl: connection.baseUrl, adapterKey: connection.adapterKey ?? "", profileName: context.providerContextId,
+        verificationCode: code, deadlineAt: run.expiresAt,
+        cleanup: { ownerId: args.ownerId, connectionId: run.connectionId, contextId: context.contextId },
+      });
+      if (access.outcome !== "authenticated") {
+        await ctx.runMutation(internal.portalConnections.finishRun, { runId: run.runId, status: "failed", errorCode: "VERIFICATION_REQUIRES_HUMAN", reauthRequired: true });
+        return null;
+      }
+      await finishRegistrationWithProof(ctx, { ownerId: args.ownerId, runId: run.runId, connectionId: run.connectionId, baseUrl: connection.baseUrl, adapterKey: connection.adapterKey ?? "", profileName: context.providerContextId, deadlineAt: run.expiresAt });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      const errorCode = /^(CONTROLLED_REGISTRATION|FIRECRAWL_)[A-Z0-9_]{1,90}$/.test(message)
+        ? message
+        : "FIRECRAWL_VERIFICATION_FAILED";
+      await ctx.runMutation(internal.portalConnections.finishRun, { runId: run.runId, status: "failed", errorCode, reauthRequired: true });
+    }
     return null;
   },
 });

@@ -28,7 +28,7 @@ read-only. No production rollout or external messages in this verification.
 - **Auth:** Convex Auth
 - **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-realtime-2.1`
 - **Started:** 2026-08-26T13:55:26Z
-- **Last updated:** 2026-09-13T21:13:00Z
+- **Last updated:** 2026-09-13T21:43:00Z
 
 ## Log
 
@@ -315,3 +315,16 @@ Both live Node probes select Firecrawl; hosted bundles point to their matching
 backend and contain the recovery UI. Retried a failed production asset upload
 successfully. The maintainer will test with a fresh band; existing accounts and
 data remain unchanged, and no registration or message was sent during rollout.
+
+### 2026-09-13 — working tree: Firecrawl registration diagnostics and progress
+
+Confirmed automatic registration was scheduled during the manual test. Fresh
+uncached browser sessions, bounded read-only retries and idempotent cleanup now
+address session lifecycle failures. Live preflight isolated an additional result
+decoding mismatch; structured output handling is being verified independently of
+signup. Sources expose persisted registration and verification phases, and OTP
+errors terminate the run rather than leaving it running. Final verification: 865
+tests passed, one skipped; build and lint passed. Dev and production functions
+and progress UI are deployed; production preflight returned ready/sign_up using
+the final unchanged source. No new account or message was created by these
+diagnostics; complete registration acceptance remains open.

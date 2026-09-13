@@ -50,6 +50,10 @@ export function firecrawlComponentPortalTransport(input: {
       return await input.client.scrapeOnce(input.ctx, args.url, {
         formats: ["markdown"],
         onlyMainContent: true,
+        // Interact requires the live browser tied to this scrapeId. A cached
+        // scrape can return metadata for an already-closed browser session.
+        maxAge: 0,
+        storeInCache: false,
         timeout: args.timeoutMs,
         extra: {
           profile: { name: args.profileName, saveChanges: args.saveChanges },
@@ -100,6 +104,23 @@ function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+function providerStatus(error: unknown): number | undefined {
+  const candidate = record(error);
+  const data = record(candidate?.data);
+  return typeof data?.status === "number" ? data.status : undefined;
+}
+
+export function firecrawlTransportErrorCode(error: unknown, operation: "SCRAPE" | "INTERACT"): string {
+  const status = providerStatus(error);
+  const suffix = status === 401 || status === 403 ? "AUTH_FAILED"
+    : status === 408 ? "TIMED_OUT"
+    : status === 429 ? "RATE_LIMITED"
+    : status !== undefined && status >= 500 ? "UNAVAILABLE"
+    : status !== undefined && status >= 400 ? "REQUEST_REJECTED"
+    : "TRANSPORT_FAILED";
+  return `FIRECRAWL_PORTAL_${operation}_${suffix}`;
 }
 
 function scrapeIdFrom(value: unknown): string {
@@ -160,8 +181,9 @@ function createPrimitives(input: {
         mutating,
         allowUnsuccessfulBody: true,
       });
-    } catch {
-      throw new Error("FIRECRAWL_PORTAL_INTERACT_TRANSPORT_FAILED");
+    } catch (error) {
+      // eslint-disable-next-line preserve-caught-error -- Provider diagnostics must not cross the credential boundary.
+      throw new Error(firecrawlTransportErrorCode(error, "INTERACT"));
     }
     input.onEnvelope(envelope);
     return parseInteractEnvelope(envelope);
@@ -215,8 +237,10 @@ function createPrimitives(input: {
         const state = await page.evaluate(() => {
           const path = window.location.pathname;
           const clerk = window.Clerk;
-          const auth = Boolean((path === "/" || path === "/listings/new") && clerk?.loaded && clerk?.user && clerk?.session) ||
-            ((path === "/inbox" || /^\\/inbox\\/[A-Za-z0-9_-]+$/.test(path) || /^\\/listings\\/[A-Za-z0-9_-]+$/.test(path)) && document.querySelector("[data-roomscout-inbox-state], [data-roomscout-thread-state=ready], textarea[data-roomscout-write=body]"));
+          const auth = Boolean(
+            ((path === "/" || path === "/listings/new") && clerk?.loaded && clerk?.user && clerk?.session) ||
+            ((path === "/inbox" || /^\\/inbox\\/[A-Za-z0-9_-]+$/.test(path) || /^\\/listings\\/[A-Za-z0-9_-]+$/.test(path)) && document.querySelector("[data-roomscout-inbox-state], [data-roomscout-thread-state=ready], textarea[data-roomscout-write=body]"))
+          );
           const code = document.querySelector('input[autocomplete="one-time-code"],input[name="code"]');
           const password = document.querySelector('input[name="password"]');
           const captcha = document.querySelector('iframe[src*="captcha" i],iframe[src*="turnstile" i],[data-sitekey]');
@@ -287,8 +311,9 @@ export async function createFirecrawlPortalSession(input: {
       saveChanges: input.saveChanges,
       timeoutMs: remainingMs(),
     });
-  } catch {
-    throw new Error("FIRECRAWL_PORTAL_SCRAPE_FAILED");
+  } catch (error) {
+    // eslint-disable-next-line preserve-caught-error -- Provider diagnostics must not cross the credential boundary.
+    throw new Error(firecrawlTransportErrorCode(error, "SCRAPE"));
   }
   const scrapeId = scrapeIdFrom(scrape);
   let latestLiveView = liveViewFrom(scrape);
@@ -320,8 +345,9 @@ export async function createFirecrawlPortalSession(input: {
         mutating,
         allowUnsuccessfulBody: true,
       });
-    } catch {
-      throw new Error("FIRECRAWL_PORTAL_INTERACT_TRANSPORT_FAILED");
+    } catch (error) {
+      // eslint-disable-next-line preserve-caught-error -- Provider diagnostics must not cross the credential boundary.
+      throw new Error(firecrawlTransportErrorCode(error, "INTERACT"));
     }
     latestLiveView = liveViewFrom(envelope) ?? latestLiveView;
     return parseInteractEnvelope(envelope);

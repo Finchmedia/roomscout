@@ -1340,3 +1340,35 @@ HTTP checks confirm current assets, correct backend URLs and the recovery UI.
 The initial production asset upload failed at the network layer and was cleaned
 up by the hosting tool; a retry published all 23 files successfully. No existing
 account, connection, search, listing or message was modified by the rollout.
+
+### 2026-09-13 — Firecrawl registration lifecycle and real-time progress
+
+The next manual test did schedule automatic registration, but its first Interact
+call failed with HTTP 409 and cleanup returned 404. Portal scrapes now disable
+cache reads and writes, read-only Interact calls have bounded conflict retries,
+and stop treats an already-missing session as idempotent success. A destroyed
+dashboard session alone does not prove the original 409 cause.
+
+A read-only production preflight creates an isolated temporary browser profile,
+reads the signup page and stops without filling forms, polling email or creating
+an account. Comparing revisions isolated a separate structured-result transport
+mismatch: the unmodified result-only decoder failed at get_url, whereas the
+explicitly awaited result program and controlled output marker passed that probe.
+Final verification is recorded below when complete; this is not an OTP or
+authenticated-profile persistence acceptance test.
+
+Sources now subscribe to sanitized latest authentication-run metadata and show
+registration/verification progress. Unsupported Firecrawl manual login is not
+offered. OTP continuation emits submitting progress before provider execution and
+records terminal failure if the driver or proof fails. Mandate activation also
+directly schedules the idempotent registration orchestrator independently of
+matching. No Browserbase fallback was introduced.
+
+Final unchanged-source verification: 865 tests passed and one skipped, with build,
+TypeScript and app/backend lint clean. Both backends are deployed; both published
+frontends serve the progress copy and point to their matching backend. A fresh
+production preflight with this exact source returned ready/sign_up. The final
+transport explicitly awaits the program and accepts valid structured results or
+only its own JSON marker; raw provider output and stderr do not cross the component
+boundary. No live signup, OTP submission or external message was sent during this
+release verification. The maintainer's manual end-to-end test remains outstanding.

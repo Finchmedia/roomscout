@@ -102,6 +102,23 @@ describe("Interact extension", () => {
     });
   });
 
+  test("normalizes owned marker output without exposing provider diagnostics", async () => {
+    const t = initConvexTest();
+    mockFetch([{ body: {
+      success: true, result: "undefined", exitCode: 0,
+      stdout: 'sensitive provider diagnostic\n__ROOMSCOUT_RESULT__{"stage":"sign_up"}\nmore diagnostics',
+      stderr: "sensitive stderr",
+    } }]);
+
+    const envelope = await t.action(api.interact.execute, {
+      jobId: "job-1", code: "return { stage: 'sign_up' };", mutating: false,
+    });
+
+    expect(envelope).toEqual({ success: true, result: '{"stage":"sign_up"}', exitCode: 0 });
+    expect(JSON.stringify(envelope)).not.toContain("sensitive");
+    expect(JSON.stringify(envelope)).not.toContain("diagnostics");
+  });
+
   test("does not automatically replay a mutating Interact program", async () => {
     const t = initConvexTest();
     const { calls } = mockFetch([
@@ -117,6 +134,38 @@ describe("Interact extension", () => {
     expect(String(failure)).toContain("Firecrawl request failed");
     expect(String(failure)).not.toContain("rate limited");
 
+    expect(calls).toHaveLength(1);
+  });
+
+  test("retries a transient 409 while initializing a read-only Interact session", async () => {
+    const t = initConvexTest();
+    const { calls } = mockFetch([
+      { status: 409, body: { success: false, error: "session initializing" } },
+      { body: { success: true, result: "{\"ready\":true}", exitCode: 0 } },
+    ]);
+    await expect(t.action(api.interact.execute, {
+      jobId: "job-1", code: "return { ready: true };", mutating: false,
+    })).resolves.toMatchObject({ success: true, exitCode: 0 });
+    expect(calls).toHaveLength(2);
+  });
+
+  test("does not replay a mutating Interact program after a 409", async () => {
+    const t = initConvexTest();
+    const { calls } = mockFetch([
+      { status: 409, body: { success: false, error: "busy" } },
+      { body: { success: true, result: "duplicate" } },
+    ]);
+    await expect(t.action(api.interact.execute, {
+      jobId: "job-1", code: "return { submitted: true };", mutating: true,
+    })).rejects.toThrow("Firecrawl request failed");
+    expect(calls).toHaveLength(1);
+  });
+
+  test("treats stop 404 as an idempotent already-stopped result", async () => {
+    const t = initConvexTest();
+    const { calls } = mockFetch([{ status: 404, body: { success: false, error: "gone" } }]);
+    await expect(t.action(api.interact.stop, { jobId: "job-1" }))
+      .resolves.toEqual({ success: true, alreadyStopped: true });
     expect(calls).toHaveLength(1);
   });
 

@@ -130,3 +130,119 @@ it("activates one safe default Autopilot mandate and respects excluded sources",
     };
   })).toEqual({ maxContactsPerDay: 500, maxBrowserMinutesPerDay: 1_000 });
 });
+
+it.each(["draft", "paused"] as const)(
+  "activating default Autopilot from a %s search queues matching and orchestration",
+  async (status) => {
+    const t = convexTest(schema, modules);
+    const fixture = await t.run(async (ctx) => {
+      const now = Date.now();
+      const ownerId = await ctx.db.insert("users", {
+        username: `activation-${status}`,
+        role: "musician",
+        createdAt: now,
+        lastSeenAt: now,
+      });
+      const savedNeedId = await ctx.db.insert("savedNeeds", {
+        ownerId,
+        title: "Bandraum suchen",
+        city: "Berlin",
+        districts: [],
+        arrangement: ["shared"],
+        schedule: [],
+        requirements: [],
+        status,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert("sourcePlatforms", {
+        slug: `platform-${status}`,
+        name: "Test platform",
+        canonicalDomain: `${status}.example`,
+        kind: "community",
+        status: "active",
+        firstSeenAt: now,
+        lastObservedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      });
+      return { ownerId, savedNeedId };
+    });
+
+    await t.withIdentity({ subject: fixture.ownerId }).mutation(
+      api.mandates.enableDefaultAutopilot,
+      { savedNeedId: fixture.savedNeedId },
+    );
+
+    const state = await t.run(async (ctx) => ({
+      need: await ctx.db.get(fixture.savedNeedId),
+      scheduled: await ctx.db.system.query("_scheduled_functions").collect(),
+    }));
+    expect(state.need?.status).toBe("active");
+    expect(state.scheduled).toHaveLength(3);
+  },
+);
+
+it("explicit mandate activation activates a paused search and queues orchestration", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await t.run(async (ctx) => {
+    const now = Date.now();
+    const ownerId = await ctx.db.insert("users", {
+      username: "explicit-activation",
+      role: "musician",
+      createdAt: now,
+      lastSeenAt: now,
+    });
+    const savedNeedId = await ctx.db.insert("savedNeeds", {
+      ownerId,
+      title: "Bandraum suchen",
+      city: "Berlin",
+      districts: [],
+      arrangement: ["shared"],
+      schedule: [],
+      requirements: [],
+      status: "paused",
+      createdAt: now,
+      updatedAt: now,
+    });
+    const platformId = await ctx.db.insert("sourcePlatforms", {
+      slug: "explicit-platform",
+      name: "Test platform",
+      canonicalDomain: "explicit.example",
+      kind: "community",
+      status: "active",
+      firstSeenAt: now,
+      lastObservedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    return { ownerId, savedNeedId, platformId };
+  });
+  const owner = t.withIdentity({ subject: fixture.ownerId });
+  const draft = await owner.mutation(api.mandates.createDraft, {
+    savedNeedId: fixture.savedNeedId,
+    mode: "negotiation_autopilot",
+    platformIds: [fixture.platformId],
+    allowedActionTypes: ["create_portal_account"],
+    allowedPersonalData: ["reply_email"],
+    maxContactsPerDay: 1,
+    maxBrowserMinutesPerDay: 5,
+    expiresAt: Date.now() + 60_000,
+    stopOnComplaint: true,
+    stopWhenSuitableRoomConfirmed: true,
+  });
+
+  await owner.mutation(api.mandates.activate, {
+    mandateId: draft.mandateId,
+    expectedContentHash: draft.contentHash,
+  });
+
+  const state = await t.run(async (ctx) => ({
+    need: await ctx.db.get(fixture.savedNeedId),
+    mandate: await ctx.db.get(draft.mandateId),
+    scheduled: await ctx.db.system.query("_scheduled_functions").collect(),
+  }));
+  expect(state.need?.status).toBe("active");
+  expect(state.mandate?.status).toBe("active");
+  expect(state.scheduled).toHaveLength(3);
+});

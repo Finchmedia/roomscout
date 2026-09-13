@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
+import { makeFunctionReference } from "convex/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
@@ -295,6 +296,60 @@ describe("exclusive controlled-portal provider isolation", () => {
     })).rejects.toThrow("PORTAL_BROWSER_PROVIDER_MISMATCH");
   });
 
+  it("persists a fixed Firecrawl registration phase code without provider diagnostics", async () => {
+    vi.stubEnv("PORTAL_BROWSER_ENGINE", "firecrawl");
+    const fixture = await portalFixture("firecrawl");
+    await fixture.t.run((ctx) => ctx.db.patch(fixture.connectionId, { status: "needs_auth" }));
+    providerSpies.firecrawlCreateSession.mockRejectedValueOnce(new Error("sensitive provider response"));
+
+    await expect(fixture.owner.action(api.browserbasePortal.startAgentRegistration, { connectionId: fixture.connectionId }))
+      .rejects.toThrow("FIRECRAWL_REGISTRATION_SESSION_OPEN_FAILED");
+    expect(providerSpies.browserbaseLaunch).not.toHaveBeenCalled();
+    const run = await fixture.t.run(async (ctx) => ctx.db.query("browserRuns").withIndex("by_connection", (q) => q.eq("connectionId", fixture.connectionId)).order("desc").first());
+    expect(run).toMatchObject({ status: "failed", errorCode: "FIRECRAWL_REGISTRATION_SESSION_OPEN_FAILED" });
+    expect(JSON.stringify(run)).not.toContain("sensitive provider response");
+  });
+
+  it("runs a fresh read-only registration preflight without invoking signup", async () => {
+    vi.stubEnv("PORTAL_BROWSER_ENGINE", "firecrawl");
+    const fixture = await portalFixture("firecrawl");
+    const preflightSession = {
+      scrapeId: "preflight", profileName: "preflight", openedAt: 1,
+      primitives: {
+        getUrl: vi.fn(async () => "https://roomscout.dev/sign-up"),
+        extract: vi.fn(async () => ({ authenticated: false, stage: "sign_up", blocker: null })),
+      },
+      stop: vi.fn(async () => undefined), liveView: vi.fn(), runProgram: vi.fn(),
+    };
+    providerSpies.firecrawlCreateSession.mockResolvedValueOnce(preflightSession);
+    const preflight = makeFunctionReference<"action">("firecrawlPortal:registrationPreflight");
+    await expect(fixture.t.action(preflight, { ownerId: fixture.ownerId, connectionId: fixture.connectionId }))
+      .resolves.toEqual({ status: "ready", stage: "sign_up" });
+    expect(providerSpies.register).not.toHaveBeenCalled();
+    expect(providerSpies.firecrawlCreateSession).toHaveBeenCalledWith(expect.objectContaining({ saveChanges: false }));
+    expect(preflightSession.stop).toHaveBeenCalledOnce();
+  });
+
+  it("fails a registration preflight whose inspected page cannot be classified", async () => {
+    vi.stubEnv("PORTAL_BROWSER_ENGINE", "firecrawl");
+    const fixture = await portalFixture("firecrawl");
+    const preflightSession = {
+      scrapeId: "preflight-unknown", profileName: "preflight-unknown", openedAt: 1,
+      primitives: {
+        getUrl: vi.fn(async () => "https://roomscout.dev/unclassified"),
+        extract: vi.fn(async () => ({ authenticated: false, stage: "unknown", blocker: null })),
+      },
+      stop: vi.fn(async () => undefined), liveView: vi.fn(), runProgram: vi.fn(),
+    };
+    providerSpies.firecrawlCreateSession.mockResolvedValueOnce(preflightSession);
+    const preflight = makeFunctionReference<"action">("firecrawlPortal:registrationPreflight");
+
+    await expect(fixture.t.action(preflight, { ownerId: fixture.ownerId, connectionId: fixture.connectionId }))
+      .resolves.toEqual({ status: "failed", phase: "inspect", errorCode: "FIRECRAWL_PREFLIGHT_STAGE_UNKNOWN" });
+    expect(providerSpies.register).not.toHaveBeenCalled();
+    expect(preflightSession.stop).toHaveBeenCalledOnce();
+  });
+
   it("keeps a confirmed send succeeded but blocks the profile when the writable profile cannot be safely stopped", async () => {
     vi.stubEnv("PORTAL_BROWSER_ENGINE", "firecrawl");
     const fixture = await portalFixture("firecrawl");
@@ -438,5 +493,49 @@ describe("exclusive controlled-portal provider isolation", () => {
     expect(providerSpies.firecrawlCreateSession).not.toHaveBeenCalled();
     const run = await fixture.t.run(async (ctx) => ctx.db.get(runId));
     expect(run).toMatchObject({ status: "failed", errorCode: "VERIFICATION_TIMEOUT" });
+  });
+
+  it("records OTP submission progress and terminalizes a failed verification continuation", async () => {
+    vi.stubEnv("PORTAL_BROWSER_ENGINE", "firecrawl");
+    const fixture = await portalFixture("firecrawl");
+    const now = Date.now();
+    const runId = await fixture.t.run(async (ctx) => {
+      const id = await ctx.db.insert("browserRuns", {
+        ownerId: fixture.ownerId, connectionId: fixture.connectionId, browserProvider: "firecrawl",
+        kind: "authenticate", status: "running", expiresAt: now + 60_000,
+        onboardingStage: "waiting_verification", onboardingMailboxId: fixture.mailboxId,
+        verificationRequestedAt: now - 5_000, createdAt: now - 5_000, updatedAt: now,
+      });
+      await ctx.db.insert("mailboxMessages", {
+        ownerId: fixture.ownerId, mailboxId: fixture.mailboxId,
+        providerThreadId: "verification-thread", providerMessageId: "verification-message",
+        providerEventId: "verification-event",
+        from: "accounts@roomscout.dev", to: ["firecrawl@agentmail.test"],
+        subject: "Your RoomScout verification code", body: "Your verification code is 123456",
+        kind: "portal_verification", status: "unread", htmlAvailable: false,
+        receivedAt: now, createdAt: now, updatedAt: now,
+      });
+      return id;
+    });
+    providerSpies.firecrawlCreateSession.mockResolvedValueOnce({
+      scrapeId: "otp-session", profileName: "firecrawl-profile", openedAt: now,
+      primitives: {}, stop: vi.fn(async () => undefined), liveView: vi.fn(), runProgram: vi.fn(),
+    });
+    providerSpies.register.mockRejectedValueOnce(new Error("FIRECRAWL_PORTAL_INTERACT_REQUEST_REJECTED"));
+
+    await fixture.t.action(internal.firecrawlPortal.continueAgentRegistration, { ownerId: fixture.ownerId, runId });
+
+    expect(providerSpies.register).toHaveBeenCalledWith(expect.objectContaining({ verificationCode: "123456" }));
+    const { run, events } = await fixture.t.run(async (ctx) => ({
+      run: await ctx.db.get(runId),
+      events: await ctx.db.query("browserRunEvents").withIndex("by_run", (q) => q.eq("runId", runId)).collect(),
+    }));
+    expect(run).toMatchObject({
+      status: "failed", onboardingStage: "failed",
+      errorCode: "FIRECRAWL_PORTAL_INTERACT_REQUEST_REJECTED",
+    });
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "progress", message: "VERIFICATION_CODE_RECEIVED" }),
+    ]));
   });
 });

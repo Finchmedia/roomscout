@@ -1,5 +1,6 @@
 const MAX_PROGRAM_BODY_LENGTH = 90_000;
 const MAX_PROGRAM_VARS_LENGTH = 10_000;
+const RESULT_MARKER = "__ROOMSCOUT_RESULT__";
 
 /** Build a single-expression program that is safe in Firecrawl's persistent REPL. */
 export function buildFirecrawlProgram(
@@ -18,7 +19,7 @@ export function buildFirecrawlProgram(
   if (!serialized || serialized.length > MAX_PROGRAM_VARS_LENGTH) {
     throw new Error("FIRECRAWL_PROGRAM_VARS_INVALID");
   }
-  return `(async () => {\nconst vars = ${serialized};\n${body}\n})()`;
+  return `await (async () => {\nconst vars = ${serialized};\nconst __roomscoutResult = await (async () => {\n${body}\n})();\nconst __roomscoutEncoded = JSON.stringify(__roomscoutResult);\nconsole.log(${JSON.stringify(RESULT_MARKER)} + __roomscoutEncoded);\nreturn __roomscoutEncoded;\n})()`;
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -40,6 +41,24 @@ export function parseInteractEnvelope(envelope: unknown): unknown {
   }
 
   let result: unknown = value.result;
+  let invalidStructuredResult = false;
+  if (typeof result === "string") {
+    try {
+      result = JSON.parse(result);
+    } catch {
+      invalidStructuredResult = true;
+      result = undefined;
+    }
+  }
+  if (result === undefined) {
+    for (const candidate of [value.output, value.stdout]) {
+      if (typeof candidate !== "string") continue;
+      const markerIndex = candidate.lastIndexOf(RESULT_MARKER);
+      if (markerIndex < 0) continue;
+      result = candidate.slice(markerIndex + RESULT_MARKER.length).split(/\r?\n/, 1)[0];
+      break;
+    }
+  }
   if (typeof result === "string") {
     try {
       result = JSON.parse(result);
@@ -48,6 +67,7 @@ export function parseInteractEnvelope(envelope: unknown): unknown {
     }
   }
   if (result === undefined) {
+    if (invalidStructuredResult) throw new Error("FIRECRAWL_INTERACT_RESULT_INVALID");
     throw new Error("FIRECRAWL_INTERACT_RESULT_MISSING");
   }
   if (typeof result === "function" || typeof result === "symbol") {

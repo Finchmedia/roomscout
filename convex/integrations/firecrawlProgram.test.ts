@@ -7,9 +7,27 @@ describe("Firecrawl program transport", () => {
     const code = buildFirecrawlProgram("return { value: vars.value };", {
       value: secretLikeValue,
     });
-    expect(code).toMatch(/^\(async \(\) => \{/);
+    expect(code).toMatch(/^await \(async \(\) => \{/);
     expect(code).toContain(JSON.stringify(secretLikeValue));
+    expect(code).toContain("__ROOMSCOUT_RESULT__");
     expect(code).toMatch(/\}\)\(\)$/);
+  });
+
+  it.each(["output", "stdout"])("accepts only marker-delimited structured %s", (field) => {
+    expect(parseInteractEnvelope({
+      success: true, exitCode: 0, killed: false,
+      [field]: `provider diagnostics\n__ROOMSCOUT_RESULT__{"ok":true}\n`,
+    })).toEqual({ ok: true });
+    expect(() => parseInteractEnvelope({
+      success: true, exitCode: 0, killed: false, [field]: '{"leaked":"diagnostic"}',
+    })).toThrow("FIRECRAWL_INTERACT_RESULT_MISSING");
+  });
+
+  it("falls back to owned marker output when the provider result is a non-JSON placeholder", () => {
+    expect(parseInteractEnvelope({
+      success: true, exitCode: 0, killed: false, result: "undefined",
+      stdout: '__ROOMSCOUT_RESULT__{"stage":"sign_up"}',
+    })).toEqual({ stage: "sign_up" });
   });
 
   it("returns only a successful structured result", () => {

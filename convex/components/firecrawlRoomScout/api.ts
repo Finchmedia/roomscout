@@ -83,6 +83,8 @@ export type RequestInitLike = {
   allowUnsuccessfulBody?: boolean;
   /** Bound the whole HTTP/retry operation in milliseconds. Omit for legacy callers. */
   requestTimeoutMs?: number;
+  /** Retry HTTP 409 only for explicitly idempotent session-readiness calls. */
+  retryConflict?: boolean;
 };
 
 function normalizeRequestTimeoutMs(value: number | undefined): number | undefined {
@@ -169,7 +171,7 @@ export async function firecrawlRequest(
       body,
       text.slice(0, 300) || response.statusText,
     );
-    const retryable = RETRYABLE_STATUS.has(response.status);
+    const retryable = RETRYABLE_STATUS.has(response.status) || (init.retryConflict === true && response.status === 409);
     if (!retryable || attempt === maxRetries) {
       fail(path, response.status, message);
     }

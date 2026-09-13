@@ -302,6 +302,10 @@ export const enableDefaultAutopilot = mutation({
     if (need.status === "active") {
       await ctx.scheduler.runAfter(0, internal.matches.recomputeNeed, { ownerId, savedNeedId: need._id });
     }
+    // Account registration is a prerequisite for controlled portal work, not a
+    // consequence of finding a match. Start the idempotent eligibility check as
+    // soon as the user activates the standing mandate.
+    await ctx.scheduler.runAfter(0, internal.mandateOrchestrator.runForOwner, { ownerId });
     return { mandateId, contentHash: hash, created: true };
   },
 });
@@ -419,6 +423,11 @@ export const activate = mutation({
       await ctx.db.patch(active._id, { status: "superseded", stoppedAt: now, updatedAt: now });
     }
     await ctx.db.patch(mandate._id, { status: "active", activatedAt: now, updatedAt: now });
+    const need = await ctx.db.get(mandate.savedNeedId);
+    if (need === null || need.ownerId !== ownerId || need.status === "archived") {
+      throw new ConvexError({ code: "NEED_NOT_FOUND" });
+    }
+    await setNeedStatus(ctx, need, "active");
     await ctx.db.insert("auditEvents", {
       eventKey: `mandate:${mandate._id}:activated:${mandate.version}`,
       actorType: "user",
@@ -429,6 +438,7 @@ export const activate = mutation({
       summary: `Activated ${mandate.mode} mandate version ${mandate.version}`,
       occurredAt: now,
     });
+    await ctx.scheduler.runAfter(0, internal.mandateOrchestrator.runForOwner, { ownerId });
     return null;
   },
 });
