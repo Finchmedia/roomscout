@@ -28,7 +28,7 @@ read-only. No production rollout or external messages in this verification.
 - **Auth:** Convex Auth
 - **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-realtime-2.1`
 - **Started:** 2026-08-26T13:55:26Z
-- **Last updated:** 2026-09-11T15:25:13Z
+- **Last updated:** 2026-09-13T20:43:16Z
 
 ## Log
 
@@ -286,3 +286,13 @@ one skipped; build and app/backend lint pass. Cleanup/reconciliation fixes are
 locally verified; live acceptance remains open. A code-generation command attempted a dev upload;
 a subsequent read-only function listing showed no new portal-engine functions.
 No provider switch or live message was performed; this is not a proven live release.
+
+### 2026-09-13 — e7a0cee manual-test rollout
+
+Pushed the exclusive portal engine to ui-port and deployed backend and frontend
+to dev and production at the maintainer's request. Both select Firecrawl without
+fallback. Reverified 835 tests, build and app/backend lint. Backed up and reset
+app and component data, including authentication, chat and queues; post-reset
+exports show 132 non-hosting tables empty in each environment. The separate
+controlled portal and external provider accounts were not changed. Live
+registration and message round-trip acceptance remain for the manual test.

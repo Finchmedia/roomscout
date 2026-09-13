@@ -1291,3 +1291,25 @@ persistence or a real message round trip. No provider setting or live message wa
 changed. A subagent's code-generation command attempted a dev function upload;
 the subsequent read-only dev function listing contained no new portal-engine
 functions. No production rollout was performed in this block.
+
+### 2026-09-13 — Firecrawl manual-test deployment and clean app state
+
+At the maintainer's explicit request, committed and pushed e7a0cee on ui-port,
+deployed both Convex backends, and uploaded environment-specific frontend builds
+through Static Hosting. Both deployments now select PORTAL_BROWSER_ENGINE=firecrawl.
+Function-spec inspection confirms the new portal and maintenance functions in
+both deployments. Local verification again passed 835 tests with one skipped,
+build, and app/backend lint. Four local exploratory scripts remain uncommitted.
+
+Created full local snapshots including file storage before resetting root and
+component tables through deployment-specific snapshot imports. Authentication,
+password/username mappings, Agent chat history, queues, mailbox mappings and
+browser state were cleared; Static Hosting was retained. Post-reset exports
+confirm 132 empty non-hosting tables per deployment. Backups remain outside the
+public repository. Root pending/running scheduled work was checked before reset.
+Crons remain installed and may rebuild public source catalog state; the temporary
+dev monitor pause was restored to its previous value. Production monitor settings
+were unchanged. The separate roomscout.dev portal, listings, external inboxes and
+remote authentication profiles were untouched. Use a fresh band identity for the
+manual test. No registration, provider message or binding acceptance was sent by
+this release procedure; live end-to-end acceptance remains unproved.
