@@ -176,7 +176,7 @@ describe("ConversationThread", () => {
 
     const note = container.querySelector("summary");
     expect(note).toHaveTextContent("Dein Scout: Der Raum kostet 280 € und ist ab Oktober frei.");
-    expect(note?.className).toContain("truncate");
+    expect(note?.className).toContain("line-clamp-1");
     expect(screen.getByText("Entscheidung: Soll ich diese Nachricht so senden? → Ja, so senden")).toBeVisible();
   });
 

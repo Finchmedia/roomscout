@@ -620,7 +620,10 @@ function PanelDialog({
 
         <PanelDialogContainerContext.Provider value={panel}>
           <SidebarProvider
-            className="h-full min-h-0"
+            // `min-w-0`: the provider is the DialogContent grid item; without it a
+            // long unbreakable line inside the content pane (a nowrap summary, a URL)
+            // widens the implicit track and the whole panel overflows to the right.
+            className="h-full min-h-0 min-w-0"
             // Nothing here collapses (`collapsible="none"`), so the provider's
             // ⌘/Ctrl+B would only swallow the browser binding and set a cookie.
             keyboardShortcut={false}

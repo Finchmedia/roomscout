@@ -165,7 +165,7 @@ export function ConversationThread({
         return <Marker>
           <MarkerContent className="min-w-0 flex-1">
             <details className="min-w-0 text-left">
-              <summary className="cursor-pointer truncate">
+              <summary className="cursor-pointer line-clamp-1 break-words [overflow-wrap:anywhere]">
                 {t("liveInbox.scoutNote", { text: item.summary })}
               </summary>
               <p className="mt-[var(--space-3)] whitespace-pre-wrap">{item.summary}</p>
