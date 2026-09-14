@@ -38,7 +38,7 @@ read-only. No production rollout or external messages in this verification.
 - **Auth:** Convex Auth
 - **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-realtime-2.1`
 - **Started:** 2026-08-26T13:55:26Z
-- **Last updated:** 2026-09-14T19:09:48Z
+- **Last updated:** 2026-09-14T20:02:18Z
 
 ## Log
 
@@ -411,3 +411,23 @@ functions (`convex/schema.ts`, `convex/decisions.ts`, `convex/lib/decisions.ts`,
 `convex/autonomyGate.ts`, `convex/providerConversations.ts`,
 `convex/providerActions.ts`, `convex/scout.ts`, `convex/voice.ts`,
 `src/components/scout/DecisionCard.tsx`, `src/ui/chat/ScoutChat.tsx`).
+
+### 2026-09-14 — 8fc8e2c Nachrichten in the settings panel chrome
+
+The musician inbox is its own menu item again, rebuilt as a two-column panel
+in the same chrome as the settings: conversation rows on the left with a
+preview, time and unread dot, the provider thread on the right, a composer at
+the bottom. One deep module, `convex/conversations.ts`, hides the mail and
+portal channels behind four functions (list, thread, reply, mark read) and
+derives its validators from the schema; the thread merges provider messages,
+the Scout's and the musician's sent messages (attributed through the execution
+ledger), pending requests with their gate status, assessment notes, the
+musician's answers and decisions in one chronological list. The musician's own
+reply goes through the same Freigabeprüfung as the Scout's and is never shown
+as sent before the message exists. The legacy three-pane page, its four
+only-there components and their dead CSS are gone. Full suite green (1000
+tests), Vite build green. Convex features: schema, indexes, queries, mutations,
+realtime queries (`convex/conversations.ts`, `convex/schema.ts`,
+`convex/providerActions.ts`, `src/routes/musician/LiveInboxPage.tsx`,
+`src/ui/inbox/ConversationThread.tsx`, `src/ui/chrome/PanelDialog.tsx`,
+`src/ui/chat/ChatComposer.tsx`).
