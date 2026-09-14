@@ -25,6 +25,7 @@ import {
   type PublicGateOutcome,
 } from "./autonomyGate";
 import { gateReasonText } from "./lib/autonomyGate";
+import { answerDecisionsForRequest } from "./lib/decisions";
 
 const actionTypeValidator = v.union(
   v.literal("send_email"), v.literal("submit_webform"), v.literal("send_platform_dm"),
@@ -499,23 +500,50 @@ export const decide = mutation({
     if (request.contentVersion !== args.expectedContentVersion || request.contentHash !== args.expectedContentHash || await payloadHash(expected) !== request.contentHash || canonicalJson(expected) !== canonicalJson(request.payload)) {
       throw new ConvexError({ code: "ACTION_CONTENT_CHANGED" });
     }
-    const now = Date.now();
-    // A claim-phase Entscheidung can follow the Scout's own authorization for the
-    // same content version; the human's decision replaces that row, never duplicates it.
-    const existing = await ctx.db.query("actionApprovals").withIndex("by_request_and_content_version", (q) =>
-      q.eq("requestId", request._id).eq("contentVersion", request.contentVersion),
-    ).unique();
-    const autonomy = request.gate ? { autonomyVersion: request.gate.autonomyVersion, autonomyHash: request.gate.autonomyHash } : {};
-    if (existing !== null && existing.ownerId === ownerId) {
-      await ctx.db.patch(existing._id, { contentHash: request.contentHash, payloadSnapshot: request.payload, policyVersionId: request.policyVersionId, decision: args.decision, ...autonomy, decidedAt: now });
-    } else {
-      await ctx.db.insert("actionApprovals", { requestId: request._id, ownerId, contentVersion: request.contentVersion, contentHash: request.contentHash, payloadSnapshot: request.payload, policyVersionId: request.policyVersionId, decision: args.decision, ...autonomy, decidedAt: now });
-    }
-    await ctx.db.patch(request._id, { status: args.decision === "approved" ? "approved" : "rejected", updatedAt: now });
-    await ctx.db.insert("auditEvents", { eventKey: `action:${request._id}:${args.decision}:${request.contentVersion}`, actorType: "user", actorUserId: ownerId, entityKey: `action:${request._id}`, eventType: `action.${args.decision}`, actionRequestId: request._id, policyId: request.policyVersionId, afterHash: request.contentHash, occurredAt: now });
+    await recordHumanDecision(ctx, request, ownerId, args.decision);
+    await answerDecisionsForRequest(ctx, request._id, { choice: args.decision === "approved" ? "yes" : "no" });
     return null;
   },
 });
+
+/**
+ * The human's exact decision on a request: approval ledger row, request status
+ * and audit trail. A claim-phase Entscheidung can follow the Scout's own
+ * authorization for the same content version; the human's decision replaces
+ * that row, never duplicates it. Callers verify ownership and state first.
+ */
+async function recordHumanDecision(
+  ctx: MutationCtx,
+  request: Doc<"actionRequests">,
+  ownerId: Id<"users">,
+  decision: "approved" | "rejected",
+): Promise<void> {
+  const now = Date.now();
+  const existing = await ctx.db.query("actionApprovals").withIndex("by_request_and_content_version", (q) =>
+    q.eq("requestId", request._id).eq("contentVersion", request.contentVersion),
+  ).unique();
+  const autonomy = request.gate ? { autonomyVersion: request.gate.autonomyVersion, autonomyHash: request.gate.autonomyHash } : {};
+  if (existing !== null && existing.ownerId === ownerId) {
+    await ctx.db.patch(existing._id, { contentHash: request.contentHash, payloadSnapshot: request.payload, policyVersionId: request.policyVersionId, decision, ...autonomy, decidedAt: now });
+  } else {
+    await ctx.db.insert("actionApprovals", { requestId: request._id, ownerId, contentVersion: request.contentVersion, contentHash: request.contentHash, payloadSnapshot: request.payload, policyVersionId: request.policyVersionId, decision, ...autonomy, decidedAt: now });
+  }
+  await ctx.db.patch(request._id, { status: decision === "approved" ? "approved" : "rejected", error: undefined, updatedAt: now });
+  await ctx.db.insert("auditEvents", { eventKey: `action:${request._id}:${decision}:${request.contentVersion}`, actorType: "user", actorUserId: ownerId, entityKey: `action:${request._id}`, eventType: `action.${decision}`, actionRequestId: request._id, policyId: request.policyVersionId, afterHash: request.contentHash, occurredAt: now });
+}
+
+/** Approves a request exactly like `decide` does, without the hash echo (the Entscheidung in chat carries the text). */
+export async function approveRequestAsHuman(ctx: MutationCtx, request: Doc<"actionRequests">, ownerId: Id<"users">): Promise<void> {
+  if (request.ownerId !== ownerId) throw new ConvexError({ code: "ACTION_NOT_FOUND" });
+  if (request.providerActionKind === "acceptance") throw new ConvexError({ code: "ACCEPTANCE_REVIEW_REQUIRED" });
+  await recordHumanDecision(ctx, request, ownerId, "approved");
+}
+
+/** Rejects a request exactly like `decide` does. */
+export async function rejectRequestAsHuman(ctx: MutationCtx, request: Doc<"actionRequests">, ownerId: Id<"users">): Promise<void> {
+  if (request.ownerId !== ownerId) throw new ConvexError({ code: "ACTION_NOT_FOUND" });
+  await recordHumanDecision(ctx, request, ownerId, "rejected");
+}
 
 export const getApprovedContactForm = internalQuery({
   args: { ownerId: v.id("users"), requestId: v.id("actionRequests") },

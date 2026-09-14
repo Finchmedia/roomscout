@@ -18,6 +18,7 @@ import {
   type GateReason,
 } from "./lib/autonomyGate";
 import type { PersonalDataScope } from "./lib/autonomy";
+import { gateDecisionSpec, raiseDecision } from "./lib/decisions";
 import { messageSafetyContext } from "./lib/messageSafety";
 import { scoutWorkpool } from "./workpools";
 
@@ -121,7 +122,8 @@ export async function checkScoutAction(
     connectionActive: connection !== null && connection.ownerId === ownerId && connection.status === "active",
     controlledPortalOnly: controlledPortalOnly(),
     browserBusy: input.browserBusy ?? false,
-    userApproved: input.userApproved ?? false,
+    // A text the musician dictated (Entscheidung "custom") is their approval in both phases.
+    userApproved: (input.userApproved ?? false) || request.humanDraft === true,
     now: Date.now(),
   };
   return {
@@ -213,6 +215,15 @@ export async function recordOutcome(
       policyId: request.policyVersionId, afterHash: request.contentHash,
       summary: outcome.reason, occurredAt: now,
     });
+    // ADR 0002: an ask_user is an Entscheidung with the finished text, never a silent stop.
+    const spec = gateDecisionSpec(request, outcome);
+    if (spec !== null) {
+      await raiseDecision(ctx, {
+        ownerId, savedNeedId: request.savedNeedId, conversationId: request.providerConversationId,
+        kind: spec.kind, question: spec.question, detail: spec.detail, options: spec.options,
+        refs: { requestId: request._id, ...(request.providerOfferId ? { offerId: request.providerOfferId } : {}) },
+      });
+    }
     return "awaiting_approval";
   }
 

@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { ActionLifecyclePanel, type ActionLifecycleItem } from "./ActionLifecyclePanel";
 
@@ -18,48 +18,28 @@ function action(status: ActionLifecycleItem["status"], executor: ActionLifecycle
   };
 }
 
-const handlers = {
-  onReview: vi.fn(),
-  onExecute: vi.fn(),
-  onConfirmHumanCompleted: vi.fn(),
-};
-
 describe("ActionLifecyclePanel", () => {
-  it("never exposes provider execution before exact approval", () => {
-    render(<ActionLifecyclePanel actions={[action("awaiting_approval")]} executionResults={{}} {...handlers} />);
+  it("shows the ledger as read-only history without approval or execution controls", () => {
+    render(<ActionLifecyclePanel actions={[action("awaiting_approval"), { ...action("approved"), _id: "action-2" as Id<"actionRequests"> }]} />);
 
-    expect(screen.getByRole("button", { name: /review exact action/i })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /execute approved action/i })).not.toBeInTheDocument();
+    expect(screen.getByText("Approval needed")).toBeInTheDocument();
+    expect(screen.getByText("Approved")).toBeInTheDocument();
+    expect(screen.getAllByText("https://rooms.example/contact")).toHaveLength(2);
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
-  it("allows an approved action to be executed through its reviewed provider", () => {
-    const onExecute = vi.fn();
-    const item = action("approved");
-    render(<ActionLifecyclePanel actions={[item]} executionResults={{}} {...handlers} onExecute={onExecute} />);
+  it("surfaces provider state and errors from the persisted execution", () => {
+    const item = { ...action("executing", "browserbase"), execution: { id: "exec-1" as Id<"actionExecutions">, status: "unknown" as const, error: "Outcome not confirmed", updatedAt: 1 } };
+    render(<ActionLifecyclePanel actions={[item]} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /execute approved action/i }));
-    expect(onExecute).toHaveBeenCalledWith(item);
+    expect(screen.getByText("Outcome unknown")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Outcome not confirmed");
   });
 
-  it("keeps Live View ephemeral and requires explicit human completion", () => {
-    const onConfirmHumanCompleted = vi.fn();
-    const item = action("executing", "browserbase");
-    render(
-      <ActionLifecyclePanel
-        actions={[item]}
-        executionResults={{
-          [item._id]: {
-            state: "human_required",
-            liveViewUrl: "https://live.example/session",
-          },
-        }}
-        {...handlers}
-        onConfirmHumanCompleted={onConfirmHumanCompleted}
-      />,
-    );
-
-    expect(screen.getByRole("link", { name: /open ephemeral live view/i })).toHaveAttribute("href", "https://live.example/session");
-    fireEvent.click(screen.getByRole("button", { name: /i submitted it/i }));
-    expect(onConfirmHumanCompleted).toHaveBeenCalledWith(item._id, true);
+  it("renders loading and empty states", () => {
+    const { rerender } = render(<ActionLifecyclePanel actions={undefined} />);
+    expect(screen.getByText(/loading action ledger/i)).toBeInTheDocument();
+    rerender(<ActionLifecyclePanel actions={[]} />);
+    expect(screen.getByText(/no persisted external actions yet/i)).toBeInTheDocument();
   });
 });

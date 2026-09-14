@@ -11,6 +11,7 @@ const fixtures = vi.hoisted(() => ({
   conversations: [] as Array<Record<string, unknown>>,
   actions: [] as Array<Record<string, unknown>>,
   messages: [] as Array<Record<string, unknown>>,
+  decisions: [] as Array<Record<string, unknown>>,
   queries: vi.fn(),
   mutations: new Map<string, ReturnType<typeof vi.fn>>(),
   actionFns: new Map<string, ReturnType<typeof vi.fn>>(),
@@ -73,6 +74,7 @@ vi.mock("convex/react", () => ({
     if (name === "matches:listMine") return fixtures.matches;
     if (name === "providerConversations:listMine") return fixtures.conversations;
     if (name === "externalActions:listMine") return fixtures.actions;
+    if (name === "decisions:listOpenMine") return fixtures.decisions;
     return null;
   },
   useMutation: (ref: Parameters<typeof getFunctionName>[0]) => mutation(getFunctionName(ref)),
@@ -90,7 +92,7 @@ afterEach(cleanup);
 beforeEach(() => {
   fixtures.needs = [need()];
   fixtures.context = { threadId: "thread", activeNeedId: "need-current", mode: "search_discovery" };
-  fixtures.matches = []; fixtures.conversations = []; fixtures.actions = []; fixtures.messages = [];
+  fixtures.matches = []; fixtures.conversations = []; fixtures.actions = []; fixtures.messages = []; fixtures.decisions = [];
   fixtures.queries.mockClear(); fixtures.mutations.clear(); fixtures.actionFns.clear();
   fixtures.voice.connected = false; fixtures.voice.connect.mockClear(); fixtures.voice.disconnect.mockClear();
 });
@@ -194,6 +196,39 @@ describe("live Scout route", () => {
     fixtures.conversations = [{ ...providerConversation({ ready: false }), assessmentFromProviderReply: false }];
     renderPage();
     expect(screen.queryByRole("heading", { name: "Der Anbieter hat geantwortet." })).not.toBeInTheDocument();
+  });
+
+  it("shows the open Entscheidung as the blocked headline, opens the chat and answers from the card", async () => {
+    fixtures.needs = [need("active")];
+    fixtures.actions = [{ _id: "send-1", savedNeedId: "need-current", requestedActionType: "send_platform_dm", status: "awaiting_approval" }];
+    fixtures.decisions = [{
+      _id: "decision-1", kind: "review_message", status: "open",
+      question: "Soll ich diese Nachricht so senden?", detail: "Hallo, ist der Raum noch frei?",
+      options: [{ id: "yes", label: "Ja, so senden" }, { id: "no", label: "Nein, anders" }],
+      refs: { requestId: "send-1" }, conversationId: "conversation-2", createdAt: 1, updatedAt: 1,
+    }];
+    renderPage();
+    // The chat dialog opened by itself, so the stage behind it is aria-hidden: match the headline by text.
+    expect(document.querySelector("[data-live-scout-stage]")).toHaveAttribute("data-live-scout-stage", "blocked");
+    expect(screen.getByText("Hier brauche ich kurz deine Hilfe.").tagName).toBe("H1");
+    expect(screen.getAllByText("Soll ich diese Nachricht so senden?").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Ein Schritt konnte noch nicht abgeschlossen werden.", { exact: false })).not.toBeInTheDocument();
+    const chat = screen.getByRole("region", { name: "Scout-Chat" });
+    expect(chat).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Entscheidung" })).toHaveTextContent("Hallo, ist der Raum noch frei?");
+    const answer = mutation("decisions:answer");
+    fireEvent.click(screen.getByRole("button", { name: "Ja, so senden" }));
+    await waitFor(() => expect(answer).toHaveBeenCalledWith({ decisionId: "decision-1", choice: "yes" }));
+    expect(fixtures.voice.connect).not.toHaveBeenCalled();
+  });
+
+  it("does not open the chat for an Entscheidung while a voice session is running", () => {
+    fixtures.needs = [need("active")]; fixtures.voice.connected = true;
+    fixtures.decisions = [{ _id: "decision-2", kind: "scout_question", status: "open", question: "Ist Stuttgart-West okay?", options: [], refs: {}, createdAt: 1, updatedAt: 1 }];
+    renderPage();
+    expect(screen.getByRole("heading", { name: "Hier brauche ich kurz deine Hilfe." })).toBeInTheDocument();
+    expect(screen.getByText("Voice Scout session")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Scout-Chat" })).not.toBeInTheDocument();
   });
 
   it("shows accepted completion even when the need is paused", () => {

@@ -1,7 +1,22 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 
+import { MemoryRouter } from "react-router-dom"
+
 import { ScoutChat } from "./ScoutChat"
+import type { OpenDecision } from "@/components/scout/DecisionCard"
+
+const decision: OpenDecision = {
+  _id: "decision-1" as OpenDecision["_id"],
+  kind: "review_message",
+  status: "open",
+  question: "Soll ich diese Nachricht so senden?",
+  detail: "Hallo, ist der Raum noch frei?",
+  options: [{ id: "yes", label: "Ja, so senden" }, { id: "no", label: "Nein, anders" }],
+  refs: {},
+  createdAt: 1,
+  updatedAt: 1,
+}
 
 class ResizeObserverStub {
   observe() {}
@@ -100,5 +115,29 @@ describe("ScoutChat", () => {
     fireEvent.click(screen.getByRole("button", { name: "Ältere Nachrichten laden" }))
     expect(onVoice).toHaveBeenCalledOnce()
     expect(onLoadHistory).toHaveBeenCalledOnce()
+  })
+
+  it("renders the open Entscheidung after the transcript and echoes the answer as bubbles", async () => {
+    const onAnswerDecision = vi.fn().mockResolvedValue(undefined)
+    render(
+      <MemoryRouter>
+        <ScoutChat
+          messages={[{ id: "1", author: "scout", body: "Ich habe einen Raum gefunden." }]}
+          onSend={vi.fn()}
+          decision={decision}
+          onAnswerDecision={onAnswerDecision}
+          decisionAnsweredText="Danke, ich mache weiter."
+        />
+      </MemoryRouter>
+    )
+    const viewport = screen.getByRole("region", { name: "Scout-Chat" })
+    const transcript = viewport.querySelector('[data-slot="bubble-content"]')
+    const card = screen.getByRole("group", { name: "Entscheidung" })
+    expect(transcript && card.compareDocumentPosition(transcript) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy()
+
+    fireEvent.click(screen.getByRole("button", { name: "Ja, so senden" }))
+    expect(onAnswerDecision).toHaveBeenCalledWith("decision-1", "yes")
+    expect((await screen.findAllByRole("group", { name: "Du" })).at(-1)).toHaveTextContent("Ja, so senden")
+    expect(screen.getAllByRole("group", { name: "Dein Scout" }).at(-1)).toHaveTextContent("Danke, ich mache weiter.")
   })
 })

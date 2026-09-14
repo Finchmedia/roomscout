@@ -203,8 +203,11 @@ describe("decideGate: user-approved claim", () => {
     expect(decideGate(autopilot, approved({ browserBusy: true }))).toMatchObject({ outcome: "wait", reason: "browser_busy" });
   });
 
-  it("does not apply at submit time", () => {
-    expect(decideGate(review, facts({ phase: "submit", userApproved: true }))).toEqual({ outcome: "ask_user", reason: "review_mode" });
+  it("also applies at submit time for a musician-dictated text (humanDraft), world facts still apply", () => {
+    expect(decideGate(review, facts({ phase: "submit", userApproved: true }))).toEqual({ outcome: "proceed" });
+    expect(decideGate(review, facts({ phase: "submit", userApproved: true, verdict: null, detectedScopes: ["phone"] }))).toEqual({ outcome: "proceed" });
+    expect(decideGate(review, facts({ phase: "submit", userApproved: true, policyExecutable: false }))).toEqual({ outcome: "stop", reason: "policy_not_executable" });
+    expect(decideGate(review, facts({ phase: "submit", userApproved: false }))).toEqual({ outcome: "ask_user", reason: "review_mode" });
   });
 });
 

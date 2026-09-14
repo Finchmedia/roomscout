@@ -1,13 +1,3 @@
-import {
-  CheckCircle2,
-  CircleAlert,
-  ExternalLink,
-  LoaderCircle,
-  Play,
-  RotateCcw,
-  ShieldCheck,
-  XCircle,
-} from "lucide-react";
 import type { Doc, Id } from "../../../convex/_generated/dataModel";
 import styles from "./ActionLifecyclePanel.module.css";
 
@@ -27,25 +17,13 @@ export type ActionLifecycleItem = Pick<
   };
 };
 
-export type EphemeralActionExecution = {
-  executionId?: Id<"actionExecutions">;
-  state: string;
-  reasonCode?: string;
-  liveViewUrl?: string;
-  interactiveLiveViewUrl?: string;
-  liveViewExpiresAt?: number;
-  filled?: string[];
-  missing?: string[];
-  blockers?: string[];
-};
-
+/**
+ * Read-only history of the external action ledger. Approvals are
+ * Entscheidungen in the Scout chat (Kandidat B); execution belongs to the
+ * server-side dispatcher, so this panel has no controls.
+ */
 type Props = {
   actions: ActionLifecycleItem[] | undefined;
-  busyActionId?: Id<"actionRequests">;
-  executionResults: Partial<Record<Id<"actionRequests">, EphemeralActionExecution>>;
-  onReview: (requestId: Id<"actionRequests">) => void;
-  onExecute: (action: ActionLifecycleItem) => Promise<void> | void;
-  onConfirmHumanCompleted: (requestId: Id<"actionRequests">, submitted: boolean) => Promise<void> | void;
 };
 
 const statusCopy: Record<ActionStatus, { label: string; tone: string }> = {
@@ -84,23 +62,7 @@ function executionLabel(action: ActionLifecycleItem): string | undefined {
   return undefined;
 }
 
-function canExecute(action: ActionLifecycleItem): boolean {
-  return (action.status === "approved" || (action.status === "executing" && action.execution?.status !== "unknown")) &&
-    (action.executor === "firecrawl" || action.executor === "browserbase");
-}
-
-function needsHumanConfirmation(result: EphemeralActionExecution | undefined): boolean {
-  return result?.state === "human_required" && Boolean(result.liveViewUrl || result.interactiveLiveViewUrl);
-}
-
-export function ActionLifecyclePanel({
-  actions,
-  busyActionId,
-  executionResults,
-  onReview,
-  onExecute,
-  onConfirmHumanCompleted,
-}: Props) {
+export function ActionLifecyclePanel({ actions }: Props) {
   if (actions === undefined) return <p className={styles.empty}>Loading action ledger…</p>;
   if (actions.length === 0) return <p className={styles.empty}>No persisted external actions yet.</p>;
 
@@ -109,11 +71,6 @@ export function ActionLifecyclePanel({
       {actions.map((action) => {
         const status = statusCopy[action.status];
         const providerStatus = executionLabel(action);
-        const result = executionResults[action._id];
-        const liveViewUrl = result?.interactiveLiveViewUrl ?? result?.liveViewUrl;
-        const busy = busyActionId === action._id;
-        const humanConfirmation = needsHumanConfirmation(result);
-        const retry = action.status === "executing";
 
         return (
           <article className={styles.card} data-state={action.status} key={action._id}>
@@ -130,39 +87,6 @@ export function ActionLifecyclePanel({
               </time>
             </div>
 
-            {action.status === "awaiting_approval" ? (
-              <div className={styles.controls}>
-                <button className="btn btn-p btn-sm" onClick={() => onReview(action._id)} type="button">
-                  <ShieldCheck aria-hidden="true" size={13} />Review exact action
-                </button>
-              </div>
-            ) : null}
-
-            {canExecute(action) && !humanConfirmation ? (
-              <div className={styles.controls}>
-                <button className="btn btn-p btn-sm" disabled={busy} onClick={() => void onExecute(action)} type="button">
-                  {busy ? <LoaderCircle aria-hidden="true" className="rs-spin" size={13} /> : retry ? <RotateCcw aria-hidden="true" size={13} /> : <Play aria-hidden="true" size={13} />}
-                  {busy ? "Starting…" : retry ? "Resume provider" : "Execute approved action"}
-                </button>
-              </div>
-            ) : null}
-
-            {action.status === "approved" && !canExecute(action) ? (
-              <p className={styles.notice}><CircleAlert aria-hidden="true" size={12} /> This approved action has no supported provider executor.</p>
-            ) : null}
-
-            {humanConfirmation ? (
-              <div className={styles.humanBoundary}>
-                <p className={styles.notice}>The provider paused at a human-only step. Open the ephemeral Live View, then explicitly tell RoomScout whether you submitted.</p>
-                {liveViewUrl ? <a className={styles.liveView} href={liveViewUrl} rel="noreferrer" target="_blank"><ExternalLink aria-hidden="true" size={13} />Open ephemeral Live View</a> : null}
-                <div className={styles.humanControls}>
-                  <button className="btn btn-p btn-sm" disabled={busy} onClick={() => void onConfirmHumanCompleted(action._id, true)} type="button"><CheckCircle2 aria-hidden="true" size={13} />I submitted it</button>
-                  <button className="btn btn-g btn-sm" disabled={busy} onClick={() => void onConfirmHumanCompleted(action._id, false)} type="button"><XCircle aria-hidden="true" size={13} />Cancel action</button>
-                </div>
-              </div>
-            ) : null}
-
-            {result?.reasonCode && !humanConfirmation ? <p className={styles.notice}>{result.reasonCode.replaceAll("_", " ").toLowerCase()}</p> : null}
             {action.error || action.execution?.error ? <p className={styles.error} role="alert">{action.error ?? action.execution?.error}</p> : null}
           </article>
         );

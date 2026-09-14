@@ -18,6 +18,7 @@ import {
   storedPortalBrowserProvider,
   type PortalBrowserProvider,
 } from "./integrations/portalBrowserEngine";
+import { answerOpenDecisions, raiseHumanStep } from "./lib/decisions";
 
 const connectionStatusValidator = v.union(
   v.literal("draft"),
@@ -1022,6 +1023,13 @@ export const markAgentOnboardingState = internalMutation({
       message: args.eventMessage.slice(0, 100),
       createdAt: now,
     });
+    if (args.humanRequired) {
+      // Registration needs the musician: an Entscheidung in the Scout chat, not only a run event.
+      await raiseHumanStep(ctx, {
+        ownerId: args.ownerId, runId: run._id, connectionId: run.connectionId,
+        browserProvider: storedPortalBrowserProvider(run.browserProvider),
+      });
+    }
     return null;
   },
 });
@@ -1124,6 +1132,11 @@ export const attachProviderRun = internalMutation({
         message: "LOGIN_OR_2FA_REQUIRED",
         createdAt: now,
       });
+      // The live login needs the musician: an Entscheidung in the Scout chat, not only a run event.
+      await raiseHumanStep(ctx, {
+        ownerId: args.ownerId, runId: run._id, connectionId: run.connectionId,
+        browserProvider: requestedProvider === "firecrawl" ? "firecrawl" : "browserbase",
+      });
     }
     return { contextId };
   },
@@ -1218,6 +1231,14 @@ export const finishRun = internalMutation({
               : undefined,
         updatedAt: now,
       });
+    }
+    // The run is over: the human_step Entscheidung for this connection is answered automatically.
+    await answerOpenDecisions(ctx, run.ownerId, (row) =>
+      row.kind === "human_step" && (row.refs.runId === run._id || row.refs.connectionId === run.connectionId),
+    { choice: terminalStatus });
+    if (reauthRequired) {
+      // The portal wants the musician again (verification failed or timed out).
+      await raiseHumanStep(ctx, { ownerId: run.ownerId, runId: run._id, connectionId: run.connectionId, browserProvider: runProvider });
     }
     if (terminalStatus === "completed" && contextReady) {
       await ctx.scheduler.runAfter(0, internal.scoutOrchestrator.runForOwner, {

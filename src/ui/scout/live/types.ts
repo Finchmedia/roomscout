@@ -6,6 +6,7 @@ export type LiveScoutStage =
   | "discovery"
   | "brief"
   | "working"
+  | "blocked"
   | "provider-update"
   | "offer"
   | "paused"
@@ -18,6 +19,8 @@ export interface LiveScoutStageSignals {
   paused?: boolean;
   briefNeedsReview?: boolean;
   providerUpdate?: boolean;
+  /** An open Entscheidung: the Scout needs the musician before it can go on. */
+  blocked?: boolean;
   working?: boolean;
   hasConversation?: boolean;
   hasPartialReply?: boolean;
@@ -33,6 +36,7 @@ export function deriveLiveScoutStage(signals: LiveScoutStageSignals): LiveScoutS
   if (signals.offerReady) return "offer";
   if (signals.paused) return "paused";
   if (signals.briefNeedsReview) return "brief";
+  if (signals.blocked) return "blocked";
   if (signals.providerUpdate) return "provider-update";
   if (signals.working) return "working";
   if (signals.hasPartialReply || signals.hasConversation) return "discovery";
@@ -52,6 +56,8 @@ export interface LiveScoutCopy {
   briefHeadline: React.ReactNode;
   workingHeadline: React.ReactNode;
   workingStatus: React.ReactNode;
+  blockedHeadline: React.ReactNode;
+  blockedStatus: React.ReactNode;
   providerUpdateHeadline: React.ReactNode;
   providerUpdateStatus: React.ReactNode;
   pausedHeadline: React.ReactNode;

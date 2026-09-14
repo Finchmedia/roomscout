@@ -21,6 +21,7 @@ import type * as controlledPersonalInboxProof from "../controlledPersonalInboxPr
 import type * as controlledSourceProof from "../controlledSourceProof.js";
 import type * as controlledSourceProofActions from "../controlledSourceProofActions.js";
 import type * as crons from "../crons.js";
+import type * as decisions from "../decisions.js";
 import type * as demoSourceBootstrap from "../demoSourceBootstrap.js";
 import type * as demoSourceBootstrapActions from "../demoSourceBootstrapActions.js";
 import type * as demoSourceCheckActions from "../demoSourceCheckActions.js";
@@ -75,6 +76,7 @@ import type * as lib_actionPayload from "../lib/actionPayload.js";
 import type * as lib_autonomy from "../lib/autonomy.js";
 import type * as lib_autonomyGate from "../lib/autonomyGate.js";
 import type * as lib_corroboration from "../lib/corroboration.js";
+import type * as lib_decisions from "../lib/decisions.js";
 import type * as lib_demoProvenance from "../lib/demoProvenance.js";
 import type * as lib_matchAssessment from "../lib/matchAssessment.js";
 import type * as lib_matchValidity from "../lib/matchValidity.js";
@@ -153,6 +155,7 @@ declare const fullApi: ApiFromModules<{
   controlledSourceProof: typeof controlledSourceProof;
   controlledSourceProofActions: typeof controlledSourceProofActions;
   crons: typeof crons;
+  decisions: typeof decisions;
   demoSourceBootstrap: typeof demoSourceBootstrap;
   demoSourceBootstrapActions: typeof demoSourceBootstrapActions;
   demoSourceCheckActions: typeof demoSourceCheckActions;
@@ -207,6 +210,7 @@ declare const fullApi: ApiFromModules<{
   "lib/autonomy": typeof lib_autonomy;
   "lib/autonomyGate": typeof lib_autonomyGate;
   "lib/corroboration": typeof lib_corroboration;
+  "lib/decisions": typeof lib_decisions;
   "lib/demoProvenance": typeof lib_demoProvenance;
   "lib/matchAssessment": typeof lib_matchAssessment;
   "lib/matchValidity": typeof lib_matchValidity;

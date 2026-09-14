@@ -34,22 +34,27 @@ function StageTitle({ children }: { children: React.ReactNode }) {
 function WorkChrome({ props, stage }: { props: LiveScoutSurfaceProps; stage: LiveScoutStage }) {
   const paused = stage === "paused";
   const providerUpdate = stage === "provider-update";
+  const blocked = stage === "blocked";
   const headline = paused
     ? props.copy.pausedHeadline
     : providerUpdate
       ? props.copy.providerUpdateHeadline
-      : props.copy.workingHeadline;
+      : blocked
+        ? props.copy.blockedHeadline
+        : props.copy.workingHeadline;
   const status = paused
     ? props.copy.pausedStatus
     : providerUpdate
       ? props.copy.providerUpdateStatus
-      : props.copy.workingStatus;
+      : blocked
+        ? props.copy.blockedStatus
+        : props.copy.workingStatus;
 
   return (
     <div className={STAGE_SHELL} data-live-scout-stage={stage}>
       <ScoutBlob
         size={stage === "working" ? 160 : 112}
-        state={paused ? "still" : "idle"}
+        state={paused ? "still" : blocked ? "listening" : "idle"}
         className="mb-[var(--space-17)]"
       />
       <StageTitle>{headline}</StageTitle>
@@ -73,7 +78,7 @@ function WorkChrome({ props, stage }: { props: LiveScoutSurfaceProps; stage: Liv
 export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
   const narrow = useNarrow();
   const { stage, copy } = props;
-  const working = stage === "working" || stage === "provider-update" || stage === "paused";
+  const working = stage === "working" || stage === "blocked" || stage === "provider-update" || stage === "paused";
   const briefReview = typeof props.briefReviewSlot === "function"
     ? props.briefReviewSlot({ onReviewBrief: props.onReviewBrief, onActivate: props.onActivate })
     : props.briefReviewSlot;
@@ -129,6 +134,7 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
       );
       break;
     case "working":
+    case "blocked":
     case "provider-update":
     case "paused":
       content = <WorkChrome props={props} stage={stage} />;

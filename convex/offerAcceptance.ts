@@ -4,6 +4,7 @@ import { mutation, query } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { requireUserId } from "./integrations/authz";
 import { actionPayloadHash } from "./integrations/contentHash";
+import { answerOpenDecisions } from "./lib/decisions";
 import { messageSafetyContext } from "./lib/messageSafety";
 import { acceptanceMessage, assertAcceptanceCurrent, currentAcceptableOffer } from "./lib/offerAcceptance";
 import { portalDestinationHash, resolveControlledPortal } from "./lib/providerPortal";
@@ -27,9 +28,13 @@ export const prepare = mutation({
       actionPayloadHash(payload),
       portalDestinationHash(target),
     ]);
-    const existing = await ctx.db.query("actionRequests").withIndex("by_provider_offer", (q) => q.eq("providerOfferId", offer._id)).unique();
+    // The musician opened the offer review: the "Angebot prüfen" Entscheidung is answered.
+    await answerOpenDecisions(ctx, ownerId, (row) => row.kind === "offer_ready" && row.refs.offerId === offer._id, { choice: "review" });
+    // A dictated reply may share the offer with the acceptance; only an acceptance row is "existing" here.
+    const offerRequests = await ctx.db.query("actionRequests").withIndex("by_provider_offer", (q) => q.eq("providerOfferId", offer._id)).order("desc").take(10);
+    const existing = offerRequests.find((row) => row.providerActionKind === "acceptance") ?? null;
     if (existing) {
-      if (existing.ownerId !== ownerId || existing.providerActionKind !== "acceptance") throw new ConvexError({ code: "OFFER_ACTION_CONFLICT" });
+      if (existing.ownerId !== ownerId) throw new ConvexError({ code: "OFFER_ACTION_CONFLICT" });
       if (["approved", "queued", "executing", "executed"].includes(existing.status)) return existing._id;
       let refreshable = ["rejected", "cancelled", "expired"].includes(existing.status);
       if (existing.status === "awaiting_approval") {

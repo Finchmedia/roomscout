@@ -1,15 +1,10 @@
 import { Bot, Mail, MessageSquare, Send, SquarePen } from "lucide-react";
-import { useAction, useMutation, useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
-import { ActionApprovalSheet } from "../../components/actions/ActionApprovalSheet";
-import {
-  ActionLifecyclePanel,
-  type ActionLifecycleItem,
-  type EphemeralActionExecution,
-} from "../../components/actions/ActionLifecyclePanel";
+import { ActionLifecyclePanel } from "../../components/actions/ActionLifecyclePanel";
 import { MailboxVerificationPanel } from "../../components/actions/MailboxVerificationPanel";
 import { WorkspaceShell } from "../../components/navigation/WorkspaceShell";
 import { OpportunityHandoff } from "../../components/opportunities/OpportunityHandoff";
@@ -17,7 +12,7 @@ import { ProviderOfferPanel } from "../../components/opportunities/ProviderOffer
 import { EmptyState } from "../../components/ui/LedgerCard";
 import { Table, TableBody, TableCell, TableRow } from "../../components/ui/table";
 import { formatMessageTime } from "../../data/convexAdapters";
-import type { ActionApprovalRequest, CommunicationChannel, Opportunity } from "../../features/agentOperations/types";
+import type { CommunicationChannel, Opportunity } from "../../features/agentOperations/types";
 
 type ChannelFilter = "all" | "needs_action" | CommunicationChannel;
 type SelectedThread = { channel: "email" | "platform" | "webform"; id: string };
@@ -43,21 +38,10 @@ export function MusicianInboxPage() {
   const mailboxMessages = useQuery(api.inbox.listMailboxMessagesMine, { limit: 10 });
   const createHandoff = useMutation(api.opportunities.createHandoff);
   const updateOpportunityStatus = useMutation(api.opportunities.updateStatus);
-  const decideAction = useMutation(api.externalActions.decide);
   const updateMailboxMessageStatus = useMutation(api.inbox.updateMailboxMessageStatus);
-  const confirmHumanCompleted = useMutation(api.externalActions.confirmHumanCompleted);
-  const executeFirecrawlAction = useAction(api.firecrawlInteract.executeApproved);
-  const completeFirecrawlHumanStep = useAction(api.firecrawlInteract.completeApprovedHumanStep);
-  const executeBrowserbaseAction = useAction(api.browserbasePortal.executeApprovedWrite);
-  const getBrowserbaseLiveView = useAction(api.browserbasePortal.getApprovedWriteLiveView);
-  const completeBrowserbaseHumanStep = useAction(api.browserbasePortal.completeApprovedWriteHumanStep);
   const [selectedThread, setSelectedThread] = useState<SelectedThread>();
   const [channelFilter, setChannelFilter] = useState<ChannelFilter>("all");
   const [handoffError, setHandoffError] = useState("");
-  const [selectedActionId, setSelectedActionId] = useState<Id<"actionRequests">>();
-  const [actionError, setActionError] = useState("");
-  const [busyActionId, setBusyActionId] = useState<Id<"actionRequests">>();
-  const [executionResults, setExecutionResults] = useState<Partial<Record<Id<"actionRequests">, EphemeralActionExecution>>>({});
   const [mailboxError, setMailboxError] = useState("");
 
   const webformThreads = (actionRows ?? []).flatMap((action) => {
@@ -110,25 +94,6 @@ export function MusicianInboxPage() {
       : "Review the evidence and unresolved facts before preparing a human handoff.",
     status: opportunity.status === "converted" ? "handed_off" : opportunity.status === "contacted" ? "visit_proposed" : "qualified",
   }));
-  const pendingActions = (actionRows ?? []).filter((action) => action.status === "awaiting_approval");
-  const selectedAction = pendingActions.find((action) => action._id === selectedActionId);
-  const approvalRequest: ActionApprovalRequest | null = selectedAction ? {
-    id: selectedAction._id,
-    kind: selectedAction.requestedActionType,
-    destination: selectedAction.payload.kind === "email_message" ? selectedAction.payload.recipientEmail : selectedAction.payload.kind === "contact_form" ? selectedAction.payload.targetUrl : selectedAction.payload.kind === "platform_message" ? selectedAction.payload.recipients.join(", ") || "Existing platform thread" : `Portal connection ${selectedAction.payload.connectionId}`,
-    actingAs: selectedAction.payload.kind === "email_message" ? mailbox?.emailAddress ?? "Personal Scout mailbox" : "Connected portal identity",
-    effect: selectedAction.payload.kind === "portal_account_operation" ? `${selectedAction.payload.operation} the selected portal account.` : "Execute the exact displayed external action once.",
-    fields: selectedAction.payload.kind === "email_message"
-      ? [{ label: "Recipient", value: selectedAction.payload.recipientEmail }, { label: "Subject", value: selectedAction.payload.subject }, { label: "Body", value: selectedAction.payload.body }]
-      : selectedAction.payload.kind === "contact_form"
-        ? selectedAction.payload.fields.map((field) => ({ label: field.label ?? field.name, value: field.value }))
-        : selectedAction.payload.kind === "platform_message"
-          ? [{ label: "Recipients", value: selectedAction.payload.recipients.join(", ") || "Existing thread" }, ...(selectedAction.payload.subject ? [{ label: "Subject", value: selectedAction.payload.subject }] : []), { label: "Body", value: selectedAction.payload.body }]
-          : [{ label: "Operation", value: selectedAction.payload.operation }, { label: "Account", value: selectedAction.payload.accountLabel ?? "No account label supplied" }],
-    contentVersion: selectedAction.contentVersion,
-    authorization: { mode: "approve_once" },
-  } : null;
-
   async function markHandedOff(opportunityId: string) {
     const source = opportunityRows?.find((candidate) => candidate._id === opportunityId);
     if (!source) return;
@@ -142,92 +107,6 @@ export function MusicianInboxPage() {
       await updateOpportunityStatus({ opportunityId: source._id, status: "converted" });
     } catch (caught) {
       setHandoffError(caught instanceof Error ? caught.message : "The handoff could not be persisted.");
-    }
-  }
-
-  async function decideSelectedAction(decision: "approved" | "rejected") {
-    if (!selectedAction) return;
-    setActionError("");
-    try {
-      await decideAction({
-        requestId: selectedAction._id,
-        decision,
-        expectedContentVersion: selectedAction.contentVersion,
-        expectedContentHash: selectedAction.contentHash,
-        expectedPayload: selectedAction.payload,
-      });
-      setSelectedActionId(undefined);
-    } catch (caught) {
-      setActionError(caught instanceof Error ? caught.message : "The exact action decision could not be persisted.");
-      throw caught;
-    }
-  }
-
-  async function executeApprovedAction(action: ActionLifecycleItem) {
-    setActionError("");
-    setBusyActionId(action._id);
-    try {
-      if (action.executor === "firecrawl") {
-        const result = await executeFirecrawlAction({ requestId: action._id });
-        setExecutionResults((current) => ({ ...current, [action._id]: result }));
-        return;
-      }
-      if (action.executor === "browserbase") {
-        const result = await executeBrowserbaseAction({ requestId: action._id });
-        if (result.status === "human_required") {
-          const liveView = await getBrowserbaseLiveView({ executionId: result.executionId });
-          setExecutionResults((current) => ({
-            ...current,
-            [action._id]: {
-              executionId: result.executionId,
-              state: result.status,
-              reasonCode: result.blocker,
-              liveViewUrl: liveView.url,
-              liveViewExpiresAt: liveView.expiresAt,
-            },
-          }));
-          return;
-        }
-        setExecutionResults((current) => ({
-          ...current,
-          [action._id]: {
-            executionId: result.executionId,
-            state: result.status,
-            reasonCode: result.blocker,
-          },
-        }));
-        return;
-      }
-      throw new Error("This action does not have a supported provider executor.");
-    } catch (caught) {
-      setActionError(caught instanceof Error ? caught.message : "The approved provider action could not be started.");
-    } finally {
-      setBusyActionId(undefined);
-    }
-  }
-
-  async function confirmHumanAction(requestId: Id<"actionRequests">, submitted: boolean) {
-    setActionError("");
-    setBusyActionId(requestId);
-    try {
-      const action = actionRows?.find((candidate) => candidate._id === requestId);
-      const executionId = executionResults[requestId]?.executionId;
-      if (action?.executor === "browserbase" && executionId) {
-        await completeBrowserbaseHumanStep({ requestId, executionId, submitted });
-      } else if (action?.executor === "firecrawl" && executionId) {
-        await completeFirecrawlHumanStep({ requestId, executionId, submitted });
-      } else {
-        await confirmHumanCompleted({ requestId, submitted });
-      }
-      setExecutionResults((current) => {
-        const next = { ...current };
-        delete next[requestId];
-        return next;
-      });
-    } catch (caught) {
-      setActionError(caught instanceof Error ? caught.message : "The human completion state could not be saved.");
-    } finally {
-      setBusyActionId(undefined);
     }
   }
 
@@ -301,7 +180,7 @@ export function MusicianInboxPage() {
                 <article className="mail out"><header className="mail-top"><span className="mono">Prepared for {new URL(webformSelected.payload.targetUrl).hostname}</span><time className="mono">{formatMessageTime(webformSelected.updatedAt)}</time></header><div className="mail-body">{webformSelected.payload.fields.map((field) => `${field.label ?? field.name}: ${field.value}`).join("\n\n")}</div></article>
                 <div className="rs-timeline-event"><MessageSquare aria-hidden="true" size={13} /><span><strong>Action state</strong> · {webformSelected.status}{webformSelected.error ? ` · ${webformSelected.error}` : ""}</span></div>
               </div>
-              <div className="cactions">{webformSelected.status === "awaiting_approval" ? <button className="btn btn-p" onClick={() => setSelectedActionId(webformSelected._id)} type="button">Review exact form</button> : null}<Link className="btn btn-s" to="/app/scout?mode=outreach_drafting"><Bot aria-hidden="true" size={14} />Ask Scout</Link></div>
+              <div className="cactions">{webformSelected.status === "awaiting_approval" ? <Link className="btn btn-p" to="/app/scout"><Bot aria-hidden="true" size={14} />Im Scout-Chat entscheiden</Link> : null}<Link className="btn btn-s" to="/app/scout?mode=outreach_drafting"><Bot aria-hidden="true" size={14} />Ask Scout</Link></div>
             </>
           ) : <div className="convo"><EmptyState body="Wähle links ein Gespräch. Hier findest du den Verlauf und neue Antworten." title="Platz für gute Nachrichten." /></div>}
         </section>
@@ -321,28 +200,13 @@ export function MusicianInboxPage() {
               </section>
               <section>
                 <h2>External action ledger</h2>
-                {actionError ? <p className="rs-form-error" role="alert">{actionError}</p> : null}
-                <ActionLifecyclePanel
-                  actions={actionRows?.slice(0, 10)}
-                  busyActionId={busyActionId}
-                  executionResults={executionResults}
-                  onConfirmHumanCompleted={confirmHumanAction}
-                  onExecute={executeApprovedAction}
-                  onReview={setSelectedActionId}
-                />
+                <ActionLifecyclePanel actions={actionRows?.slice(0, 10)} />
               </section>
               <section><h2>Opportunities</h2>{handoffError ? <p className="rs-form-error" role="alert">{handoffError}</p> : null}{opportunityRows === undefined ? <p>Loading…</p> : opportunities.length ? opportunities.slice(0, 3).map((opportunity) => <OpportunityHandoff key={opportunity.id} onMarkHandedOff={markHandedOff} opportunity={opportunity} />) : <p>No persisted opportunity is ready for handoff.</p>}</section>
             </div>
           </details>
         </aside>
       </div>
-      <ActionApprovalSheet
-        onApprove={() => decideSelectedAction("approved")}
-        onOpenChange={(open) => { if (!open) setSelectedActionId(undefined); }}
-        onReject={() => decideSelectedAction("rejected")}
-        open={Boolean(selectedAction)}
-        request={approvalRequest}
-      />
     </WorkspaceShell>
   );
 }

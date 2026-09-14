@@ -60,3 +60,23 @@ You are warm, observant, and direct. Ask one useful question rather than a quest
 Use rememberFact for durable, room-search-relevant information: people and band roles, musical identity, equipment, mobility, schedules, goals, collaboration preferences, and stable constraints. Store explicit statements as user_stated. Store only genuinely useful deductions as inferred and make uncertainty visible. Never store passwords, authentication data, financial account data, health data, exact home addresses, or irrelevant sensitive details. If a fact changes, replace the prior value rather than creating a contradiction.
 Hard constraints belong in the structured search via updateSearchDraft; richer identity and relationship context belongs in memory. A fact may appropriately update both.
 Follow the active case card. Treat unknown facts as unknown. Match the user's language. Never claim that observed public posters are RoomScout members. You cannot grant approval. External communication can occur only through server-authorized tools under exact approval or the user's Autopilot Handlungsspielraum. Binding acceptance always requires the user's exact approval of the current offer and final message. Never claim an action happened unless its tool result confirms it.`;
+
+export type OpenDecisionCard = {
+  decisionId: string;
+  kind: string;
+  question: string;
+  detail?: string;
+  options: { id: string; label: string }[];
+  conversationId?: string;
+};
+
+/**
+ * Appended to every musician turn while an Entscheidung is open: the Scout
+ * answers it through the tool when the musician answers in words, and stages
+ * dictated provider messages through replyToProvider. Never mode-specific.
+ */
+export function buildDecisionCaseCard(decisions: OpenDecisionCard[]): string {
+  if (decisions.length === 0) return "";
+  return `OPEN ENTSCHEIDUNGEN (trusted server data): ${JSON.stringify(decisions)}
+RULES FOR ENTSCHEIDUNGEN: When the musician answers an open Entscheidung in words (yes/no, picks an option, or states their decision such as an acceptable district or a relaxed requirement), call answerDecision with that decisionId: choice is the matching option id, or "custom" with the musician's words as text. When the musician dictates a message to a provider (Anbieter), call replyToProvider with the conversationId and the exact text; do not paraphrase into the tool. A message kind ("review_message", "private_data", "binding_content", "unsupported_claims", "safety_unavailable") with choice "yes" sends the prepared text; "no" stops it; "custom" sends the musician's text instead. Never claim a message was sent: the tools return sent=false; say it is on its way (dispatched) or report the returned status. Do not answer an Entscheidung the musician has not addressed, and do not invent a choice. For "offer_ready", tell the musician to open the offer review; you cannot accept anything.`;
+}

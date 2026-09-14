@@ -61,7 +61,10 @@ export type GateFacts = {
   connectionActive: boolean;
   controlledPortalOnly: boolean;
   browserBusy: boolean;
-  /** Claim phase: the human already said yes to this exact content. */
+  /**
+   * The human already said yes to this exact content: an exact approval at
+   * claim time, or a text the musician dictated themselves (`humanDraft`).
+   */
   userApproved: boolean;
   now: number;
 };
@@ -123,13 +126,14 @@ function listDetail(items: readonly string[]): string | undefined {
  * controlled_portal_only > policy_not_executable > connection_not_ready >
  * browser_busy (claim only) > verdict > private_data > review_mode > proceed.
  *
- * `userApproved` (claim phase) short-circuits every rule that only exists to
- * ask the human — the human already decided on this exact content. Facts about
- * the world (context, policy, connection, browser) still apply.
+ * `userApproved` short-circuits every rule that only exists to ask the human —
+ * the human already decided on this exact content (exact approval at claim
+ * time, or a musician-dictated text in either phase). Facts about the world
+ * (context, policy, connection, browser) still apply.
  */
 export function decideGate(rules: AutonomyRules, facts: GateFacts): GateOutcome {
   if (!facts.contextValid) return { outcome: "stop", reason: "context_changed" };
-  const humanDecided = facts.phase === "claim" && facts.userApproved;
+  const humanDecided = facts.userApproved;
 
   if (facts.isAcceptance && !humanDecided) return { outcome: "ask_user", reason: "binding_action" };
 

@@ -14,6 +14,12 @@ describe("deriveLiveScoutStage", () => {
     expect(deriveLiveScoutStage({ paused: true, working: true })).toBe("paused");
   });
 
+  it("lets an open Entscheidung interrupt routine work but not a ready offer", () => {
+    expect(deriveLiveScoutStage({ blocked: true, providerUpdate: true, working: true })).toBe("blocked");
+    expect(deriveLiveScoutStage({ blocked: true, offerReady: true })).toBe("offer");
+    expect(deriveLiveScoutStage({ blocked: true, hasConversation: true })).toBe("blocked");
+  });
+
   it("defaults to welcome without live progress", () => {
     expect(deriveLiveScoutStage({})).toBe("welcome");
   });

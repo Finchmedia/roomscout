@@ -1732,9 +1732,12 @@ export default defineSchema({
   providerTurns: defineTable({
     conversationId: v.id("providerConversations"),
     sourceKey: v.string(),
-    kind: v.union(v.literal("opportunity"), v.literal("mail_reply"), v.literal("portal_reply")),
+    kind: v.union(v.literal("opportunity"), v.literal("mail_reply"), v.literal("portal_reply"), v.literal("musician_input")),
     mailMessageId: v.optional(v.id("mailMessages")),
     platformMessageId: v.optional(v.id("platformMessages")),
+    /** musician_input: the musician's trusted answer to a Scout question (Entscheidung). */
+    input: v.optional(v.string()),
+    decisionId: v.optional(v.id("decisions")),
     revision: v.number(),
     promptMessageId: v.optional(v.string()),
     status: v.union(v.literal("pending"), v.literal("processing"), v.literal("completed"), v.literal("superseded"), v.literal("failed")),
@@ -1744,7 +1747,46 @@ export default defineSchema({
     completedAt: v.optional(v.number()),
   })
     .index("by_conversation_and_source", ["conversationId", "sourceKey"])
-    .index("by_conversation_and_status_and_revision", ["conversationId", "status", "revision"]),
+    .index("by_conversation_and_status_and_revision", ["conversationId", "status", "revision"])
+    .index("by_conversation_and_kind_and_revision", ["conversationId", "kind", "revision"]),
+
+  /**
+   * Entscheidung: one question of the Scout to the musician, answered in the
+   * Scout chat. At most one open decision per conversation (or per owner when
+   * no conversation is involved); raising a new one supersedes the older one.
+   */
+  decisions: defineTable({
+    ownerId: v.id("users"),
+    savedNeedId: v.optional(v.id("savedNeeds")),
+    conversationId: v.optional(v.id("providerConversations")),
+    kind: v.union(
+      v.literal("scout_question"),
+      v.literal("review_message"),
+      v.literal("private_data"),
+      v.literal("binding_content"),
+      v.literal("unsupported_claims"),
+      v.literal("safety_unavailable"),
+      v.literal("offer_ready"),
+      v.literal("human_step"),
+    ),
+    status: v.union(v.literal("open"), v.literal("answered"), v.literal("superseded")),
+    question: v.string(),
+    detail: v.optional(v.string()),
+    options: v.array(v.object({ id: v.string(), label: v.string() })),
+    refs: v.object({
+      requestId: v.optional(v.id("actionRequests")),
+      offerId: v.optional(v.id("offerRevisions")),
+      runId: v.optional(v.id("browserRuns")),
+      connectionId: v.optional(v.id("portalConnections")),
+    }),
+    threadMessageId: v.optional(v.string()),
+    answer: v.optional(v.object({ choice: v.string(), text: v.optional(v.string()), at: v.number() })),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_owner_and_status", ["ownerId", "status"])
+    .index("by_conversation_and_status", ["conversationId", "status"])
+    .index("by_request", ["refs.requestId"]),
 
   offerRevisions: defineTable({
     ownerId: v.id("users"),
@@ -1861,6 +1903,8 @@ export default defineSchema({
       }),
     ),
     executionIdempotencyKey: v.optional(v.string()),
+    /** The musician dictated this text (Entscheidung "custom"); the Freigabeprüfung treats it as approved by the human. */
+    humanDraft: v.optional(v.boolean()),
     expiresAt: v.optional(v.number()),
     error: v.optional(v.string()),
     createdAt: v.number(),

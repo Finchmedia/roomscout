@@ -2,6 +2,7 @@ import * as React from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
+import { DecisionCard, type OpenDecision } from "@/components/scout/DecisionCard"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
 import { Icon } from "@/components/ui/icon"
@@ -54,6 +55,21 @@ interface ScoutChatProps extends Omit<React.ComponentProps<"section">, "onError"
   historyBusy?: boolean
   emptyState?: React.ReactNode
   labels?: Partial<ScoutChatLabels>
+  /** The newest open Entscheidung; rendered as the last item so it scrolls with the chat. */
+  decision?: OpenDecision | null
+  /** `offer_ready`: the current content hash of the referenced offer. */
+  decisionOfferHash?: string
+  /** Records a button answer; resolves once the server accepted it. */
+  onAnswerDecision?: (decisionId: OpenDecision["_id"], choice: string) => Promise<void>
+  /** Shown as the Scout's bubble after an answer no chat message follows. */
+  decisionAnsweredText?: string
+}
+
+/** Locally echoed answer to an Entscheidung: the musician's bubble plus the Scout's acknowledgement. */
+interface DecisionEcho {
+  id: string
+  user: string
+  scout?: string
 }
 
 const DEFAULT_LABELS: ScoutChatLabels = {
@@ -104,11 +120,16 @@ function ScoutChat({
   historyBusy = false,
   emptyState,
   labels: labelOverrides,
+  decision,
+  decisionOfferHash,
+  onAnswerDecision,
+  decisionAnsweredText,
   className,
   ...props
 }: ScoutChatProps) {
   const labels = { ...DEFAULT_LABELS, ...labelOverrides }
   const [draft, setDraft] = React.useState("")
+  const [echoes, setEchoes] = React.useState<DecisionEcho[]>([])
   const [submitting, setSubmitting] = React.useState(false)
   const [localError, setLocalError] = React.useState<string | null>(null)
   const [failedDraft, setFailedDraft] = React.useState<string | null>(null)
@@ -143,6 +164,23 @@ function ScoutChat({
       submittingRef.current = false
       setSubmitting(false)
     }
+  }
+
+  const answerDecision = async (choice: string, label: string) => {
+    if (!decision || !onAnswerDecision) return
+    setLocalError(null)
+    try {
+      await onAnswerDecision(decision._id, choice)
+    } catch {
+      setLocalError(labels.sendError)
+      throw new Error("decision answer failed")
+    }
+    const quiet = decision.kind !== "scout_question" && decision.kind !== "offer_ready" && choice === "no"
+    setEchoes((current) => [...current, {
+      id: `decision-${decision._id}-${choice}`,
+      user: label,
+      ...(!quiet && decisionAnsweredText ? { scout: decisionAnsweredText } : {}),
+    }])
   }
 
   const loadHistory = async () => {
@@ -208,6 +246,35 @@ function ScoutChat({
                   </MessageScrollerItem>
                 )
               })}
+
+              {echoes.map((echo) => (
+                <React.Fragment key={echo.id}>
+                  <MessageScrollerItem messageId={`${echo.id}-user`} scrollAnchor>
+                    <Message align="end" role="group" aria-label={labels.user}>
+                      <MessageContent>
+                        <MessageHeader aria-hidden="true">{labels.user}</MessageHeader>
+                        <Bubble align="end"><BubbleContent>{echo.user}</BubbleContent></Bubble>
+                      </MessageContent>
+                    </Message>
+                  </MessageScrollerItem>
+                  {echo.scout ? (
+                    <MessageScrollerItem messageId={`${echo.id}-scout`}>
+                      <Message align="start" role="group" aria-label={labels.scout}>
+                        <MessageContent>
+                          <MessageHeader aria-hidden="true">{labels.scout}</MessageHeader>
+                          <Bubble align="start"><BubbleContent>{echo.scout}</BubbleContent></Bubble>
+                        </MessageContent>
+                      </Message>
+                    </MessageScrollerItem>
+                  ) : null}
+                </React.Fragment>
+              ))}
+
+              {decision && onAnswerDecision ? (
+                <MessageScrollerItem key={decision._id} messageId={`decision-${decision._id}`} scrollAnchor>
+                  <DecisionCard decision={decision} offerHash={decisionOfferHash} onAnswer={answerDecision} busy={busy} />
+                </MessageScrollerItem>
+              ) : null}
 
               {isBusy && (
                 <MessageScrollerItem messageId="scout-status">

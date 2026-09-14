@@ -29,10 +29,14 @@ export function ScoutPage() {
   const setStatus = useMutation(api.savedNeeds.setStatus);
   const activate = useMutation(api.savedNeeds.activate);
   const sendMessage = useAction(api.scout.sendMessage);
+  const decisions = useQuery(api.decisions.listOpenMine);
+  const answerDecision = useMutation(api.decisions.answer);
   const [sending, setSending] = useState(false);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
   const [textOpen, setTextOpen] = useState(false);
+  // The Entscheidung the musician closed the chat on; a newer one opens the chat again.
+  const [dismissedDecisionId, setDismissedDecisionId] = useState<string | undefined>(undefined);
   const [voiceOpen, setVoiceOpen] = useState(() => voice.connected);
   const [manualBrief, setManualBrief] = useState(false);
   const [dismissedReady, setDismissedReady] = useState("");
@@ -52,6 +56,13 @@ export function ScoutPage() {
   const accepted = conversations.find(row => (row.acceptedOfferId && row.acceptedAt !== undefined) || row.acceptanceStatus === "executed");
   const updated = conversations.find(row => row.offer?.current && row.assessmentFromProviderReply);
   const selected = accepted ?? ready ?? updated;
+  // The newest open Entscheidung; every gate ask_user, provider question and portal human step raises one.
+  const openDecision = Array.isArray(decisions) && decisions.length ? decisions[0] : undefined;
+  const decisionOfferHash = openDecision?.kind === "offer_ready" && openDecision.refs.offerId
+    ? (Array.isArray(conversationRows) ? conversationRows : []).find(row => row.offer?.offerId === openDecision.refs.offerId)?.offer?.contentHash
+    : undefined;
+  // A new Entscheidung opens the chat by itself unless the musician is talking or closed it already.
+  const chatOpen = textOpen || Boolean(openDecision && openDecision._id !== dismissedDecisionId && !voiceOpen && !voice.connected);
   const rawFacts = need ? factsFromNeed(need) : [];
   const facts = rawFacts.map(fact => {
     let value = fact.value;
@@ -72,9 +83,10 @@ export function ScoutPage() {
     complete: Boolean(accepted), paused: need?.status === "paused",
     offerReady: Boolean(ready && need?.status === "active"),
     briefNeedsReview: need?.status === "draft" && (manualBrief || autoBrief),
+    blocked: Boolean(openDecision),
     providerUpdate: need?.status === "active" && Boolean(updated),
     working: need?.status === "active",
-    hasConversation: Boolean(threadId && (textOpen || voiceOpen || history.results.length)),
+    hasConversation: Boolean(threadId && (chatOpen || voiceOpen || history.results.length)),
   });
 
   // Leaving the scene must never leave an invisible microphone session running.
@@ -122,7 +134,8 @@ export function ScoutPage() {
   function editBrief() { setManualBrief(false); setDismissedReady(readyKey); openChat(); }
   const offerTitle = matches?.find(row => row.signal._id === selected?.signalId)?.signal.title;
   const offerSlot = selected ? <LiveProviderOffer key={selected.conversationId} conversation={selected} title={offerTitle} /> : null;
-  const blocked = latestSend?.status === "failed" || latestSend?.status === "awaiting_approval";
+  // Approval waits are Entscheidungen now (stage "blocked"); only a failed send still blocks here.
+  const blocked = latestSend?.status === "failed";
   const workHeading = blocked ? t("liveScout.blocked") : latestSend?.status === "executed" ? t("liveScout.waiting") :
     latestSend && ["approved", "queued", "executing"].includes(latestSend.status) ? t("liveScout.sending") : t("liveScout.working");
   const brief = <FactList facts={facts} variant="card" title={t("scout.brief.title")}>
@@ -143,6 +156,7 @@ export function ScoutPage() {
       discoveryLabel: t("scout.discovery.speaker.scout"), loadingHeadline: t("liveScout.preparing"), loadingStatus: "",
       briefHeadline: t("scout.brief.headline"),
       workingHeadline: workHeading, workingStatus: t(blocked ? "liveScout.blockedDetail" : "liveScout.workingDetail"),
+      blockedHeadline: t("liveScout.blocked"), blockedStatus: openDecision?.question || t("liveScout.blockedDetail"),
       providerUpdateHeadline: t("liveScout.reply"), providerUpdateStatus: t("liveScout.replyDetail"),
       pausedHeadline: t("liveScout.paused"), pausedStatus: t("liveScout.pausedDetail"),
       pauseAction: t("scout.chrome.pause.pause"), resumeAction: t("scout.chrome.pause.resume"), settingsAction: t("scout.chrome.menu.settings"),
@@ -152,12 +166,12 @@ export function ScoutPage() {
     }}
     briefReviewSlot={brief}
     briefExpanded={manualBrief}
-    chatSlot={!voiceOpen && (stage === "discovery" || (textOpen && stage !== "brief")) ? <ScoutChat key={threadId ?? "loading"} messages={messages.length ? messages : [{ id: "intro", author: "scout", body: t("liveScout.intro") }]} onSend={send} busy={sending || !threadId} error={error} onVoice={openVoice} autoFocus hasMoreHistory={history.status === "CanLoadMore"} historyBusy={history.status === "LoadingMore"} onLoadHistory={() => history.loadMore(60)} /> : undefined}
+    chatSlot={!voiceOpen && (stage === "discovery" || (chatOpen && stage !== "brief")) ? <ScoutChat key={threadId ?? "loading"} messages={messages.length ? messages : [{ id: "intro", author: "scout", body: t("liveScout.intro") }]} onSend={send} busy={sending || !threadId} error={error} onVoice={openVoice} autoFocus decision={openDecision} decisionOfferHash={decisionOfferHash} onAnswerDecision={async (decisionId, choice) => { await answerDecision({ decisionId, choice }); }} decisionAnsweredText={t("liveScout.decisionAnswered")} hasMoreHistory={history.status === "CanLoadMore"} historyBusy={history.status === "LoadingMore"} onLoadHistory={() => history.loadMore(60)} /> : undefined}
     voiceSlot={voiceOpen ? <LiveVoiceChat onText={openChat} onEnd={() => { setVoiceOpen(false); setTextOpen(true); }} /> : undefined}
     providerUpdateSlot={offerSlot} offerSlot={offerSlot}
     completeSlot={<Link className="text-rs-ink-2 underline underline-offset-4" to="/app/inbox">{t("liveScout.viewMessages")}</Link>}
     errorSlot={error ? <p role="alert">{error}</p> : undefined}
-    onChat={openChat} onCloseChat={() => setTextOpen(false)} onVoice={openVoice} onReviewBrief={() => setManualBrief(value => !value)}
+    onChat={openChat} onCloseChat={() => { setTextOpen(false); setDismissedDecisionId(openDecision?._id); }} onVoice={openVoice} onReviewBrief={() => setManualBrief(value => !value)}
     onActivate={() => { if (need) void run(() => activate({ savedNeedId: need._id })); }}
     onPause={() => { if (need) void run(() => setStatus({ needId: need._id, status: "paused" })); }}
     onResume={() => { if (need) void run(() => setStatus({ needId: need._id, status: "active" })); }}
