@@ -77,11 +77,9 @@ export function deriveProviderReadiness(readEnv: ReadEnv) {
     firecrawlReasons.push("Webhook URL is not a valid HTTP(S) URL.");
   if (!firecrawlMonitorsEnabled)
     firecrawlReasons.push("Native monitors are intentionally disabled.");
-  const firecrawlStatus: ProviderReadinessStatus = !firecrawlCoreConfigured
-    ? "incomplete"
-    : firecrawlMonitorsEnabled
-      ? "configured"
-      : "disabled";
+  // Firecrawl runs the controlled portal and the source checks whenever its core
+  // configuration is present; the native-monitor flag is informational only.
+  const firecrawlStatus: ProviderReadinessStatus = firecrawlCoreConfigured ? "configured" : "incomplete";
 
   const agentmailApiKeyConfigured = present(readEnv("AGENTMAIL_API_KEY"));
   const agentmailWebhookSecretConfigured = present(

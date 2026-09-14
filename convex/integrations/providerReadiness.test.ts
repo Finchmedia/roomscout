@@ -66,7 +66,7 @@ describe("provider readiness", () => {
     expect(serialized).not.toContain(values.REALTIME_ALLOWED_ORIGINS);
   });
 
-  it("distinguishes intentionally disabled Firecrawl monitors from missing configuration", () => {
+  it("keeps Firecrawl configured when only the native monitors are intentionally disabled", () => {
     const result = deriveProviderReadiness(
       reader({
         FIRECRAWL_API_KEY: "configured",
@@ -77,7 +77,8 @@ describe("provider readiness", () => {
       }),
     );
 
-    expect(result.firecrawl.status).toBe("disabled");
+    // Monitors off is a note, not a status: the portal engine and source checks run without them.
+    expect(result.firecrawl.status).toBe("configured");
     expect(result.firecrawl.monitorsEnabled).toBe(false);
     expect(result.firecrawl.reasons).toContain(
       "Native monitors are intentionally disabled.",
