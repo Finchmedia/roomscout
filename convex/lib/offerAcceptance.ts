@@ -38,13 +38,13 @@ export async function assertAcceptanceCurrent(ctx: QueryCtx, request: Doc<"actio
 
 export function acceptanceMessage(offer: Doc<"offerRevisions">, title: string) {
   const assessment = offer.assessment;
-  const subject = `Demo offer acceptance: ${title}`.slice(0, 200);
+  const subject = `Zusage: ${title}`.slice(0, 200);
   const body = [
-    `We accept the rehearsal-room offer for "${title}" on the following confirmed terms:`,
-    `Total recurring cost: EUR ${assessment.monthlyPrice.totalEur} per month, including all stated recurring costs.`,
+    `Hallo, wir nehmen das Angebot für „${title}“ zu den folgenden bestätigten Konditionen an:`,
+    `Monatliche Gesamtkosten: ${assessment.monthlyPrice.totalEur} € pro Monat, inklusive aller genannten laufenden Kosten.`,
     ...assessment.terms.map((term) => `${term.label}: ${term.value}`),
-    ...assessment.constraints.filter((item) => item.key !== "budget").map((item) => `Confirmed condition: ${item.explanation}`),
-    "", "This is a controlled RoomScout demo confirmation. No payment is made and no contract is signed by this action.",
+    ...assessment.constraints.filter((item) => item.key !== "budget").map((item) => `Bestätigte Bedingung: ${item.explanation}`),
+    "", "Dies ist eine Bestätigung aus der RoomScout-Demo. Mit dieser Nachricht wird keine Zahlung geleistet und kein Vertrag unterschrieben.",
   ].join("\n");
   if (body.length > 20_000) throw new ConvexError({ code: "ACCEPTANCE_MESSAGE_TOO_LONG" });
   return { subject, body };

@@ -42,6 +42,8 @@ type RegistrationPhase = "mailbox" | "session_open" | "run_attach" | "progress" 
  * new session each time; later batches keep failing fast.
  */
 const INBOX_OPEN_RETRY_DELAYS_MS = [4_000, 8_000];
+/** The write path retries only its side-effect-free opening (session, navigate, fill, verify). */
+const WRITE_OPEN_RETRY_DELAYS_MS = [4_000, 8_000];
 const INBOX_OPEN_RETRYABLE_CODE = /^FIRECRAWL_PORTAL_((SCRAPE|INTERACT)_(TRANSPORT_FAILED|REQUEST_REJECTED|UNAVAILABLE|PROFILE_BUSY|RATE_LIMITED|TIMED_OUT)|SCRAPE_ID_MISSING)$/;
 const INBOX_SYNC_ERROR_CODE_MAX = 100;
 
@@ -452,40 +454,66 @@ export async function executeFirecrawlApprovedWrite(
 ) {
   const path = input.providerThreadId ? `/inbox/${encodeURIComponent(input.providerThreadId)}` : input.targetPath;
   if (!path) throw new Error("PORTAL_TARGET_PATH_INVALID");
-  const session = await openFirecrawlPortalSession(ctx, { ...input, path, saveChanges: true, timeoutMs: 120_000 });
-  let submissionMayHaveOccurred = false;
-  let sessionStopped = false;
-  let cleanupScheduled = false;
-  try {
-    await input.onSessionOpened?.(session.scrapeId);
-    const result = await sendControlledPortalMessage({
-      client: session.primitives,
-      baseUrl: input.baseUrl,
-      adapterKey: input.adapterKey,
-      body: input.body,
-      providerThreadId: input.providerThreadId,
-      targetPath: input.targetPath,
-      senderLabel: input.senderLabel,
-      beforeSubmit: async () => {
-        submissionMayHaveOccurred = true;
-        await input.beforeSubmit();
-      },
-    });
-    let profileStopFailed = false;
-    try { await session.stop(); sessionStopped = true; } catch { profileStopFailed = true; await input.onStopFailure?.(session.scrapeId); cleanupScheduled = true; }
-    return { ...result, profileStopFailed };
-  } catch {
-    if (submissionMayHaveOccurred) {
+  // Everything up to beforeSubmit is side-effect free on the portal, so a fresh
+  // session's transport-class failure (cold start, busy profile, rate limit) is
+  // retried with a new session the same way the inbox sync retries its opening.
+  for (let attempt = 0; ; attempt += 1) {
+    let session: FirecrawlPortalSession;
+    try {
+      session = await openFirecrawlPortalSession(ctx, { ...input, path, saveChanges: true, timeoutMs: 120_000 });
+    } catch (error) {
+      const delayMs = WRITE_OPEN_RETRY_DELAYS_MS[attempt];
+      const code = inboxSyncInnerCode(error);
+      if (delayMs === undefined || !INBOX_OPEN_RETRYABLE_CODE.test(code)) {
+        console.error("FIRECRAWL_PORTAL_WRITE_FAILED", { phase: "open", code, attempt });
+        throw new Error(`FIRECRAWL_PORTAL_WRITE_FAILED:${code}`, { cause: error });
+      }
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      continue;
+    }
+    let submissionMayHaveOccurred = false;
+    let sessionStopped = false;
+    let cleanupScheduled = false;
+    let retryDelayMs: number | undefined;
+    try {
+      await input.onSessionOpened?.(session.scrapeId);
+      const result = await sendControlledPortalMessage({
+        client: session.primitives,
+        baseUrl: input.baseUrl,
+        adapterKey: input.adapterKey,
+        body: input.body,
+        providerThreadId: input.providerThreadId,
+        targetPath: input.targetPath,
+        senderLabel: input.senderLabel,
+        beforeSubmit: async () => {
+          submissionMayHaveOccurred = true;
+          await input.beforeSubmit();
+        },
+      });
       let profileStopFailed = false;
       try { await session.stop(); sessionStopped = true; } catch { profileStopFailed = true; await input.onStopFailure?.(session.scrapeId); cleanupScheduled = true; }
-      return { outcome: "unknown" as const, submitted: true, errorCode: "SUBMIT_RESULT_UNKNOWN", profileStopFailed };
+      return { ...result, profileStopFailed };
+    } catch (error) {
+      if (submissionMayHaveOccurred) {
+        let profileStopFailed = false;
+        try { await session.stop(); sessionStopped = true; } catch { profileStopFailed = true; await input.onStopFailure?.(session.scrapeId); cleanupScheduled = true; }
+        return { outcome: "unknown" as const, submitted: true, errorCode: "SUBMIT_RESULT_UNKNOWN", profileStopFailed };
+      }
+      const code = inboxSyncInnerCode(error);
+      const delayMs = WRITE_OPEN_RETRY_DELAYS_MS[attempt];
+      if (delayMs !== undefined && INBOX_OPEN_RETRYABLE_CODE.test(code)) {
+        retryDelayMs = delayMs;
+      } else {
+        console.error("FIRECRAWL_PORTAL_WRITE_FAILED", { phase: "prepare", code, attempt });
+        throw new Error(`FIRECRAWL_PORTAL_WRITE_FAILED:${code}`, { cause: error });
+      }
+    } finally {
+      if (!sessionStopped) {
+        try { await session.stop(); }
+        catch { if (!cleanupScheduled) await input.onStopFailure?.(session.scrapeId); }
+      }
     }
-    throw new Error("FIRECRAWL_PORTAL_WRITE_FAILED");
-  } finally {
-    if (!sessionStopped) {
-      try { await session.stop(); }
-      catch { if (!cleanupScheduled) await input.onStopFailure?.(session.scrapeId); }
-    }
+    await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
   }
 }
 
