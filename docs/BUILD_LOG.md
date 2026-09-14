@@ -1666,3 +1666,40 @@ Seite; `internal.scout.reply` wirft nach dem Protokollieren erneut und erzeugt
 so einen sichtbaren Fehler-Eintrag in den Convex-Logs; die Bühnen zeigen den
 Scout jetzt mit Blase und die Nutzerblase eine Stufe kleiner, das ist eine
 sichtbare Änderung für den Maintainer-Blick.
+
+### 2026-09-14 — Kleine UI-Änderungen nach dem ersten Blick des Maintainers
+
+Nach A, B, C und K wechselt der Modus: kleine, direkte Änderungen ohne
+Review-Runden. Vier Entscheidungen per Rückfrage mit ASCII-Vorschau getroffen:
+Bühne in drei festen Spalten (Kandidaten links, Blob und Headline mittig,
+Suchauftrag rechts, unter 1100 px als Sheets), offene Entscheidung als Buttons
+direkt unter der Frage auf der Bühne (Karte im Chat bleibt), Quellen-Tabelle im
+Betreiber-Panel mit lebendem Schalter und „Erweiterte Ansicht“-Link zur alten
+Seite, Kandidaten-Zeile mit Titel, Ort, Zustand und Zeit mit Klick in die
+Nachrichten. Dazu die Integrationen in der Reihenfolge Convex, AgentMail,
+OpenAI, Firecrawl als vier Kacheln, Browserbase nur noch als ausgegraute
+Alternative in einem Engine-Menü der Firecrawl-Kachel. Umsetzung durch zwei
+parallele Agenten (Betreiber, Bühne); Ergebnis folgt.
+
+Ergebnis: Betreiber (Commit c8534f2): vier Kacheln in der Reihenfolge Convex AI
+Gateway, AgentMail, OpenAI direkt, Firecrawl; Browserbase nur noch als
+ausgegraute Alternative in einem Engine-Menü der Firecrawl-Kachel, ohne
+eigene Bereitschaftsanzeige; die Quellen-Seite ist die Tabelle des Mocks mit
+Anbindungs-Text aus Status und Gesundheit, Zeitstempel über
+`formatMessageStamp`, Schalter auf `sourceRegistry.setSourceActive`, Knopf
+„Jetzt Quellen prüfen“ auf `demoSourceChecks.requestNow` und Link „Erweiterte
+Ansicht“ zur alten Seite. Bühne (Commit folgt im Log): `decisionSlot`,
+`asideSlot`, `railSlot` an der Live-Bühne; Entscheidungs-Buttons ohne Rahmen
+unter der Frage, kein automatisches Aufklappen des Chats mehr; drei Spalten ab
+1100 px (Kandidaten 260 px, Mitte, Suchauftrag 300 px), darunter zwei Sheets;
+`CandidateList` aus `conversations.listMine` gefiltert auf den aktiven
+Suchauftrag, Klick öffnet die Unterhaltung. Volle Suite 1031 Tests grün, Build
+grün, Frontend auf Prod und Dev.
+
+Dazwischen der Befund aus der laufenden Demo: `present_offer` mit nur einem
+internen offenen Punkt (Dienstag oder Mittwoch) blieb als Zwischenstand
+liegen, weil nur `ask_musician` und `ready` eine Entscheidung heben. Die
+Bereitschaftsprüfung trennt jetzt Anbieter-Blocker von eigenen offenen
+Punkten; `present_offer` ohne Anbieter-Blocker hebt eine Scout-Frage, der
+Prompt verlangt in dem Fall `ask_musician` (Commit 2db65d9, Backend auf Prod
+und Dev). Die Frage zur laufenden Konversation wurde von Hand nachgezogen.

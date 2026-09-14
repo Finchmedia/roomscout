@@ -38,7 +38,7 @@ read-only. No production rollout or external messages in this verification.
 - **Auth:** Convex Auth
 - **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-realtime-2.1`
 - **Started:** 2026-08-26T13:55:26Z
-- **Last updated:** 2026-09-14T20:42:01Z
+- **Last updated:** 2026-09-14T21:21:12Z
 
 ## Log
 
@@ -452,3 +452,23 @@ internal actions, queries with stream sync, realtime queries, Agent component
 (`convex/scout.ts`, `convex/scoutRuntime.ts`, `convex/lib/providerAssessment.ts`,
 `src/routes/musician/ScoutPage.tsx`, `src/ui/chat/ScoutChat.tsx`,
 `src/ui/chat/ChatTurn.tsx`).
+
+### 2026-09-14 — 44fabad Stage in three columns, decisions answered on the stage, operator polish
+
+Groups c8534f2, 2db65d9 and 44fabad. The Scout stage now answers an open
+Entscheidung in place: option buttons under the question, free text through
+the chat, no more auto-opened dialog. From 1100px the working stages show
+three columns: candidate rooms on the left (one row per provider conversation
+with state and time, opening its Nachrichten thread), the Scout in the middle,
+the compact search brief on the right, both sides as sheets on narrow screens.
+The operator panel lists four integration tiles (Convex AI Gateway, AgentMail,
+OpenAI, Firecrawl) with Browserbase as a greyed alternative in an engine menu,
+and its Quellen page is the design mock's table with a live source toggle and a
+manual demo check. The assessment stops parking a complete offer as
+Zwischenstand when only the band's own choice is open: provider-side blockers
+are separated from the model's own open points, and present_offer without a
+provider blocker raises a Scout question. Full suite green (1031 tests). Convex
+features: realtime queries, mutations, scheduled functions
+(`convex/lib/providerAssessment.ts`, `convex/providerConversations.ts`,
+`src/ui/scout/live/LiveScoutSurface.tsx`, `src/ui/scout/live/CandidateList.tsx`,
+`src/routes/musician/ScoutPage.tsx`, `src/ui/operator/live/LiveOperatorSurface.tsx`).
