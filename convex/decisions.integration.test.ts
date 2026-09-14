@@ -266,6 +266,21 @@ describe("Entscheidung from the provider assessment", () => {
     expect(await f.musician.query(api.decisions.listOpenMine, {})).toHaveLength(1);
   });
 
+  it("present_offer with only the band's own open point left raises a scout_question instead of a dead end", async () => {
+    const f = await mailFixture();
+    await f.record({ ...f.ready, uncertainties: ["Internally open: Tuesday or Wednesday?"] });
+    const [decision] = await f.decisions();
+    expect(decision).toMatchObject({ kind: "scout_question", status: "open", conversationId: f.conversationId });
+    expect(await f.scheduledNames()).toContain("decisions:formulateQuestion");
+  });
+
+  it("present_offer with a provider-side blocker raises nothing and keeps the notification", async () => {
+    const f = await mailFixture();
+    await f.record({ ...f.ready, monthlyPrice: { totalEur: null, allRecurringCostsKnown: false, evidence: [] } });
+    expect(await f.decisions()).toEqual([]);
+    expect(await f.systemNotifications()).toHaveLength(1);
+  });
+
   it("formulateQuestion runs one Scout round in the musician's chat: the tool records question + options, the text becomes the chat message", async () => {
     const f = await mailFixture();
     await f.record(f.asksMusician);

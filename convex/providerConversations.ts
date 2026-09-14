@@ -302,7 +302,9 @@ export const recordAssessment = internalMutation({
     await ctx.db.patch(input.conversationId, {
       currentOfferId: offerId, state: readiness.ready ? "offer_ready" : "needs_attention", updatedAt: now,
     });
-    const asksMusician = !readiness.ready && assessment.nextAction === "ask_musician";
+    // present_offer with only the band's own open points left is a question to the musician, not a dead end.
+    const asksMusician = !readiness.ready &&
+      (assessment.nextAction === "ask_musician" || (assessment.nextAction === "present_offer" && readiness.hardBlockers.length === 0));
     if (readiness.ready) {
       // Ein Angebot liegt vor: the Entscheidung appears in the Scout chat; the notification stays.
       await raiseDecision(ctx, {
