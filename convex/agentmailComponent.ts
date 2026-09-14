@@ -26,6 +26,7 @@ import {
   parseAgentMailWebhook,
   sameAgentMailWebhookConfiguration,
   accountWebhookConfig,
+  planAccountWebhookBootstrap,
   summarizeAccountWebhookCoverage,
   planScopedWebhookBootstrap,
   resolveScopedWebhookSigningSecret,
@@ -296,6 +297,45 @@ export const bootstrapControlledScopedWebhook = internalAction({
       },
     });
     return signingSecretFromCreateResponse(created);
+  },
+});
+
+/**
+ * Create or reuse the ONE account-wide AgentMail webhook for this deployment's
+ * site URL. Account-wide means every RoomScout mailbox (one per band) reports
+ * inbound mail here; the scoped bootstrap above only fits a single-inbox key.
+ * Returns the signing secret so the caller can pipe it into
+ * AGENTMAIL_WEBHOOK_SECRET without it appearing in arguments or logs.
+ */
+export const bootstrapAccountWebhook = internalAction({
+  args: { confirmation: v.literal("CREATE_OR_REUSE_ACCOUNT_AGENTMAIL_WEBHOOK") },
+  returns: v.object({ kind: v.union(v.literal("created"), v.literal("reused")), secret: v.string() }),
+  handler: async () => {
+    const config = accountWebhookConfig(envValue("CONVEX_SITE_URL") ?? "");
+    const page = parseAgentMailWebhookPage(
+      await agentmailWebhookRequest("/webhooks?limit=100", { method: "GET" }),
+    );
+    if (page.hasMore) throw new Error("AGENTMAIL_ACCOUNT_WEBHOOK_LIST_TRUNCATED");
+    const plan = planAccountWebhookBootstrap(page.webhooks, config);
+    if (plan.kind === "reuse") {
+      let secret = plan.webhook.secret;
+      if (!secret) {
+        const detail = parseAgentMailWebhook(await agentmailWebhookRequest(
+          `/webhooks/${encodeURIComponent(plan.webhook.webhookId)}`,
+          { method: "GET" },
+        ));
+        secret = detail?.secret;
+      }
+      return { kind: "reused" as const, secret: resolveScopedWebhookSigningSecret(secret, envValue("AGENTMAIL_WEBHOOK_SECRET")) };
+    }
+    const created = parseAgentMailWebhook(await agentmailWebhookRequest("/webhooks", {
+      method: "POST",
+      body: { url: config.url, event_types: config.eventTypes, client_id: config.clientId },
+    }));
+    if (!created || created.url !== config.url || created.clientId !== config.clientId || !created.enabled || !created.secret) {
+      throw new Error("AGENTMAIL_ACCOUNT_WEBHOOK_CREATE_RESPONSE_INVALID");
+    }
+    return { kind: "created" as const, secret: created.secret };
   },
 });
 
