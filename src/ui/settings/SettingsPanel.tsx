@@ -268,7 +268,7 @@ function SettingsPanel({
 
       {currentPage === "autonomy" ? (
         <AutonomyPage
-          {...context}
+          rules={data.rules}
           draft={rulesDraft}
           onDraftChange={setRulesDraft}
           onSave={(rules) => {

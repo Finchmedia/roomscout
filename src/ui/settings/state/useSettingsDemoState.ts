@@ -20,7 +20,6 @@
 
 import * as React from "react"
 
-import type { StepperValue } from "@/components/ui/stepper"
 import { formatTime, useCopy } from "@/ui/copy"
 import type { StringCopyKey } from "@/ui/copy"
 
@@ -57,6 +56,12 @@ export interface DemoSource {
 
 export type AutonomyMode = "autopilot" | "review"
 
+/**
+ * Handlungsspielraum — the six rules of `convex/lib/autonomy.ts`
+ * (`AutonomyRules`), kept structurally identical so the live route can hand
+ * `api.autonomy.getMine().rules` straight to `AutonomyPage`. No daily limits
+ * (ADR 0002).
+ */
 export interface AutonomyRules {
   mode: AutonomyMode
   contact: boolean
@@ -64,8 +69,6 @@ export interface AutonomyRules {
   publishAd: boolean
   shareProfile: boolean
   sharePrivate: boolean
-  /** Raw stepper value — a half-typed string reaches the save bar's validation. */
-  perDay: StepperValue
 }
 
 /** The three knowledge tabs of §7.3. */
@@ -205,7 +208,6 @@ const DEMO_RULES: AutonomyRules = {
   publishAd: false,
   shareProfile: true,
   sharePrivate: false,
-  perDay: 5,
 }
 
 /**

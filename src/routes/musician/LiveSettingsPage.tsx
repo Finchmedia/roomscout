@@ -11,13 +11,14 @@ import { Input } from "../../components/ui/input";
 import { LiveSourcesSection } from "./LiveSourcesSection";
 import { LiveKnowledgeSection } from "./LiveKnowledgeSection";
 import { LiveBillingSection, LivePrivacySection } from "./LiveAccountSections";
-import { LiveAutonomySection, mandateToRules, type AutonomyRules } from "./LiveAutonomySection";
 import { PanelDialog, type PanelDialogGroup } from "../../ui/chrome/PanelDialog";
 import { StageBackground } from "../../ui/chrome/StageBackground";
 import { AppHeader } from "../../ui/chrome/AppHeader";
 import { useCopy, type CopyVars, type StringCopyKey } from "../../ui/copy";
 import { liveSettingsCopy } from "../../ui/settings/liveCopy";
+import { AutonomyPage } from "../../ui/settings/pages/AutonomyPage";
 import { PageLead, PageTitle, SettingsRow } from "../../ui/settings/primitives";
+import type { AutonomyRules } from "../../ui/settings/state/useSettingsDemoState";
 
 const PAGES = ["sources", "autonomy", "knowledge", "profile", "notifications", "billing", "privacy"] as const;
 type LiveSettingsSection = (typeof PAGES)[number];
@@ -51,9 +52,10 @@ export function LiveSettingsPage() {
   const connectable = useQuery(api.portalConnections.listConnectableSources, user ? { limit: 50 } : "skip");
   const need = needs?.find((item) => item._id === scout?.activeNeedId && item.status !== "archived") ?? needs?.find((item) => item.status !== "archived");
   const sources = useQuery(api.searchSources.listForNeed, need ? { savedNeedId: need._id, limit: 50 } : "skip");
-  const mandate = useQuery(api.mandates.getActiveMine, need ? { savedNeedId: need._id } : "skip");
+  const autonomy = useQuery(api.autonomy.getMine, user ? {} : "skip");
   const portalPreferences = useQuery(api.searchSources.getPortalPreferences, need ? { savedNeedId: need._id } : "skip");
   const setPortalPreference = useMutation(api.searchSources.setPortalPreference);
+  const saveAutonomy = useMutation(api.autonomy.save);
   const updateName = useMutation(api.settings.updateDisplayName);
   const setPreference = useMutation(api.searchSources.setPreference);
   const deleteFact = useMutation(api.memory.deleteFact);
@@ -70,6 +72,7 @@ export function LiveSettingsPage() {
   const disableConnection = useAction(api.browserbasePortal.disableConnection);
   const [nameDraft, setNameDraft] = React.useState<string | null>(null);
   const [autonomyDraft, setAutonomyDraft] = React.useState<AutonomyRules | null>(null);
+  const [autonomyError, setAutonomyError] = React.useState<string | null>(null);
   const [working, setWorking] = React.useState("");
   const [message, setMessage] = React.useState("");
   const [importOpen, setImportOpen] = React.useState(false);
@@ -78,7 +81,7 @@ export function LiveSettingsPage() {
   const currentName = user?.displayName ?? user?.username ?? "";
   const draftName = nameDraft ?? currentName;
   const nameDirty = nameDraft !== null && nameDraft.trim() !== currentName;
-  const autonomyDirty = autonomyDraft !== null && JSON.stringify(autonomyDraft) !== JSON.stringify(mandateToRules(mandate ?? null));
+  const autonomyDirty = autonomyDraft !== null && JSON.stringify(autonomyDraft) !== JSON.stringify(autonomy?.rules);
   const dirty = nameDirty || autonomyDirty;
   const connectedSourceIds = new Set((portals ?? []).filter((portal) => portal.status !== "disabled").map((portal) => portal.sourceId));
   const availableConnections = (connectable ?? []).filter((source) => !connectedSourceIds.has(source.sourceId));
@@ -90,10 +93,11 @@ export function LiveSettingsPage() {
   function go(next: LiveSettingsSection) {
     guarded(() => navigate(`/app/settings/${next}`));
   }
-  async function run(key: string, operation: () => Promise<unknown>, success = copy("saved")) {
+  /** Runs one backend call behind the shared status line; resolves `true` on success. */
+  async function run(key: string, operation: () => Promise<unknown>, success = copy("saved")): Promise<boolean> {
     setWorking(key); setMessage("");
-    try { await operation(); setMessage(success); }
-    catch { setMessage(copy("actionFailed")); }
+    try { await operation(); setMessage(success); return true; }
+    catch { setMessage(copy("actionFailed")); return false; }
     finally { setWorking(""); }
   }
 
@@ -111,7 +115,7 @@ export function LiveSettingsPage() {
     ] },
   ];
 
-  const loading = user === undefined || needs === undefined || scout === undefined || memory === undefined || portals === undefined || connectable === undefined;
+  const loading = user === undefined || needs === undefined || scout === undefined || memory === undefined || portals === undefined || connectable === undefined || autonomy === undefined;
   return <StageBackground position="fixed" className="font-sans text-rs-ink">
     <AppHeader initials={initials(currentName)} avatarLabel={currentName || "RoomScout"} />
     <PanelDialog
@@ -162,11 +166,17 @@ export function LiveSettingsPage() {
       moreSources={< >{availableConnections.map((source) => <SettingsRow key={source.sourceId}><div><strong>{source.platformName ?? source.name}</strong><div className="text-sm text-rs-ink-4">{source.baseUrl}</div></div><Button size="xs" variant="secondary" disabled={Boolean(working)} onClick={() => void run(`connect:${source.sourceId}`, () => requestConnection({ sourceId: source.sourceId, label: source.name }), copy("connectionAdded"))}>{copy("include")}</Button></SettingsRow>)}{!availableConnections.length ? <p className="text-rs-ink-4">{copy("noMoreSources")}</p> : null}</>}
     /> : null}
 
-    {!loading && page === "autonomy" ? <LiveAutonomySection
-      needId={need?._id} mandate={mandate} draft={autonomyDraft}
+    {!loading && page === "autonomy" ? <AutonomyPage
+      rules={autonomy.rules} draft={autonomyDraft}
       onDraftChange={setAutonomyDraft}
-      platformIds={(sources?.sources ?? []).filter((source) => source.preference !== "exclude").map((source) => source.platformId)}
-      back={() => guarded(() => navigate("/app/scout"))}
+      saving={working === "autonomy"}
+      error={autonomyError}
+      onSave={async (rules) => {
+        setAutonomyError(null);
+        const ok = await run("autonomy", async () => { await saveAutonomy({ rules }); setAutonomyDraft(null); });
+        if (!ok) setAutonomyError(copy("autonomySaveFailed"));
+        return ok;
+      }}
     /> : null}
 
     {!loading && page === "knowledge" ? <LiveKnowledgeSection

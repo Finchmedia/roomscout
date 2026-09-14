@@ -13,7 +13,7 @@ import { useCopy } from "@/ui/copy"
 interface SaveBarProps {
   /** The draft differs from the saved rules. */
   dirty: boolean
-  /** „Neue Anbieter pro Tag“ is not a positive integer — save stays disabled. */
+  /** Save stays disabled — e.g. while a save is in flight or the rules are not loaded. */
   invalid: boolean
   /** The 2600 ms „Handlungsspielraum aktualisiert“ line. */
   saved: boolean

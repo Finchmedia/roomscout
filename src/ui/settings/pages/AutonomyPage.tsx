@@ -2,12 +2,16 @@
  * „Handlungsspielraum“ — how independently the Scout is allowed to work.
  *
  * DS reference: `design-system/ui_kits/roomscout-app/Settings.jsx:72-103`
- * (`AutonomyPage`), measured in `docs/UI_PORT/SETTINGS_SCREENS.md` §5.
+ * (`AutonomyPage`), measured in `docs/UI_PORT/SETTINGS_SCREENS.md` §5. The
+ * former „Grenzen“ section (per-day stepper, „Weitere Grenzen“) is gone: the
+ * product has no daily limits (ADR 0002).
  *
- * Every control writes a **draft**, which the panel owns (so its unsaved-changes
+ * Every control writes a **draft**, which the host owns (so its unsaved-changes
  * gate can drop it from the discard dialog). The page is therefore controlled:
- * `draft` in, `onDraftChange` out, and the save bar reports back through
- * `onSave` / `onCancel`.
+ * `rules` + `draft` in, `onDraftChange` out, and the save bar reports back
+ * through `onSave` / `onCancel`. The same component serves the demo host
+ * (`SettingsPanel`) and the live route (`LiveSettingsPage` with
+ * `api.autonomy.getMine` / `api.autonomy.save`).
  */
 
 import * as React from "react"
@@ -17,28 +21,33 @@ import { Card } from "@/components/ui/card"
 import { Icon } from "@/components/ui/icon"
 import { Overline } from "@/components/ui/overline"
 import { RadioCard, RadioCardGroup } from "@/components/ui/radio-card"
-import { Stepper } from "@/components/ui/stepper"
 import { Switch } from "@/components/ui/switch"
 import { useCopy } from "@/ui/copy"
 
 import { PageLead, PageTitle, SettingsRow } from "../primitives"
 import { SaveBar } from "../SaveBar"
 import type {
+  AutonomyMode,
   AutonomyRules,
-  SettingsPageContext,
 } from "../state/useSettingsDemoState"
 
-interface AutonomyPageProps extends SettingsPageContext {
+interface AutonomyPageProps {
+  /** The saved rules — the baseline the draft is compared against. */
+  rules: AutonomyRules
   /** The unsaved draft, or `null` while the page is clean. */
   draft: AutonomyRules | null
   onDraftChange: (draft: AutonomyRules | null) => void
-  onSave: (rules: AutonomyRules) => void
-}
-
-/** §5.7 — the per-day limit must be a whole number greater than zero. */
-function isPerDayInvalid(value: AutonomyRules["perDay"]): boolean {
-  const n = Number(value)
-  return !(Number.isInteger(n) && n > 0)
+  /**
+   * Persist the draft. Resolve (or return) `false` to suppress the
+   * „Handlungsspielraum aktualisiert“ line, e.g. after a failed save.
+   */
+  onSave: (rules: AutonomyRules) => void | boolean | Promise<void | boolean>
+  /** Every control is inert (rules not loaded yet, another action running). */
+  disabled?: boolean
+  /** A save is in flight — controls stay inert and the save button is disabled. */
+  saving?: boolean
+  /** Rendered as `role="alert"` under the lock card. */
+  error?: string | null
 }
 
 /** The five switch rows of §5.3 / §5.5. */
@@ -50,31 +59,30 @@ type BoolRuleKey =
   | "sharePrivate"
 
 function AutonomyPage({
-  data,
-  back,
+  rules: savedRules,
   draft,
   onDraftChange,
   onSave,
+  disabled = false,
+  saving = false,
+  error = null,
 }: AutonomyPageProps) {
   const { t } = useCopy()
   const [actionDetails, setActionDetails] = React.useState(false)
   const [shareDetails, setShareDetails] = React.useState(false)
-  const [limitsOpen, setLimitsOpen] = React.useState(false)
   const [saved, setSaved] = React.useState(false)
   const savedTimer = React.useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined
   )
-  const alertId = React.useId()
 
   React.useEffect(() => () => clearTimeout(savedTimer.current), [])
 
-  const rules = draft ?? data.rules
+  const rules = draft ?? savedRules
   const dirty =
-    draft !== null && JSON.stringify(draft) !== JSON.stringify(data.rules)
-  const invalid = isPerDayInvalid(rules.perDay)
+    draft !== null && JSON.stringify(draft) !== JSON.stringify(savedRules)
+  const inert = disabled || saving
 
-  const patch = (next: Partial<AutonomyRules>) =>
-    onDraftChange({ ...rules, ...next })
+  const setMode = (mode: AutonomyMode) => onDraftChange({ ...rules, mode })
 
   /** Writing through a union key keeps the draft typed without a cast. */
   const setFlag = (key: BoolRuleKey, checked: boolean) => {
@@ -94,6 +102,15 @@ function AutonomyPage({
     { key: "sharePrivate", label: t("settings.autonomy.share.private") },
   ]
 
+  const save = async () => {
+    if (inert) return
+    const result = await onSave(rules)
+    if (result === false) return
+    setSaved(true)
+    clearTimeout(savedTimer.current)
+    savedTimer.current = setTimeout(() => setSaved(false), 2600)
+  }
+
   return (
     <>
       <PageTitle>{t("settings.autonomy.title")}</PageTitle>
@@ -104,14 +121,16 @@ function AutonomyPage({
         className="mt-[var(--space-12)] grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-[var(--space-6)]"
       >
         <RadioCard
+          disabled={inert}
           checked={rules.mode === "autopilot"}
-          onSelect={() => patch({ mode: "autopilot" })}
+          onSelect={() => setMode("autopilot")}
           title={t("settings.autonomy.mode.autopilot.title")}
           description={t("settings.autonomy.mode.autopilot.sub")}
         />
         <RadioCard
+          disabled={inert}
           checked={rules.mode === "review"}
-          onSelect={() => patch({ mode: "review" })}
+          onSelect={() => setMode("review")}
           title={t("settings.autonomy.mode.review.title")}
           description={t("settings.autonomy.mode.review.sub")}
         />
@@ -141,6 +160,7 @@ function AutonomyPage({
         >
           <span>{row.label}</span>
           <Switch
+            disabled={inert}
             checked={Boolean(rules[row.key])}
             onCheckedChange={(checked) => setFlag(row.key, checked)}
             label={row.label}
@@ -172,84 +192,13 @@ function AutonomyPage({
         >
           <span>{row.label}</span>
           <Switch
+            disabled={inert}
             checked={Boolean(rules[row.key])}
             onCheckedChange={(checked) => setFlag(row.key, checked)}
             label={row.label}
           />
         </SettingsRow>
       ))}
-
-      <Overline className="mt-[var(--space-14)]">
-        {t("settings.autonomy.limits.label")}
-      </Overline>
-      <SettingsRow className="flex-wrap py-[var(--space-6)] text-[length:var(--text-body-lg-size)]">
-        <span>{t("settings.autonomy.limits.perDay")}</span>
-        <div className="flex flex-wrap items-center gap-[var(--space-10)]">
-          <Stepper
-            value={rules.perDay}
-            onChange={(value) => patch({ perDay: value })}
-            label={t("settings.autonomy.limits.perDay")}
-            aria-invalid={invalid}
-            aria-describedby={invalid ? alertId : undefined}
-          />
-          <Button
-            variant="link"
-            size="2xs"
-            aria-expanded={limitsOpen}
-            className="text-[length:var(--text-body-sm-size)] text-rs-ink"
-            onClick={() => setLimitsOpen((value) => !value)}
-          >
-            {t("settings.autonomy.limits.more")}
-            <Icon
-              name="chevron-right"
-              size={14}
-              className={limitsOpen ? "rotate-90" : undefined}
-            />
-          </Button>
-        </div>
-      </SettingsRow>
-      {invalid ? (
-        <div
-          id={alertId}
-          role="alert"
-          className="mt-[var(--space-3)] text-[length:var(--text-caption-size)] text-rs-red-text"
-        >
-          {t("settings.autonomy.limits.invalid")}
-        </div>
-      ) : null}
-      <div className="mt-[var(--space-2)] text-[length:var(--text-caption-sm-size)] text-rs-ink-6">
-        {t("settings.autonomy.limits.caption")}
-      </div>
-      {limitsOpen ? (
-        <div className="mt-[var(--space-5)] animate-rs-fade-up rounded-card border border-rs-border-card-soft bg-rs-surface-subtle px-[var(--space-9)] py-[var(--space-7)] text-[length:var(--text-body-sm-size)] leading-[1.7] text-rs-ink-2">
-          <div>
-            <span className="text-rs-ink-6">
-              {t("settings.autonomy.limits.periodLabel")}
-            </span>{" "}
-            {t("settings.autonomy.limits.periodValue")}
-          </div>
-          <div>
-            <span className="text-rs-ink-6">
-              {t("settings.autonomy.limits.stopsLabel")}
-            </span>{" "}
-            {t("settings.autonomy.limits.stopsValue")}
-          </div>
-          <div>
-            <span className="text-rs-ink-6">
-              {t("settings.autonomy.limits.budgetLabel")}
-            </span>{" "}
-            {t("settings.autonomy.limits.budgetValue")}{" "}
-            <Button
-              variant="link"
-              size="2xs"
-              className="text-[length:var(--text-body-sm-size)] text-rs-ink"
-              onClick={back}
-            >
-              {t("settings.autonomy.limits.budgetLink")}
-            </Button>
-          </div>
-        </div>
-      ) : null}
 
       <Card
         tone="rust"
@@ -267,21 +216,27 @@ function AutonomyPage({
         </div>
       </Card>
 
+      {error ? (
+        <p
+          role="alert"
+          className="mt-[var(--space-5)] mb-0 text-[length:var(--text-body-sm-size)] text-rs-red-text"
+        >
+          {error}
+        </p>
+      ) : null}
+
       <SaveBar
         dirty={dirty}
-        invalid={invalid}
+        invalid={Boolean(saving || disabled)}
         saved={saved}
-        onCancel={() => onDraftChange(null)}
-        onSave={() => {
-          if (invalid) return
-          onSave({ ...rules, perDay: Number(rules.perDay) })
-          setSaved(true)
-          clearTimeout(savedTimer.current)
-          savedTimer.current = setTimeout(() => setSaved(false), 2600)
+        onCancel={() => {
+          if (!saving) onDraftChange(null)
         }}
+        onSave={() => void save()}
       />
     </>
   )
 }
 
 export { AutonomyPage }
+export type { AutonomyPageProps }

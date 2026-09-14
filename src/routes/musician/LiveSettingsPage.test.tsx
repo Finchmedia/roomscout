@@ -58,7 +58,7 @@ function queryFixture(portals: unknown[] = [], connectable: unknown[] = [], sele
     "portalConnections:listMine": portals,
     "portalConnections:listConnectableSources": connectable,
     "searchSources:listForNeed": { city: "Berlin", sources: [] },
-    "mandates:getActiveMine": null,
+    "autonomy:getMine": { rules: { mode: "autopilot", contact: true, viewings: true, publishAd: false, shareProfile: true, sharePrivate: false }, version: 0, contentHash: "hash", updatedAt: null },
     "searchSources:getPortalPreferences": [],
   };
   useQuery.mockImplementation((reference) => results[getFunctionName(reference)]);
@@ -105,7 +105,8 @@ describe("LiveSettingsPage", () => {
 
   it("guards navigation away from an unsaved autonomy mode change", () => {
     renderRoute("autonomy");
-    fireEvent.click(screen.getByRole("radio", { name: /settings.autonomy.mode.autopilot.title/ }));
+    expect(screen.getByRole("radio", { name: /settings.autonomy.mode.autopilot.title/ })).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(screen.getByRole("radio", { name: /settings.autonomy.mode.review.title/ }));
     fireEvent.click(screen.getByRole("button", { name: "settings.nav.item.sources" }));
     expect(screen.getByText("liveSettings.discardBody")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "liveSettings.discard" }));

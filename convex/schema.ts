@@ -1633,6 +1633,21 @@ export default defineSchema({
     .index("by_thread_and_sent_at", ["threadId", "sentAt"])
     .index("by_owner", ["ownerId"]),
 
+  /** Handlungsspielraum — one row per user (ADR 0001); defaults apply while absent. */
+  scoutAutonomy: defineTable({
+    ownerId: v.id("users"),
+    mode: v.union(v.literal("autopilot"), v.literal("review")),
+    contact: v.boolean(),
+    viewings: v.boolean(),
+    publishAd: v.boolean(),
+    shareProfile: v.boolean(),
+    sharePrivate: v.boolean(),
+    version: v.number(),
+    contentHash: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_owner", ["ownerId"]),
+
   searchMandates: defineTable({
     ownerId: v.id("users"),
     savedNeedId: v.id("savedNeeds"),
