@@ -1449,3 +1449,11 @@ the same day's manual test) were cleared with the maintainer's consent because
 the mandate-free schema rejects them; the backend was pushed to production and
 dev, the frontend rebuilt and uploaded to both. Signals, listings, portal
 connections and the registered Firecrawl profile were left untouched.
+
+Same evening: the first autopilot run on production reached the demo listing
+without a human step (opportunity, Scout assessment, gate "proceed", Firecrawl
+write, portal thread within about seventy seconds). Two follow-ups: matching
+now recreates an opportunity for a still-current match whose row was removed,
+and the roomscout.dev portal (separate project, ../roomscout-dev) received the
+AgentMail component env mapping plus the patch-package patch so provider-reply
+notifications reach the musician's Scout address again.
