@@ -59,7 +59,7 @@ describe("evidence-backed provider offers", () => {
   });
   it("keeps an offer unready without a present_offer action but does not surface that as a blocker", () => {
     const input = assessment(); input.nextAction = "ask_musician";
-    expect(offerReadiness(input, need)).toEqual({ ready: false, blockers: [] });
+    expect(offerReadiness(input, need)).toEqual({ ready: false, blockers: [], hardBlockers: [] });
   });
   it("does not create an outgoing proposal when handing an offer to the musician", () => {
     const input = assessment(); input.suggestedReply = { subject: "Reply", body: "We accept." };
