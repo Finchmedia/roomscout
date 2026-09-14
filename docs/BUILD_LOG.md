@@ -1639,3 +1639,30 @@ wechseln auf `Message`/`Bubble`. Chat-Flächen nutzen den aus der Inbox
 herausgelösten `ChatComposer`; der Pill-Composer bleibt nur auf der Bühne.
 Voice bleibt unverändert. Start nach Abschluss der Inbox, weil beide den
 Scout-Chat und den Composer anfassen.
+
+Ergebnis (2026-09-14, Commit folgt im Log): der Workflow hat Backend, Prüfung,
+zwei parallele Frontend-Schritte und die Endprüfung abgeschlossen. Backend:
+`scout.send` ist eine Mutation (Besitzprüfung über `scoutContexts`, 1 bis 4000
+Zeichen, `saveMessage`, plant `internal.scout.reply`); die Action baut die
+Werkzeuge wie zuvor und streamt über `streamText` mit `saveStreamDeltas`
+(wortweise, 250 ms); `runScoutTurn` behält den `generateText`-Pfad für Anbieter-
+Runden und Entscheidungsfragen. `scout.listMessages` nimmt `streamArgs` an,
+liefert `syncStreams` mit und reduziert Tool-Teile auf Typ, Aufruf-Id und
+Zustand; Ein- und Ausgaben der Werkzeuge verlassen den Server nicht. Ein
+Fehler der Runde markiert die wartende Scout-Nachricht als `failed` (im Agent-
+Quelltext geprüft und getestet). Frontend: `useUIMessages` mit `stream: true`,
+`optimisticallySendMessage`, `useSmoothText` für laufende Antworten,
+Denk-Marker mit Schimmer, deutsche Marker-Zeilen pro Werkzeug während der
+Runde, Fehlerzeile mit „Erneut senden“; das lokale Sende-Flag und die
+Pseudo-Zeile „Nachricht wird gesendet“ sind weg, der Composer blockiert nur das
+Senden, nicht das Tippen. `ChatBubble` ist gelöscht, `ChatTurn` auf
+`Message`/`Bubble` ersetzt es in Bühnen, Mitschrift, Voice-Chat, Landing und
+Galerie; wo beide Systeme abwichen, gewinnt `Bubble` (Scout-Zeile jetzt immer
+mit Blase, 88 Prozent Breite, eine Schriftstufe). Prüfung: Typecheck, ESLint,
+volle Suite (143 Dateien, 1017 Tests, 1 übersprungen) und Build grün.
+Bekannte Punkte: eine Typ-Brücke am Hook, weil die reduzierten Tool-Teile nicht
+strukturell zu `UIMessage` passen; `createdAt` bleibt vorerst als Alias in der
+Seite; `internal.scout.reply` wirft nach dem Protokollieren erneut und erzeugt
+so einen sichtbaren Fehler-Eintrag in den Convex-Logs; die Bühnen zeigen den
+Scout jetzt mit Blase und die Nutzerblase eine Stufe kleiner, das ist eine
+sichtbare Änderung für den Maintainer-Blick.

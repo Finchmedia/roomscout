@@ -38,7 +38,7 @@ read-only. No production rollout or external messages in this verification.
 - **Auth:** Convex Auth
 - **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-realtime-2.1`
 - **Started:** 2026-08-26T13:55:26Z
-- **Last updated:** 2026-09-14T20:02:18Z
+- **Last updated:** 2026-09-14T20:42:01Z
 
 ## Log
 
@@ -431,3 +431,24 @@ realtime queries (`convex/conversations.ts`, `convex/schema.ts`,
 `convex/providerActions.ts`, `src/routes/musician/LiveInboxPage.tsx`,
 `src/ui/inbox/ConversationThread.tsx`, `src/ui/chrome/PanelDialog.tsx`,
 `src/ui/chat/ChatComposer.tsx`).
+
+### 2026-09-14 — 9a0d507 Streaming Scout chat on Agent deltas, one bubble system
+
+The live Scout chat now streams. The musician's message is saved by a
+mutation and answered by a scheduled action that streams the reply through the
+Agent component's delta store (`saveStreamDeltas`, `syncStreams` in the
+message query, `useUIMessages` with streaming on the client, `useSmoothText`
+while text arrives), with an optimistic user bubble the moment the message is
+sent. Thinking, tool activity and failure come from message status and parts
+instead of a local flag: a shimmering "Dein Scout denkt nach …" marker, German
+marker lines per tool call while the Scout works, a retry on failure; tool
+inputs and outputs never leave the server. The design kit's second bubble
+component was deleted; stages, transcript, voice chat, landing and gallery now
+render one `ChatTurn` on the shadcn Message and Bubble primitives. The provider
+assessment also receives the search centre and radius, so an address inside
+the radius is no longer questioned as a wrong district. Full suite green (1017
+tests), Vite build green. Convex features: mutations, scheduled functions,
+internal actions, queries with stream sync, realtime queries, Agent component
+(`convex/scout.ts`, `convex/scoutRuntime.ts`, `convex/lib/providerAssessment.ts`,
+`src/routes/musician/ScoutPage.tsx`, `src/ui/chat/ScoutChat.tsx`,
+`src/ui/chat/ChatTurn.tsx`).
