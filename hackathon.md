@@ -38,7 +38,7 @@ read-only. No production rollout or external messages in this verification.
 - **Auth:** Convex Auth
 - **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-realtime-2.1`
 - **Started:** 2026-08-26T13:55:26Z
-- **Last updated:** 2026-09-14T21:21:12Z
+- **Last updated:** 2026-09-14T23:55:41Z
 
 ## Log
 
@@ -472,3 +472,26 @@ features: realtime queries, mutations, scheduled functions
 (`convex/lib/providerAssessment.ts`, `convex/providerConversations.ts`,
 `src/ui/scout/live/LiveScoutSurface.tsx`, `src/ui/scout/live/CandidateList.tsx`,
 `src/routes/musician/ScoutPage.tsx`, `src/ui/operator/live/LiveOperatorSurface.tsx`).
+
+### 2026-09-15 — 0631cc8 Firecrawl orchestration rebuilt in the shape of the local proof
+
+After the acceptance message needed three attempts, the Firecrawl portal path
+was compared against the standalone scripts that had proven the flow on
+2026-09-11: the Convex port had reused the Stagehand driver primitive by
+primitive, so one message cost 16 to 46 Interact round trips, client-side poll
+loops, swallowed errors and a decoder that trusted Firecrawl's result field
+over our own marker. The path now mirrors the scripts: one browser session per
+operation and one Interact program per phase. A message is scrape, prepare,
+send, stop; a registration is scrape, sign-up, verify, stop; the inbox read
+stays at three. The marker is decoded at the component boundary, sandbox errors
+return in-band with page diagnostics, the execution record carries the inner
+code, writes open the saved profile read-only with the proof inside the send
+program, and the controlled portal is no longer polled because the AgentMail
+webhook drives it. The Firecrawl primitives adapter is gone; Browserbase, the
+Stagehand driver and their tests are byte-identical, guarded by a parity test
+that counts round trips at the transport boundary. Full suite green (1083
+tests). Convex features: actions, internal actions, scheduled functions,
+mutations (`convex/firecrawlPortal.ts`, `convex/integrations/firecrawlPortalEngine.ts`,
+`convex/integrations/firecrawlPortalRuntime.ts`, `convex/integrations/firecrawlProgram.ts`,
+`convex/components/firecrawlRoomScout/interact.ts`, `convex/portalConnections.ts`,
+`docs/FIRECRAWL_HARDENING_PLAN.md`).

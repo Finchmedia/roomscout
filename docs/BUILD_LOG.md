@@ -1719,4 +1719,29 @@ S0 bis S7, Browserbase-Schutzzaun mit Datei- und Testliste. Entscheidungen per
 Rückfrage: alles in einem Zug, `saveChanges:false` hinter Schalter, alter Pfad
 löschen, Poll ganz aus. Bau als sechsstufiger Workflow (drei Bau-, drei
 Prüfschritte, jeweils mit `git diff --stat` über die geschützten Dateien).
-Ergebnis folgt.
+
+Ergebnis (2026-09-15, 01:55): alle sieben Scheiben gebaut, sechs Workflow-
+Schritte durch, geschützte Browserbase- und Treiber-Dateien samt ihrer Tests
+Byte für Byte unverändert (`git diff --stat` leer), die sieben Delegations-
+stellen unangetastet. Eine Nachricht kostet jetzt scrape, vorbereiten, senden,
+stop (vier Roundtrips, vorher 16 bis 46), eine Registrierung scrape, signup,
+verify, stop (vier statt etwa 33, Keepalives separat), der Inbox-Sync bleibt bei
+drei. Die eigene Ergebnis-Markierung wird an der Komponentengrenze zuerst
+gelesen, Firecrawls `result`-Feld ist nur noch Rückfall, und die Form einer
+unerwarteten Antwort wird protokolliert. Sandbox-Fehler kommen in-band mit
+bereinigter Meldung und Seitendiagnose zurück; der Execution-Record trägt den
+inneren Code. Schreiben öffnet das Profil standardmäßig lesend
+(`FIRECRAWL_WRITE_SAVE_CHANGES`), der Beweis läuft im Sende-Programm mit, die
+zweite Beweis-Session und `retryWriteProfileProof` sind gelöscht. Der Poll des
+Demo-Portals ist aus (Intervall 0, `disableAutomaticPolling` für bestehende
+Verbindungen); ein fehlgeschlagener Webhook-Sync darf genau einen Backoff-
+Versuch nehmen. Der Firecrawl-Primitiv-Adapter ist gelöscht, `firecrawlPortal.ts`
+importiert den Treiber nicht mehr; ein Paritätstest zählt die Roundtrips pro
+Vorgang an der Transportgrenze und prüft die Quittungsfelder gegen das lokale
+Skript. Der Isolationstest musste an zwei Stellen mitziehen (Spione auf die
+Engine statt den Treiber, eine statt zwei Sessions); seine 21 Fälle sind grün.
+Nachgezogen von mir: Fehlergrund nach dem Klick wird protokolliert, zwei
+uhrzeit- und regelabhängige Tests korrigiert. Volle Suite 1083 Tests grün,
+Build grün. Offen bleibt der Live-Nachweis der ersten echten Nachricht ohne
+Schreib-Lock; die erste echte Registrierung ist ebenso zu beobachten, weil der
+Profil-Beweis jetzt die live beobachtete Anmeldung ist.
