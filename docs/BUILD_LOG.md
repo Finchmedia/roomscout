@@ -1457,3 +1457,12 @@ now recreates an opportunity for a still-current match whose row was removed,
 and the roomscout.dev portal (separate project, ../roomscout-dev) received the
 AgentMail component env mapping plus the patch-package patch so provider-reply
 notifications reach the musician's Scout address again.
+
+Later that evening the reason for the slow reply loop was found: the AgentMail
+account had webhooks for the portal deployments only; the Scout's production
+site had none, so "new message" notifications from the portal never reached the
+Scout and replies surfaced only through the hourly Firecrawl poll. The Scout's
+production webhook is now created by agentmailComponent.bootstrapAccountWebhook
+(pod-scoped, secret stored in the deployment), the controlled portal is polled
+every five minutes as a fallback, the inbox sync retries the first Interact call,
+and the Scout surface shows a Zwischenstand card until an offer is ready.
