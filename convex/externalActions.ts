@@ -367,6 +367,32 @@ export const submit = mutation({
   handler: async (ctx, args) => submitRequest(ctx, await requireUserId(ctx), args.requestId),
 });
 
+/**
+ * Re-run the Freigabeprüfung for an autopilot request that stopped at
+ * ask_user (for example after the rules or the safety classifier changed).
+ * Returns the request to drafted and submits it again; a cached verdict for
+ * the same snapshot is reused, so bump MESSAGE_SAFETY_VERSION when the
+ * classifier itself changed.
+ */
+export const resubmitAutopilotRequest = internalMutation({
+  args: { requestId: v.id("actionRequests") },
+  returns: submitResult,
+  handler: async (ctx, args) => {
+    const request = await ctx.db.get(args.requestId);
+    if (request === null) throw new ConvexError({ code: "ACTION_NOT_FOUND" });
+    if (request.status !== "awaiting_approval" || request.automationMode !== "autopilot") {
+      throw new ConvexError({ code: "INVALID_ACTION_STATE" });
+    }
+    await ctx.db.patch(request._id, { status: "drafted", error: undefined, updatedAt: Date.now() });
+    const result = await submitRequest(ctx, request.ownerId, request._id);
+    if (result.status === "approved" && result.authorizedByAutonomy) {
+      const approved = await ctx.db.get(request._id);
+      if (approved !== null) await dispatchApproved(ctx, approved);
+    }
+    return result;
+  },
+});
+
 export const submitChecked = internalMutation({
   args: { ownerId: v.id("users"), requestId: v.id("actionRequests"), dispatch: v.optional(v.boolean()) }, returns: submitResult,
   handler: async (ctx, args): Promise<{ status: Doc<"actionRequests">["status"]; authorizedByAutonomy: boolean; reasons: string[] }> => {

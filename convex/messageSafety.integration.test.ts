@@ -203,6 +203,6 @@ describe("semantic final-message gate and provider dispatch", () => {
     expect(await actionPayloadHash({ a: [1, 2] })).not.toBe(await actionPayloadHash({ a: [2, 1] }));
     const f = await fixture();
     expect(await f.t.run(async (ctx) => (await messageSafetyContext(ctx, (await ctx.db.get(f.requestId))!))?.snapshotHash)).toBe(f.input.snapshotHash);
-    expect(MESSAGE_SAFETY_VERSION).toBe("final-message-v1");
+    expect(MESSAGE_SAFETY_VERSION).toBe("final-message-v2");
   });
 });
