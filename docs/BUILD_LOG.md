@@ -1466,3 +1466,13 @@ production webhook is now created by agentmailComponent.bootstrapAccountWebhook
 (pod-scoped, secret stored in the deployment), the controlled portal is polled
 every five minutes as a fallback, the inbox sync retries the first Interact call,
 and the Scout surface shows a Zwischenstand card until an offer is ready.
+
+Webhook chain proven the same evening: provider reply in the portal at 20:04,
+AgentMail event on the Scout's production webhook at 20:04:25, mailbox message
+stored. The hint that turns that mail into an immediate inbox sync rejected it
+because AgentMail appends a plain-text footer to the portal template; the hint
+now strips that footer. The replayed hint scheduled the sync, the reply was
+imported and assessed within about ninety seconds. The Scout then chose
+ask_musician (Stuttgart-West statt Mitte? Dienstag oder Mittwoch?), which today
+reaches nobody: no chat question, no decision. That is the gap candidate B
+(Entscheidung im Chat) closes; it is the next piece of work.
