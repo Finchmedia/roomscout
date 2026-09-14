@@ -53,6 +53,11 @@ describe("portal notification hints", () => {
     expect(await f.consume({ providerMessageId: "mail-2" })).toEqual({ triggered: false, reason: "coalesced" });
   });
 
+  it("accepts the AgentMail branded footer appended to the portal template", async () => {
+    const f = await fixture(); const mail = notification(f.email);
+    expect(await f.consume({ body: `${mail.body}\n\n--\nSent via AgentMail` })).toEqual({ triggered: true, reason: "scheduled" });
+  });
+
   it("accepts ordinary CRLF transport without flattening the template", async () => {
     const f = await fixture(); const mail = notification(f.email);
     expect(await f.consume({ body: mail.body.replace(/\n/g, "\r\n") })).toEqual({ triggered: true, reason: "scheduled" });

@@ -50,7 +50,10 @@ export const consumeOwnedMailboxHint = internalMutation({
     const senderDomain = sender.split("@")[1] ?? "";
     // Keep legacy portal mail working during cutover; AgentMail is shared by other users.
     const isPortalSender = senderDomain === "roomscout.dev" || sender === PORTAL_NOTIFICATION_SENDER;
-    const body = args.body.replace(/\r\n/g, "\n");
+    // AgentMail appends a branded plain-text footer ("--\nSent via AgentMail") to
+    // notification mails; it is not part of the portal template and must not
+    // hide a genuine notification from the hint.
+    const body = args.body.replace(/\r\n/g, "\n").replace(/\s*\n--\s*\nSent via AgentMail\s*$/, "");
     const urlMatch = body.match(THREAD_URL);
     if (!isPortalSender || !args.subject.startsWith(SUBJECT_PREFIX) || args.subject.length <= SUBJECT_PREFIX.length ||
       !body.startsWith(BODY_PREFIX) || !body.endsWith(BODY_SUFFIX) || !urlMatch || body.match(/https?:\/\//g)?.length !== 1) {
