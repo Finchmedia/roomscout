@@ -276,3 +276,23 @@ it("removal retires a match without deleting its historical row", async () => {
   expect((await f.t.run(async (ctx) => ctx.db.query("signalMatches").first()))?.eligible).toBe(false);
   expect((await f.t.run(async (ctx) => ctx.db.query("opportunities").first()))?.status).toBe("expired");
 });
+
+it("recreates a missing opportunity for a still-current match on recomputation", async () => {
+  vi.useFakeTimers();
+  vi.stubEnv("OPENAI_API_KEY", "");
+  const f = await fixture();
+  await f.owner.mutation(api.savedNeeds.activate, { savedNeedId: f.savedNeedId });
+  await f.t.finishAllScheduledFunctions(vi.runAllTimers);
+  const before = await f.t.run(async (ctx) => ctx.db.query("opportunities").withIndex("by_saved_need_and_fingerprint", (q) =>
+    q.eq("savedNeedId", f.savedNeedId).eq("fingerprint", `match:${f.savedNeedId}:${f.signalId}`)).unique());
+  expect(before?.status).toBe("new");
+  // The opportunity row disappears (reset, cleanup) while the signalMatch stays current.
+  await f.t.run(async (ctx) => ctx.db.delete(before!._id));
+  await f.t.mutation(internal.matches.rematchAllActive, { cursor: null });
+  await f.t.finishAllScheduledFunctions(vi.runAllTimers);
+  const after = await f.t.run(async (ctx) => ctx.db.query("opportunities").withIndex("by_saved_need_and_fingerprint", (q) =>
+    q.eq("savedNeedId", f.savedNeedId).eq("fingerprint", `match:${f.savedNeedId}:${f.signalId}`)).unique());
+  expect(after?.status).toBe("new");
+  expect(after?.signalId).toBe(f.signalId);
+  expect(await f.t.run(async (ctx) => (await ctx.db.query("signalMatches").collect()).length)).toBe(1);
+});

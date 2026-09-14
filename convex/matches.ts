@@ -339,6 +339,25 @@ export const applyMatches = internalMutation({
             score: match.score, reasons: match.reasons, uncertainties: match.uncertainties, lastSeenAt: now, updatedAt: now,
             status: opportunity.status === "expired" && existing.status !== "dismissed" ? "new" : opportunity.status,
           });
+        } else if (opportunity === null && existing.status !== "dismissed") {
+          // A current match without an opportunity row (deleted, reset) must
+          // still reach the orchestrator; otherwise the Scout stays idle forever.
+          await ctx.db.insert("opportunities", {
+            ownerId: args.ownerId,
+            savedNeedId: args.savedNeedId,
+            kind: match.kind === "need_supply" ? "supply_match" : "demand_collaboration",
+            status: "new",
+            signalId: match.signalId,
+            score: match.score,
+            reasons: match.reasons,
+            uncertainties: match.uncertainties,
+            fingerprint: opportunityFingerprint,
+            firstSeenAt: now,
+            lastSeenAt: now,
+            createdAt: now,
+            updatedAt: now,
+          });
+          created += 1;
         }
         continue;
       }
