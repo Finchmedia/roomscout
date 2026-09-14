@@ -215,3 +215,17 @@ behalten; der Treiber bleibt für Browserbase.
 - Zehn Demo-Nachrichten in Folge gehen ohne manuellen Eingriff durch.
 - Jede fehlgeschlagene Anfrage trägt die Ursache im Execution-Record.
 - Alle Browserbase- und Treiber-Testsuiten bleiben unverändert grün.
+
+## 9. Entscheidungen des Maintainers (2026-09-15, 00:20)
+
+- Alle Scheiben S0 bis S7 in einem Zug, inklusive Registrierung (S4).
+- Senden ohne Schreib-Lock: `saveChanges:false` als Standard hinter dem
+  Schalter `FIRECRAWL_WRITE_SAVE_CHANGES` (Wert `true` stellt zurück); der
+  Live-Nachweis erfolgt mit der ersten echten Nachricht nach dem Deploy, weil
+  Dev keine Portal-Verbindung besitzt. Hält der Login nicht, Schalter auf
+  `true`, kein Deploy nötig.
+- Alter Primitiv-Pfad wird ersetzt und gelöscht, kein Schalter.
+- Poll des Demo-Portals ganz aus (`CONTROLLED_PORTAL_POLL_MINUTES = 0`);
+  Webhook ist der einzige automatische Weg, „Jetzt Quellen prüfen“ bleibt als
+  manueller Abgleich. Bestehende Verbindungen werden nach dem Deploy per
+  interner Mutation auf 0 gesetzt.

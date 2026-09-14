@@ -1703,3 +1703,20 @@ Bereitschaftsprüfung trennt jetzt Anbieter-Blocker von eigenen offenen
 Punkten; `present_offer` ohne Anbieter-Blocker hebt eine Scout-Frage, der
 Prompt verlangt in dem Fall `ask_musician` (Commit 2db65d9, Backend auf Prod
 und Dev). Die Frage zur laufenden Konversation wurde von Hand nachgezogen.
+
+### 2026-09-15 — Firecrawl-Härtung: Plan und Bau
+
+Nach der Zusage-Nachricht (nach zwei Fehlversuchen durchgegangen) wollte der
+Maintainer keinen weiteren Punkt-Fix, sondern einen Plan, der den Convex-Pfad
+auf die Form des lokalen Beweises bringt. Drei parallele Analysen (lokale
+Skripte, Convex-Pfad, Nahtstellen zu Browserbase) ergaben: 16 bis 46
+Roundtrips pro Nachricht statt 7 lokal, dreifach plattgedrückte Fehler, eine
+Dekodierung, die Firecrawls `result`-Feld vor unserer eigenen Markierung
+bevorzugt (der Fix 0abe076 vom Abend ist dadurch in Produktion wirkungslos),
+eine selbstgemachte 409-Klasse durch die zweite Beweis-Session, ein Budget für
+alles. Plan in `docs/FIRECRAWL_HARDENING_PLAN.md` (Commit fccd2da), Scheiben
+S0 bis S7, Browserbase-Schutzzaun mit Datei- und Testliste. Entscheidungen per
+Rückfrage: alles in einem Zug, `saveChanges:false` hinter Schalter, alter Pfad
+löschen, Poll ganz aus. Bau als sechsstufiger Workflow (drei Bau-, drei
+Prüfschritte, jeweils mit `git diff --stat` über die geschützten Dateien).
+Ergebnis folgt.
