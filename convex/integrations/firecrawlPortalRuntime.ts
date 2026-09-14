@@ -86,6 +86,27 @@ export type FirecrawlPortalSession = {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 120_000;
+/** A stop must always reach the provider, even after the run budget is gone. */
+const STOP_TIMEOUT_MS = 20_000;
+const MIN_STOP_TIMEOUT_MS = 5_000;
+/** Every program returns the page URL; `getUrl` reuses it for this long. */
+const URL_CACHE_TTL_MS = 2_000;
+/** Time given to a DOM element or auth state to appear inside one program. */
+const IN_SANDBOX_WAIT_MS = 1_500;
+const AUTH_SETTLE_WAIT_MS = 2_000;
+/** Short settle after a click or fill so the returned URL reflects the action. */
+const ACTION_SETTLE_MS = 200;
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Session-level helpers shared by the primitives and `runProgram`. */
+type SessionShared = {
+  now(): number;
+  /** Space requests to stay under the team's per-minute Interact limit. */
+  pace(): Promise<void>;
+  rememberUrl(result: unknown): void;
+  cachedUrl(): string | null;
+};
 
 function timeoutMs(value: number | undefined): number {
   const timeout = Math.floor(value ?? DEFAULT_TIMEOUT_MS);
@@ -117,6 +138,8 @@ export function firecrawlTransportErrorCode(error: unknown, operation: "SCRAPE" 
   const suffix = status === 401 || status === 403 ? "AUTH_FAILED"
     : status === 408 ? "TIMED_OUT"
     : status === 429 ? "RATE_LIMITED"
+    // Firecrawl answers 409 when another session still writes to the profile.
+    : status === 409 ? "PROFILE_BUSY"
     : status !== undefined && status >= 500 ? "UNAVAILABLE"
     : status !== undefined && status >= 400 ? "REQUEST_REJECTED"
     : "TRANSPORT_FAILED";
@@ -168,8 +191,10 @@ function createPrimitives(input: {
   timeoutMs: number;
   remainingMs(): number;
   onEnvelope(value: unknown): void;
+  shared: SessionShared;
 }): StagehandPortalPrimitives {
   const run = async (body: string, vars: Record<string, unknown>, mutating: boolean) => {
+    await input.shared.pace();
     const operationTimeoutMs = input.remainingMs();
     let envelope: unknown;
     try {
@@ -186,8 +211,16 @@ function createPrimitives(input: {
       throw new Error(firecrawlTransportErrorCode(error, "INTERACT"));
     }
     input.onEnvelope(envelope);
-    return parseInteractEnvelope(envelope);
+    const parsed = parseInteractEnvelope(envelope);
+    input.shared.rememberUrl(parsed);
+    return parsed;
   };
+  // Short waits inside the sandbox: the driver polls fields and evidence in a
+  // loop, and every iteration would otherwise be one rate-limited request.
+  const inSandboxWaitMs = () => Math.max(0, Math.min(IN_SANDBOX_WAIT_MS, input.remainingMs() - 1_000));
+  const authWaitMs = () => Math.max(0, Math.min(AUTH_SETTLE_WAIT_MS, input.remainingMs() - 1_000));
+  const settledResult = `await page.waitForTimeout(vars.settleMs);
+        return { ok: true, url: await page.url() };`;
 
   return {
     async navigate({ url }) {
@@ -198,6 +231,8 @@ function createPrimitives(input: {
         return { url: currentUrl };`, { url: target, timeoutMs: navigationTimeoutMs, origin: REVIEWED_PORTAL_ORIGIN }, false);
     },
     async getUrl() {
+      const cached = input.shared.cachedUrl();
+      if (cached !== null) return cached;
       const result = record(await run("return { url: await page.url() };", {}, false));
       if (typeof result?.url !== "string") throw new Error("FIRECRAWL_PORTAL_URL_INVALID");
       return result.url;
@@ -214,23 +249,23 @@ function createPrimitives(input: {
         if (typeof value !== "string") throw new Error("FIRECRAWL_PORTAL_ACTION_INVALID");
         await run(`${currentOriginGuard()}
           await page.locator(vars.selector).fill(vars.value);
-          return { ok: true };`, { origin: REVIEWED_PORTAL_ORIGIN, selector: action.selector, value }, true);
+          ${settledResult}`, { origin: REVIEWED_PORTAL_ORIGIN, selector: action.selector, value, settleMs: ACTION_SETTLE_MS }, true);
         return;
       }
       if (action.method !== "click") throw new Error("FIRECRAWL_PORTAL_ACTION_INVALID");
       await run(`${currentOriginGuard()}
         await page.locator(vars.selector).click();
-        return { ok: true };`, { origin: REVIEWED_PORTAL_ORIGIN, selector: action.selector }, true);
+        ${settledResult}`, { origin: REVIEWED_PORTAL_ORIGIN, selector: action.selector, settleMs: ACTION_SETTLE_MS }, true);
     },
     async clickSelector({ selector }) {
       await run(`${currentOriginGuard()}
         await page.locator(vars.selector).click();
-        return { ok: true };`, { origin: REVIEWED_PORTAL_ORIGIN, selector }, true);
+        ${settledResult}`, { origin: REVIEWED_PORTAL_ORIGIN, selector, settleMs: ACTION_SETTLE_MS }, true);
     },
     async fillSelector({ selector, value }) {
       await run(`${currentOriginGuard()}
         await page.locator(vars.selector).fill(vars.value);
-        return { ok: true };`, { origin: REVIEWED_PORTAL_ORIGIN, selector, value }, true);
+        ${settledResult}`, { origin: REVIEWED_PORTAL_ORIGIN, selector, value, settleMs: ACTION_SETTLE_MS }, true);
     },
     async extract<Schema extends ZodType>({ schema }: { instruction: string; schema: Schema }): Promise<z.output<Schema>> {
       const result = await run(`${currentOriginGuard()}
@@ -250,8 +285,23 @@ function createPrimitives(input: {
       return schema.parse(result);
     },
     async readEvidence({ kind }: { kind: PortalDomEvidence["kind"] }) {
+      // Let the expected DOM or auth state settle inside the sandbox first, so
+      // the driver's poll loops converge in one or two requests.
+      const waitSelector = kind === "receipt" ? '[data-roomscout-write-result]'
+        : kind === "thread" ? '[data-roomscout-thread-state="ready"]'
+        : kind === "inbox" ? '[data-roomscout-inbox-state]'
+        : null;
       const result = record(await run(`${currentOriginGuard()}
-        return { url: currentUrl, raw: await page.evaluate(vars.expression) };`, { origin: REVIEWED_PORTAL_ORIGIN, expression: PORTAL_DOM_EXPRESSIONS[kind] }, false));
+        if (vars.waitSelector) await page.waitForSelector(vars.waitSelector, { state: "attached", timeout: vars.waitMs }).catch(() => null);
+        if (vars.waitAuth) await page.waitForFunction(() => window.Clerk?.loaded === true && Boolean(window.Clerk?.user && window.Clerk?.session), undefined, { timeout: vars.waitMs }).catch(() => null);
+        const settledUrl = await page.url();
+        return { url: settledUrl, raw: await page.evaluate(vars.expression) };`, {
+        origin: REVIEWED_PORTAL_ORIGIN,
+        expression: PORTAL_DOM_EXPRESSIONS[kind],
+        waitSelector,
+        waitAuth: kind === "access",
+        waitMs: kind === "access" ? authWaitMs() : inSandboxWaitMs(),
+      }, false));
       if (typeof result?.url !== "string" || !("raw" in (result ?? {}))) {
         throw new Error("FIRECRAWL_PORTAL_EVIDENCE_INVALID");
       }
@@ -262,9 +312,13 @@ function createPrimitives(input: {
     },
     async inspectForm(formInput) {
       const result = await run(`${currentOriginGuard()}
-        return await page.evaluate(vars.expression);`, {
+        await page.waitForSelector(vars.selector, { state: "attached", timeout: vars.waitMs }).catch(() => null);
+        const inspection = await page.evaluate(vars.expression);
+        return { ...inspection, url: await page.url() };`, {
         origin: REVIEWED_PORTAL_ORIGIN,
         expression: portalFormInspectionExpression(formInput),
+        selector: formInput.selector,
+        waitMs: inSandboxWaitMs(),
       }, false);
       return z.object({
         count: z.number(), visible: z.boolean(), editable: z.boolean(),
@@ -277,7 +331,11 @@ function createPrimitives(input: {
       if (!Number.isFinite(milliseconds) || milliseconds < 0 || milliseconds > input.timeoutMs) {
         throw new Error("FIRECRAWL_PORTAL_WAIT_INVALID");
       }
-      await run("await page.waitForTimeout(vars.milliseconds); return { ok: true };", { milliseconds: Math.floor(milliseconds) }, false);
+      // A pause needs no browser round trip; spending a rate-limited request
+      // on it was the single largest source of Interact calls per run.
+      const ms = Math.floor(milliseconds);
+      if (ms >= input.remainingMs()) throw new Error("FIRECRAWL_PORTAL_DEADLINE_EXCEEDED");
+      await sleep(ms);
     },
   };
 }
@@ -289,6 +347,8 @@ export async function createFirecrawlPortalSession(input: {
   saveChanges: boolean;
   timeoutMs?: number;
   now?: () => number;
+  /** Minimum spacing between Interact requests; 0 disables pacing. */
+  pacing?: { minIntervalMs: number };
 }): Promise<FirecrawlPortalSession> {
   const url = reviewedPortalUrl(input.url);
   if (!/^[A-Za-z0-9_-]{1,200}$/.test(input.profileName)) {
@@ -318,12 +378,35 @@ export async function createFirecrawlPortalSession(input: {
   const scrapeId = scrapeIdFrom(scrape);
   let latestLiveView = liveViewFrom(scrape);
   let stopPromise: Promise<void> | undefined;
+  const minIntervalMs = Math.max(0, Math.floor(input.pacing?.minIntervalMs ?? 0));
+  let lastDispatchAt = Number.NEGATIVE_INFINITY;
+  let urlCache: { url: string; at: number } | null = null;
+  const shared: SessionShared = {
+    now,
+    async pace() {
+      if (minIntervalMs <= 0) return;
+      const waitMs = lastDispatchAt + minIntervalMs - now();
+      if (waitMs > 0) {
+        if (waitMs >= remainingMs()) throw new Error("FIRECRAWL_PORTAL_DEADLINE_EXCEEDED");
+        await sleep(waitMs);
+      }
+      lastDispatchAt = now();
+    },
+    rememberUrl(result) {
+      const url = record(result)?.url;
+      if (typeof url === "string") urlCache = { url, at: now() };
+    },
+    cachedUrl() {
+      return urlCache !== null && now() - urlCache.at <= URL_CACHE_TTL_MS ? urlCache.url : null;
+    },
+  };
   const primitives = createPrimitives({
     transport: input.transport,
     scrapeId,
     timeoutMs: timeout,
     remainingMs,
     onEnvelope: (value) => { latestLiveView = liveViewFrom(value) ?? latestLiveView; },
+    shared,
   });
   const runProgram = async (
     body: string,
@@ -331,6 +414,7 @@ export async function createFirecrawlPortalSession(input: {
     mutating = false,
     timeoutOverrideMs?: number,
   ) => {
+    await shared.pace();
     const programTimeout = Math.min(
       timeoutMs(timeoutOverrideMs ?? timeout),
       remainingMs(),
@@ -350,7 +434,9 @@ export async function createFirecrawlPortalSession(input: {
       throw new Error(firecrawlTransportErrorCode(error, "INTERACT"));
     }
     latestLiveView = liveViewFrom(envelope) ?? latestLiveView;
-    return parseInteractEnvelope(envelope);
+    const parsed = parseInteractEnvelope(envelope);
+    shared.rememberUrl(parsed);
+    return parsed;
   };
   return {
     scrapeId,
@@ -358,7 +444,10 @@ export async function createFirecrawlPortalSession(input: {
     openedAt,
     primitives,
     stop() {
-      const stopTimeoutMs = remainingMs();
+      // Never let an exhausted run budget skip the provider stop: an unstopped
+      // session holds the profile write lock and a browser slot for its TTL.
+      const remaining = Math.max(0, deadlineAt - now());
+      const stopTimeoutMs = Math.max(MIN_STOP_TIMEOUT_MS, Math.min(STOP_TIMEOUT_MS, remaining || STOP_TIMEOUT_MS));
       stopPromise ??= input.transport.stop(scrapeId, stopTimeoutMs).then(
         () => undefined,
         () => { throw new Error("FIRECRAWL_PORTAL_STOP_FAILED"); },

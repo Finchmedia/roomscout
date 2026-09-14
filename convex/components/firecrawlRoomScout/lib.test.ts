@@ -152,3 +152,26 @@ describe("withExtra", () => {
     expect(withExtra(undefined)).toEqual({});
   });
 });
+
+describe("rate-limit windows", () => {
+  test("reads the retry window from the header or the 429 body", async () => {
+    const { _test } = await import("./api.js");
+    expect(_test.retryAfterMsFrom("12", "")).toBe(12_000);
+    expect(_test.retryAfterMsFrom(null, "Rate limit exceeded. Consumed (req/min): 11, Remaining (req/min): 0. Upgrade your plan or please retry after 57s, resets at Sun Sep 13 2026")).toBe(57_000);
+    expect(_test.retryAfterMsFrom(null, "rate limited")).toBeUndefined();
+    expect(_test.retryAfterMsFrom("not-a-number", "nothing here")).toBeUndefined();
+  });
+
+  test("carries the announced window on the thrown error without the provider text", async () => {
+    const t = initConvexTest();
+    mockFetch([
+      { status: 429, body: { success: false, error: "Rate limit exceeded ... please retry after 57s, resets at later" } },
+    ]);
+    const error = await t.action(api.lib.scrape, { url: "https://a.com" })
+      .catch((value: unknown) => value);
+    expect(String(error)).toContain("firecrawl_request_failed");
+    expect(String(error)).toContain("429");
+    expect(String(error)).toContain("57000");
+    expect(String(error)).not.toContain("Upgrade");
+  });
+});

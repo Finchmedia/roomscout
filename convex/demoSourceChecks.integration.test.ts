@@ -1,8 +1,11 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
+import { AUTO_CHECK_COOLDOWN_MS } from "./demoSourceChecks";
+
+afterEach(() => vi.unstubAllEnvs());
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -60,4 +63,48 @@ it("claims only never-attempted roomscout.dev details within the per-check bound
   const jobs = await t.mutation(internal.demoSourceChecks.claimDetails, { generation: "generation-0001", sourceTargetId: data.targetId, leaseId: "lease-0001", limit: 99 });
   expect(jobs).toHaveLength(5);
   expect(jobs.every((job) => job.detailUrl.startsWith("https://roomscout.dev/"))).toBe(true);
+});
+
+it("starts one bounded automatic check per trigger, never interrupts a run, and honours the cooldown", async () => {
+  vi.stubEnv("FIRECRAWL_API_KEY", "firecrawl-test-key");
+  const { t, ids, musician } = await fixture();
+  expect(await t.mutation(internal.demoSourceChecks.requestAutomatic, { ownerId: ids.musicianId, requestId: "auto:mandate:0001" }))
+    .toEqual({ accepted: true, status: "queued" });
+  expect(await musician.query(api.demoSourceChecks.status, {}))
+    .toMatchObject({ status: "queued", mode: "manual", maxChecks: 1, maxDetailPages: 5 });
+  const scheduled = await t.run(async (ctx) => ctx.db.system.query("_scheduled_functions").collect());
+  expect(scheduled.map((row) => row.name)).toContain("demoSourceCheckActions:runCheck");
+
+  expect(await t.mutation(internal.demoSourceChecks.requestAutomatic, { ownerId: ids.musicianId, requestId: "auto:mandate:0002" }))
+    .toEqual({ accepted: false, status: "queued", reason: "busy" });
+
+  await t.run(async (ctx) => {
+    const run = await ctx.db.query("demoSourceChecks").withIndex("by_singleton_key", (q) => q.eq("singletonKey", "global")).unique();
+    await ctx.db.patch(run!._id, { status: "completed", checksCompleted: 1, lastCompletedAt: Date.now(), updatedAt: Date.now() });
+  });
+  expect(await t.mutation(internal.demoSourceChecks.requestAutomatic, { ownerId: ids.musicianId, requestId: "auto:run:0003" }))
+    .toEqual({ accepted: false, status: "completed", reason: "cooldown" });
+
+  await t.run(async (ctx) => {
+    const run = await ctx.db.query("demoSourceChecks").withIndex("by_singleton_key", (q) => q.eq("singletonKey", "global")).unique();
+    await ctx.db.patch(run!._id, { lastCompletedAt: Date.now() - AUTO_CHECK_COOLDOWN_MS - 1 });
+  });
+  expect(await t.mutation(internal.demoSourceChecks.requestAutomatic, { ownerId: ids.musicianId, requestId: "auto:run:0003" }))
+    .toEqual({ accepted: true, status: "queued" });
+});
+
+it("skips the automatic check without a Firecrawl key or a known owner", async () => {
+  vi.stubEnv("FIRECRAWL_API_KEY", "");
+  const { t, ids } = await fixture();
+  expect(await t.mutation(internal.demoSourceChecks.requestAutomatic, { ownerId: ids.musicianId, requestId: "auto:mandate:0004" }))
+    .toEqual({ accepted: false, status: "idle", reason: "unconfigured" });
+  vi.stubEnv("FIRECRAWL_API_KEY", "firecrawl-test-key");
+  const missingOwner = await t.run(async (ctx) => {
+    const id = await ctx.db.insert("users", { username: "gone", role: "musician", createdAt: 1, lastSeenAt: 1 });
+    await ctx.db.delete(id);
+    return id;
+  });
+  expect(await t.mutation(internal.demoSourceChecks.requestAutomatic, { ownerId: missingOwner, requestId: "auto:mandate:0005" }))
+    .toEqual({ accepted: false, status: "idle", reason: "owner_missing" });
+  expect(await t.run(async (ctx) => ctx.db.query("demoSourceChecks").take(1))).toEqual([]);
 });

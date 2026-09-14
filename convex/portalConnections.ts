@@ -1190,6 +1190,13 @@ export const finishRun = internalMutation({
       await ctx.scheduler.runAfter(0, internal.mandateOrchestrator.runForOwner, {
         ownerId: run.ownerId,
       });
+      // A ready portal account is the moment outreach becomes possible; make
+      // sure a bounded roomscout.dev check has run so opportunities exist.
+      // The check itself is global and skipped inside its cooldown.
+      await ctx.scheduler.runAfter(0, internal.demoSourceChecks.requestAutomatic, {
+        ownerId: run.ownerId,
+        requestId: `auto:run:${run._id}`,
+      });
     }
     return null;
   },

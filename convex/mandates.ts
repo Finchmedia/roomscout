@@ -306,6 +306,12 @@ export const enableDefaultAutopilot = mutation({
     // consequence of finding a match. Start the idempotent eligibility check as
     // soon as the user activates the standing mandate.
     await ctx.scheduler.runAfter(0, internal.mandateOrchestrator.runForOwner, { ownerId });
+    // Listings only arrive through ingestion; the daily monitor may not have
+    // run yet. Start one bounded roomscout.dev check so the Scout has
+    // something to work on right after activation (idempotent per mandate).
+    await ctx.scheduler.runAfter(0, internal.demoSourceChecks.requestAutomatic, {
+      ownerId, requestId: `auto:mandate:${mandateId}`,
+    });
     return { mandateId, contentHash: hash, created: true };
   },
 });
@@ -439,6 +445,9 @@ export const activate = mutation({
       occurredAt: now,
     });
     await ctx.scheduler.runAfter(0, internal.mandateOrchestrator.runForOwner, { ownerId });
+    await ctx.scheduler.runAfter(0, internal.demoSourceChecks.requestAutomatic, {
+      ownerId, requestId: `auto:mandate:${mandate._id}`,
+    });
     return null;
   },
 });

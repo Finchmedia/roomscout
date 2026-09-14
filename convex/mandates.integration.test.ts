@@ -179,7 +179,8 @@ it.each(["draft", "paused"] as const)(
       scheduled: await ctx.db.system.query("_scheduled_functions").collect(),
     }));
     expect(state.need?.status).toBe("active");
-    expect(state.scheduled).toHaveLength(3);
+    expect(state.scheduled).toHaveLength(4);
+    expect(state.scheduled.map((row) => row.name)).toContain("demoSourceChecks:requestAutomatic");
   },
 );
 
@@ -244,5 +245,6 @@ it("explicit mandate activation activates a paused search and queues orchestrati
   }));
   expect(state.need?.status).toBe("active");
   expect(state.mandate?.status).toBe("active");
-  expect(state.scheduled).toHaveLength(3);
+  expect(state.scheduled).toHaveLength(4);
+    expect(state.scheduled.map((row) => row.name)).toContain("demoSourceChecks:requestAutomatic");
 });

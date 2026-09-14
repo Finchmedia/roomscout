@@ -6,6 +6,7 @@ import { components, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { action, internalAction, type ActionCtx } from "./_generated/server";
 import { requireActionUserId } from "./integrations/authz";
+import { envValue } from "./integrations/env";
 import { requirePortalBrowserProviderConfiguration, resolvePortalBrowserProvider } from "./integrations/portalBrowserEngine";
 import { buildAllowedPortalUrl, sanitizeInboxThreads } from "./integrations/portalSafety";
 import { extractPortalVerificationCode, isRelevantPortalVerificationMessage } from "./integrations/portalVerification";
@@ -32,12 +33,80 @@ const WRITE_PROFILE_PROOF_DEADLINE_MS = 120_000;
 const ONBOARDING_POLL_MS = 5_000;
 const ONBOARDING_MAX_POLLS = 60;
 const RUN_TEARDOWN_RESERVE_MS = 5_000;
+const VERIFICATION_KEEPALIVE_EVERY_POLLS = 12;
 type RegistrationPhase = "mailbox" | "session_open" | "run_attach" | "progress" | "driver" | "session_stop" | "profile_proof";
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/** Read-only AgentMail REST fetch. Never persists the body; used only to read the OTP. */
+async function firecrawlAgentMailJson(path: string): Promise<unknown> {
+  const apiKey = envValue("AGENTMAIL_API_KEY");
+  if (!apiKey) throw new Error("AGENTMAIL_API_KEY_MISSING");
+  const base = (envValue("AGENTMAIL_BASE_URL") ?? "https://api.agentmail.to/v0").replace(/\/$/, "");
+  const response = await fetch(`${base}${path}`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) throw new Error(`AGENTMAIL_HTTP_${response.status}`);
+  return await response.json();
+}
+
+/**
+ * Wait for the Clerk verification code inline, in the same Firecrawl session
+ * that started the sign-up. Polls the AgentMail REST inbox directly rather than
+ * the webhook-backed mailboxMessages table, so a delayed or missing webhook
+ * cannot stall the run, and returns the code to the caller for entry in the
+ * one live browser that holds Clerk's in-progress sign-up.
+ */
+async function waitForFirecrawlVerification(input: {
+  emailAddress: string;
+  receivedAfter: number;
+  portalDomain: string;
+  deadlineAt: number;
+  keepAlive: () => Promise<void>;
+}): Promise<{ messageId: string; code: string } | null> {
+  const inboxPath = `/inboxes/${encodeURIComponent(input.emailAddress)}/messages`;
+  for (let attempt = 0; attempt < ONBOARDING_MAX_POLLS; attempt += 1) {
+    if (input.deadlineAt - Date.now() <= RUN_TEARDOWN_RESERVE_MS) break;
+    const list = asRecord(await firecrawlAgentMailJson(`${inboxPath}?limit=10`).catch(() => null));
+    const messages = Array.isArray(list?.messages) ? list.messages : [];
+    for (const raw of messages) {
+      const summary = asRecord(raw);
+      const messageId = typeof summary?.message_id === "string" ? summary.message_id : null;
+      const receivedAt = Date.parse(
+        typeof summary?.created_at === "string" ? summary.created_at
+          : typeof summary?.timestamp === "string" ? summary.timestamp : "",
+      );
+      if (!messageId || !Number.isFinite(receivedAt) || receivedAt < input.receivedAfter) continue;
+      const message = asRecord(await firecrawlAgentMailJson(`${inboxPath}/${encodeURIComponent(messageId)}`).catch(() => null));
+      const subject = typeof message?.subject === "string" ? message.subject : "";
+      const body = typeof message?.extracted_text === "string" ? message.extracted_text
+        : typeof message?.text === "string" ? message.text : "";
+      const from = typeof message?.from === "string" ? message.from : JSON.stringify(message?.from ?? "").slice(0, 1_000);
+      if (!isRelevantPortalVerificationMessage({ from, subject, body, portalDomain: input.portalDomain })) continue;
+      const code = extractPortalVerificationCode(`${subject}\n${body}`);
+      if (code) return { messageId, code };
+    }
+    if (attempt < ONBOARDING_MAX_POLLS - 1) {
+      // A Firecrawl session goes idle after ~5 min without an Interact call;
+      // ping it periodically so a slow delivery cannot expire the browser.
+      if (attempt > 0 && attempt % VERIFICATION_KEEPALIVE_EVERY_POLLS === 0) await input.keepAlive();
+      const sleepMs = Math.min(ONBOARDING_POLL_MS, Math.max(0, input.deadlineAt - Date.now() - RUN_TEARDOWN_RESERVE_MS));
+      if (sleepMs <= 0) break;
+      await new Promise((resolve) => setTimeout(resolve, sleepMs));
+    }
+  }
+  return null;
+}
 
 function firecrawlRegistrationFailureCode(error: unknown, phase: RegistrationPhase): string {
   const message = error instanceof Error ? error.message : "";
   if (/^CONTROLLED_REGISTRATION_[A-Z_]+_FAILED$/.test(message)) return message.slice(0, 100);
-  if (/^FIRECRAWL_PORTAL_(SCRAPE_(AUTH_FAILED|TIMED_OUT|RATE_LIMITED|UNAVAILABLE|REQUEST_REJECTED|TRANSPORT_FAILED)|SCRAPE_ID_MISSING|PROFILE_INVALID|TIMEOUT_INVALID|DEADLINE_EXCEEDED|INTERACT_(AUTH_FAILED|TIMED_OUT|RATE_LIMITED|UNAVAILABLE|REQUEST_REJECTED|TRANSPORT_FAILED))$/.test(message)) {
+  if (/^FIRECRAWL_PORTAL_(SCRAPE_(AUTH_FAILED|TIMED_OUT|RATE_LIMITED|PROFILE_BUSY|UNAVAILABLE|REQUEST_REJECTED|TRANSPORT_FAILED)|SCRAPE_ID_MISSING|PROFILE_INVALID|TIMEOUT_INVALID|DEADLINE_EXCEEDED|INTERACT_(AUTH_FAILED|TIMED_OUT|RATE_LIMITED|PROFILE_BUSY|UNAVAILABLE|REQUEST_REJECTED|TRANSPORT_FAILED))$/.test(message)) {
     return message;
   }
   if (error instanceof ConvexError && typeof error.data === "object" && error.data !== null && "code" in error.data) {
@@ -131,6 +200,20 @@ async function stopRunSessionOrSchedule(ctx: ActionCtx, session: FirecrawlPortal
   }
 }
 
+/**
+ * Minimum spacing between Interact requests of one session. Firecrawl rate
+ * limits Interact executes per team and per minute (10 on Free, 100 on Hobby,
+ * 500 on Standard); the reviewed driver issues one request per primitive, so
+ * a registration burst of ~20 requests must be spread out. 700 ms keeps one
+ * session under ~85 requests per minute.
+ */
+const DEFAULT_INTERACT_MIN_INTERVAL_MS = 700;
+
+function interactMinIntervalMs(): number {
+  const raw = Number(process.env.FIRECRAWL_INTERACT_MIN_INTERVAL_MS ?? "");
+  return Number.isFinite(raw) && raw >= 0 && raw <= 10_000 ? Math.floor(raw) : DEFAULT_INTERACT_MIN_INTERVAL_MS;
+}
+
 export async function openFirecrawlPortalSession(
   ctx: ActionCtx,
   input: FirecrawlPortalContext & { path: string; saveChanges: boolean; timeoutMs?: number },
@@ -141,6 +224,7 @@ export async function openFirecrawlPortalSession(
     profileName: input.profileName,
     saveChanges: input.saveChanges,
     timeoutMs: input.timeoutMs,
+    pacing: { minIntervalMs: interactMinIntervalMs() },
   });
 }
 
@@ -811,7 +895,11 @@ export async function startAgentRegistrationForOwner(ctx: ActionCtx, ownerId: Id
   const reservedRun = await ctx.runQuery(internal.portalConnections.getRunForOwner, { ownerId, runId });
   if (!reservedRun) throw new ConvexError({ code: "RUN_NOT_FOUND" });
   const deadlineAt = reservedRun.expiresAt;
-  const profileName = connection.providerContextId ?? `roomscout_${connectionId}`;
+  // A ready context reuses its saved profile. Before that, every attempt gets
+  // its own profile name: a previous attempt whose session could not be
+  // stopped keeps a write lock on its profile until the session TTL expires,
+  // and a shared name would turn that into a 409 for every retry.
+  const profileName = connection.providerContextId ?? `roomscout_${connectionId}_${runId}`;
   let session: FirecrawlPortalSession | undefined;
   let phase: RegistrationPhase = "mailbox";
   try {
@@ -838,10 +926,42 @@ export async function startAgentRegistrationForOwner(ctx: ActionCtx, ownerId: Id
       phase = "profile_proof";
       return await finishRegistrationWithProof(ctx, { ownerId, runId, connectionId, baseUrl: connection.baseUrl, adapterKey: connection.adapterKey, profileName, deadlineAt });
     }
+    // OTP continuation runs INLINE in the same Firecrawl session. A Firecrawl
+    // scrape-bound session cannot be reconnected, and Clerk's in-progress
+    // sign-up transaction lives in that one browser, so a second session on
+    // /sign-up would show no verification field. The verification code is
+    // polled from AgentMail's REST inbox directly (not the webhook-backed
+    // mailboxMessages table) so a delayed webhook cannot stall the run. This
+    // mirrors the proven Stagehand path; the scheduler-based
+    // continueAgentRegistration is never used for Firecrawl.
     const verificationRequestedAt = Date.now() - 5_000;
     await ctx.runMutation(internal.portalConnections.markAgentOnboardingState, { ownerId, runId, stage: "waiting_verification", mailboxId: mailbox.mailboxId, verificationRequestedAt, pollAttempt: 0, humanRequired: false, eventMessage: "WAITING_FOR_AGENTMAIL_VERIFICATION" });
-    await ctx.scheduler.runAfter(Math.min(ONBOARDING_POLL_MS, remainingRunMs(deadlineAt)), internal.firecrawlPortal.continueAgentRegistration, { ownerId, runId });
-    return { runId, status: "waiting_verification" as const };
+    const verification = await waitForFirecrawlVerification({
+      emailAddress: mailbox.emailAddress,
+      receivedAfter: verificationRequestedAt,
+      portalDomain: new URL(connection.baseUrl).hostname,
+      deadlineAt,
+      keepAlive: async () => { await session!.primitives.getUrl().catch(() => undefined); },
+    });
+    if (!verification) {
+      await ctx.runMutation(internal.portalConnections.markAgentOnboardingState, { ownerId, runId, stage: "human_required", mailboxId: mailbox.mailboxId, pollAttempt: ONBOARDING_MAX_POLLS, humanRequired: true, eventMessage: "VERIFICATION_EMAIL_NOT_FOUND" });
+      return { runId, status: "human_required" as const };
+    }
+    // verification.messageId is AgentMail's opaque id, not a Convex
+    // mailboxMessages id, so it is not stored on the onboarding state (the
+    // Stagehand inline path omits it too).
+    await ctx.runMutation(internal.portalConnections.markAgentOnboardingState, { ownerId, runId, stage: "submitting_verification", mailboxId: mailbox.mailboxId, humanRequired: false, eventMessage: "VERIFICATION_CODE_RECEIVED" });
+    remainingRunMs(deadlineAt);
+    const verified = await ensureControlledPortalRegistration({ client: session.primitives, verificationCode: verification.code });
+    if (verified.outcome !== "authenticated") {
+      await ctx.runMutation(internal.portalConnections.markAgentOnboardingState, { ownerId, runId, stage: "human_required", mailboxId: mailbox.mailboxId, humanRequired: true, eventMessage: verified.outcome === "human_required" && verified.blocker ? `VERIFICATION_${verified.blocker.toUpperCase()}_REQUIRES_HUMAN` : "VERIFICATION_REQUIRES_HUMAN" });
+      return { runId, status: "human_required" as const };
+    }
+    phase = "session_stop";
+    await stopRegistrationSession(ctx, session, { ownerId, runId });
+    session = undefined;
+    phase = "profile_proof";
+    return await finishRegistrationWithProof(ctx, { ownerId, runId, connectionId, baseUrl: connection.baseUrl, adapterKey: connection.adapterKey, profileName, deadlineAt });
   } catch (error) {
     const errorCode = firecrawlRegistrationFailureCode(error, phase);
     await ctx.runMutation(internal.portalConnections.finishRun, { runId, status: "failed", errorCode });

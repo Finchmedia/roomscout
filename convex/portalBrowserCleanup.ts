@@ -8,9 +8,25 @@ import type { Id } from "./_generated/dataModel";
 import { internalAction, type ActionCtx } from "./_generated/server";
 import { FirecrawlRoomScoutClient } from "./components/firecrawlRoomScout/client";
 
-const MAX_CLEANUP_ATTEMPTS = 5;
+// Firecrawl rate limits are per minute; a stop that hit a 429 must wait out the
+// window, so the schedule spans several windows instead of one.
+const MAX_CLEANUP_ATTEMPTS = 8;
 const CLEANUP_RETRY_BASE_MS = 2_000;
-const CLEANUP_DEADLINE_MS = 120_000;
+const CLEANUP_RETRY_MAX_MS = 90_000;
+const CLEANUP_DEADLINE_MS = 5 * 60_000;
+const RATE_LIMIT_PADDING_MS = 1_000;
+
+/** Provider-announced rate-limit wait carried on the component's ConvexError, if any. */
+function retryAfterMsOf(error: unknown): number | undefined {
+  if (error && typeof error === "object" && "data" in error) {
+    const data = (error as { data?: unknown }).data;
+    if (data && typeof data === "object" && "retryAfterMs" in data) {
+      const value = (data as { retryAfterMs?: unknown }).retryAfterMs;
+      if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
+    }
+  }
+  return undefined;
+}
 
 export type ProviderCleanupInput = {
   ownerId: Id<"users">;
@@ -38,8 +54,12 @@ export async function runProviderCleanupAttempt<T extends { provider: "firecrawl
   try {
     await deps.stop(input.provider, input.providerSessionId, remainingMs);
     return "stopped";
-  } catch {
-    const delayMs = Math.min(CLEANUP_RETRY_BASE_MS * input.attempt, 15_000);
+  } catch (error) {
+    const retryAfterMs = retryAfterMsOf(error);
+    const delayMs = Math.min(
+      retryAfterMs !== undefined ? retryAfterMs + RATE_LIMIT_PADDING_MS : CLEANUP_RETRY_BASE_MS * input.attempt,
+      retryAfterMs !== undefined ? CLEANUP_RETRY_MAX_MS : 15_000,
+    );
     if (input.attempt >= MAX_CLEANUP_ATTEMPTS || deps.now() + delayMs >= input.deadlineAt) return "exhausted";
     await deps.schedule(delayMs, { ...input, attempt: input.attempt + 1 });
     return "retry_scheduled";

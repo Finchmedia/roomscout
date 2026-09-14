@@ -1372,3 +1372,34 @@ transport explicitly awaits the program and accepts valid structured results or
 only its own JSON marker; raw provider output and stderr do not cross the component
 boundary. No live signup, OTP submission or external message was sent during this
 release verification. The maintainer's manual end-to-end test remains outstanding.
+
+### 2026-09-14 — Automatic roomscout.dev source check after activation
+
+The first successful Firecrawl registration on production completed, but the
+Scout stayed idle: no roomscout.dev listing had been ingested since the reset.
+The daily Firecrawl monitor for the public source had never run (no checks,
+`lastRunAt` null), and the working stage shown to the musician is derived from
+the need status alone. One operator click on "Jetzt Quellen prüfen" carried the
+chain through ingestion, matching, three opportunities, provider assessments
+and a drafted non-binding platform message that now awaits the musician's
+approval because the safety check flagged a personal-data scope outside the
+default mandate.
+
+`demoSourceChecks.requestAutomatic` is the internal counterpart of the manual
+check. Default Autopilot activation, explicit mandate activation and a
+completed registration with a ready portal context now schedule it with an
+idempotent request id per mandate or run. It reuses the bounded manual run
+(one check, five detail pages), never interrupts an active run, skips when the
+last run completed within fifteen minutes, and skips silently without a
+Firecrawl key. Full suite: 877 tests passed, one skipped; typecheck clean.
+
+Diagnosed but deliberately left open at the maintainer's request: the global
+monitor reconciliation compares `schedule.text` while Firecrawl returns only
+`schedule.cron`, so the 15-minute cron rewrites the monitor on every tick and
+the nightly run keeps being skipped; two orphaned monitors from before the
+reset still post nightly into the webhook; portal Interact requests carry no
+headroom between HTTP deadline and sandbox timeout (the logged `status: 0`
+during the profile proof was such an abort, swallowed and retried
+successfully); the 45-second registration session cannot survive a slow OTP.
+The production test account was promoted to operator so the manual check is
+reachable. Nothing is committed or deployed by this entry.

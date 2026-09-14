@@ -9,6 +9,7 @@ import {
   type MutationCtx,
 } from "./_generated/server";
 import { requireOperatorId, requireUserId } from "./integrations/authz";
+import { envValue } from "./integrations/env";
 import { isControlledDemoOrigin } from "./lib/demoProvenance";
 
 export const DEMO_CHECK_INTERVAL_MS = 60_000;
@@ -16,6 +17,8 @@ export const DEMO_DURATION_MS = 10 * 60_000;
 export const DEMO_MAX_CHECKS = 10;
 export const DEMO_DETAILS_PER_CHECK = 5;
 export const DEMO_MAX_DETAIL_PAGES = 50;
+/** An automatic check is not repeated while the last completed run is this recent. */
+export const AUTO_CHECK_COOLDOWN_MS = 15 * 60_000;
 
 const runStatus = v.union(
   v.literal("queued"), v.literal("scraping"), v.literal("processing"),
@@ -119,6 +122,38 @@ export const stopDemo = mutation({
     await ctx.db.patch(run._id, { status: "stopped", nextCheckAt: undefined, updatedAt: Date.now() });
     await ctx.scheduler.runAfter(0, internal.demoSourceCheckActions.cleanup, { generation: run.generation });
     return { accepted: true, status: "stopped" as const };
+  },
+});
+
+const automaticSkipReason = v.union(
+  v.literal("unconfigured"), v.literal("owner_missing"), v.literal("cooldown"), v.literal("busy"),
+);
+
+/**
+ * Automatic counterpart of `requestNow`, scheduled when a standing mandate is
+ * activated and when a controlled portal registration completes, so the Scout
+ * starts looking at roomscout.dev without an operator click. It reuses the
+ * bounded manual run (one check, five detail pages). The run is global, so a
+ * check that completed inside the cooldown already serves every active need,
+ * and an active run is never interrupted. Without a Firecrawl key the request
+ * is skipped silently instead of recording a failed run.
+ */
+export const requestAutomatic = internalMutation({
+  args: { ownerId: v.id("users"), requestId: v.string() },
+  returns: v.object({ accepted: v.boolean(), status: publicStatus, reason: v.optional(automaticSkipReason) }),
+  handler: async (ctx, args) => {
+    validateRequestId(args.requestId);
+    if (!envValue("FIRECRAWL_API_KEY")) return { accepted: false, status: "idle" as const, reason: "unconfigured" as const };
+    if ((await ctx.db.get(args.ownerId)) === null) return { accepted: false, status: "idle" as const, reason: "owner_missing" as const };
+    const current = await singleton(ctx);
+    if (
+      current && current.status === "completed" && current.lastCompletedAt !== undefined &&
+      Date.now() - current.lastCompletedAt < AUTO_CHECK_COOLDOWN_MS
+    ) {
+      return { accepted: false, status: "completed" as const, reason: "cooldown" as const };
+    }
+    const result = await request(ctx, { requestId: args.requestId, kind: "manual", userId: args.ownerId });
+    return result.accepted ? result : { ...result, reason: "busy" as const };
   },
 });
 

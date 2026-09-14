@@ -91,6 +91,34 @@ profile-readiness budget. Exhaustion is recoverable `profile not ready`, not
 permission to create a new profile or repeat signup blindly. A connection made
 with the other provider displays reconnect required.
 
+## Rate limits and request pacing
+
+Firecrawl limits Interact executes per team and per minute, and browser
+sessions per team in parallel. Measured on 2026-09-13: the Free plan allows
+10 executes per minute and 2 parallel browsers, and a session stop (`DELETE`)
+counts against the same minute window. Hobby allows 100 executes and 5 browsers,
+Standard 500 and 25. The 429 body announces the wait ("retry after 57s").
+
+The reviewed portal driver issues one Interact request per primitive, so a
+registration is roughly 20 requests. Three rules keep that inside the window:
+
+1. Requests of one session are spaced by `FIRECRAWL_INTERACT_MIN_INTERVAL_MS`
+   (default 700 ms, about 85 requests per minute). Waits run locally, the page
+   URL is reused from the previous program for two seconds, and field and
+   evidence reads let the element appear inside the sandbox first.
+2. A 429 is retried after the announced window when the request budget still
+   covers it; otherwise the error carries `retryAfterMs` and the caller
+   reschedules. Session stops retry within their budget and the scheduled
+   cleanup waits out the announced window for up to five minutes.
+3. Registration attempts use a profile name per run until the context is
+   proven ready. A session that could not be stopped keeps a write lock on its
+   profile for its whole TTL; a shared name would turn that into a 409
+   (`FIRECRAWL_PORTAL_INTERACT_PROFILE_BUSY`) for every retry.
+
+Do not retry a failed registration inside the same minute. Parallel portal
+work (inbox sync, proof, registration) shares the team window, so keep the
+inbox poll interval and the workpool parallelism at their defaults.
+
 ## Verification gates still required
 
 Automated tests and configuration checks do not satisfy live acceptance. Before

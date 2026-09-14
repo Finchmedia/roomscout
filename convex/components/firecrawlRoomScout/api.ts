@@ -35,14 +35,36 @@ function apiKey(): string {
   return key;
 }
 
-function fail(path: string, status: number, message: string): never {
+function fail(path: string, status: number, message: string, retryAfterMs?: number): never {
   void path;
   void message;
   throw new ConvexError({
     code: "firecrawl_request_failed",
     status,
     message: "Firecrawl request failed.",
+    // Rate-limit windows are per team and per minute. Callers that must
+    // eventually succeed (session stop, cleanup) reschedule after this delay
+    // instead of burning retries inside the same window.
+    ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
   });
+}
+
+/**
+ * Firecrawl signals rate limits with a `Retry-After` header when present, but
+ * the 429 body is authoritative in practice: "... please retry after 57s,
+ * resets at ...". Returns milliseconds, or undefined when neither is usable.
+ */
+function retryAfterMsFrom(retryAfterHeader: string | null, message: string): number | undefined {
+  if (retryAfterHeader) {
+    const seconds = Number(retryAfterHeader);
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1000);
+  }
+  const match = /retry after (\d+(?:\.\d+)?)\s*s/i.exec(message);
+  if (match) {
+    const seconds = Number(match[1]);
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1000);
+  }
+  return undefined;
 }
 
 async function sleep(ms: number): Promise<void> {
@@ -171,18 +193,38 @@ export async function firecrawlRequest(
       body,
       text.slice(0, 300) || response.statusText,
     );
+    const retryAfterMs = response.status === 429
+      ? retryAfterMsFrom(response.headers.get("retry-after"), message)
+      : undefined;
     const retryable = RETRYABLE_STATUS.has(response.status) || (init.retryConflict === true && response.status === 409);
     if (!retryable || attempt === maxRetries) {
-      fail(path, response.status, message);
+      fail(path, response.status, message, retryAfterMs);
     }
     lastError = message;
+    const remainingBudgetMs = Math.max(0, (deadlineAt ?? Infinity) - Date.now());
+    if (retryAfterMs !== undefined) {
+      // Waiting out a rate-limit window only helps when an explicit request
+      // budget still covers it; otherwise fail now with the announced window
+      // and let the caller reschedule instead of blocking an action blindly.
+      const waitMs = retryAfterMs + RATE_LIMIT_PADDING_MS;
+      if (deadlineAt === undefined || waitMs > remainingBudgetMs || waitMs > MAX_RATE_LIMIT_WAIT_MS) {
+        fail(path, response.status, message, retryAfterMs);
+      }
+      await sleep(waitMs);
+      continue;
+    }
     await sleep(Math.min(
       retryDelayMs(attempt, response.headers.get("retry-after")),
-      Math.max(0, (deadlineAt ?? Infinity) - Date.now()),
+      remainingBudgetMs,
     ));
   }
 
   fail(path, 0, lastError || "exhausted retries");
 }
 
-export const _test = { retryDelayMs, errorMessage, normalizeRequestTimeoutMs };
+/** Extra wait after a rate-limit reset so the next attempt lands inside the new window. */
+const RATE_LIMIT_PADDING_MS = 1_000;
+/** Never block one request on a rate-limit window longer than this; reschedule instead. */
+const MAX_RATE_LIMIT_WAIT_MS = 90_000;
+
+export const _test = { retryDelayMs, retryAfterMsFrom, errorMessage, normalizeRequestTimeoutMs };

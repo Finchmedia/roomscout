@@ -81,7 +81,12 @@ export const execute = action({
   },
 });
 
-/** Stop an interactive browser session. Safe to call best-effort on cleanup. */
+/**
+ * Stop an interactive browser session. Safe to call best-effort on cleanup.
+ * DELETE is idempotent (a stopped session answers 404), so transient failures
+ * and rate-limit windows are retried within the request budget: an unstopped
+ * session keeps its profile write lock and a concurrency slot for its whole TTL.
+ */
 export const stop = action({
   args: { jobId: v.string(), requestTimeoutMs: v.optional(v.number()) },
   returns: v.any(),
@@ -89,7 +94,7 @@ export const stop = action({
     try {
       return await firecrawlRequest(
         `/v2/scrape/${firecrawlId(args.jobId, "job_id")}/interact`,
-        { method: "DELETE", requestTimeoutMs: args.requestTimeoutMs, maxRetries: 0 },
+        { method: "DELETE", requestTimeoutMs: args.requestTimeoutMs, maxRetries: 3 },
       );
     } catch (error) {
       if (error instanceof ConvexError && typeof error.data === "object" && error.data !== null && "status" in error.data && error.data.status === 404) {

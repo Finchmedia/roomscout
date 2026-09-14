@@ -129,6 +129,94 @@ describe("firecrawlPortalRuntime", () => {
     expect(interact).toHaveBeenCalledTimes(1);
   });
 
+  it("pauses locally instead of spending an Interact request on wait()", async () => {
+    const interact = vi.fn(async () => successful({ url: "https://roomscout.dev" }));
+    const session = await createFirecrawlPortalSession({
+      transport: { scrape: async () => ({ metadata: { scrapeId: "scrape_1" } }), interact, stop: async () => ({}) },
+      url: "https://roomscout.dev", profileName: "profile_1", saveChanges: false, timeoutMs: 30_000,
+    });
+    const before = Date.now();
+    await session.primitives.wait?.(30);
+    expect(Date.now() - before).toBeGreaterThanOrEqual(25);
+    expect(interact).not.toHaveBeenCalled();
+  });
+
+  it("serves getUrl from the URL returned by the previous program", async () => {
+    let now = 1_000;
+    const interact = vi.fn(async () => successful({ ok: true, url: "https://roomscout.dev/sign-up" }));
+    const session = await createFirecrawlPortalSession({
+      transport: { scrape: async () => ({ metadata: { scrapeId: "scrape_1" } }), interact, stop: async () => ({}) },
+      url: "https://roomscout.dev/sign-up", profileName: "profile_1", saveChanges: false, timeoutMs: 60_000, now: () => now,
+    });
+    await session.primitives.clickSelector?.({ selector: "#submit" });
+    await expect(session.primitives.getUrl()).resolves.toBe("https://roomscout.dev/sign-up");
+    expect(interact).toHaveBeenCalledTimes(1);
+    now = 4_000;
+    await session.primitives.getUrl();
+    expect(interact).toHaveBeenCalledTimes(2);
+  });
+
+  it("lets a field or evidence element appear inside the sandbox before inspecting", async () => {
+    const programs: string[] = [];
+    const session = await createFirecrawlPortalSession({
+      transport: {
+        scrape: async () => ({ metadata: { scrapeId: "scrape_1" } }),
+        interact: async (_id, options) => {
+          programs.push(options.code);
+          return options.code.includes("waitForSelector(vars.selector")
+            ? successful({ count: 1, visible: true, editable: true, name: "emailAddress", type: "email", autocomplete: null, required: true, value: "", formValid: null, url: "https://roomscout.dev/sign-up" })
+            : successful({ url: "https://roomscout.dev/sign-up", raw: { visible: true, providerThreadId: "t1", providerMessageId: "m1" } });
+        },
+        stop: async () => ({}),
+      },
+      url: "https://roomscout.dev/sign-up", profileName: "profile_1", saveChanges: false,
+    });
+    await session.primitives.inspectForm({ selector: 'input[name="emailAddress"]', role: "email" });
+    await session.primitives.readEvidence({ kind: "receipt" });
+    expect(programs[0]).toContain("waitForSelector(vars.selector");
+    expect(programs[0]).toContain('"selector":"input[name=\\"emailAddress\\"]"');
+    expect(programs[1]).toContain("waitForSelector(vars.waitSelector");
+    expect(programs[1]).toContain('"waitSelector":"[data-roomscout-write-result]"');
+  });
+
+  it("still stops the provider session after the run budget is exhausted", async () => {
+    let now = 1_000;
+    const stop = vi.fn(async () => ({}));
+    const session = await createFirecrawlPortalSession({
+      transport: { scrape: async () => ({ metadata: { scrapeId: "scrape_1" } }), interact: vi.fn(), stop },
+      url: "https://roomscout.dev", profileName: "profile_1", saveChanges: true, timeoutMs: 10_000, now: () => now,
+    });
+    now = 50_000;
+    await expect(session.stop()).resolves.toBeUndefined();
+    expect(stop).toHaveBeenCalledWith("scrape_1", 20_000);
+  });
+
+  it("spaces Interact requests by the configured minimum interval", async () => {
+    const dispatchedAt: number[] = [];
+    const session = await createFirecrawlPortalSession({
+      transport: {
+        scrape: async () => ({ metadata: { scrapeId: "scrape_1" } }),
+        interact: async () => { dispatchedAt.push(Date.now()); return successful({ ok: true }); },
+        stop: async () => ({}),
+      },
+      url: "https://roomscout.dev", profileName: "profile_1", saveChanges: false, timeoutMs: 30_000,
+      pacing: { minIntervalMs: 60 },
+    });
+    await session.primitives.clickSelector?.({ selector: "#a" });
+    await session.primitives.clickSelector?.({ selector: "#b" });
+    expect(dispatchedAt).toHaveLength(2);
+    expect(dispatchedAt[1]! - dispatchedAt[0]!).toBeGreaterThanOrEqual(55);
+  });
+
+  it("names a profile write lock instead of a generic rejection", async () => {
+    const busy = Object.assign(new Error("Firecrawl request failed."), { data: { code: "firecrawl_request_failed", status: 409 } });
+    const session = await createFirecrawlPortalSession({
+      transport: { scrape: async () => ({ metadata: { scrapeId: "scrape_1" } }), interact: async () => { throw busy; }, stop: async () => ({}) },
+      url: "https://roomscout.dev", profileName: "profile_1", saveChanges: true,
+    });
+    await expect(session.primitives.getUrl()).rejects.toThrow("FIRECRAWL_PORTAL_INTERACT_PROFILE_BUSY");
+  });
+
   it("rejects other origins before allocating a scrape", async () => {
     const scrape = vi.fn(async () => ({ metadata: { scrapeId: "unused" } }));
     await expect(createFirecrawlPortalSession({
