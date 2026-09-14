@@ -44,6 +44,9 @@ export const liveOperatorCopy = {
   attentionOnly: "Braucht Aufmerksamkeit",
   noAttentionTasks: "Keine auffälligen Vorgänge in der aktuellen Stichprobe.",
   providerCheckOnly: "Nur Konfigurationsprüfung, kein Live-Test",
+  engineLabel: "Engine",
+  engineDefault: "Standard",
+  engineInactive: "nicht aktiv",
   configured: "Konfiguriert",
   notChecked: "Noch nicht geprüft",
   incomplete: "Unvollständig",
@@ -59,16 +62,32 @@ export const liveOperatorCopy = {
     "Konfiguriert bedeutet nicht automatisch erreichbar oder gesund. Diese Prüfung liest nur die vorhandene Konfiguration.",
   sourcesLoading: "Quellen werden geladen …",
   noSources: "Keine Quellen im aktuellen Live-Ergebnis.",
-  sourcesReadOnly:
-    "Diese Tabelle ist schreibgeschützt. Änderungen bleiben im bestehenden Quellenwerkzeug.",
   unknown: "Nicht angegeben",
   neverChecked: "Noch nicht geprüft",
-  openSources: "Quellen und Monitoring öffnen",
+  checkNow: "Jetzt Quellen prüfen",
+  checkRunning: "Prüfung läuft …",
+  checkStartFailed:
+    "Die Quellenprüfung konnte nicht gestartet werden. Bitte erneut versuchen.",
+  demoScopeNote:
+    "Der Demo-Lauf ist auf roomscout.dev begrenzt. Persönliche Quellenpräferenzen der Nutzer verändern diesen Status nicht.",
+  advancedView: "Erweiterte Ansicht",
+  sourceToggleLabel: "{name} aktivieren",
+  sourceToggleFailed:
+    "Die Quelle konnte nicht umgeschaltet werden. Bitte erneut versuchen.",
+  sourceReviewRequired:
+    "Diese Quelle ist noch nicht freigegeben und lässt sich nicht aktivieren.",
+  connection: {
+    demo: "Angebunden · Demo-Zugang",
+    connected: "Angebunden",
+    inactive: "Nicht aktiv",
+    degraded: "Gestört",
+  },
   sourceColumns: {
     source: "Quelle",
     region: "Region",
     connection: "Anbindung",
-    lastCheck: "Letzter Check",
+    lastCheck: "Letzter Demo-Check",
+    toggle: "Aktiv",
   },
   flagsUnavailable:
     "Die Schalter sind noch nicht an die Live-Einstellungen angebunden.",
@@ -128,7 +147,7 @@ export const liveOperatorCopy = {
   },
   providerRoles: {
     convexAiGateway: "Text & Auswertung",
-    firecrawl: "Quellen beobachten",
+    firecrawl: "Quellen beobachten · Portal-Zugänge",
     agentmail: "Scout-Postfächer",
     browserbase: "Portal-Zugänge",
     mapbox: "Karten und Geocoding",

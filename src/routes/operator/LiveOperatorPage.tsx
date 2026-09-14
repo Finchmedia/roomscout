@@ -1,9 +1,12 @@
 import type { FunctionReturnType } from "convex/server";
-import { useAction, useQuery } from "convex/react";
+import { ConvexError } from "convex/values";
+import { useAction, useMutation, useQuery } from "convex/react";
 import * as React from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../../../convex/_generated/api";
+import type { Id } from "../../../convex/_generated/dataModel";
 import { Card } from "../../components/ui/card";
+import { showToast } from "../../components/ui/sonner";
 import { StageBackground } from "../../ui/chrome/StageBackground";
 import { LiveOperatorSurface, type LiveOperatorMetric, type LiveOperatorProvider, type LiveOperatorSection, type LiveOperatorToolId } from "../../ui/operator/live";
 import { useCopy } from "../../ui/copy";
@@ -14,8 +17,21 @@ const TOOL_PATHS: Record<LiveOperatorToolId, string> = {
   outreach: "/ops/tools/outreach", inbox: "/ops/tools/inbox", audit: "/ops/tools/audit",
 };
 
+/** `demoSourceChecks.status` states that mean a run is still in flight. */
+const CHECK_RUNNING = new Set(["queued", "scraping", "processing", "waiting"]);
+
 function isSection(value: string | undefined): value is LiveOperatorSection {
   return value !== undefined && SECTIONS.has(value as LiveOperatorSection);
+}
+
+function errorCodeOf(error: unknown): string | undefined {
+  if (!(error instanceof ConvexError)) return undefined;
+  const data: unknown = error.data;
+  if (typeof data === "object" && data !== null && "code" in data) {
+    const code = (data as { code: unknown }).code;
+    if (typeof code === "string") return code;
+  }
+  return undefined;
 }
 
 export function LiveOperatorPage() {
@@ -26,8 +42,15 @@ export function LiveOperatorPage() {
   const currentUser = useQuery(api.users.current);
   const isOperator = currentUser?.role === "operator";
   const overview = useQuery(api.ops.overview, isOperator ? {} : "skip");
-  const sources = useQuery(api.ops.listSources, isOperator && section === "sources" ? { limit: 40 } : "skip");
+  const onSources = isOperator && section === "sources";
+  const sources = useQuery(api.ops.listSources, onSources ? { limit: 40 } : "skip");
+  const checkStatus = useQuery(api.demoSourceChecks.status, onSources ? {} : "skip");
+  const setSourceActive = useMutation(api.sourceRegistry.setSourceActive);
+  const requestCheck = useMutation(api.demoSourceChecks.requestNow);
   const checkReadiness = useAction(api.opsActions.providerReadiness);
+  // Captured once so every row formats its stamp against the same clock.
+  const [now] = React.useState(() => Date.now());
+  const [checkPending, setCheckPending] = React.useState(false);
   const [readiness, setReadiness] = React.useState<FunctionReturnType<typeof api.opsActions.providerReadiness> | null>(null);
   const [readinessLoading, setReadinessLoading] = React.useState(false);
   const [readinessError, setReadinessError] = React.useState<string>();
@@ -41,6 +64,31 @@ export function LiveOperatorPage() {
       .catch(() => setReadinessError(t("liveOperator.checkFailed")))
       .finally(() => setReadinessLoading(false));
   }, [checkReadiness, isOperator, readinessLoading, t]);
+
+  const toggleSource = React.useCallback(
+    async (sourceId: string, active: boolean) => {
+      try {
+        await setSourceActive({ sourceId: sourceId as Id<"sources">, active });
+      } catch (error: unknown) {
+        showToast(
+          t(
+            errorCodeOf(error) === "SOURCE_REVIEW_REQUIRED"
+              ? "liveOperator.sourceReviewRequired"
+              : "liveOperator.sourceToggleFailed",
+          ),
+        );
+      }
+    },
+    [setSourceActive, t],
+  );
+
+  const checkSources = React.useCallback(() => {
+    if (checkPending) return;
+    setCheckPending(true);
+    void requestCheck({ requestId: `manual:${Date.now()}` })
+      .catch(() => { showToast(t("liveOperator.checkStartFailed")); })
+      .finally(() => { setCheckPending(false); });
+  }, [checkPending, requestCheck, t]);
 
   if (currentUser === undefined || (isOperator && overview === undefined)) return <OperatorRouteState status>{t("liveOperator.accessChecking")}</OperatorRouteState>;
   if (!isOperator || !overview) return <OperatorRouteState>{t("liveOperator.accessDenied")}</OperatorRouteState>;
@@ -56,7 +104,7 @@ export function LiveOperatorPage() {
     { id: "activeVoiceSessions", value: overview.metrics.activeVoiceSessions },
     { id: "activeMailboxes", value: overview.metrics.activeMailboxes },
   ];
-  const providers: LiveOperatorProvider[] = readiness ? (["firecrawl", "agentmail", "browserbase", "mapbox", "openaiDirect"] as const).map((id) => ({ id, status: readiness[id].status })) : [];
+  const providers: LiveOperatorProvider[] = readiness ? (["firecrawl", "agentmail", "mapbox", "openaiDirect"] as const).map((id) => ({ id, status: readiness[id].status })) : [];
 
   return <LiveOperatorSurface
     section={section}
@@ -70,12 +118,17 @@ export function LiveOperatorPage() {
       status: source.status,
       health: source.health,
       accessMode: source.accessMode,
+      baseUrl: source.baseUrl,
       lastCheckedAt: source.lastCheckedAt,
     }))}
     boundedSample={overview.boundedSample}
     readinessLoading={readinessLoading}
     readinessError={readinessError}
+    now={now}
+    sourceCheckRunning={checkPending || CHECK_RUNNING.has(checkStatus?.status ?? "idle")}
     onRefreshReadiness={refreshReadiness}
+    onCheckSources={checkSources}
+    onToggleSource={toggleSource}
     onSectionChange={(next) => navigate(next === "overview" ? "/ops" : `/ops/${next}`)}
     onToolOpen={(tool) => navigate(TOOL_PATHS[tool])}
     onClose={() => navigate("/app/scout")}

@@ -2,6 +2,12 @@ import * as React from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { Overline } from "@/components/ui/overline";
 import { StatusDot } from "@/components/ui/status-dot";
@@ -19,6 +25,7 @@ import { AppHeader } from "@/ui/chrome/AppHeader";
 import { PanelDialog } from "@/ui/chrome/PanelDialog";
 import { StageBackground } from "@/ui/chrome/StageBackground";
 import { useCopy, type StringCopyKey } from "@/ui/copy";
+import { formatMessageStamp } from "@/ui/copy/format";
 import { PartnerLogo } from "@/ui/operator/IntegrationTile";
 import { PageIntro } from "@/ui/operator/PageIntro";
 
@@ -64,6 +71,7 @@ export interface LiveOperatorSource {
   status: string;
   health: string;
   accessMode?: string;
+  baseUrl?: string;
   lastCheckedAt?: number;
 }
 interface LiveOperatorSurfaceProps {
@@ -75,7 +83,14 @@ interface LiveOperatorSurfaceProps {
   boundedSample: number;
   readinessLoading: boolean;
   readinessError?: string;
+  /** Captured once by the route so a render stays reproducible. */
+  now: number;
+  /** A demo source check is queued or running. */
+  sourceCheckRunning?: boolean;
   onRefreshReadiness: () => void;
+  onCheckSources?: () => void;
+  /** Resolves when the toggle mutation settled — the row stays disabled until then. */
+  onToggleSource?: (sourceId: string, active: boolean) => void | Promise<void>;
   onSectionChange: (section: LiveOperatorSection) => void;
   onToolOpen: (tool: LiveOperatorToolId) => void;
   onClose: () => void;
@@ -117,12 +132,15 @@ const LOGOS: Partial<Record<LiveOperatorProvider["id"], string>> = {
   browserbase: "/design/partners/logo-browserbase.png",
   openaiDirect: "/design/partners/logo-openai.svg",
 };
+/**
+ * Fixed display order. `browserbase` is deliberately absent: the portal engine
+ * is shown as a picker inside the Firecrawl entry instead of as its own tile.
+ */
 const PROVIDER_IDS: readonly LiveOperatorProvider["id"][] = [
   "convexAiGateway",
-  "firecrawl",
   "agentmail",
-  "browserbase",
   "openaiDirect",
+  "firecrawl",
   "mapbox",
 ];
 const ATTENTION_STATUSES = new Set([
@@ -133,12 +151,30 @@ const ATTENTION_STATUSES = new Set([
   "degraded",
   "unhealthy",
 ]);
-function sourceHealthTone(health: string): "success" | "warning" | "idle" {
-  const normalized = health.toLowerCase();
-  if (normalized === "healthy") return "success";
-  if (["degraded", "failing", "failed", "unhealthy"].includes(normalized))
-    return "warning";
-  return "idle";
+const DEGRADED_HEALTH = new Set([
+  "degraded",
+  "failing",
+  "failed",
+  "unhealthy",
+]);
+/**
+ * The „Anbindung“ cell. A degraded source reads as disturbed whatever its
+ * status says; an active source on the controlled demo origin names it.
+ */
+function sourceConnection(source: LiveOperatorSource): {
+  tone: "success" | "warning" | "muted";
+  key: StringCopyKey;
+} {
+  if (DEGRADED_HEALTH.has(source.health.toLowerCase()))
+    return { tone: "warning", key: "liveOperator.connection.degraded" };
+  if (source.status !== "active")
+    return { tone: "muted", key: "liveOperator.connection.inactive" };
+  return {
+    tone: "success",
+    key: source.baseUrl?.includes("roomscout")
+      ? "liveOperator.connection.demo"
+      : "liveOperator.connection.connected",
+  };
 }
 const statusKey = (
   status: LiveOperatorProvider["status"] | null,
@@ -175,6 +211,78 @@ function ProviderMark({
     <span className="flex size-[var(--space-13)] items-center justify-center rounded-circle border border-rs-border-control bg-rs-surface-subtle">
       <Icon name="globe" size={16} />
     </span>
+  );
+}
+/**
+ * Portal-engine picker inside the Firecrawl entry. Purely informational — the
+ * engine is a deployment decision, so the menu states it rather than changing
+ * it, and Browserbase stays listed as the inactive alternative.
+ */
+function EnginePicker() {
+  const { t } = useCopy();
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="2xs" className="self-start text-rs-ink-4">
+          {t("liveOperator.engineLabel")}: {t("liveOperator.providers.firecrawl")}
+          <Icon name="chevron-down" size={14} />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent size="compact" align="start">
+        <DropdownMenuItem>
+          <Icon name="check" />
+          {t("liveOperator.providers.firecrawl")} ·{" "}
+          {t("liveOperator.engineDefault")}
+        </DropdownMenuItem>
+        <DropdownMenuItem disabled>
+          {t("liveOperator.providers.browserbase")} ·{" "}
+          {t("liveOperator.engineInactive")}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+/**
+ * Overview integration tile. The card is a plain container so the Firecrawl
+ * tile can carry the engine picker next to — never inside — the open button.
+ */
+function ProviderTile({
+  provider,
+  onOpen,
+  footer,
+}: {
+  provider: { id: LiveOperatorProvider["id"]; status: LiveOperatorProvider["status"] | null };
+  onOpen: () => void;
+  footer?: React.ReactNode;
+}) {
+  const { t } = useCopy();
+  return (
+    <Card
+      size="sm"
+      className="flex flex-col gap-[var(--space-6)] rounded-card px-[var(--space-9)] py-[var(--space-8)] transition-[background-color] duration-[var(--duration-fast)] hover:bg-rs-surface-hover-soft"
+    >
+      <button
+        type="button"
+        className="flex cursor-pointer flex-col gap-[var(--space-6)] text-left"
+        onClick={onOpen}
+      >
+        <span className="flex items-center gap-[var(--space-5)]">
+          <ProviderMark provider={provider} />
+          <span className="min-w-0">
+            <span className="block text-[16.5px] font-medium">
+              {t(`liveOperator.providers.${provider.id}`)}
+            </span>
+            <span className="mt-px block text-[length:var(--text-caption-size)] text-rs-ink-4">
+              {t(`liveOperator.providerRoles.${provider.id}`)}
+            </span>
+          </span>
+        </span>
+        <StatusDot tone={statusTone(provider.status)}>
+          {t(statusKey(provider.status))}
+        </StatusDot>
+      </button>
+      {footer}
+    </Card>
   );
 }
 function ActivityList({
@@ -265,11 +373,20 @@ function ActivityList({
 }
 
 export function LiveOperatorSurface(props: LiveOperatorSurfaceProps) {
-  const { t } = useCopy();
+  const { t, locale } = useCopy();
   const [openProvider, setOpenProvider] = React.useState<
     LiveOperatorProvider["id"] | null
   >(null);
   const [attentionOnly, setAttentionOnly] = React.useState(false);
+  const [pendingSource, setPendingSource] = React.useState<string | null>(null);
+  const { onToggleSource } = props;
+  const toggleSource = (sourceId: string, active: boolean) => {
+    if (!onToggleSource) return;
+    setPendingSource(sourceId);
+    void Promise.resolve(onToggleSource(sourceId, active)).finally(() => {
+      setPendingSource((current) => (current === sourceId ? null : current));
+    });
+  };
   const alerts = props.metrics.filter(
     (metric) => metric.attention && metric.value > 0,
   );
@@ -285,9 +402,6 @@ export function LiveOperatorSurface(props: LiveOperatorSurfaceProps) {
         status: null,
       },
   );
-  const openAiProvider = providers.find(
-    (provider) => provider.id === "openaiDirect",
-  )!;
   const groups = [
     {
       id: "betrieb",
@@ -356,47 +470,20 @@ export function LiveOperatorSurface(props: LiveOperatorSurfaceProps) {
             </Overline>
             <div className="mt-[var(--space-5)] grid gap-[var(--space-5)] [grid-template-columns:repeat(auto-fit,minmax(210px,1fr))]">
               {providers.slice(0, 4).map((provider) => (
-                <Card key={provider.id} asChild size="sm" className="rounded-card px-[var(--space-9)] py-[var(--space-8)] transition-[background-color] duration-[var(--duration-fast)] hover:bg-rs-surface-hover-soft">
-                  <button
-                    type="button"
-                    className="flex cursor-pointer flex-col gap-[var(--space-6)] text-left hover:bg-rs-surface-hover-soft"
-                    onClick={() => {
-                      setOpenProvider(provider.id);
-                      props.onSectionChange("integrations");
-                    }}
-                  >
-                    <span className="flex items-center gap-[var(--space-5)]">
-                      <ProviderMark provider={provider} />
-                      <span className="min-w-0">
-                        <span className="block text-[16.5px] font-medium">{t(`liveOperator.providers.${provider.id}`)}</span>
-                        <span className="mt-px block text-[length:var(--text-caption-size)] text-rs-ink-4">{t(`liveOperator.providerRoles.${provider.id}`)}</span>
-                      </span>
-                    </span>
-                    <StatusDot tone={statusTone(provider.status)}>
-                      {t(statusKey(provider.status))}
-                    </StatusDot>
-                  </button>
-                </Card>
+                <ProviderTile
+                  key={provider.id}
+                  provider={provider}
+                  footer={
+                    provider.id === "firecrawl" ? <EnginePicker /> : undefined
+                  }
+                  onOpen={() => {
+                    setOpenProvider(provider.id);
+                    props.onSectionChange("integrations");
+                  }}
+                />
               ))}
             </div>
-            <button
-              type="button"
-              className="mt-[var(--space-6)] flex cursor-pointer flex-wrap items-center gap-[var(--space-6)] border-b border-rs-border-divider pb-[var(--space-8)] text-left"
-              onClick={() => {
-                setOpenProvider("openaiDirect");
-                props.onSectionChange("integrations");
-              }}
-            >
-              <ProviderMark provider={{ id: "openaiDirect" }} />
-              <span>{t("liveOperator.providers.openaiDirect")}</span>
-              <span className="text-rs-ink-4">
-                {t("liveOperator.providerRoles.openaiDirect")}
-              </span>
-              <StatusDot tone={statusTone(openAiProvider.status)}>
-                {t(statusKey(openAiProvider.status))}
-              </StatusDot>
-            </button>
-            <Overline className="mt-[var(--space-11)]">
+            <Overline className="mt-[var(--space-12)]">
               {t("liveOperator.tasks")}
             </Overline>
             <ActivityList
@@ -447,10 +534,24 @@ export function LiveOperatorSurface(props: LiveOperatorSurfaceProps) {
       case "sources":
         return (
           <div>
-            <PageIntro
-              title={t("liveOperator.sourcesTitle")}
-              lead={t("liveOperator.sourcesSubtitle")}
-            />
+            <div className="flex flex-wrap items-end justify-between gap-[var(--space-7)]">
+              <PageIntro
+                title={t("liveOperator.sourcesTitle")}
+                lead={t("liveOperator.sourcesSubtitle")}
+              />
+              <Button
+                size="xs"
+                variant="secondary"
+                disabled={props.sourceCheckRunning ?? !props.onCheckSources}
+                onClick={props.onCheckSources}
+              >
+                {t(
+                  props.sourceCheckRunning
+                    ? "liveOperator.checkRunning"
+                    : "liveOperator.checkNow",
+                )}
+              </Button>
+            </div>
             {props.sources === undefined ? (
               <Card size="sm" tone="faint" className="mt-[var(--space-12)]">
                 {t("liveOperator.sourcesLoading")}
@@ -475,51 +576,74 @@ export function LiveOperatorSurface(props: LiveOperatorSurfaceProps) {
                     <TableHead>
                       {t("liveOperator.sourceColumns.lastCheck")}
                     </TableHead>
+                    <TableHead>
+                      <span className="sr-only">
+                        {t("liveOperator.sourceColumns.toggle")}
+                      </span>
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {props.sources.map((source) => (
-                    <TableRow key={source.id}>
-                      <TableCell>
-                        <span className="flex items-center gap-[var(--space-5)]">
-                          <span className="flex size-[var(--space-13)] items-center justify-center rounded-circle border border-rs-border-control bg-rs-surface-subtle">
-                            <Icon name="globe" size={16} />
+                  {props.sources.map((source) => {
+                    const connection = sourceConnection(source);
+                    return (
+                      <TableRow key={source.id}>
+                        <TableCell>
+                          <span className="flex items-center gap-[var(--space-5)]">
+                            <span className="flex size-[var(--space-13)] items-center justify-center rounded-circle border border-rs-border-control bg-rs-surface-subtle">
+                              <Icon name="globe" size={16} />
+                            </span>
+                            {source.name}
                           </span>
-                          {source.name}
-                        </span>
-                      </TableCell>
-                      <TableCell muted>
-                        {source.region ?? t("liveOperator.unknown")}
-                      </TableCell>
-                      <TableCell>
-                        <StatusDot tone={sourceHealthTone(source.health)}>
-                          {source.health} · {source.status}
-                          {source.accessMode ? ` · ${source.accessMode}` : ""}
-                        </StatusDot>
-                      </TableCell>
-                      <TableCell muted>
-                        {source.lastCheckedAt
-                          ? new Date(source.lastCheckedAt).toLocaleString(
-                              "de-DE",
-                            )
-                          : t("liveOperator.neverChecked")}
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                        </TableCell>
+                        <TableCell muted>
+                          {source.region ?? t("liveOperator.unknown")}
+                        </TableCell>
+                        <TableCell>
+                          <StatusDot tone={connection.tone}>
+                            {t(connection.key)}
+                          </StatusDot>
+                        </TableCell>
+                        <TableCell muted>
+                          {source.lastCheckedAt
+                            ? formatMessageStamp(
+                                locale,
+                                source.lastCheckedAt,
+                                props.now,
+                              )
+                            : t("liveOperator.unavailableDash")}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Switch
+                            checked={source.status === "active"}
+                            disabled={
+                              !onToggleSource || pendingSource === source.id
+                            }
+                            label={t("liveOperator.sourceToggleLabel", {
+                              name: source.name,
+                            })}
+                            onCheckedChange={(checked) =>
+                              toggleSource(source.id, checked)
+                            }
+                          />
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             )}
+            <p className="mt-[var(--space-8)] text-sm text-rs-ink-6">
+              {t("liveOperator.demoScopeNote")}
+            </p>
             <Button
-              className="mt-[var(--space-8)]"
-              variant="secondary"
-              size="xs"
+              className="mt-[var(--space-4)]"
+              variant="link"
+              size="sm"
               onClick={() => props.onToolOpen("sources")}
             >
-              {t("liveOperator.openSources")}
+              {t("liveOperator.advancedView")}
             </Button>
-            <p className="mt-[var(--space-6)] text-sm text-rs-ink-6">
-              {t("liveOperator.sourcesReadOnly")}
-            </p>
           </div>
         );
       case "tasks":
@@ -618,27 +742,33 @@ export function LiveOperatorSurface(props: LiveOperatorSurfaceProps) {
                 const open = provider.id === openProvider;
                 return (
                   <div key={provider.id}>
-                    <button
-                      type="button"
-                      aria-expanded={open}
-                      className="grid w-full cursor-pointer items-center gap-[var(--space-5)] py-[var(--space-7)] text-left min-[760px]:grid-cols-[1.2fr_1.3fr_1fr_auto]"
-                      onClick={() => setOpenProvider(open ? null : provider.id)}
-                    >
-                      <span className="flex items-center gap-[var(--space-5)] font-medium">
-                        <ProviderMark provider={provider} />
-                        {t(`liveOperator.providers.${provider.id}`)}
-                      </span>
-                      <span className="text-rs-ink-4">
-                        {t(`liveOperator.providerRoles.${provider.id}`)}
-                      </span>
-                      <StatusDot tone={statusTone(provider.status)}>
-                        {t(statusKey(provider.status))}
-                      </StatusDot>
-                      <Icon
-                        name="chevron-down"
-                        className={open ? "rotate-180" : ""}
-                      />
-                    </button>
+                    <div className="flex items-center gap-[var(--space-5)]">
+                      <button
+                        type="button"
+                        data-slot="operator-integration-row"
+                        aria-expanded={open}
+                        className="grid min-w-0 flex-1 cursor-pointer items-center gap-[var(--space-5)] py-[var(--space-7)] text-left min-[760px]:grid-cols-[1.2fr_1.3fr_1fr_auto]"
+                        onClick={() =>
+                          setOpenProvider(open ? null : provider.id)
+                        }
+                      >
+                        <span className="flex items-center gap-[var(--space-5)] font-medium">
+                          <ProviderMark provider={provider} />
+                          {t(`liveOperator.providers.${provider.id}`)}
+                        </span>
+                        <span className="text-rs-ink-4">
+                          {t(`liveOperator.providerRoles.${provider.id}`)}
+                        </span>
+                        <StatusDot tone={statusTone(provider.status)}>
+                          {t(statusKey(provider.status))}
+                        </StatusDot>
+                        <Icon
+                          name="chevron-down"
+                          className={open ? "rotate-180" : ""}
+                        />
+                      </button>
+                      {provider.id === "firecrawl" ? <EnginePicker /> : null}
+                    </div>
                     {open ? (
                       <div className="animate-rs-fade-up grid gap-[var(--space-4)] pb-[var(--space-7)] pl-[var(--space-16)] text-sm text-rs-ink-4 min-[760px]:grid-cols-2">
                         <div>

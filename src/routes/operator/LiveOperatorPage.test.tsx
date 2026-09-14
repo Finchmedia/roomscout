@@ -23,7 +23,10 @@ const fixtures = vi.hoisted(() => ({
     openaiDirect: { status: "client_only" }, frontendMapbox: { status: "client_only" },
   }),
   queries: vi.fn(),
-  sources: [{ _id: "source-test", name: "Testquelle", geographicScope: "Testregion", status: "paused", health: "unknown", accessMode: "public" }],
+  sources: [{ _id: "source-test", name: "Testquelle", baseUrl: "https://roomscout.dev/inserate", geographicScope: "Testregion", status: "paused", health: "unknown", accessMode: "public" }],
+  checkStatus: { status: "idle" } as { status: string },
+  setSourceActive: vi.fn().mockResolvedValue(null),
+  requestCheck: vi.fn().mockResolvedValue({ accepted: true, status: "queued" }),
 }));
 
 vi.mock("convex/react", () => ({
@@ -33,9 +36,14 @@ vi.mock("convex/react", () => ({
     if (name === "users:current") return fixtures.user;
     if (name === "ops:overview") return fixtures.overview;
     if (name === "ops:listSources") return fixtures.sources;
+    if (name === "demoSourceChecks:status") return fixtures.checkStatus;
     return undefined;
   },
   useAction: () => fixtures.readiness,
+  useMutation: (ref: Parameters<typeof getFunctionName>[0]) =>
+    getFunctionName(ref) === "demoSourceChecks:requestNow"
+      ? fixtures.requestCheck
+      : fixtures.setSourceActive,
 }));
 
 function renderRoute(path = "/ops") {
@@ -45,8 +53,11 @@ function renderRoute(path = "/ops") {
 afterEach(cleanup);
 beforeEach(() => {
   fixtures.user = { role: "operator" };
+  fixtures.checkStatus = { status: "idle" };
   fixtures.readiness.mockClear();
   fixtures.queries.mockClear();
+  fixtures.setSourceActive.mockClear();
+  fixtures.requestCheck.mockClear();
 });
 
 it("renders only real overview metrics and preserves links to operational tools", () => {
@@ -90,13 +101,36 @@ it("keeps a local authorization boundary if mounted outside the guarded router",
   expect(screen.queryByText("Veröffentlichte Signale")).not.toBeInTheDocument();
   expect(fixtures.queries).toHaveBeenCalledWith("ops:overview", "skip");
   expect(fixtures.queries).toHaveBeenCalledWith("ops:listSources", "skip");
+  expect(fixtures.queries).toHaveBeenCalledWith("demoSourceChecks:status", "skip");
 });
 
 it("loads real source rows only on the authorized sources section", () => {
   renderRoute("/ops/sources");
   expect(fixtures.queries).toHaveBeenCalledWith("ops:listSources", { limit: 40 });
+  expect(fixtures.queries).toHaveBeenCalledWith("demoSourceChecks:status", {});
   expect(screen.getByText("Testquelle")).toBeInTheDocument();
   expect(screen.getByText("Testregion")).toBeInTheDocument();
+  expect(screen.getByText("Nicht aktiv")).toBeInTheDocument();
+});
+
+it("activates a source through the registry mutation", async () => {
+  renderRoute("/ops/sources");
+  fireEvent.click(screen.getByRole("switch", { name: "Testquelle aktivieren" }));
+  await waitFor(() =>
+    expect(fixtures.setSourceActive).toHaveBeenCalledWith({ sourceId: "source-test", active: true }),
+  );
+});
+
+it("requests a bounded manual check and locks the button while one runs", async () => {
+  renderRoute("/ops/sources");
+  fireEvent.click(screen.getByRole("button", { name: "Jetzt Quellen prüfen" }));
+  await waitFor(() => expect(fixtures.requestCheck).toHaveBeenCalledTimes(1));
+  expect(fixtures.requestCheck.mock.calls[0]![0]).toMatchObject({ requestId: expect.stringMatching(/^manual:\d+$/) as unknown as string });
+
+  cleanup();
+  fixtures.checkStatus = { status: "scraping" };
+  renderRoute("/ops/sources");
+  expect(screen.getByRole("button", { name: "Prüfung läuft …" })).toBeDisabled();
 });
 
 it("does not subscribe to source details from the overview", () => {
