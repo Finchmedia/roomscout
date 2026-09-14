@@ -1599,6 +1599,18 @@ Nachbar-Selektoren in `app.css` (`.pane`, `.convo`, `.rs-handoff-sheet` u. a.)
 warten auf einen Sweep; `api.opportunities.createHandoff/updateStatus/listMine`
 haben keinen UI-Aufrufer mehr.
 
+Erster Blick des Maintainers auf Prod (22:10): die Scout-Nachrichten fehlten
+scheinbar und die Anbieter-Blasen liefen rechts aus dem Panel. Ursache, mit den
+echten Prod-Daten in einer lokalen Playwright-Testseite reproduziert: der
+`SidebarProvider` ist das Grid-Item des Dialogs; ohne `min-w-0` wächst die
+implizite Spalte auf die Länge einer nicht umbrechbaren Zeile, und die
+eingeklappte Scout-Notiz war mit `truncate` genau so eine Zeile (600 Zeichen).
+Das ganze Panel wurde 3900 px breit, alles Rechtsbündige lag außerhalb des
+Sichtfelds. Behoben mit `min-w-0` am Grid-Item und `line-clamp-1` statt
+`truncate` an der Notiz (Commit c0011a0); Frontend aus einem sauberen Worktree
+neu gebaut und auf Prod und Dev hochgeladen, weil der Arbeitsbaum zu dem
+Zeitpunkt die halbfertigen Änderungen von Kandidat K enthielt.
+
 ### 2026-09-14 — Scout-Chat (Kandidat K): Streaming und ein Blasen-System
 
 Befund: der Live-Chat antwortet über `generateText`, die Antwort erscheint erst
