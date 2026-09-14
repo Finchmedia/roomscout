@@ -1,12 +1,21 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
+import agentTest from "@convex-dev/agent/test";
+import workpoolTest from "@convex-dev/workpool/test";
 import { expect, it } from "vitest";
 import { internal } from "./_generated/api";
 import schema from "./schema";
+import { messageSafetySchema } from "./lib/messageSafety";
 
 const modules = import.meta.glob("./**/*.ts");
 
-async function seedScoutWebform(t: ReturnType<typeof convexTest>) {
+function testConvex() {
+  const t = convexTest(schema, modules);
+  agentTest.register(t); workpoolTest.register(t, "scoutWorkpool");
+  return t;
+}
+
+async function seedScoutWebform(t: ReturnType<typeof convexTest>, domain = "bandnet.hamburg") {
   return await t.run(async (ctx) => {
     const now = Date.now();
     const ownerId = await ctx.db.insert("users", {
@@ -31,7 +40,7 @@ async function seedScoutWebform(t: ReturnType<typeof convexTest>) {
     const platformId = await ctx.db.insert("sourcePlatforms", {
       slug: "bandnet",
       name: "Bandnet",
-      canonicalDomain: "bandnet.hamburg",
+      canonicalDomain: domain,
       kind: "community",
       status: "active",
       firstSeenAt: now,
@@ -43,7 +52,7 @@ async function seedScoutWebform(t: ReturnType<typeof convexTest>) {
       platformId,
       slug: "bandnet-supply",
       name: "Bandnet supply",
-      baseUrl: "https://bandnet.hamburg/anzeige/kategorie/19/proberaum-frei",
+      baseUrl: `https://${domain}/anzeige/kategorie/19/proberaum-frei`,
       side: "supply",
       status: "active",
       health: "healthy",
@@ -52,7 +61,7 @@ async function seedScoutWebform(t: ReturnType<typeof convexTest>) {
     });
     const sourceTargetId = await ctx.db.insert("sourceTargets", {
       sourceId,
-      url: "https://bandnet.hamburg/anzeige/kategorie/19/proberaum-frei",
+      url: `https://${domain}/anzeige/kategorie/19/proberaum-frei`,
       mode: "scrape",
       changeTrackingTag: "bandnet-supply",
       scheduleMinutes: 1_440,
@@ -65,8 +74,8 @@ async function seedScoutWebform(t: ReturnType<typeof convexTest>) {
       sourceId,
       sourceTargetId,
       externalId: "room-42",
-      canonicalUrl: "https://bandnet.hamburg/anzeige/42",
-      detailUrl: "https://bandnet.hamburg/anzeige/42",
+      canonicalUrl: `https://${domain}/anzeige/42`,
+      detailUrl: `https://${domain}/anzeige/42`,
       title: "Room in Bramfeld",
       excerpt: "Public listing",
       side: "supply",
@@ -97,7 +106,7 @@ async function seedScoutWebform(t: ReturnType<typeof convexTest>) {
       signalId,
       sourceEntryId: entryId,
       kind: "platform",
-      value: "https://bandnet.hamburg/anzeige/42/kontaktieren",
+      value: `https://${domain}/anzeige/42/kontaktieren`,
       confidence: 1,
       createdAt: now,
       updatedAt: now,
@@ -117,7 +126,7 @@ async function seedScoutWebform(t: ReturnType<typeof convexTest>) {
       externalApprovalRequired: true,
       robotsDecision: "allowed",
       termsDecision: "allowed",
-      evidenceUrls: ["https://bandnet.hamburg/nutzungsbedingungen"],
+      evidenceUrls: [`https://${domain}/nutzungsbedingungen`],
       nextReviewAt: now + 86_400_000,
       createdAt: now,
       updatedAt: now,
@@ -165,8 +174,8 @@ async function seedScoutWebform(t: ReturnType<typeof convexTest>) {
   });
 }
 
-it("holds legacy real-source Autopilot drafts instead of sending fictional demo outreach", async () => {
-  const t = convexTest(schema, modules);
+it("stops legacy real-source Autopilot drafts with a reason instead of sending fictional demo outreach", async () => {
+  const t = testConvex();
   const fixture = await seedScoutWebform(t);
   const result = await t.mutation(internal.externalActions.createContactFormFromScout, {
     ownerId: fixture.ownerId,
@@ -177,25 +186,28 @@ it("holds legacy real-source Autopilot drafts instead of sending fictional demo 
     body: "Hello, is the room still available for a four-piece band?",
   });
 
-  expect(result).toMatchObject({ status: "awaiting_approval", authorizedByAutopilot: false });
+  expect(result).toMatchObject({ status: "blocked", authorizedByAutopilot: false });
   const state = await t.run(async (ctx) => ({
     request: await ctx.db.get(result.requestId),
     approval: await ctx.db.query("actionApprovals").withIndex("by_request_and_content_version", (q) =>
       q.eq("requestId", result.requestId).eq("contentVersion", 1),
     ).unique(),
+    audit: await ctx.db.query("auditEvents").collect(),
   }));
   expect(state.request).toMatchObject({
     mandateId: fixture.mandateId,
     automationMode: "standing_mandate",
-    status: "awaiting_approval",
-    error: "CONTROLLED_DEMO_ONLY",
+    status: "blocked",
+    error: "controlled_portal_only",
+    gate: { outcome: "stop", reason: "controlled_portal_only", detail: "bandnet.hamburg", autonomyVersion: 0 },
   });
   expect(state.approval).toBeNull();
+  expect(state.audit.map((event) => event.eventType)).toEqual(["action.scout_drafted_webform", "action.stopped_by_gate"]);
 });
 
-it("falls back to human review when Scout prose contains a binding commitment", async () => {
-  const t = convexTest(schema, modules);
-  const fixture = await seedScoutWebform(t);
+it("turns a binding Scout draft into an Entscheidung with the reason, never silent review", async () => {
+  const t = testConvex();
+  const fixture = await seedScoutWebform(t, "roomscout.dev");
   const result = await t.mutation(internal.externalActions.createContactFormFromScout, {
     ownerId: fixture.ownerId,
     savedNeedId: fixture.savedNeedId,
@@ -205,10 +217,18 @@ it("falls back to human review when Scout prose contains a binding commitment", 
     body: "We accept the contract and confirm the booking.",
   });
 
-  expect(result).toMatchObject({
-    status: "awaiting_approval",
-    authorizedByAutopilot: false,
+  // Wording alone never decides: the request waits for the safety verdict.
+  expect(result).toMatchObject({ status: "queued", authorizedByAutopilot: false });
+  expect(await t.run((ctx) => ctx.db.get(result.requestId))).toMatchObject({
+    automationMode: "standing_mandate", status: "queued", gate: { outcome: "wait", reason: "safety_pending" },
   });
-  const request = await t.run(async (ctx) => await ctx.db.get(result.requestId));
-  expect(request).toMatchObject({ automationMode: "exact_once", status: "awaiting_approval" });
+
+  const input = (await t.query(internal.messageSafety.getInput, { requestId: result.requestId }))!;
+  const binding = messageSafetySchema.parse({ classification: "binding", explanation: "Accepts the contract and confirms a booking.", personalDataScopes: ["reply_email"], proposedMonthlyPriceEur: null, unsupportedClaims: [] });
+  expect(await t.mutation(internal.messageSafety.recordAndAuthorize, { requestId: result.requestId, snapshotHash: input.snapshotHash, assessment: binding })).toBe(false);
+  expect(await t.run((ctx) => ctx.db.get(result.requestId))).toMatchObject({
+    automationMode: "standing_mandate", status: "awaiting_approval",
+    gate: { outcome: "ask_user", reason: "binding_content", detail: "Accepts the contract and confirms a booking." },
+  });
+  expect(await t.run((ctx) => ctx.db.query("actionApprovals").collect())).toEqual([]);
 });

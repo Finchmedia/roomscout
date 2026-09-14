@@ -59,6 +59,7 @@ const statusCopy: Record<ActionStatus, { label: string; tone: string }> = {
   failed: { label: "Failed", tone: "warn" },
   cancelled: { label: "Cancelled", tone: "warn" },
   expired: { label: "Expired", tone: "warn" },
+  blocked: { label: "Gestoppt", tone: "warn" },
 };
 
 function actionLabel(action: ActionLifecycleItem): string {

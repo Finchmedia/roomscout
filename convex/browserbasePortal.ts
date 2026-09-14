@@ -2297,6 +2297,8 @@ async function executeApprovedWriteForOwner(
   // provider key cannot strand a newly approved action in `claimed`.
   const apiKey = browserbaseApiKey();
   const client = createBrowserbaseClient(apiKey);
+  const gate = await ctx.runMutation(internal.externalActions.prepareClaim, { ownerId, requestId, executor: "browserbase" });
+  if (gate.outcome !== "proceed") throw new ConvexError({ code: `GATE_${gate.outcome.toUpperCase()}`, reason: gate.reason });
   const claim: ClaimedBrowserAction = await ctx.runMutation(
     internal.externalActions.claimForExecutor,
     { ownerId, requestId, executor: "browserbase" },
@@ -2681,12 +2683,12 @@ export const executeApprovedWriteWorker = internalAction({
       const busy = error instanceof ConvexError && typeof error.data === "object" && error.data !== null &&
         "code" in error.data && error.data.code === "BROWSER_SESSION_BUSY";
       if (!busy) throw error;
+      // prepareClaim normally parks a busy browser as a wait with re-dispatch;
+      // this only covers the race between prepareClaim and the claim itself.
       const attempt = Math.max(0, Math.floor(args.busyAttempt ?? 0));
       if (attempt < 5) {
         await ctx.scheduler.runAfter(Math.min(60_000, 2_000 * 2 ** attempt), internal.browserbasePortal.executeApprovedWriteWorker,
           { ownerId: args.ownerId, requestId: args.requestId, busyAttempt: attempt + 1 });
-      } else {
-        await ctx.runMutation(internal.externalActions.recordBrowserSessionBusy, { ownerId: args.ownerId, requestId: args.requestId });
       }
       throw error;
     }

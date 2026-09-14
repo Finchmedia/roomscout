@@ -333,6 +333,8 @@ export const executeApprovedReply = internalAction({
   args: { ownerId: v.id("users"), requestId: v.id("actionRequests") }, returns: v.null(),
   handler: async (ctx, args) => {
     if (!await ctx.runQuery(internal.devUserReset.userMayRunWork, { userId: args.ownerId })) return null;
+    const gate = await ctx.runMutation(internal.externalActions.prepareClaim, { ...args, executor: "agentmail" });
+    if (gate.outcome !== "proceed") return null;
     const claim = await ctx.runMutation(internal.externalActions.claimForExecutor, { ...args, executor: "agentmail" });
     if (claim.executionStatus !== "claimed" || claim.alreadyClaimed) return null;
     if (!await ctx.runQuery(internal.devUserReset.userMayRunWork, { userId: args.ownerId })) {

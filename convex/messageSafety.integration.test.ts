@@ -2,6 +2,7 @@
 import { convexTest } from "convex-test";
 import agentTest from "@convex-dev/agent/test";
 import workpoolTest from "@convex-dev/workpool/test";
+import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
@@ -55,8 +56,14 @@ async function fixture(options?: { initial?: boolean }) {
   expect(requestId).toBeTruthy();
   const input = (await t.query(internal.messageSafety.getInput, { requestId }))!;
   const authorize = (assessment = clear) => t.mutation(internal.messageSafety.recordAndAuthorize, { requestId, snapshotHash: input.snapshotHash, assessment });
-  const claim = () => t.mutation(internal.externalActions.claimForExecutor, { ownerId: f.ownerId, requestId, executor: "browserbase" });
-  return { t, ...f, requestId, input, authorize, claim };
+  // Executors run the Freigabeprüfung (prepareClaim) before the transactional claim.
+  const claim = async () => {
+    const gate = await t.mutation(internal.externalActions.prepareClaim, { ownerId: f.ownerId, requestId, executor: "browserbase" });
+    if (gate.outcome !== "proceed") throw new ConvexError({ code: `GATE_${gate.outcome.toUpperCase()}`, reason: gate.reason });
+    return t.mutation(internal.externalActions.claimForExecutor, { ownerId: f.ownerId, requestId, executor: "browserbase" });
+  };
+  const request = () => t.run((ctx) => ctx.db.get(requestId));
+  return { t, ...f, requestId, input, authorize, claim, request };
 }
 
 describe("semantic final-message gate and provider dispatch", () => {
@@ -82,10 +89,14 @@ describe("semantic final-message gate and provider dispatch", () => {
     expect(await f.t.withIdentity({ subject: f.otherId }).query(api.externalActions.listMine, {})).toEqual([]);
   });
 
-  it.each(["binding", "unsafe", "uncertain"] as const)("does not authorize a %s semantic verdict", async (classification) => {
+  it.each([
+    ["binding", "awaiting_approval", "binding_content"],
+    ["uncertain", "awaiting_approval", "uncertain_content"],
+    ["unsafe", "blocked", "unsafe_content"],
+  ] as const)("does not authorize a %s semantic verdict: %s (%s)", async (classification, status, reason) => {
     const f = await fixture();
     expect(await f.authorize({ ...clear, classification })).toBe(false);
-    expect((await f.t.run((ctx) => ctx.db.get(f.requestId)))?.status).toBe("awaiting_approval");
+    expect(await f.request()).toMatchObject({ status, gate: { outcome: status === "blocked" ? "stop" : "ask_user", reason } });
     expect(await f.t.run((ctx) => ctx.db.query("actionApprovals").collect())).toEqual([]);
   });
 
@@ -103,14 +114,15 @@ describe("semantic final-message gate and provider dispatch", () => {
     expect((await automatic.t.withIdentity({ subject: automatic.ownerId }).mutation(api.externalActions.submit, { requestId: automatic.requestId })).authorizedByMandate).toBe(true);
   });
 
-  it("uses detected disclosures, price and unsupported claims, not the model author's empty declaration", async () => {
-    for (const assessment of [
-      { ...clear, personalDataScopes: ["phone" as const] },
-      { ...clear, proposedMonthlyPriceEur: 400 },
-      { ...clear, unsupportedClaims: ["Invented rehearsal availability"] },
-    ]) {
+  it("uses detected disclosures and unsupported claims, not the model author's empty declaration", async () => {
+    const cases: Array<[typeof clear, string, string]> = [
+      [{ ...clear, personalDataScopes: ["phone"] }, "private_data", "phone"],
+      [{ ...clear, unsupportedClaims: ["Invented rehearsal availability"] }, "unsupported_claims", "Invented rehearsal availability"],
+    ];
+    for (const [assessment, reason, detail] of cases) {
       const f = await fixture();
       expect(await f.authorize(assessment)).toBe(false);
+      expect(await f.request()).toMatchObject({ status: "awaiting_approval", gate: { outcome: "ask_user", reason, detail } });
       await expect(f.claim()).rejects.toThrow("ACTION_NOT_EXECUTABLE");
     }
   });
@@ -123,20 +135,28 @@ describe("semantic final-message gate and provider dispatch", () => {
     expect((await f.t.run((ctx) => ctx.db.get(f.requestId)))?.status).toBe("expired");
   });
 
-  it.each(["search", "provider", "mandate", "content", "memory"])("rechecks changed %s after authorization, before a provider click", async (change) => {
+  it.each([
+    ["search", "stop", "context_changed", "expired"],
+    ["provider", "stop", "context_changed", "expired"],
+    ["autonomy", "stop", "action_not_allowed", "blocked"],
+    ["content", "stop", "context_changed", "expired"],
+    ["memory", "wait", "safety_pending", "queued"],
+  ] as const)("rechecks changed %s after authorization, before a provider click (%s %s)", async (change, outcome, reason, status) => {
     const f = await fixture(); await f.authorize();
     await f.t.run(async (ctx) => {
+      const now = Date.now();
       if (change === "search") await ctx.db.patch(f.needId, { matchingRevision: 2 });
       if (change === "provider") await ctx.db.patch(f.conversationId, { revision: 2 });
-      if (change === "mandate") await ctx.db.patch(f.mandateId, { status: "revoked" });
+      if (change === "autonomy") await ctx.db.insert("scoutAutonomy", { ownerId: f.ownerId, mode: "autopilot", contact: false, viewings: true, publishAd: false, shareProfile: true, sharePrivate: false, version: 1, contentHash: "rules-v1", createdAt: now, updatedAt: now });
       if (change === "content") {
         const request = (await ctx.db.get(f.requestId))!;
         if (request.payload.kind !== "platform_message") throw new Error("bad fixture");
         await ctx.db.patch(f.requestId, { payload: { ...request.payload, body: "Then the place is ours starting next month." } });
       }
-      if (change === "memory") await ctx.db.insert("memoryProfiles", { ownerId: f.ownerId, summary: "We can no longer rehearse on Mondays.", factVersion: 1, contextVersion: 1, openQuestions: [], hardConstraints: [], softPreferences: [], createdAt: Date.now(), updatedAt: Date.now() });
+      if (change === "memory") await ctx.db.insert("memoryProfiles", { ownerId: f.ownerId, summary: "We can no longer rehearse on Mondays.", factVersion: 1, contextVersion: 1, openQuestions: [], hardConstraints: [], softPreferences: [], createdAt: now, updatedAt: now });
     });
-    await expect(f.claim()).rejects.toThrow();
+    await expect(f.claim()).rejects.toThrow(`GATE_${outcome.toUpperCase()}`);
+    expect(await f.request()).toMatchObject({ status, gate: { outcome, reason } });
     expect(await f.t.run((ctx) => ctx.db.query("actionExecutions").collect())).toEqual([]);
   });
 
@@ -149,11 +169,19 @@ describe("semantic final-message gate and provider dispatch", () => {
     expect((await f.t.run((ctx) => ctx.db.get(f.requestId)))?.status).toBe("approved");
   });
 
-  it("holds the message on exhausted AI retries instead of using a regex fallback", async () => {
+  it("parks the message on exhausted AI retries and asks after the third wait, never a regex fallback", async () => {
     const f = await fixture();
-    await f.t.mutation(internal.messageSafety.assessmentCompleted, { workId: "test" as never, context: { requestId: f.requestId, contentVersion: 1 }, result: { kind: "failed", error: "provider unavailable" } });
-    const row = await f.t.run((ctx) => ctx.db.get(f.requestId));
-    expect(row).toMatchObject({ status: "awaiting_approval", error: "FINAL_MESSAGE_CHECK_UNAVAILABLE" });
+    const exhausted = () => f.t.mutation(internal.messageSafety.assessmentCompleted, { workId: "test" as never, context: { requestId: f.requestId, contentVersion: 1 }, result: { kind: "failed", error: "provider unavailable" } });
+    await exhausted();
+    expect(await f.request()).toMatchObject({ status: "queued", gate: { outcome: "wait", reason: "safety_pending", attempts: 1, retryAt: Date.now() + 5 * 60_000 } });
+    const scheduled = await f.t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect());
+    expect(scheduled.map((row) => row.name)).toContain("externalActions:submitChecked");
+    await exhausted(); await exhausted();
+    expect(await f.request()).toMatchObject({ status: "queued", gate: { attempts: 3 } });
+    const result = await f.t.mutation(internal.externalActions.submitChecked, { ownerId: f.ownerId, requestId: f.requestId });
+    expect(result).toMatchObject({ status: "awaiting_approval", authorizedByMandate: false, reasons: ["Die Prüfung der Nachricht ist mehrfach fehlgeschlagen."] });
+    expect(await f.request()).toMatchObject({ status: "awaiting_approval", gate: { outcome: "ask_user", reason: "safety_unavailable", attempts: 3 } });
+    expect(await f.t.run((ctx) => ctx.db.query("notifications").collect())).toEqual([]);
     expect(await f.t.run((ctx) => ctx.db.query("actionExecutions").collect())).toEqual([]);
   });
 

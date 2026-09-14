@@ -3,9 +3,12 @@ import { vOnCompleteArgs } from "@convex-dev/workpool";
 import { internal } from "./_generated/api";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { generateRoomScoutObject, ROOMSCOUT_MODEL_ID } from "./ai";
+import { loadAutonomyForOwner } from "./autonomy";
+import { recordOutcome } from "./autonomyGate";
+import { dispatchApproved } from "./externalActions";
+import { SAFETY_RETRY_MS } from "./lib/autonomyGate";
 import { delimitUntrustedData } from "./lib/privacy";
 import { MESSAGE_SAFETY_VERSION, messageSafetyContext, messageSafetyInstructions, messageSafetySchema, messageSafetyValidator } from "./lib/messageSafety";
-import { resolvePortalBrowserProvider, storedPortalBrowserProvider } from "./integrations/portalBrowserEngine";
 
 export const getInput = internalQuery({
   args: { requestId: v.id("actionRequests") },
@@ -26,7 +29,11 @@ export const recordAndAuthorize = internalMutation({
     if (!request || request.status !== "queued") return false;
     const input = await messageSafetyContext(ctx, request);
     if (!input || input.snapshotHash !== args.snapshotHash) {
-      await ctx.db.patch(request._id, { status: "expired", error: "MESSAGE_CONTEXT_CHANGED", updatedAt: Date.now() });
+      const autonomy = await loadAutonomyForOwner(ctx, request.ownerId);
+      await recordOutcome(ctx, request, {
+        outcome: "stop", reason: "context_changed", phase: "submit",
+        autonomyVersion: autonomy.version, autonomyHash: autonomy.contentHash, attempts: request.gate?.attempts,
+      });
       return false;
     }
     const assessment = messageSafetySchema.parse(args.assessment);
@@ -41,26 +48,8 @@ export const recordAndAuthorize = internalMutation({
     await ctx.db.patch(request._id, { status: "drafted", updatedAt: Date.now() });
     const result = await ctx.runMutation(internal.externalActions.submitChecked, { ownerId: request.ownerId, requestId: request._id });
     if (result.authorizedByMandate) {
-      const binding = request.adapterBindingId ? await ctx.db.get(request.adapterBindingId) : null;
-      // Enqueue one provider attempt transactionally with authorization. No AI
-      // workpool retries enclose an external write or an ambiguous browser result.
-      if (binding?.executor === "browserbase") {
-        const connection = request.connectionId ? await ctx.db.get(request.connectionId) : null;
-        const selectedProvider = resolvePortalBrowserProvider();
-        if (!connection || connection.ownerId !== request.ownerId ||
-          storedPortalBrowserProvider(connection.browserProvider) !== selectedProvider) {
-          await ctx.db.patch(request._id, {
-            status: "expired", error: "PORTAL_BROWSER_PROVIDER_RECONNECT_REQUIRED", updatedAt: Date.now(),
-          });
-          return false;
-        }
-        const worker = selectedProvider === "firecrawl"
-          ? internal.firecrawlPortal.executeApprovedWriteWorker
-          : internal.browserbasePortal.executeApprovedWriteWorker;
-        await ctx.scheduler.runAfter(0, worker, { ownerId: request.ownerId, requestId: request._id });
-      }
-      else if (binding?.executor === "firecrawl") await ctx.scheduler.runAfter(0, internal.firecrawlInteract.executeApprovedWorker, { ownerId: request.ownerId, requestId: request._id });
-      else if (binding?.executor === "agentmail" && binding.config.kind === "agentmail" && binding.config.purpose === "reply") await ctx.scheduler.runAfter(0, internal.agentmail.executeApprovedReply, { ownerId: request.ownerId, requestId: request._id });
+      const approved = await ctx.db.get(request._id);
+      if (approved !== null && approved.status === "approved") await dispatchApproved(ctx, approved);
     }
     return result.authorizedByMandate;
   },
@@ -80,14 +69,24 @@ export const assessAndAuthorize = internalAction({
   },
 });
 
+/**
+ * Workpool exhaustion: the verdict is still missing. Park the request and
+ * re-submit in five minutes; the gate turns the third such wait into an
+ * Entscheidung (safety_unavailable). Nothing is sent, nobody is nagged.
+ */
 export const assessmentCompleted = internalMutation({
   args: vOnCompleteArgs(v.object({ requestId: v.id("actionRequests"), contentVersion: v.number() }), v.null()),
   returns: v.null(),
-  handler: async (ctx, { context }) => {
+  handler: async (ctx, { context, result }) => {
+    if (result.kind === "success") return null;
     const request = await ctx.db.get(context.requestId);
     if (request?.status === "queued" && request.contentVersion === context.contentVersion) {
-      await ctx.db.patch(request._id, { status: "awaiting_approval", error: "FINAL_MESSAGE_CHECK_UNAVAILABLE", updatedAt: Date.now() });
-      await ctx.db.insert("notifications", { ownerId: request.ownerId, kind: "system", title: "Scout needs your review", body: "The final-message check could not complete. Nothing was sent.", createdAt: Date.now() });
+      const autonomy = await loadAutonomyForOwner(ctx, request.ownerId);
+      await recordOutcome(ctx, request, {
+        outcome: "wait", reason: "safety_pending", retryAt: Date.now() + SAFETY_RETRY_MS, phase: "submit",
+        autonomyVersion: autonomy.version, autonomyHash: autonomy.contentHash,
+        attempts: (request.gate?.attempts ?? 0) + 1,
+      });
     }
     return null;
   },

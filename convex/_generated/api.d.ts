@@ -13,6 +13,7 @@ import type * as agentmailComponent from "../agentmailComponent.js";
 import type * as ai from "../ai.js";
 import type * as auth from "../auth.js";
 import type * as autonomy from "../autonomy.js";
+import type * as autonomyGate from "../autonomyGate.js";
 import type * as browserbasePortal from "../browserbasePortal.js";
 import type * as browserbaseSessionProof from "../browserbaseSessionProof.js";
 import type * as communications from "../communications.js";
@@ -72,6 +73,7 @@ import type * as integrations_structuredConvexGateway from "../integrations/stru
 import type * as integrations_urlCanonicalization from "../integrations/urlCanonicalization.js";
 import type * as lib_actionPayload from "../lib/actionPayload.js";
 import type * as lib_autonomy from "../lib/autonomy.js";
+import type * as lib_autonomyGate from "../lib/autonomyGate.js";
 import type * as lib_corroboration from "../lib/corroboration.js";
 import type * as lib_demoProvenance from "../lib/demoProvenance.js";
 import type * as lib_mandateAuthorization from "../lib/mandateAuthorization.js";
@@ -145,6 +147,7 @@ declare const fullApi: ApiFromModules<{
   ai: typeof ai;
   auth: typeof auth;
   autonomy: typeof autonomy;
+  autonomyGate: typeof autonomyGate;
   browserbasePortal: typeof browserbasePortal;
   browserbaseSessionProof: typeof browserbaseSessionProof;
   communications: typeof communications;
@@ -204,6 +207,7 @@ declare const fullApi: ApiFromModules<{
   "integrations/urlCanonicalization": typeof integrations_urlCanonicalization;
   "lib/actionPayload": typeof lib_actionPayload;
   "lib/autonomy": typeof lib_autonomy;
+  "lib/autonomyGate": typeof lib_autonomyGate;
   "lib/corroboration": typeof lib_corroboration;
   "lib/demoProvenance": typeof lib_demoProvenance;
   "lib/mandateAuthorization": typeof lib_mandateAuthorization;

@@ -3,14 +3,12 @@ import { opportunityMatchIsCurrent, signalMatchRevision } from "./lib/matchValid
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, mutation, query, type MutationCtx } from "./_generated/server";
-import { currentMessageSafety, messageSafetyContext, permitsAutonomy } from "./lib/messageSafety";
+import { messageSafetyContext } from "./lib/messageSafety";
 import { assertAcceptanceCurrent } from "./lib/offerAcceptance";
 import { resolveControlledPortal } from "./lib/providerPortal";
 import { setNeedStatus } from "./lib/needLifecycle";
-import { scoutWorkpool } from "./workpools";
 import { actionPayloadHash, canonicalJson, normalizeEmail, normalizeText } from "./integrations/contentHash";
 import { requireUserId } from "./integrations/authz";
-import { isDefaultAutopilotMandate } from "./mandates";
 import { isUserResetTombstoned } from "./devUserReset";
 import {
   portalBrowserProviderValidator,
@@ -18,12 +16,15 @@ import {
   storedPortalBrowserProvider,
   type PortalBrowserProvider,
 } from "./integrations/portalBrowserEngine";
+import { loadAutonomyForOwner } from "./autonomy";
 import {
-  authorizeFromMandate,
-  containsBindingCommitment,
-  countUniqueAttemptedRequests,
-  type PersonalDataScope,
-} from "./lib/mandateAuthorization";
+  checkScoutAction,
+  gateOutcomeValidator,
+  publicOutcome,
+  recordOutcome,
+  type PublicGateOutcome,
+} from "./autonomyGate";
+import { gateReasonText } from "./lib/autonomyGate";
 
 const actionTypeValidator = v.union(
   v.literal("send_email"), v.literal("submit_webform"), v.literal("send_platform_dm"),
@@ -46,6 +47,7 @@ const statusValidator = v.union(
   v.literal("drafted"), v.literal("awaiting_approval"), v.literal("approved"),
   v.literal("rejected"), v.literal("queued"), v.literal("executing"),
   v.literal("executed"), v.literal("failed"), v.literal("cancelled"), v.literal("expired"),
+  v.literal("blocked"),
 );
 const executorValidator = v.union(
   v.literal("firecrawl"),
@@ -333,88 +335,34 @@ export const createContactFormFromScout = internalMutation({
     };
     const now = Date.now();
     const hash = await payloadHash(payload);
+    // Slice 3 removes the per-search mandate; until then the id is carried for the orchestrator only.
     const mandate = await ctx.db.query("searchMandates").withIndex("by_owner_and_saved_need_and_status", (q) =>
       q.eq("ownerId", args.ownerId).eq("savedNeedId", need._id).eq("status", "active"),
     ).unique();
-    let authorizedByAutopilot = false;
-    if (mandate !== null && policy.maxAutomationLevel === "approved_execute") {
-      const startOfDay = new Date();
-      startOfDay.setHours(0, 0, 0, 0);
-      const [executions, browserRuns, mailThreads, converted] = await Promise.all([
-        ctx.db.query("actionExecutions").withIndex("by_owner_and_created_at", (q) =>
-          q.eq("ownerId", args.ownerId).gte("createdAt", startOfDay.getTime()),
-        ).take(100),
-        ctx.db.query("browserRuns").withIndex("by_owner", (q) => q.eq("ownerId", args.ownerId)).order("desc").take(100),
-        ctx.db.query("mailThreads").withIndex("by_owner_and_last_message_at", (q) => q.eq("ownerId", args.ownerId)).order("desc").take(50),
-        ctx.db.query("opportunities").withIndex("by_saved_need_and_status_and_updated_at", (q) =>
-          q.eq("savedNeedId", need._id).eq("status", "converted"),
-        ).take(1),
-      ]);
-      const browserMinutesUsedToday = browserRuns.reduce((total, run) => {
-        const startedAt = run.startedAt ?? run.createdAt;
-        if (startedAt < startOfDay.getTime()) return total;
-        return total + Math.max(0, ((run.endedAt ?? now) - startedAt) / 60_000);
-      }, 0);
-      const skipUsageLimits = await isDefaultAutopilotMandate(ctx, mandate);
-      const authorization = authorizeFromMandate({
-        mode: mandate.mode,
-        status: "active",
-        platformIds: mandate.platformIds,
-        allowedActionTypes: mandate.allowedActionTypes,
-        allowedPersonalData: mandate.allowedPersonalData,
-        maxContactsPerDay: mandate.maxContactsPerDay,
-        maxBrowserMinutesPerDay: mandate.maxBrowserMinutesPerDay,
-        maxMonthlyPriceEur: mandate.maxMonthlyPriceEur,
-        expiresAt: mandate.expiresAt,
-        stopOnComplaint: mandate.stopOnComplaint,
-        stopWhenSuitableRoomConfirmed: mandate.stopWhenSuitableRoomConfirmed,
-        commitmentBoundary: mandate.commitmentBoundary,
-        stoppedAt: mandate.stoppedAt,
-      }, {
-        now,
-        actionType: "submit_webform",
-        platformId: source.platformId,
-        personalData: ["reply_email"],
-        contactsAlreadyAttemptedToday: countUniqueAttemptedRequests(executions),
-        browserMinutesUsedToday,
-        policyDecision: policy.decision,
-        policyAutomationLevel: policy.maxAutomationLevel,
-        connectionActive: true,
-        complaintRecorded: mailThreads.some((thread) => thread.lastDeliveryStatus === "complained"),
-        suitableRoomConfirmed: converted.length > 0,
-        bindingCommitment: containsBindingCommitment(payload),
-        skipUsageLimits,
-      });
-      authorizedByAutopilot = authorization.authorized;
-    }
     const requestId = await ctx.db.insert("actionRequests", {
       ownerId: args.ownerId,
       savedNeedId: need._id,
       matchingNeedRevision: need.matchingRevision ?? 0,
       matchingSignalId: signal._id,
       matchingSignalRevision: await signalMatchRevision(signal),
-      mandateId: authorizedByAutopilot ? mandate?._id : undefined,
+      mandateId: mandate?._id,
       platformId: source.platformId,
       adapterBindingId: binding._id,
       policyVersionId: policy._id,
-      automationMode: authorizedByAutopilot ? "standing_mandate" : "exact_once",
+      automationMode: "standing_mandate",
       requestedActionType: "submit_webform",
       personalDataScopes: ["reply_email"],
       payload,
       contentVersion: 1,
       contentHash: hash,
-      status: authorizedByAutopilot ? "approved" : "awaiting_approval",
-      expiresAt: authorizedByAutopilot && mandate ? Math.min(mandate.expiresAt, now + 24 * 60 * 60 * 1_000) : undefined,
+      status: "drafted",
+      expiresAt: mandate ? Math.min(mandate.expiresAt, now + 24 * 60 * 60 * 1_000) : now + 24 * 60 * 60 * 1_000,
       createdAt: now,
       updatedAt: now,
     });
-    if (authorizedByAutopilot) {
-      await ctx.db.patch(requestId, { status: "drafted" });
-      const result = await submitRequest(ctx, args.ownerId, requestId);
-      return { requestId, status: result.status, authorizedByAutopilot: result.authorizedByMandate };
-    }
-    await ctx.db.insert("auditEvents", { eventKey: `action:${requestId}:approval_requested:1`, actorType: "system", actorUserId: args.ownerId, entityKey: `action:${requestId}`, eventType: "action.scout_drafted_webform", actionRequestId: requestId, policyId: policy._id, afterHash: hash, occurredAt: now });
-    return { requestId, status: "awaiting_approval" as const, authorizedByAutopilot: false };
+    await ctx.db.insert("auditEvents", { eventKey: `action:${requestId}:scout_drafted:1`, actorType: "system", actorUserId: args.ownerId, entityKey: `action:${requestId}`, eventType: "action.scout_drafted_webform", actionRequestId: requestId, policyId: policy._id, afterHash: hash, occurredAt: now });
+    const result = await submitRequest(ctx, args.ownerId, requestId);
+    return { requestId, status: result.status, authorizedByAutopilot: result.authorizedByMandate };
   },
 });
 
@@ -426,17 +374,29 @@ export const submit = mutation({
 });
 
 export const submitChecked = internalMutation({
-  args: { ownerId: v.id("users"), requestId: v.id("actionRequests") }, returns: submitResult,
-  handler: async (ctx, args) => submitRequest(ctx, args.ownerId, args.requestId),
+  args: { ownerId: v.id("users"), requestId: v.id("actionRequests"), dispatch: v.optional(v.boolean()) }, returns: submitResult,
+  handler: async (ctx, args): Promise<{ status: Doc<"actionRequests">["status"]; authorizedByMandate: boolean; reasons: string[] }> => {
+    const result = await submitRequest(ctx, args.ownerId, args.requestId);
+    if (args.dispatch && result.status === "approved" && result.authorizedByMandate) {
+      const request = await ctx.db.get(args.requestId);
+      if (request !== null) await dispatchApproved(ctx, request);
+    }
+    return result;
+  },
 });
 
+/**
+ * Freigabeprüfung at submit time. Exact drafts always become an Entscheidung
+ * (the user wrote them and confirms them); Scout drafts go through the gate.
+ */
 async function submitRequest(ctx: MutationCtx, ownerId: Id<"users">, requestId: Id<"actionRequests">): Promise<{
   status: Doc<"actionRequests">["status"]; authorizedByMandate: boolean; reasons: string[];
 }> {
-    const args = { requestId };
-    const request = await ctx.db.get(args.requestId);
+    const request = await ctx.db.get(requestId);
     if (request === null || request.ownerId !== ownerId) throw new ConvexError({ code: "ACTION_NOT_FOUND" });
-    if (["queued", "approved", "executing", "executed"].includes(request.status)) {
+    // A queued request re-enters the gate only when it was parked with a due retry.
+    const scheduledRetry = request.status === "queued" && request.gate?.outcome === "wait" && request.gate.retryAt !== undefined;
+    if (["queued", "approved", "executing", "executed"].includes(request.status) && !scheduledRetry) {
       const approval = await ctx.db.query("actionApprovals")
         .withIndex("by_request_and_content_version", (q) => q.eq("requestId", request._id).eq("contentVersion", request.contentVersion))
         .unique();
@@ -446,100 +406,63 @@ async function submitRequest(ctx: MutationCtx, ownerId: Id<"users">, requestId: 
         reasons: [],
       };
     }
-    if (request.status !== "drafted") throw new ConvexError({ code: "INVALID_ACTION_STATE" });
+    if (request.status !== "drafted" && !scheduledRetry) throw new ConvexError({ code: "INVALID_ACTION_STATE" });
     if (request.providerActionKind === "acceptance") throw new ConvexError({ code: "ACCEPTANCE_REVIEW_REQUIRED" });
-    if (request.automationMode !== "standing_mandate" || !request.mandateId) {
-      const now = Date.now();
-      await ctx.db.patch(request._id, { status: "awaiting_approval", updatedAt: now });
-      await ctx.db.insert("auditEvents", { eventKey: `action:${request._id}:approval_requested:${request.contentVersion}`, actorType: "user", actorUserId: ownerId, entityKey: `action:${request._id}`, eventType: "action.approval_requested", actionRequestId: request._id, afterHash: request.contentHash, occurredAt: now });
-      return { status: "awaiting_approval" as const, authorizedByMandate: false, reasons: [] };
-    }
-    const mandate = await ctx.db.get(request.mandateId);
-    if (mandate === null || mandate.ownerId !== ownerId || mandate.savedNeedId !== request.savedNeedId || mandate.status !== "active") {
-      await ctx.db.patch(request._id, { status: "awaiting_approval", updatedAt: Date.now() });
-      return { status: "awaiting_approval" as const, authorizedByMandate: false, reasons: ["The selected standing mandate is not valid for this search."] };
-    }
-    const platform = request.platformId ? await ctx.db.get(request.platformId) : null;
-    const isOwnedMailReply = request.payload.kind === "email_message" && request.payload.mailThreadId !== undefined && request.payload.parentMessageId !== undefined;
-    if (request.payload.kind !== "portal_account_operation" && !isOwnedMailReply && platform?.canonicalDomain !== "roomscout.dev") {
-      await ctx.db.patch(request._id, { status: "awaiting_approval", error: "CONTROLLED_DEMO_ONLY", updatedAt: Date.now() });
-      return { status: "awaiting_approval", authorizedByMandate: false, reasons: ["Autonomous demo communication is restricted to roomscout.dev."] };
-    }
-    const semantic = request.payload.kind === "portal_account_operation" ? null : await currentMessageSafety(ctx, request);
-    if (request.payload.kind !== "portal_account_operation" && !semantic) {
-      if (!await messageSafetyContext(ctx, request)) {
-        await ctx.db.patch(request._id, { status: "expired", error: "MESSAGE_CONTEXT_CHANGED", updatedAt: Date.now() });
-        return { status: "expired", authorizedByMandate: false, reasons: ["The search or provider conversation changed."] };
-      }
-      await ctx.db.patch(request._id, { status: "queued", updatedAt: Date.now() });
-      await scoutWorkpool.enqueueAction(ctx, internal.messageSafety.assessAndAuthorize, { requestId: request._id }, {
-        onComplete: internal.messageSafety.assessmentCompleted, context: { requestId: request._id, contentVersion: request.contentVersion },
+    if (request.automationMode !== "standing_mandate") {
+      const autonomy = await loadAutonomyForOwner(ctx, ownerId);
+      const status = await recordOutcome(ctx, request, {
+        outcome: "ask_user", reason: "review_mode", phase: "submit",
+        autonomyVersion: autonomy.version, autonomyHash: autonomy.contentHash,
       });
-      return { status: "queued", authorizedByMandate: false, reasons: ["Scout is checking the final message before authorization."] };
+      return { status, authorizedByMandate: false, reasons: [] };
     }
-    if (semantic && !permitsAutonomy(semantic.assessment)) {
-      await ctx.db.patch(request._id, { status: "awaiting_approval", error: "MESSAGE_REQUIRES_REVIEW", updatedAt: Date.now() });
-      return { status: "awaiting_approval", authorizedByMandate: false, reasons: [semantic.assessment.explanation] };
-    }
-    const policy = request.policyVersionId ? await ctx.db.get(request.policyVersionId) : null;
-    const connection = request.connectionId ? await ctx.db.get(request.connectionId) : null;
-    const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
-    const executions = await ctx.db.query("actionExecutions").withIndex("by_owner_and_created_at", (q) => q.eq("ownerId", ownerId).gte("createdAt", startOfDay.getTime())).take(100);
-    const browserRuns = await ctx.db.query("browserRuns").withIndex("by_owner", (q) => q.eq("ownerId", ownerId)).order("desc").take(100);
-    const mailThreads = await ctx.db.query("mailThreads").withIndex("by_owner_and_last_message_at", (q) => q.eq("ownerId", ownerId)).order("desc").take(50);
-    const converted = request.savedNeedId
-      ? await ctx.db.query("opportunities").withIndex("by_saved_need_and_status_and_updated_at", (q) => q.eq("savedNeedId", request.savedNeedId!).eq("status", "converted")).take(1)
-      : [];
-    const browserMinutesUsedToday = browserRuns.reduce((total, run) => {
-      const startedAt = run.startedAt ?? run.createdAt;
-      if (startedAt < startOfDay.getTime()) return total;
-      return total + Math.max(0, ((run.endedAt ?? Date.now()) - startedAt) / 60_000);
-    }, 0);
-    const skipUsageLimits = await isDefaultAutopilotMandate(ctx, mandate);
-    const decision = authorizeFromMandate({
-      mode: mandate.mode,
-      status: "active",
-      platformIds: mandate.platformIds,
-      allowedActionTypes: mandate.allowedActionTypes,
-      allowedPersonalData: mandate.allowedPersonalData,
-      maxContactsPerDay: mandate.maxContactsPerDay,
-      maxBrowserMinutesPerDay: mandate.maxBrowserMinutesPerDay,
-      maxMonthlyPriceEur: mandate.maxMonthlyPriceEur,
-      expiresAt: mandate.expiresAt,
-      stopOnComplaint: mandate.stopOnComplaint,
-      stopWhenSuitableRoomConfirmed: mandate.stopWhenSuitableRoomConfirmed,
-      commitmentBoundary: mandate.commitmentBoundary,
-      stoppedAt: mandate.stoppedAt,
-    }, {
-      now: Date.now(), actionType: request.requestedActionType,
-      platformId: request.platformId, personalData: [...new Set([...request.personalDataScopes, ...(semantic?.assessment.personalDataScopes ?? [])])] as PersonalDataScope[],
-      contactsAlreadyAttemptedToday: countUniqueAttemptedRequests(executions),
-      browserMinutesUsedToday,
-      proposedMonthlyPriceEur: semantic?.assessment.proposedMonthlyPriceEur ?? request.proposedMonthlyPriceEur,
-      policyDecision: policy?.decision ?? "unknown",
-      policyAutomationLevel: policy?.maxAutomationLevel ?? "disabled",
-      connectionActive: connection?.ownerId === ownerId && connection.status === "active",
-      complaintRecorded: mailThreads.some((thread) => thread.lastDeliveryStatus === "complained"),
-      suitableRoomConfirmed: converted.length > 0,
-      bindingCommitment: semantic ? semantic.assessment.classification !== "non_binding" : containsBindingCommitment(request.payload),
-      skipUsageLimits,
-    });
-    if (!decision.authorized) {
-      await ctx.db.patch(request._id, { status: "awaiting_approval", updatedAt: Date.now() });
-      return { status: "awaiting_approval" as const, authorizedByMandate: false, reasons: decision.reasons };
-    }
-    const now = Date.now();
-    await ctx.db.insert("actionApprovals", {
-      requestId: request._id, ownerId, contentVersion: request.contentVersion,
-      contentHash: request.contentHash, payloadSnapshot: request.payload,
-      policyVersionId: request.policyVersionId, decision: "authorized_by_mandate",
-      mandateId: mandate._id, mandateVersion: mandate.version, mandateHash: mandate.contentHash,
-      decidedAt: now,
-    });
-    await ctx.db.patch(request._id, { status: "approved", updatedAt: now });
-    await ctx.db.insert("auditEvents", { eventKey: `action:${request._id}:mandate_authorized:${request.contentVersion}`, actorType: "system", actorUserId: ownerId, entityKey: `action:${request._id}`, eventType: "action.authorized_by_mandate", actionRequestId: request._id, policyId: request.policyVersionId, afterHash: request.contentHash, occurredAt: now });
-    return { status: "approved" as const, authorizedByMandate: true, reasons: [] };
+    const outcome = await checkScoutAction(ctx, { ownerId, request, phase: "submit" });
+    const status = await recordOutcome(ctx, request, outcome);
+    return {
+      status,
+      authorizedByMandate: outcome.outcome === "proceed",
+      reasons: outcome.outcome === "proceed" ? [] : [gateReasonText(outcome.reason), ...(outcome.detail ? [outcome.detail] : [])],
+    };
 }
+
+/**
+ * Enqueue exactly one provider attempt for an approved request. No AI
+ * workpool retries enclose an external write or an ambiguous browser result.
+ */
+export async function dispatchApproved(ctx: MutationCtx, request: Doc<"actionRequests">): Promise<void> {
+  const binding = request.adapterBindingId ? await ctx.db.get(request.adapterBindingId) : null;
+  if (binding?.executor === "browserbase") {
+    const connection = request.connectionId ? await ctx.db.get(request.connectionId) : null;
+    const selectedProvider = resolvePortalBrowserProvider();
+    if (!connection || connection.ownerId !== request.ownerId ||
+      storedPortalBrowserProvider(connection.browserProvider) !== selectedProvider) {
+      await ctx.db.patch(request._id, {
+        status: "expired", error: "PORTAL_BROWSER_PROVIDER_RECONNECT_REQUIRED", updatedAt: Date.now(),
+      });
+      return;
+    }
+    const worker = selectedProvider === "firecrawl"
+      ? internal.firecrawlPortal.executeApprovedWriteWorker
+      : internal.browserbasePortal.executeApprovedWriteWorker;
+    await ctx.scheduler.runAfter(0, worker, { ownerId: request.ownerId, requestId: request._id });
+  } else if (binding?.executor === "firecrawl") {
+    await ctx.scheduler.runAfter(0, internal.firecrawlInteract.executeApprovedWorker, { ownerId: request.ownerId, requestId: request._id });
+  } else if (binding?.executor === "agentmail" && binding.config.kind === "agentmail" && binding.config.purpose === "reply") {
+    await ctx.scheduler.runAfter(0, internal.agentmail.executeApprovedReply, { ownerId: request.ownerId, requestId: request._id });
+  }
+}
+
+/** Scheduled by the gate after a claim-phase wait (browser busy, connection not ready). */
+export const redispatchApproved = internalMutation({
+  args: { ownerId: v.id("users"), requestId: v.id("actionRequests") },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const request = await ctx.db.get(args.requestId);
+    if (request === null || request.ownerId !== args.ownerId || request.status !== "approved") return null;
+    await dispatchApproved(ctx, request);
+    return null;
+  },
+});
 
 export const decide = mutation({
   args: { requestId: v.id("actionRequests"), decision: v.union(v.literal("approved"), v.literal("rejected")), expectedContentVersion: v.number(), expectedContentHash: v.string(), expectedPayload: payloadValidator },
@@ -555,7 +478,17 @@ export const decide = mutation({
       throw new ConvexError({ code: "ACTION_CONTENT_CHANGED" });
     }
     const now = Date.now();
-    await ctx.db.insert("actionApprovals", { requestId: request._id, ownerId, contentVersion: request.contentVersion, contentHash: request.contentHash, payloadSnapshot: request.payload, policyVersionId: request.policyVersionId, decision: args.decision, decidedAt: now });
+    // A claim-phase Entscheidung can follow the Scout's own authorization for the
+    // same content version; the human's decision replaces that row, never duplicates it.
+    const existing = await ctx.db.query("actionApprovals").withIndex("by_request_and_content_version", (q) =>
+      q.eq("requestId", request._id).eq("contentVersion", request.contentVersion),
+    ).unique();
+    const autonomy = request.gate ? { autonomyVersion: request.gate.autonomyVersion, autonomyHash: request.gate.autonomyHash } : {};
+    if (existing !== null && existing.ownerId === ownerId) {
+      await ctx.db.patch(existing._id, { contentHash: request.contentHash, payloadSnapshot: request.payload, policyVersionId: request.policyVersionId, decision: args.decision, ...autonomy, decidedAt: now });
+    } else {
+      await ctx.db.insert("actionApprovals", { requestId: request._id, ownerId, contentVersion: request.contentVersion, contentHash: request.contentHash, payloadSnapshot: request.payload, policyVersionId: request.policyVersionId, decision: args.decision, ...autonomy, decidedAt: now });
+    }
     await ctx.db.patch(request._id, { status: args.decision === "approved" ? "approved" : "rejected", updatedAt: now });
     await ctx.db.insert("auditEvents", { eventKey: `action:${request._id}:${args.decision}:${request.contentVersion}`, actorType: "user", actorUserId: ownerId, entityKey: `action:${request._id}`, eventType: `action.${args.decision}`, actionRequestId: request._id, policyId: request.policyVersionId, afterHash: request.contentHash, occurredAt: now });
     return null;
@@ -591,21 +524,6 @@ export const markPreparing = internalMutation({
     const executionId = await ctx.db.insert("actionExecutions", { requestId: request._id, ownerId: args.ownerId, approvalId: approval._id, platformId: request.platformId, connectionId: request.connectionId, adapterBindingId: request.adapterBindingId, status: "running", idempotencyKey, providerActionId: args.providerActionId, startedAt: now, createdAt: now, updatedAt: now });
     await ctx.db.patch(request._id, { status: "executing", executionIdempotencyKey: idempotencyKey, updatedAt: now });
     return executionId;
-  },
-});
-
-export const recordBrowserSessionBusy = internalMutation({
-  args: { ownerId: v.id("users"), requestId: v.id("actionRequests") },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    const request = await ctx.db.get(args.requestId);
-    if (request?.ownerId === args.ownerId && request.status === "approved") {
-      const now = Date.now();
-      await ctx.db.patch(request._id, { error: "BROWSER_SESSION_BUSY", updatedAt: now });
-      await ctx.db.insert("notifications", { ownerId: args.ownerId, kind: "system", title: "Portal action is waiting",
-        body: "The controlled portal is busy with another session. Nothing was sent; try again after that session finishes.", createdAt: now });
-    }
-    return null;
   },
 });
 
@@ -722,9 +640,55 @@ const claimedActionValidator = v.object({
   browserProvider: v.optional(portalBrowserProviderValidator),
 });
 
+/** The three conditions under which the controlled portal browser is busy. */
+async function browserSessionBusy(ctx: MutationCtx, connection: Doc<"portalConnections">, now: number): Promise<boolean> {
+  if (connection.inboxSyncActiveGeneration !== undefined && (connection.inboxSyncDeadlineAt ?? 0) > now) return true;
+  if (connection.activeWriteExecutionId && (connection.activeWriteDeadlineAt ?? 0) > now) return true;
+  const connectionRuns = await ctx.db.query("browserRuns").withIndex("by_connection", (q) =>
+    q.eq("connectionId", connection._id),
+  ).order("desc").take(20);
+  return connectionRuns.some((run) => ["queued", "running", "human_required"].includes(run.status));
+}
+
 /**
- * Final transactional gate before any provider write. Provider actions must
- * claim here first; approval at draft time is never treated as sufficient.
+ * Freigabeprüfung at claim time. Executors call this first and only claim
+ * when it returns proceed; every other outcome is persisted on the request
+ * (wait re-dispatches itself, ask_user and stop carry their reason).
+ */
+export const prepareClaim = internalMutation({
+  args: { ownerId: v.id("users"), requestId: v.id("actionRequests"), executor: executorValidator },
+  returns: gateOutcomeValidator,
+  handler: async (ctx, args): Promise<PublicGateOutcome> => {
+    const request = await ctx.db.get(args.requestId);
+    if (request === null || request.ownerId !== args.ownerId) throw new ConvexError({ code: "ACTION_NOT_EXECUTABLE" });
+    if (request.status === "executing") {
+      // Already claimed: claimForExecutor replays the existing execution.
+      return { outcome: "proceed" };
+    }
+    if (request.status !== "approved") throw new ConvexError({ code: "ACTION_NOT_EXECUTABLE" });
+    const [approval, connection] = await Promise.all([
+      ctx.db.query("actionApprovals").withIndex("by_request_and_content_version", (q) =>
+        q.eq("requestId", request._id).eq("contentVersion", request.contentVersion),
+      ).unique(),
+      request.connectionId ? ctx.db.get(request.connectionId) : Promise.resolve(null),
+    ]);
+    const browserBusy = args.executor === "browserbase" && connection !== null && connection.ownerId === args.ownerId
+      ? await browserSessionBusy(ctx, connection, Date.now())
+      : false;
+    const outcome = await checkScoutAction(ctx, {
+      ownerId: args.ownerId, request, phase: "claim", executor: args.executor,
+      userApproved: approval?.decision === "approved" && approval.contentHash === request.contentHash,
+      browserBusy,
+    });
+    await recordOutcome(ctx, request, outcome);
+    return publicOutcome(outcome);
+  },
+});
+
+/**
+ * Final transactional claim before any provider write. Provider actions must
+ * pass `prepareClaim` and claim here; approval at draft time is never treated
+ * as sufficient. Structural drift (context, policy, binding) is rechecked here.
  */
 export const claimForExecutor = internalMutation({
   args: {
@@ -889,89 +853,6 @@ export const claimForExecutor = internalMutation({
       }
     }
 
-    if (approval.decision === "authorized_by_mandate") {
-      const isOwnedMailReply = request.payload.kind === "email_message" && request.payload.mailThreadId !== undefined && request.payload.parentMessageId !== undefined;
-      if (request.payload.kind !== "portal_account_operation" && !isOwnedMailReply && platform.canonicalDomain !== "roomscout.dev") {
-        throw new ConvexError({ code: "CONTROLLED_DEMO_ONLY" });
-      }
-      const semantic = request.payload.kind === "portal_account_operation" ? null : await currentMessageSafety(ctx, request);
-      if (request.payload.kind !== "portal_account_operation" && (!semantic || !permitsAutonomy(semantic.assessment))) {
-        throw new ConvexError({ code: "FINAL_MESSAGE_NOT_CLEARED" });
-      }
-      if (!approval.mandateId || approval.mandateVersion === undefined || !approval.mandateHash) {
-        throw new ConvexError({ code: "MANDATE_SNAPSHOT_MISSING" });
-      }
-      const mandate = await ctx.db.get(approval.mandateId);
-      if (
-        mandate === null ||
-        mandate.ownerId !== args.ownerId ||
-        mandate.status !== "active" ||
-        mandate.version !== approval.mandateVersion ||
-        mandate.contentHash !== approval.mandateHash ||
-        mandate.savedNeedId !== request.savedNeedId
-      ) {
-        throw new ConvexError({ code: "MANDATE_CHANGED" });
-      }
-      const startOfDay = new Date();
-      startOfDay.setHours(0, 0, 0, 0);
-      const [executions, runs, complainedThreads, converted] = await Promise.all([
-        ctx.db.query("actionExecutions").withIndex("by_owner_and_created_at", (q) =>
-          q.eq("ownerId", args.ownerId).gte("createdAt", startOfDay.getTime()),
-        ).take(100),
-        ctx.db.query("browserRuns").withIndex("by_owner", (q) => q.eq("ownerId", args.ownerId)).order("desc").take(100),
-        ctx.db.query("mailThreads").withIndex("by_owner_and_last_message_at", (q) => q.eq("ownerId", args.ownerId)).order("desc").take(50),
-        request.savedNeedId
-          ? ctx.db.query("opportunities").withIndex("by_saved_need_and_status_and_updated_at", (q) =>
-              q.eq("savedNeedId", request.savedNeedId!).eq("status", "converted"),
-            ).take(1)
-          : Promise.resolve([]),
-      ]);
-      const browserMinutes = runs.reduce((sum, run) => {
-        const startedAt = run.startedAt ?? run.createdAt;
-        if (startedAt < startOfDay.getTime()) return sum;
-        return sum + Math.max(0, ((run.endedAt ?? Date.now()) - startedAt) / 60_000);
-      }, 0);
-      const skipUsageLimits = await isDefaultAutopilotMandate(ctx, mandate);
-      const authorization = authorizeFromMandate({
-        mode: mandate.mode,
-        status: "active",
-        platformIds: mandate.platformIds,
-        allowedActionTypes: mandate.allowedActionTypes,
-        allowedPersonalData: mandate.allowedPersonalData,
-        maxContactsPerDay: mandate.maxContactsPerDay,
-        maxBrowserMinutesPerDay: mandate.maxBrowserMinutesPerDay,
-        maxMonthlyPriceEur: mandate.maxMonthlyPriceEur,
-        expiresAt: mandate.expiresAt,
-        stopOnComplaint: mandate.stopOnComplaint,
-        stopWhenSuitableRoomConfirmed: mandate.stopWhenSuitableRoomConfirmed,
-        commitmentBoundary: mandate.commitmentBoundary,
-        stoppedAt: mandate.stoppedAt,
-      }, {
-        now: Date.now(),
-        actionType: request.requestedActionType,
-        platformId: request.platformId,
-        personalData: [...new Set([...request.personalDataScopes, ...(semantic?.assessment.personalDataScopes ?? [])])] as PersonalDataScope[],
-        // Re-claiming or resuming the same idempotent request must not consume
-        // another contact slot. Other requests still count, including failed
-        // attempts, because they may already have reached the recipient.
-        contactsAlreadyAttemptedToday: countUniqueAttemptedRequests(
-          executions.filter((execution) => execution.requestId !== request._id),
-        ),
-        browserMinutesUsedToday: browserMinutes,
-        proposedMonthlyPriceEur: semantic?.assessment.proposedMonthlyPriceEur ?? request.proposedMonthlyPriceEur,
-        policyDecision: policy.decision,
-        policyAutomationLevel: policy.maxAutomationLevel,
-        connectionActive: args.executor !== "browserbase" || connection?.status === "active",
-        complaintRecorded: complainedThreads.some((thread) => thread.lastDeliveryStatus === "complained"),
-        suitableRoomConfirmed: converted.length > 0,
-        bindingCommitment: semantic ? semantic.assessment.classification !== "non_binding" : containsBindingCommitment(request.payload),
-        skipUsageLimits,
-      });
-      if (!authorization.authorized) {
-        throw new ConvexError({ code: "MANDATE_NO_LONGER_AUTHORIZES", reasons: authorization.reasons });
-      }
-    }
-
     const idempotencyKey = `action:${request._id}:${request.contentVersion}:${request.contentHash}`;
     const existing = await ctx.db.query("actionExecutions").withIndex("by_idempotency_key", (q) =>
       q.eq("idempotencyKey", idempotencyKey),
@@ -997,21 +878,17 @@ export const claimForExecutor = internalMutation({
         browserProvider,
       };
     }
+    // Scout-authorized requests must have passed the Freigabeprüfung (prepareClaim);
+    // a human's exact approval stands on its own.
+    if (approval.decision !== "approved" && request.gate?.outcome !== "proceed") {
+      throw new ConvexError({ code: "GATE_NOT_PASSED", reason: request.gate?.reason });
+    }
     const now = Date.now();
     if (args.executor === "browserbase") {
       if (connection === null) throw new ConvexError({ code: "PORTAL_CONNECTION_NOT_ACTIVE" });
-      if (connection.inboxSyncActiveGeneration !== undefined && (connection.inboxSyncDeadlineAt ?? 0) > now) {
-        throw new ConvexError({ code: "BROWSER_SESSION_BUSY" });
-      }
-      if (connection.activeWriteExecutionId && (connection.activeWriteDeadlineAt ?? 0) > now) {
-        throw new ConvexError({ code: "BROWSER_SESSION_BUSY" });
-      }
-      const connectionRuns = await ctx.db.query("browserRuns").withIndex("by_connection", (q) =>
-        q.eq("connectionId", connection._id),
-      ).order("desc").take(20);
-      if (connectionRuns.some((run) => ["queued", "running", "human_required"].includes(run.status))) {
-        throw new ConvexError({ code: "BROWSER_SESSION_BUSY" });
-      }
+      // prepareClaim already turned a busy browser into a wait; this is the
+      // transactional last line against a race between the two mutations.
+      if (await browserSessionBusy(ctx, connection, now)) throw new ConvexError({ code: "BROWSER_SESSION_BUSY" });
     }
     const executionId = await ctx.db.insert("actionExecutions", {
       requestId: request._id,

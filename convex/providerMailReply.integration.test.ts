@@ -4,6 +4,7 @@ import agentTest from "@convex-dev/agent/test";
 import workpoolTest from "@convex-dev/workpool/test";
 import rateLimiterTest from "@convex-dev/rate-limiter/test";
 import { convexTest } from "convex-test";
+import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { internal } from "./_generated/api";
 import schema from "./schema";
@@ -56,7 +57,12 @@ async function fixture() {
   expect(await t.run((ctx) => ctx.db.get(requestId))).toMatchObject({ status: "queued" });
   const input = (await t.query(internal.messageSafety.getInput, { requestId }))!;
   expect(await t.mutation(internal.messageSafety.recordAndAuthorize, { requestId, snapshotHash: input.snapshotHash, assessment: cleared })).toBe(true);
-  const claim = () => t.mutation(internal.externalActions.claimForExecutor, { ownerId: ids.ownerId, requestId, executor: "agentmail" });
+  // Executors run the Freigabeprüfung (prepareClaim) before the transactional claim.
+  const claim = async () => {
+    const gate = await t.mutation(internal.externalActions.prepareClaim, { ownerId: ids.ownerId, requestId, executor: "agentmail" });
+    if (gate.outcome !== "proceed") throw new ConvexError({ code: `GATE_${gate.outcome.toUpperCase()}`, reason: gate.reason });
+    return t.mutation(internal.externalActions.claimForExecutor, { ownerId: ids.ownerId, requestId, executor: "agentmail" });
+  };
   return { t, requestId, claim, ...ids };
 }
 
@@ -89,7 +95,7 @@ describe("approved provider email replies", () => {
     ["owner", async (f: Awaited<ReturnType<typeof fixture>>) => f.t.run((ctx) => ctx.db.patch(f.threadId, { ownerId: f.otherId }))],
     ["mailbox inactive", async (f: Awaited<ReturnType<typeof fixture>>) => f.t.run((ctx) => ctx.db.patch(f.mailboxId, { status: "disabled" }))],
     ["binding", async (f: Awaited<ReturnType<typeof fixture>>) => f.t.run((ctx) => ctx.db.patch(f.bindingId, { status: "paused" }))],
-    ["mandate", async (f: Awaited<ReturnType<typeof fixture>>) => f.t.run((ctx) => ctx.db.patch(f.mandateId, { status: "revoked" }))],
+    ["autonomy", async (f: Awaited<ReturnType<typeof fixture>>) => f.t.run((ctx) => ctx.db.insert("scoutAutonomy", { ownerId: f.ownerId, mode: "autopilot", contact: false, viewings: true, publishAd: false, shareProfile: true, sharePrivate: false, version: 1, contentHash: "rules-v1", createdAt: Date.now(), updatedAt: Date.now() }))],
   ] as const)("rejects %s drift before any enqueue", async (_name, mutate) => {
     const f = await fixture(); await mutate(f);
     await expect(f.claim()).rejects.toThrow();

@@ -646,6 +646,8 @@ export const retryWriteProfileProof = internalAction({
 
 async function executeWriteForOwner(ctx: ActionCtx, ownerId: Id<"users">, requestId: Id<"actionRequests">): Promise<WriteResult> {
   requireSelectedFirecrawl();
+  const gate = await ctx.runMutation(internal.externalActions.prepareClaim, { ownerId, requestId, executor: "browserbase" });
+  if (gate.outcome !== "proceed") throw new ConvexError({ code: `GATE_${gate.outcome.toUpperCase()}`, reason: gate.reason });
   const claim: WriteClaim = await ctx.runMutation(internal.externalActions.claimForExecutor, { ownerId, requestId, executor: "browserbase" }) as WriteClaim;
   if (claim.browserProvider !== "firecrawl") throw new ConvexError({ code: "PORTAL_BROWSER_PROVIDER_MISMATCH" });
   if (claim.executionStatus === "succeeded") return { executionId: claim.executionId, status: "succeeded" as const, alreadyCompleted: true };

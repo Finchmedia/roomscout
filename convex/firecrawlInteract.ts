@@ -164,6 +164,8 @@ async function executeApprovedForOwner(
   requestId: Id<"actionRequests">,
 ): Promise<ExecuteApprovedResult> {
   firecrawlKey();
+  const gate = await ctx.runMutation(internal.externalActions.prepareClaim, { ownerId, requestId, executor: "firecrawl" });
+  if (gate.outcome !== "proceed") throw new ConvexError({ code: `GATE_${gate.outcome.toUpperCase()}`, reason: gate.reason });
   const claim = await ctx.runMutation(
     internal.externalActions.claimForExecutor,
     { ownerId, requestId, executor: "firecrawl" },

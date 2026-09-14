@@ -18,7 +18,7 @@ async function seedSemanticClearance(ctx: MutationCtx, requestId: Id<"actionRequ
     model: "model-double", version: "final-message-v1", createdAt: Date.now() });
 }
 
-async function seedStandingClaimFixture(t: ReturnType<typeof convexTest>, defaultAutopilot = false) {
+async function seedStandingClaimFixture(t: ReturnType<typeof convexTest>) {
   return await t.run(async (ctx) => {
     const now = Date.now();
     const ownerId = await ctx.db.insert("users", { username: "owner", role: "musician", createdAt: now, lastSeenAt: now });
@@ -27,9 +27,6 @@ async function seedStandingClaimFixture(t: ReturnType<typeof convexTest>, defaul
     const policyId = await ctx.db.insert("sourceFlowPolicies", { platformId, scopeKey: "bandnet:contact", flow: "contact", version: 1, status: "approved", decision: "allowed", maxAutomationLevel: "approved_execute", userConnectionRequired: false, humanPresenceRequired: false, accountCreationAllowed: false, externalApprovalRequired: true, robotsDecision: "allowed", termsDecision: "allowed", evidenceUrls: ["https://roomscout.dev/nutzungsbedingungen"], createdAt: now, updatedAt: now });
     const bindingId = await ctx.db.insert("sourceAdapterBindings", { platformId, scopeKey: "bandnet:contact", flow: "contact", adapterKey: "bandnet_contact_v1", adapterVersion: 1, status: "active", executor: "firecrawl", config: { kind: "firecrawl", extractionProfileKey: "bandnet_contact_v1", monitorDriven: false }, configFingerprint: "binding-hash", policyVersionId: policyId, createdAt: now, updatedAt: now });
     const mandateId = await ctx.db.insert("searchMandates", { ownerId, savedNeedId: needId, version: 1, mode: "outreach_autopilot", status: "active", platformIds: [platformId], allowedActionTypes: ["submit_webform"], allowedPersonalData: [], maxContactsPerDay: 1, maxBrowserMinutesPerDay: 30, expiresAt: now + 86_400_000, stopOnComplaint: true, stopWhenSuitableRoomConfirmed: true, commitmentBoundary: "non_binding_outreach_only", contentHash: "mandate-hash", activatedAt: now, createdAt: now, updatedAt: now });
-    if (defaultAutopilot) {
-      await ctx.db.insert("auditEvents", { eventKey: `mandate:${mandateId}:default_autopilot:1`, actorType: "user", actorUserId: ownerId, entityKey: `mandate:${mandateId}`, eventType: "mandate.default_autopilot_activated", afterHash: "mandate-hash", occurredAt: now });
-    }
     const payload = { kind: "contact_form" as const, targetUrl: "https://roomscout.dev/kontakt/42", fields: [{ name: "message", value: "Is the room still available?", sensitivity: "normal" as const }] };
     const createRequest = async () => {
       const contentHash = await actionPayloadHash(payload);
@@ -147,39 +144,41 @@ it("claims an approved provider write once and rechecks the current source polic
   await expect(t.mutation(internal.externalActions.claimForExecutor, { ownerId: fixture.ownerId, requestId: secondRequestId, executor: "firecrawl" })).rejects.toThrow();
 });
 
-it("does not execute from a standing approval after its mandate is revoked", async () => {
+it("does not execute from a Scout authorization after the user switches contact off", async () => {
   const t = convexTest(schema, modules);
   const fixture = await t.run(async (ctx) => {
     const now = Date.now();
     const ownerId = await ctx.db.insert("users", { username: "owner", role: "musician", createdAt: now, lastSeenAt: now });
     const needId = await ctx.db.insert("savedNeeds", { ownerId, title: "Room", city: "Hamburg", districts: [], arrangement: ["shared"], schedule: [], requirements: [], status: "active", createdAt: now, updatedAt: now });
-    const platformId = await ctx.db.insert("sourcePlatforms", { slug: "bandnet", name: "Bandnet", canonicalDomain: "bandnet.hamburg", kind: "community", status: "active", firstSeenAt: now, lastObservedAt: now, createdAt: now, updatedAt: now });
+    const platformId = await ctx.db.insert("sourcePlatforms", { slug: "bandnet", name: "Bandnet", canonicalDomain: "roomscout.dev", kind: "community", status: "active", firstSeenAt: now, lastObservedAt: now, createdAt: now, updatedAt: now });
     const policyId = await ctx.db.insert("sourceFlowPolicies", { platformId, scopeKey: "bandnet:contact", flow: "contact", version: 1, status: "approved", decision: "allowed", maxAutomationLevel: "approved_execute", userConnectionRequired: false, humanPresenceRequired: false, accountCreationAllowed: false, externalApprovalRequired: true, robotsDecision: "allowed", termsDecision: "allowed", evidenceUrls: ["https://bandnet.hamburg/nutzungsbedingungen"], createdAt: now, updatedAt: now });
     const bindingId = await ctx.db.insert("sourceAdapterBindings", { platformId, scopeKey: "bandnet:contact", flow: "contact", adapterKey: "bandnet_contact_v1", adapterVersion: 1, status: "active", executor: "firecrawl", config: { kind: "firecrawl", extractionProfileKey: "bandnet_contact_v1", monitorDriven: false }, configFingerprint: "binding-hash", policyVersionId: policyId, createdAt: now, updatedAt: now });
     const mandateId = await ctx.db.insert("searchMandates", { ownerId, savedNeedId: needId, version: 1, mode: "outreach_autopilot", status: "active", platformIds: [platformId], allowedActionTypes: ["submit_webform"], allowedPersonalData: [], maxContactsPerDay: 5, maxBrowserMinutesPerDay: 30, expiresAt: now + 86_400_000, stopOnComplaint: true, stopWhenSuitableRoomConfirmed: true, commitmentBoundary: "non_binding_outreach_only", contentHash: "mandate-hash", activatedAt: now, createdAt: now, updatedAt: now });
-    const payload = { kind: "contact_form" as const, targetUrl: "https://bandnet.hamburg/kontakt/42", fields: [{ name: "message", value: "Hello", sensitivity: "normal" as const }] };
-    const requestId = await ctx.db.insert("actionRequests", { ownerId, savedNeedId: needId, mandateId, platformId, adapterBindingId: bindingId, policyVersionId: policyId, automationMode: "standing_mandate", requestedActionType: "submit_webform", personalDataScopes: [], payload, contentVersion: 1, contentHash: "content-hash", status: "approved", createdAt: now, updatedAt: now });
-    await ctx.db.insert("actionApprovals", { requestId, ownerId, contentVersion: 1, contentHash: "content-hash", payloadSnapshot: payload, policyVersionId: policyId, decision: "authorized_by_mandate", mandateId, mandateVersion: 1, mandateHash: "mandate-hash", decidedAt: now });
-    await ctx.db.patch(mandateId, { status: "revoked", stoppedAt: now + 1, updatedAt: now + 1 });
+    const payload = { kind: "contact_form" as const, targetUrl: "https://roomscout.dev/kontakt/42", fields: [{ name: "message", value: "Hello", sensitivity: "normal" as const }] };
+    const contentHash = await actionPayloadHash(payload);
+    const requestId = await ctx.db.insert("actionRequests", { ownerId, savedNeedId: needId, mandateId, platformId, adapterBindingId: bindingId, policyVersionId: policyId, automationMode: "standing_mandate", requestedActionType: "submit_webform", personalDataScopes: [], payload, contentVersion: 1, contentHash, status: "approved", createdAt: now, updatedAt: now });
+    await ctx.db.insert("actionApprovals", { requestId, ownerId, contentVersion: 1, contentHash, payloadSnapshot: payload, policyVersionId: policyId, decision: "authorized_by_mandate", autonomyVersion: 0, autonomyHash: "defaults", decidedAt: now });
+    await seedSemanticClearance(ctx, requestId);
+    await ctx.db.insert("scoutAutonomy", { ownerId, mode: "autopilot", contact: false, viewings: true, publishAd: false, shareProfile: true, sharePrivate: false, version: 1, contentHash: "rules-v1", createdAt: now, updatedAt: now });
     return { ownerId, requestId };
   });
-  await expect(t.mutation(internal.externalActions.claimForExecutor, { ownerId: fixture.ownerId, requestId: fixture.requestId, executor: "firecrawl" })).rejects.toThrow();
+  const gate = await t.mutation(internal.externalActions.prepareClaim, { ownerId: fixture.ownerId, requestId: fixture.requestId, executor: "firecrawl" });
+  expect(gate).toEqual({ outcome: "stop", reason: "action_not_allowed", detail: "submit_webform" });
+  expect(await t.run((ctx) => ctx.db.get(fixture.requestId))).toMatchObject({ status: "blocked", error: "action_not_allowed", gate: { outcome: "stop", reason: "action_not_allowed", autonomyVersion: 1, autonomyHash: "rules-v1" } });
+  await expect(t.mutation(internal.externalActions.claimForExecutor, { ownerId: fixture.ownerId, requestId: fixture.requestId, executor: "firecrawl" })).rejects.toThrow("ACTION_NOT_EXECUTABLE");
 });
 
-it("resumes one idempotent mandate request without charging its contact slot twice", async () => {
+it("resumes one idempotent Scout request through the Freigabeprüfung", async () => {
   const t = convexTest(schema, modules);
   const fixture = await seedStandingClaimFixture(t);
+  const claim = async () => {
+    const gate = await t.mutation(internal.externalActions.prepareClaim, { ownerId: fixture.ownerId, requestId: fixture.firstRequestId, executor: "firecrawl" });
+    expect(gate).toEqual({ outcome: "proceed" });
+    return t.mutation(internal.externalActions.claimForExecutor, { ownerId: fixture.ownerId, requestId: fixture.firstRequestId, executor: "firecrawl" });
+  };
 
-  const first = await t.mutation(internal.externalActions.claimForExecutor, {
-    ownerId: fixture.ownerId,
-    requestId: fixture.firstRequestId,
-    executor: "firecrawl",
-  });
-  const resumed = await t.mutation(internal.externalActions.claimForExecutor, {
-    ownerId: fixture.ownerId,
-    requestId: fixture.firstRequestId,
-    executor: "firecrawl",
-  });
+  const first = await claim();
+  const resumed = await claim();
 
   expect(first.alreadyClaimed).toBe(false);
   expect(resumed).toMatchObject({
@@ -187,87 +186,19 @@ it("resumes one idempotent mandate request without charging its contact slot twi
     executionStatus: "claimed",
     alreadyClaimed: true,
   });
-
-  const secondRequestId = await t.run(async (ctx) => {
-    const now = Date.now();
-    const firstRequest = await ctx.db.get(fixture.firstRequestId);
-    if (firstRequest === null || !firstRequest.savedNeedId || !firstRequest.mandateId || !firstRequest.platformId || !firstRequest.adapterBindingId || !firstRequest.policyVersionId) {
-      throw new Error("Standing-action fixture is incomplete");
-    }
-    const contentHash = await actionPayloadHash(firstRequest.payload);
-    const requestId = await ctx.db.insert("actionRequests", {
-      ownerId: fixture.ownerId,
-      savedNeedId: firstRequest.savedNeedId,
-      mandateId: firstRequest.mandateId,
-      platformId: firstRequest.platformId,
-      adapterBindingId: firstRequest.adapterBindingId,
-      policyVersionId: firstRequest.policyVersionId,
-      automationMode: "standing_mandate",
-      requestedActionType: "submit_webform",
-      personalDataScopes: [],
-      payload: firstRequest.payload,
-      contentVersion: 1,
-      contentHash,
-      status: "approved",
-      expiresAt: now + 86_400_000,
-      createdAt: now,
-      updatedAt: now,
-    });
-    await ctx.db.insert("actionApprovals", {
-      requestId,
-      ownerId: fixture.ownerId,
-      contentVersion: 1,
-      contentHash,
-      payloadSnapshot: firstRequest.payload,
-      policyVersionId: firstRequest.policyVersionId,
-      decision: "authorized_by_mandate",
-      mandateId: firstRequest.mandateId,
-      mandateVersion: 1,
-      mandateHash: "mandate-hash",
-      decidedAt: now,
-    });
-    await seedSemanticClearance(ctx, requestId);
-    return requestId;
-  });
-
-  await expect(
-    t.mutation(internal.externalActions.claimForExecutor, {
-      ownerId: fixture.ownerId,
-      requestId: secondRequestId,
-      executor: "firecrawl",
-    }),
-  ).rejects.toThrow("MANDATE_NO_LONGER_AUTHORIZES");
+  expect(await t.run((ctx) => ctx.db.query("actionApprovals").collect())).toHaveLength(1);
+  expect(await t.run((ctx) => ctx.db.get(fixture.firstRequestId))).toMatchObject({ status: "executing", gate: { outcome: "proceed" } });
 });
 
-it("revalidates a default autopilot execution without enforcing artificial daily usage quotas", async () => {
+it("refuses the transactional claim for a Scout request that never passed the Freigabeprüfung", async () => {
   const t = convexTest(schema, modules);
-  const fixture = await seedStandingClaimFixture(t, true);
-  await t.mutation(internal.externalActions.claimForExecutor, {
+  const fixture = await seedStandingClaimFixture(t);
+  await expect(t.mutation(internal.externalActions.claimForExecutor, {
     ownerId: fixture.ownerId,
     requestId: fixture.firstRequestId,
     executor: "firecrawl",
-  });
-  const secondRequestId = await t.run(async (ctx) => {
-    const now = Date.now();
-    const first = (await ctx.db.get(fixture.firstRequestId))!;
-    const contentHash = await actionPayloadHash(first.payload);
-    const requestId = await ctx.db.insert("actionRequests", { ownerId: fixture.ownerId, savedNeedId: first.savedNeedId,
-      mandateId: first.mandateId, platformId: first.platformId, adapterBindingId: first.adapterBindingId,
-      policyVersionId: first.policyVersionId, automationMode: "standing_mandate", requestedActionType: "submit_webform",
-      personalDataScopes: [], payload: first.payload, contentVersion: 2, contentHash,
-      status: "approved", expiresAt: now + 86_400_000, createdAt: now, updatedAt: now });
-    await ctx.db.insert("actionApprovals", { requestId, ownerId: fixture.ownerId, contentVersion: 2,
-      contentHash, payloadSnapshot: first.payload, policyVersionId: first.policyVersionId,
-      decision: "authorized_by_mandate", mandateId: first.mandateId, mandateVersion: 1,
-      mandateHash: "mandate-hash", decidedAt: now });
-    await seedSemanticClearance(ctx, requestId);
-    return requestId;
-  });
-  await expect(t.mutation(internal.externalActions.claimForExecutor, {
-    ownerId: fixture.ownerId,
-    requestId: secondRequestId,
-    executor: "firecrawl",
-  })).resolves.toMatchObject({ alreadyClaimed: false, executionStatus: "claimed" });
+  })).rejects.toThrow("GATE_NOT_PASSED");
+  expect(await t.run((ctx) => ctx.db.query("actionExecutions").collect())).toEqual([]);
 });
 
 it("rejects an exact approval whose action request expired before claim", async () => {

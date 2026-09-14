@@ -1885,6 +1885,25 @@ export default defineSchema({
       v.literal("failed"),
       v.literal("cancelled"),
       v.literal("expired"),
+      v.literal("blocked"),
+    ),
+    /** Last Freigabeprüfung verdict for this request (ADR 0002): never a silent stop. */
+    gate: v.optional(
+      v.object({
+        outcome: v.union(
+          v.literal("proceed"),
+          v.literal("wait"),
+          v.literal("ask_user"),
+          v.literal("stop"),
+        ),
+        reason: v.optional(v.string()),
+        detail: v.optional(v.string()),
+        retryAt: v.optional(v.number()),
+        attempts: v.optional(v.number()),
+        autonomyVersion: v.number(),
+        autonomyHash: v.string(),
+        decidedAt: v.number(),
+      }),
     ),
     executionIdempotencyKey: v.optional(v.string()),
     expiresAt: v.optional(v.number()),
@@ -1927,6 +1946,9 @@ export default defineSchema({
     mandateId: v.optional(v.id("searchMandates")),
     mandateVersion: v.optional(v.number()),
     mandateHash: v.optional(v.string()),
+    /** Handlungsspielraum version the Freigabeprüfung acted on (ADR 0001). */
+    autonomyVersion: v.optional(v.number()),
+    autonomyHash: v.optional(v.string()),
     decidedAt: v.number(),
   })
     .index("by_request_and_content_version", ["requestId", "contentVersion"])

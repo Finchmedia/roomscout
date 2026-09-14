@@ -4,6 +4,7 @@ import { makeFunctionReference } from "convex/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
+import { actionPayloadHash } from "./integrations/contentHash";
 
 const providerSpies = vi.hoisted(() => ({
   firecrawlCreateSession: vi.fn(),
@@ -100,13 +101,14 @@ async function portalFixture(provider: "firecrawl" | "browserbase") {
       configFingerprint: "isolation", policyVersionId: policyId, createdAt: now, updatedAt: now,
     });
     const payload = { kind: "platform_message" as const, targetPath: "/listings", recipients: ["Owner"], body: "Is the room available?" };
+    const contentHash = await actionPayloadHash(payload);
     const requestId = await ctx.db.insert("actionRequests", {
       ownerId, platformId, connectionId, policyVersionId: policyId, adapterBindingId: bindingId,
       automationMode: "exact_once", requestedActionType: "send_platform_dm", personalDataScopes: [], payload,
-      contentVersion: 1, contentHash: "isolation-content", status: "approved", createdAt: now, updatedAt: now,
+      contentVersion: 1, contentHash, status: "approved", createdAt: now, updatedAt: now,
     });
     await ctx.db.insert("actionApprovals", {
-      requestId, ownerId, contentVersion: 1, contentHash: "isolation-content", payloadSnapshot: payload,
+      requestId, ownerId, contentVersion: 1, contentHash, payloadSnapshot: payload,
       policyVersionId: policyId, decision: "approved", decidedAt: now,
     });
     const mailboxId = await ctx.db.insert("userMailboxes", {

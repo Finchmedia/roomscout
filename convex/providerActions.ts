@@ -16,10 +16,12 @@ export const stageReply = internalMutation({
     if (!offer || !conversation || conversation.state === "closed" || conversation.ownerId !== offer.ownerId ||
       conversation.currentOfferId !== offerId || conversation.revision !== offer.revision ||
       !offer.assessment.suggestedReply || !["ask_provider", "decline"].includes(offer.assessment.nextAction)) return null;
-    const [need, signal, existing] = await Promise.all([
+    const [need, signal, priorRequests] = await Promise.all([
       ctx.db.get(conversation.savedNeedId), ctx.db.get(conversation.signalId),
-      ctx.db.query("actionRequests").withIndex("by_provider_offer", (q) => q.eq("providerOfferId", offerId)).unique(),
+      ctx.db.query("actionRequests").withIndex("by_provider_offer", (q) => q.eq("providerOfferId", offerId)).order("desc").take(10),
     ]);
+    // A dead request (stopped, expired, rejected) must not block a fresh draft forever.
+    const existing = priorRequests.find((row) => !["expired", "blocked", "rejected"].includes(row.status));
     if (existing) return existing._id;
     if (!need || need.ownerId !== offer.ownerId || need.status !== "active" || (need.matchingRevision ?? 0) !== offer.needRevision ||
       !signal || !["published", "stale"].includes(signal.status) || await signalMatchRevision(signal) !== offer.signalRevision) return null;
