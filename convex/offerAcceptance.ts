@@ -52,7 +52,9 @@ export const prepare = mutation({
       if (existing.status === "failed") refreshable = true;
       if (refreshable) {
         const execution = await ctx.db.query("actionExecutions").withIndex("by_request", (q) => q.eq("requestId", existing._id)).order("desc").first();
-        refreshable = !execution || (!execution.providerActionId && execution.status === "failed");
+        // A failed execution never submitted: the write path reports "unknown" whenever a submission may have
+        // happened, and the provider session id is attached at session open, before anything is sent.
+        refreshable = !execution || execution.status === "failed";
       }
       if (!refreshable) return existing._id;
       const contentVersion = existing.contentVersion + 1;
