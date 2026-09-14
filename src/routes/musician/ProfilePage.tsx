@@ -23,7 +23,6 @@ import {
   type SettingsSection,
 } from "../../components/settings/SettingsFrame";
 import settingsStyles from "../../components/settings/SettingsFrame.module.css";
-import { SearchControlSettings } from "../../components/settings/SearchControlSettings";
 import {
   PortalConnectionsWorkspace,
   type AvailablePortal,
@@ -427,7 +426,6 @@ export function ProfilePage() {
       <WorkspaceShell mode="musician">
         <SettingsFrame onSectionChange={setSection} section={section}>
           <div className="stack">
-            <SearchControlSettings view="sources" />
             <PortalConnectionsWorkspace
               availablePortals={connectableSources}
               error={connectionError}
@@ -502,7 +500,10 @@ export function ProfilePage() {
   if (section !== "knowledge") {
     const content =
       section === "autonomy" ? (
-        <SearchControlSettings view="autonomy" />
+        <EmptyState
+          body="Dein Handlungsspielraum gilt pro Nutzer für alle Suchaufträge und wird in den Einstellungen gepflegt."
+          title="Handlungsspielraum"
+        />
       ) : section === "profile" ? (
         <div className="stack">
           <LedgerCard

@@ -352,7 +352,7 @@ async function executeApprovedForOwner(
 
 /**
  * Executes a reviewed public contact-form workflow after the generic action
- * ledger transactionally rechecks the immutable approval/mandate, current
+ * ledger transactionally rechecks the immutable approval, current
  * source policy, platform domain, and adapter binding. Live View URLs are only
  * returned to this authenticated caller and are never written to Convex.
  */

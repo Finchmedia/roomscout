@@ -287,7 +287,7 @@ const DEMO_NOTIF: NotificationPrefs = {
 
 const DEMO_FLAGS: SettingsFlags = { voice: true, publicSearch: false }
 
-/** §10.3 — the prototype's own demo counts, not derived from a live mandate. */
+/** §10.3 — the prototype's own demo counts, not derived from the live Handlungsspielraum. */
 const DEMO_USAGE: SettingsUsage = { searches: 1, contacted: 1 }
 
 /* -------------------------------------------------------------------------- */

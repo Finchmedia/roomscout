@@ -80,13 +80,6 @@ async function portalFixture(provider: "firecrawl" | "browserbase") {
       ownerId, title: "Isolation need", city: "Berlin", districts: [], arrangement: ["shared"], schedule: [],
       requirements: [], status: "active", createdAt: now, updatedAt: now,
     });
-    const mandateId = await ctx.db.insert("searchMandates", {
-      ownerId, savedNeedId, version: 1, mode: "outreach_autopilot", status: "active", platformIds: [platformId],
-      allowedActionTypes: ["create_portal_account"], allowedPersonalData: ["reply_email"], maxContactsPerDay: 1,
-      maxBrowserMinutesPerDay: 10, expiresAt: now + 60_000, stopOnComplaint: true,
-      stopWhenSuitableRoomConfirmed: true, commitmentBoundary: "non_binding_outreach_only", contentHash: "mandate",
-      createdAt: now, updatedAt: now,
-    });
     const policyId = await ctx.db.insert("sourceFlowPolicies", {
       platformId, sourceId, scopeKey: "controlled:contact", flow: "contact", version: 1, status: "approved",
       decision: "allowed", maxAutomationLevel: "approved_execute", userConnectionRequired: true,
@@ -115,7 +108,7 @@ async function portalFixture(provider: "firecrawl" | "browserbase") {
       ownerId, provider: "agentmail", providerInboxId: `${provider}-mailbox`, emailAddress: `${provider}@agentmail.test`,
       clientId: `${provider}-client`, status: "active", createdAt: now, updatedAt: now,
     });
-    return { ownerId, connectionId, requestId, mandateId, mailboxId };
+    return { ownerId, savedNeedId, connectionId, requestId, mailboxId };
   });
   return { t, owner: t.withIdentity({ subject: ids.ownerId }), ...ids };
 }
@@ -195,7 +188,7 @@ describe("exclusive controlled-portal provider isolation", () => {
       ownerId: fixture.ownerId, connectionId: fixture.connectionId, kind: "authenticate", browserProvider: "firecrawl",
     });
     await expect(fixture.t.action(internal.firecrawlPortal.runScheduledAgentRegistration, {
-      ownerId: fixture.ownerId, mandateId: fixture.mandateId, connectionId: fixture.connectionId, runId,
+      ownerId: fixture.ownerId, savedNeedId: fixture.savedNeedId, connectionId: fixture.connectionId, runId,
     })).resolves.toBeNull();
     expect(await fixture.t.run((ctx) => ctx.db.get(runId))).toMatchObject({
       status: "failed", errorCode: "FIRECRAWL_NOT_CONFIGURED",

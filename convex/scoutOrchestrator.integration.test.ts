@@ -5,23 +5,35 @@ import agentTest from "@convex-dev/agent/test";
 import rateLimiterTest from "@convex-dev/rate-limiter/test";
 import workpoolTest from "@convex-dev/workpool/test";
 import { api, internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
 import schema from "./schema";
+import { DEFAULT_AUTONOMY_RULES, type AutonomyRules } from "./lib/autonomy";
 import { signalMatchRevision } from "./lib/matchValidity";
 
 const modules = import.meta.glob("./**/*.ts");
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 
+/** Persists the owner's Handlungsspielraum directly (what `api.autonomy.save` would write). */
+async function saveRules(ctx: Pick<MutationCtx, "db">, ownerId: Id<"users">, rules: Partial<AutonomyRules>) {
+  const now = Date.now();
+  const existing = await ctx.db.query("scoutAutonomy").withIndex("by_owner", (q) => q.eq("ownerId", ownerId)).unique();
+  const next = { ...(existing ?? DEFAULT_AUTONOMY_RULES), ...rules };
+  const row = {
+    mode: next.mode, contact: next.contact, viewings: next.viewings, publishAd: next.publishAd,
+    shareProfile: next.shareProfile, sharePrivate: next.sharePrivate,
+    version: (existing?.version ?? 0) + 1, contentHash: `rules-v${(existing?.version ?? 0) + 1}`, updatedAt: now,
+  };
+  if (existing) await ctx.db.patch(existing._id, row);
+  else await ctx.db.insert("scoutAutonomy", { ownerId, ...row, createdAt: now });
+}
+
 async function seedOrchestrationFixture(
   t: ReturnType<typeof convexTest>,
   options?: {
-    mode?:
-      | "guided"
-      | "research_autopilot"
-      | "outreach_autopilot"
-      | "negotiation_autopilot";
-    status?: "active" | "revoked";
-    expiresAt?: number;
+    rules?: Partial<AutonomyRules>;
+    needStatus?: "draft" | "active" | "paused" | "archived";
     adapterKey?: string;
     executor?: "firecrawl" | "browserbase";
   },
@@ -35,6 +47,7 @@ async function seedOrchestrationFixture(
       createdAt: now,
       lastSeenAt: now,
     });
+    await saveRules(ctx, ownerId, options?.rules ?? {});
     const needId = await ctx.db.insert("savedNeeds", {
       ownerId,
       title: "Fester Proberaum für unsere Band",
@@ -43,7 +56,7 @@ async function seedOrchestrationFixture(
       arrangement: ["permanent", "shared"],
       schedule: ["Mittwochabend"],
       requirements: ["Schlagzeug erlaubt"],
-      status: "active",
+      status: options?.needStatus ?? "active",
       createdAt: now,
       updatedAt: now,
     });
@@ -190,27 +203,6 @@ async function seedOrchestrationFixture(
       updatedAt: now,
     });
     await ctx.db.patch(targetId, { adapterBindingId: bindingId });
-    const mandateId = await ctx.db.insert("searchMandates", {
-      ownerId,
-      savedNeedId: needId,
-      version: 1,
-      mode: options?.mode ?? "outreach_autopilot",
-      status: options?.status ?? "active",
-      platformIds: [platformId],
-      allowedActionTypes: ["submit_webform"],
-      allowedPersonalData: ["reply_email"],
-      maxContactsPerDay: 5,
-      maxBrowserMinutesPerDay: 30,
-      expiresAt: options?.expiresAt ?? now + 86_400_000,
-      stopOnComplaint: true,
-      stopWhenSuitableRoomConfirmed: true,
-      commitmentBoundary: "non_binding_outreach_only",
-      contentHash: "mandate-hash",
-      activatedAt: now,
-      ...(options?.status === "revoked" ? { stoppedAt: now } : {}),
-      createdAt: now,
-      updatedAt: now,
-    });
     const opportunityId = await ctx.db.insert("opportunities", {
       ownerId,
       savedNeedId: needId,
@@ -227,7 +219,7 @@ async function seedOrchestrationFixture(
       createdAt: now,
       updatedAt: now,
     });
-    return { ownerId, needId, platformId, mandateId, opportunityId, signalId, entryId, sourceId, bindingId, policyId };
+    return { ownerId, needId, platformId, opportunityId, signalId, entryId, sourceId, bindingId, policyId };
   });
 }
 
@@ -283,11 +275,6 @@ async function makeControlledRegistrationEligible(
       createdAt: Date.now(),
       updatedAt: Date.now(),
     });
-    const mandate = await ctx.db.get(fixture.mandateId);
-    await ctx.db.patch(fixture.mandateId, {
-      allowedActionTypes: [...(mandate?.allowedActionTypes ?? []), "create_portal_account"],
-      commitmentBoundary: "non_binding_outreach_only",
-    });
     return connectionId;
   });
 }
@@ -297,10 +284,10 @@ it("schedules one controlled portal registration before outreach and remains ide
   const fixture = await seedOrchestrationFixture(t);
   const connectionId = await makeControlledRegistrationEligible(t, fixture);
 
-  expect(await t.mutation(internal.mandateOrchestrator.runForOwner, {
+  expect(await t.mutation(internal.scoutOrchestrator.runForOwner, {
     ownerId: fixture.ownerId,
   })).toMatchObject({ created: 0, scheduled: 1 });
-  expect(await t.mutation(internal.mandateOrchestrator.runForOwner, {
+  expect(await t.mutation(internal.scoutOrchestrator.runForOwner, {
     ownerId: fixture.ownerId,
   })).toMatchObject({ created: 0, scheduled: 0 });
 
@@ -320,27 +307,36 @@ it("schedules one controlled portal registration before outreach and remains ide
   expect(state.turns).toEqual([]);
 });
 
-it("stops a queued registration when its standing mandate is revoked before execution", async () => {
+it.each([
+  {
+    name: "the search is paused",
+    mutate: async (t: ReturnType<typeof convexTest>, fixture: Awaited<ReturnType<typeof seedOrchestrationFixture>>) =>
+      await t.run(async (ctx) => { await ctx.db.patch(fixture.needId, { status: "paused" }); }),
+  },
+  {
+    name: "contact is switched off in the Handlungsspielraum",
+    mutate: async (t: ReturnType<typeof convexTest>, fixture: Awaited<ReturnType<typeof seedOrchestrationFixture>>) =>
+      await t.run(async (ctx) => { await saveRules(ctx, fixture.ownerId, { contact: false }); }),
+  },
+])("stops a queued registration when $name before execution", async ({ mutate }) => {
   const t = convexTest(schema, modules);
   const fixture = await seedOrchestrationFixture(t);
   const connectionId = await makeControlledRegistrationEligible(t, fixture);
-  await t.mutation(internal.mandateOrchestrator.runForOwner, { ownerId: fixture.ownerId });
+  await t.mutation(internal.scoutOrchestrator.runForOwner, { ownerId: fixture.ownerId });
   const runId = await t.run(async (ctx) =>
     (await ctx.db.query("browserRuns").withIndex("by_connection", (q) => q.eq("connectionId", connectionId)).unique())!._id,
   );
-  await t.run(async (ctx) => {
-    await ctx.db.patch(fixture.mandateId, { status: "revoked", stoppedAt: Date.now() });
-  });
+  await mutate(t, fixture);
 
   await expect(t.action(internal.browserbasePortal.runScheduledAgentRegistration, {
     ownerId: fixture.ownerId,
-    mandateId: fixture.mandateId,
+    savedNeedId: fixture.needId,
     connectionId,
     runId,
   })).resolves.toBeNull();
   expect(await t.run(async (ctx) => ctx.db.get(runId))).toMatchObject({
     status: "stopped",
-    errorCode: "REGISTRATION_MANDATE_NO_LONGER_ACTIVE",
+    errorCode: "REGISTRATION_SEARCH_NO_LONGER_ACTIVE",
   });
 });
 
@@ -350,14 +346,14 @@ it("surfaces a scheduled registration startup failure on the reserved browser ru
   rateLimiterTest.register(t);
   const fixture = await seedOrchestrationFixture(t);
   const connectionId = await makeControlledRegistrationEligible(t, fixture);
-  await t.mutation(internal.mandateOrchestrator.runForOwner, { ownerId: fixture.ownerId });
+  await t.mutation(internal.scoutOrchestrator.runForOwner, { ownerId: fixture.ownerId });
   const runId = await t.run(async (ctx) =>
     (await ctx.db.query("browserRuns").withIndex("by_connection", (q) => q.eq("connectionId", connectionId)).unique())!._id,
   );
 
   await expect(t.action(internal.browserbasePortal.runScheduledAgentRegistration, {
     ownerId: fixture.ownerId,
-    mandateId: fixture.mandateId,
+    savedNeedId: fixture.needId,
     connectionId,
     runId,
   })).resolves.toBeNull();
@@ -369,14 +365,9 @@ it("surfaces a scheduled registration startup failure on the reserved browser ru
 
 it.each([
   {
-    name: "guided mode",
+    name: "contact switched off in the Handlungsspielraum",
     mutate: async (t: ReturnType<typeof convexTest>, fixture: Awaited<ReturnType<typeof seedOrchestrationFixture>>) =>
-      await t.run(async (ctx) => { await ctx.db.patch(fixture.mandateId, { mode: "guided" }); }),
-  },
-  {
-    name: "missing account-creation scope",
-    mutate: async (t: ReturnType<typeof convexTest>, fixture: Awaited<ReturnType<typeof seedOrchestrationFixture>>) =>
-      await t.run(async (ctx) => { await ctx.db.patch(fixture.mandateId, { allowedActionTypes: ["submit_webform"] }); }),
+      await t.run(async (ctx) => { await saveRules(ctx, fixture.ownerId, { contact: false }); }),
   },
   {
     name: "inactive personal mailbox",
@@ -394,9 +385,14 @@ it.each([
       await t.run(async (ctx) => { await ctx.db.patch(fixture.needId, { status: "paused" }); }),
   },
   {
-    name: "platform outside mandate",
+    name: "platform excluded by the owner's source preferences",
     mutate: async (t: ReturnType<typeof convexTest>, fixture: Awaited<ReturnType<typeof seedOrchestrationFixture>>) =>
-      await t.run(async (ctx) => { await ctx.db.patch(fixture.mandateId, { platformIds: [] }); }),
+      await t.run(async (ctx) => {
+        await ctx.db.insert("searchSourcePreferences", {
+          ownerId: fixture.ownerId, savedNeedId: fixture.needId, platformId: fixture.platformId,
+          preference: "exclude", createdAt: Date.now(), updatedAt: Date.now(),
+        });
+      }),
   },
   {
     name: "account creation forbidden by policy",
@@ -418,20 +414,20 @@ it.each([
   const fixture = await seedOrchestrationFixture(t);
   const connectionId = await makeControlledRegistrationEligible(t, fixture);
   await mutate(t, fixture, connectionId);
-  expect(await t.mutation(internal.mandateOrchestrator.runForOwner, {
+  expect(await t.mutation(internal.scoutOrchestrator.runForOwner, {
     ownerId: fixture.ownerId,
   })).toMatchObject({ scheduled: 0 });
   expect(await t.run(async (ctx) => ctx.db.query("browserRuns").collect())).toEqual([]);
 });
 
-it("does not send fictional demo outreach to a real Bandnet listing even with an old mandate", async () => {
+it("does not send fictional demo outreach to a real Bandnet listing even with contact on", async () => {
   const t = convexTest(schema, modules);
   const fixture = await seedOrchestrationFixture(t);
-  const first = await t.mutation(internal.mandateOrchestrator.runForOwner, {
+  const first = await t.mutation(internal.scoutOrchestrator.runForOwner, {
     ownerId: fixture.ownerId,
     limit: 5,
   });
-  const second = await t.mutation(internal.mandateOrchestrator.runForOwner, {
+  const second = await t.mutation(internal.scoutOrchestrator.runForOwner, {
     ownerId: fixture.ownerId,
     limit: 5,
   });
@@ -459,8 +455,8 @@ it("queues one controlled opportunity into the shared Agent without pre-authoriz
     await ctx.db.patch(f.sourceId, { baseUrl: "https://roomscout.dev/listings" });
     await ctx.db.patch(f.entryId, { detailUrl: "https://roomscout.dev/listings/controlled" });
   });
-  expect(await t.mutation(internal.mandateOrchestrator.runForOwner, { ownerId: f.ownerId })).toMatchObject({ created: 1, scheduled: 1 });
-  expect(await t.mutation(internal.mandateOrchestrator.runForOwner, { ownerId: f.ownerId })).toMatchObject({ created: 0 });
+  expect(await t.mutation(internal.scoutOrchestrator.runForOwner, { ownerId: f.ownerId })).toMatchObject({ created: 1, scheduled: 1 });
+  expect(await t.mutation(internal.scoutOrchestrator.runForOwner, { ownerId: f.ownerId })).toMatchObject({ created: 0 });
   const state = await t.run(async (ctx) => ({
     turns: await ctx.db.query("providerTurns").collect(), actions: await ctx.db.query("actionRequests").collect(),
     approvals: await ctx.db.query("actionApprovals").collect(), opportunity: await ctx.db.get(f.opportunityId),
@@ -472,7 +468,7 @@ it("queues one controlled opportunity into the shared Agent without pre-authoriz
   expect(state.approvals).toEqual([]);
 });
 
-it("honors a current source exclusion even when the active mandate still contains the platform", async () => {
+it("honors a current source exclusion for the controlled platform", async () => {
   const t = convexTest(schema, modules);
   agentTest.register(t); workpoolTest.register(t, "scoutWorkpool");
   const f = await seedOrchestrationFixture(t);
@@ -486,37 +482,38 @@ it("honors a current source exclusion even when the active mandate still contain
     });
   });
 
-  expect(await t.mutation(internal.mandateOrchestrator.runForOwner, { ownerId: f.ownerId }))
+  expect(await t.mutation(internal.scoutOrchestrator.runForOwner, { ownerId: f.ownerId }))
     .toMatchObject({ created: 0, scheduled: 0, skipped: 1 });
   expect(await t.run(async (ctx) => ctx.db.query("providerTurns").collect())).toEqual([]);
   expect(await t.run(async (ctx) => ctx.db.get(f.opportunityId))).toMatchObject({ status: "new" });
 });
 
-it("does not orchestrate revoked or expired mandates", async () => {
-  const revokedTest = convexTest(schema, modules);
-  const revoked = await seedOrchestrationFixture(revokedTest, {
-    status: "revoked",
+it.each(["draft", "paused", "archived"] as const)("does not orchestrate a %s search", async (needStatus) => {
+  const t = convexTest(schema, modules);
+  agentTest.register(t); workpoolTest.register(t, "scoutWorkpool");
+  const f = await seedOrchestrationFixture(t, { needStatus });
+  await t.run(async (ctx) => {
+    await ctx.db.patch(f.platformId, { canonicalDomain: "roomscout.dev", slug: "roomscout-dev" });
+    await ctx.db.patch(f.sourceId, { baseUrl: "https://roomscout.dev/listings" });
+    await ctx.db.patch(f.entryId, { detailUrl: "https://roomscout.dev/listings/controlled" });
   });
-  expect(
-    (
-      await revokedTest.mutation(internal.mandateOrchestrator.runForOwner, {
-        ownerId: revoked.ownerId,
-      })
-    ).created,
-  ).toBe(0);
+  expect(await t.mutation(internal.scoutOrchestrator.runForOwner, { ownerId: f.ownerId }))
+    .toMatchObject({ checked: 0, created: 0, scheduled: 0 });
+  expect(await t.mutation(internal.scoutOrchestrator.runBatch, {})).toMatchObject({ checked: 0, created: 0 });
+  expect(await t.run(async (ctx) => ctx.db.get(f.opportunityId))).toMatchObject({ status: "new" });
+});
 
-  const expiredTest = convexTest(schema, modules);
-  const expired = await seedOrchestrationFixture(expiredTest, {
-    expiresAt: Date.now() - 1,
+it("runBatch walks every active search across owners", async () => {
+  const t = convexTest(schema, modules);
+  agentTest.register(t); workpoolTest.register(t, "scoutWorkpool");
+  const f = await seedOrchestrationFixture(t);
+  await t.run(async (ctx) => {
+    await ctx.db.patch(f.platformId, { canonicalDomain: "roomscout.dev", slug: "roomscout-dev" });
+    await ctx.db.patch(f.sourceId, { baseUrl: "https://roomscout.dev/listings" });
+    await ctx.db.patch(f.entryId, { detailUrl: "https://roomscout.dev/listings/controlled" });
   });
-  const result = await expiredTest.mutation(
-    internal.mandateOrchestrator.runForOwner,
-    { ownerId: expired.ownerId },
-  );
-  expect(result).toMatchObject({ created: 0, expired: 1 });
-  expect(
-    await expiredTest.run(async (ctx) => (await ctx.db.get(expired.mandateId))?.status),
-  ).toBe("expired");
+  expect(await t.mutation(internal.scoutOrchestrator.runBatch, {})).toMatchObject({ checked: 1, created: 1 });
+  expect(await t.run(async (ctx) => ctx.db.get(f.opportunityId))).toMatchObject({ status: "reviewing" });
 });
 
 it("cannot execute an already prepared first contact after the search changes", async () => {
@@ -543,53 +540,54 @@ it("cannot execute an already prepared first contact after the search changes", 
   expect(await t.run(async (ctx) => ctx.db.query("actionExecutions").collect())).toEqual([]);
 });
 
-it("records a durable audit event when the owner uses the search kill switch", async () => {
+it("pausing the search stops orchestration; re-activating resumes it", async () => {
   const t = convexTest(schema, modules);
-  const fixture = await seedOrchestrationFixture(t);
-  const owner = t.withIdentity({ subject: fixture.ownerId });
+  agentTest.register(t); workpoolTest.register(t, "scoutWorkpool");
+  const f = await seedOrchestrationFixture(t);
+  await t.run(async (ctx) => {
+    await ctx.db.patch(f.platformId, { canonicalDomain: "roomscout.dev", slug: "roomscout-dev" });
+    await ctx.db.patch(f.sourceId, { baseUrl: "https://roomscout.dev/listings" });
+    await ctx.db.patch(f.entryId, { detailUrl: "https://roomscout.dev/listings/controlled" });
+  });
+  const owner = t.withIdentity({ subject: f.ownerId });
+  await owner.mutation(api.savedNeeds.setStatus, { needId: f.needId, status: "paused" });
+  expect(await t.mutation(internal.scoutOrchestrator.runForOwner, { ownerId: f.ownerId })).toMatchObject({ checked: 0, created: 0 });
+  expect(await t.run(async (ctx) => ctx.db.query("providerTurns").collect())).toEqual([]);
 
-  await expect(
-    owner.mutation(api.mandates.killSwitch, { savedNeedId: fixture.needId }),
-  ).resolves.toBe(1);
-
-  const state = await t.run(async (ctx) => ({
-    mandate: await ctx.db.get(fixture.mandateId),
-    auditEvents: await ctx.db
-      .query("auditEvents")
-      .withIndex("by_entity_key_and_occurred_at", (q) =>
-        q.eq("entityKey", `mandate:${fixture.mandateId}`),
-      )
-      .collect(),
-  }));
-  expect(state.mandate).toMatchObject({ status: "revoked" });
-  expect(state.auditEvents).toContainEqual(
-    expect.objectContaining({
-      actorType: "user",
-      actorUserId: fixture.ownerId,
-      eventType: "mandate.kill_switch_revoked",
-    }),
-  );
-
-  const orchestrated = await t.mutation(
-    internal.mandateOrchestrator.runForOwner,
-    { ownerId: fixture.ownerId },
-  );
-  expect(orchestrated.created).toBe(0);
+  await owner.mutation(api.savedNeeds.activate, { savedNeedId: f.needId });
+  expect(await t.run(async (ctx) => (await ctx.db.get(f.needId))?.status)).toBe("active");
+  expect((await t.run(async (ctx) => ctx.db.query("auditEvents").collect())).map((event) => event.eventType)).toContain("search.activated");
+  expect((await t.run(async (ctx) => ctx.db.system.query("_scheduled_functions").collect())).map((row) => row.name))
+    .toEqual(expect.arrayContaining(["matches:recomputeNeed", "scoutOrchestrator:runForOwner", "demoSourceChecks:requestAutomatic"]));
 });
 
-it.each(["guided", "research_autopilot"] as const)(
-  "does not execute external communication in %s mode",
-  async (mode) => {
-    const t = convexTest(schema, modules);
-    const fixture = await seedOrchestrationFixture(t, { mode });
-    const result = await t.mutation(
-      internal.mandateOrchestrator.runForOwner,
-      { ownerId: fixture.ownerId },
-    );
-    expect(result.created).toBe(0);
-    expect(await t.run(async (ctx) => ctx.db.query("actionRequests").collect())).toEqual([]);
-  },
-);
+it("Rücksprache still queues the controlled opportunity — the mode only matters at message time", async () => {
+  const t = convexTest(schema, modules);
+  agentTest.register(t); workpoolTest.register(t, "scoutWorkpool");
+  const f = await seedOrchestrationFixture(t, { rules: { mode: "review" } });
+  await t.run(async (ctx) => {
+    await ctx.db.patch(f.platformId, { canonicalDomain: "roomscout.dev", slug: "roomscout-dev" });
+    await ctx.db.patch(f.sourceId, { baseUrl: "https://roomscout.dev/listings" });
+    await ctx.db.patch(f.entryId, { detailUrl: "https://roomscout.dev/listings/controlled" });
+  });
+  expect(await t.mutation(internal.scoutOrchestrator.runForOwner, { ownerId: f.ownerId })).toMatchObject({ created: 1 });
+  expect(await t.run(async (ctx) => ctx.db.query("providerTurns").collect())).toHaveLength(1);
+  expect(await t.run(async (ctx) => ctx.db.query("actionRequests").collect())).toEqual([]);
+});
+
+it("does not queue an opportunity while contact is switched off", async () => {
+  const t = convexTest(schema, modules);
+  agentTest.register(t); workpoolTest.register(t, "scoutWorkpool");
+  const f = await seedOrchestrationFixture(t, { rules: { contact: false } });
+  await t.run(async (ctx) => {
+    await ctx.db.patch(f.platformId, { canonicalDomain: "roomscout.dev", slug: "roomscout-dev" });
+    await ctx.db.patch(f.sourceId, { baseUrl: "https://roomscout.dev/listings" });
+    await ctx.db.patch(f.entryId, { detailUrl: "https://roomscout.dev/listings/controlled" });
+  });
+  expect(await t.mutation(internal.scoutOrchestrator.runForOwner, { ownerId: f.ownerId })).toMatchObject({ checked: 0, created: 0 });
+  expect(await t.run(async (ctx) => ctx.db.query("providerTurns").collect())).toEqual([]);
+  expect(await t.run(async (ctx) => ctx.db.get(f.opportunityId))).toMatchObject({ status: "new" });
+});
 
 it.each([
   { adapterKey: "unreviewed-contact-v1", executor: "firecrawl" as const },
@@ -598,7 +596,7 @@ it.each([
   const t = convexTest(schema, modules);
   const fixture = await seedOrchestrationFixture(t, options);
   const owner = t.withIdentity({ subject: fixture.ownerId });
-  const result = await owner.mutation(api.mandateOrchestrator.runNowMine, {
+  const result = await owner.mutation(api.scoutOrchestrator.runNowMine, {
     limit: 5,
   });
   expect(result.created).toBe(0);

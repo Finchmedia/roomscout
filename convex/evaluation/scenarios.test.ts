@@ -37,7 +37,7 @@ describe("evaluation scenario catalog", () => {
     expect(byId.get("changed-requirements-revocation")?.hidden.turns.at(-1)).toMatch(/withdrawn/i);
     expect(byId.get("changed-requirements-revocation")?.hidden.controllerEvents).toEqual([
       { kind: "update_need", beforeRound: 2, schedule: ["Thursday evening"] },
-      { kind: "revoke_mandate", beforeRound: 2 },
+      { kind: "pause_search", beforeRound: 2 },
     ]);
   });
 

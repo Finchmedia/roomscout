@@ -11,7 +11,6 @@ const statusValidator = v.union(
 const opportunityValidator = v.object({
   _id: v.id("opportunities"),
   savedNeedId: v.id("savedNeeds"),
-  mandateId: v.optional(v.id("searchMandates")),
   kind: v.union(v.literal("supply_match"), v.literal("demand_collaboration"), v.literal("source_lead")),
   status: statusValidator,
   signalId: v.optional(v.id("signals")),
@@ -45,7 +44,6 @@ export const listMine = query({
     return visible.map((row) => ({
       _id: row._id,
       savedNeedId: row.savedNeedId,
-      mandateId: row.mandateId,
       kind: row.kind,
       status: row.status,
       signalId: row.signalId,
@@ -89,7 +87,6 @@ export const createHandoff = mutation({
     const id = await ctx.db.insert("handoffs", {
       ownerId,
       savedNeedId: opportunity.savedNeedId,
-      mandateId: opportunity.mandateId,
       opportunityId: opportunity._id,
       channel: args.channel,
       status: "ready",

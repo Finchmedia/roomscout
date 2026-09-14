@@ -57,28 +57,50 @@ it("validates saved-search radius bounds and stores the full location query", as
   });
 });
 
-it("default Autopilot activation matches an already indexed room without a new signal", async () => {
+it("activation matches an already indexed room without a new signal", async () => {
   vi.useFakeTimers();
   vi.stubEnv("OPENAI_API_KEY", "");
   const f = await fixture();
-  await f.owner.mutation(api.mandates.enableDefaultAutopilot, { savedNeedId: f.savedNeedId });
+  await f.owner.mutation(api.savedNeeds.activate, { savedNeedId: f.savedNeedId });
   await f.t.finishAllScheduledFunctions(vi.runAllTimers);
   const rows = await f.owner.query(api.matches.listMine, {});
   expect(rows).toHaveLength(1);
   expect(rows[0].signalId).toBe(f.signalId);
   const need = await f.owner.query(api.savedNeeds.getMine, { needId: f.savedNeedId });
   expect(need?.matchingRevision).toBe(1);
-  await f.owner.mutation(api.mandates.enableDefaultAutopilot, { savedNeedId: f.savedNeedId });
+  await f.owner.mutation(api.savedNeeds.activate, { savedNeedId: f.savedNeedId });
   await f.t.finishAllScheduledFunctions(vi.runAllTimers);
   expect((await f.owner.query(api.matches.listMine, {}))).toHaveLength(1);
   expect((await f.owner.query(api.savedNeeds.getMine, { needId: f.savedNeedId }))?.matchingRevision).toBe(1);
 });
 
-it("activation rejects an empty city without creating a mandate", async () => {
+it("activation sets the search active, records the audit event and schedules matching, the orchestrator and the roomscout.dev check", async () => {
+  vi.useFakeTimers();
+  const f = await fixture();
+  await f.owner.mutation(api.savedNeeds.activate, { savedNeedId: f.savedNeedId });
+  expect((await f.owner.query(api.savedNeeds.getMine, { needId: f.savedNeedId }))?.status).toBe("active");
+  const state = await f.t.run(async (ctx) => ({
+    scheduled: (await ctx.db.system.query("_scheduled_functions").collect()).map((row) => row.name),
+    audit: (await ctx.db.query("auditEvents").collect()).map((event) => event.eventType),
+  }));
+  expect(state.scheduled).toEqual(expect.arrayContaining([
+    "matches:recomputeNeed", "scoutOrchestrator:runForOwner", "demoSourceChecks:requestAutomatic",
+  ]));
+  expect(state.audit).toContain("search.activated");
+});
+
+it("activation rejects an empty city and leaves the search a draft", async () => {
   const f = await fixture();
   await f.t.run(async (ctx) => { await ctx.db.patch(f.savedNeedId, { city: " " }); });
-  await expect(f.owner.mutation(api.mandates.enableDefaultAutopilot, { savedNeedId: f.savedNeedId })).rejects.toThrow("INCOMPLETE_NEED");
-  expect(await f.owner.query(api.mandates.getActiveMine, { savedNeedId: f.savedNeedId })).toBeNull();
+  await expect(f.owner.mutation(api.savedNeeds.activate, { savedNeedId: f.savedNeedId })).rejects.toThrow("INCOMPLETE_NEED");
+  expect((await f.owner.query(api.savedNeeds.getMine, { needId: f.savedNeedId }))?.status).toBe("draft");
+  expect(await f.t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect())).toEqual([]);
+});
+
+it("activation is refused for another user's search", async () => {
+  const f = await fixture();
+  const strangerId = await f.t.run((ctx) => ctx.db.insert("users", { username: "stranger", role: "musician", createdAt: 1, lastSeenAt: 1 }));
+  await expect(f.t.withIdentity({ subject: strangerId }).mutation(api.savedNeeds.activate, { savedNeedId: f.savedNeedId })).rejects.toThrow("NEED_NOT_FOUND");
 });
 
 it("edits hide obsolete matches immediately and expire the old opportunity after recomputation", async () => {

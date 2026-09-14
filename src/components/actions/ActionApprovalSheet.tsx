@@ -10,7 +10,7 @@ type ActionApprovalSheetProps = {
   onOpenChange: (open: boolean) => void;
   onApprove?: (request: ActionApprovalRequest) => Promise<void> | void;
   onReject?: (request: ActionApprovalRequest) => Promise<void> | void;
-  onPauseMandate?: (mandateVersion: number) => Promise<void> | void;
+  onPauseAutopilot?: (autonomyVersion: number) => Promise<void> | void;
 };
 
 const kindLabels: Record<ActionApprovalRequest["kind"], string> = {
@@ -23,7 +23,7 @@ const kindLabels: Record<ActionApprovalRequest["kind"], string> = {
   propose_visit_time: "Propose visit time",
 };
 
-export function ActionApprovalSheet({ request, open, onOpenChange, onApprove, onReject, onPauseMandate }: ActionApprovalSheetProps) {
+export function ActionApprovalSheet({ request, open, onOpenChange, onApprove, onReject, onPauseAutopilot }: ActionApprovalSheetProps) {
   const acknowledgementId = useId();
   const [acknowledged, setAcknowledged] = useState(false);
   const [working, setWorking] = useState(false);
@@ -37,8 +37,8 @@ export function ActionApprovalSheet({ request, open, onOpenChange, onApprove, on
 
   if (!request) return null;
 
-  const standingAuthorization = request.authorization.mode === "standing_mandate" ? request.authorization : undefined;
-  const needsOneTimeApproval = !standingAuthorization?.executionAllowed;
+  const autopilotAuthorization = request.authorization.mode === "autopilot" ? request.authorization : undefined;
+  const needsOneTimeApproval = !autopilotAuthorization?.executionAllowed;
 
   async function approve() {
     if (!request || !acknowledged || !onApprove) return;
@@ -68,11 +68,11 @@ export function ActionApprovalSheet({ request, open, onOpenChange, onApprove, on
     }
   }
 
-  async function pauseMandate() {
-    if (!standingAuthorization || !onPauseMandate) return;
+  async function pauseAutopilot() {
+    if (!autopilotAuthorization || !onPauseAutopilot) return;
     setWorking(true);
     try {
-      await onPauseMandate(standingAuthorization.mandateVersion);
+      await onPauseAutopilot(autopilotAuthorization.autonomyVersion);
       changeOpen(false);
     } finally {
       setWorking(false);
@@ -84,20 +84,20 @@ export function ActionApprovalSheet({ request, open, onOpenChange, onApprove, on
       description={`${kindLabels[request.kind]} · exact payload version ${request.contentVersion}`}
       footer={needsOneTimeApproval
         ? <><button className="btn btn-g" disabled={working || !onReject} onClick={() => void reject()} type="button">Reject</button><button className="btn btn-p" disabled={!acknowledged || working || !onApprove} onClick={() => void approve()} type="button">{working ? "Saving…" : "Approve once"}</button></>
-        : <><button className="btn btn-g" onClick={() => changeOpen(false)} type="button">Close</button><button className="btn btn-s" disabled={working || !onPauseMandate} onClick={() => void pauseMandate()} type="button">{working ? "Pausing…" : "Pause mandate"}</button></>}
+        : <><button className="btn btn-g" onClick={() => changeOpen(false)} type="button">Close</button><button className="btn btn-s" disabled={working || !onPauseAutopilot} onClick={() => void pauseAutopilot()} type="button">{working ? "Pausing…" : "Pause Autopilot"}</button></>}
       onOpenChange={changeOpen}
       open={open}
       title={needsOneTimeApproval ? "This step needs you" : "Handled by Autopilot"}
     >
       <div className="rs-action-approval">
-        {standingAuthorization ? (
-          <div className={`rs-action-authorization${standingAuthorization.executionAllowed ? " is-authorized" : ""}`}>
+        {autopilotAuthorization ? (
+          <div className={`rs-action-authorization${autopilotAuthorization.executionAllowed ? " is-authorized" : ""}`}>
             <ShieldCheck aria-hidden="true" size={16} />
-            <p><strong>{standingAuthorization.executionAllowed ? "Covered by Autopilot" : "Outside the current Autopilot boundary"}</strong><br />{standingAuthorization.mandateLabel} · version {standingAuthorization.mandateVersion}{standingAuthorization.executionAllowed ? " allows this non-binding action." : " does not cover this exact action, so your decision is required."}</p>
+            <p><strong>{autopilotAuthorization.executionAllowed ? "Covered by Autopilot" : "Outside the current Autopilot boundary"}</strong><br />{autopilotAuthorization.autonomyLabel} · version {autopilotAuthorization.autonomyVersion}{autopilotAuthorization.executionAllowed ? " allows this non-binding action." : " does not cover this exact action, so your decision is required."}</p>
           </div>
         ) : <div className="rs-action-effect"><ShieldCheck aria-hidden="true" size={16} /><p><strong>One-time approval:</strong> nothing executes until you approve this exact destination and payload.</p></div>}
         <div className="rs-action-effect"><ShieldCheck aria-hidden="true" size={16} /><p><strong>What will happen:</strong> {request.effect}</p></div>
-        <Table className="facts"><TableBody><TableRow><TableCell>Destination</TableCell><TableCell>{request.destination}</TableCell></TableRow><TableRow><TableCell>Acting as</TableCell><TableCell>{request.actingAs}</TableCell></TableRow><TableRow><TableCell>Action</TableCell><TableCell>{kindLabels[request.kind]}</TableCell></TableRow>{standingAuthorization ? <TableRow><TableCell>Authorization</TableCell><TableCell>Autopilot v{standingAuthorization.mandateVersion}</TableCell></TableRow> : <TableRow><TableCell>Authorization</TableCell><TableCell>Your decision</TableCell></TableRow>}</TableBody></Table>
+        <Table className="facts"><TableBody><TableRow><TableCell>Destination</TableCell><TableCell>{request.destination}</TableCell></TableRow><TableRow><TableCell>Acting as</TableCell><TableCell>{request.actingAs}</TableCell></TableRow><TableRow><TableCell>Action</TableCell><TableCell>{kindLabels[request.kind]}</TableCell></TableRow>{autopilotAuthorization ? <TableRow><TableCell>Authorization</TableCell><TableCell>Autopilot v{autopilotAuthorization.autonomyVersion}</TableCell></TableRow> : <TableRow><TableCell>Authorization</TableCell><TableCell>Your decision</TableCell></TableRow>}</TableBody></Table>
         <section><span className="flabel">Exact payload</span><div className="rs-action-fields">{request.fields.map((field) => <div key={field.label}><span className="mono">{field.label}</span><p>{field.value}</p></div>)}</div></section>
         {needsOneTimeApproval ? <label className="ack" htmlFor={acknowledgementId}><input checked={acknowledged} id={acknowledgementId} onChange={(event) => setAcknowledged(event.target.checked)} type="checkbox" /><span>I approve this exact destination and payload for one execution.</span></label> : null}
         {error ? <p className="rs-form-error" role="alert">{error}</p> : null}

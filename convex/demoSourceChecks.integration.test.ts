@@ -68,14 +68,14 @@ it("claims only never-attempted roomscout.dev details within the per-check bound
 it("starts one bounded automatic check per trigger, never interrupts a run, and honours the cooldown", async () => {
   vi.stubEnv("FIRECRAWL_API_KEY", "firecrawl-test-key");
   const { t, ids, musician } = await fixture();
-  expect(await t.mutation(internal.demoSourceChecks.requestAutomatic, { ownerId: ids.musicianId, requestId: "auto:mandate:0001" }))
+  expect(await t.mutation(internal.demoSourceChecks.requestAutomatic, { ownerId: ids.musicianId, requestId: "auto:need:0001" }))
     .toEqual({ accepted: true, status: "queued" });
   expect(await musician.query(api.demoSourceChecks.status, {}))
     .toMatchObject({ status: "queued", mode: "manual", maxChecks: 1, maxDetailPages: 5 });
   const scheduled = await t.run(async (ctx) => ctx.db.system.query("_scheduled_functions").collect());
   expect(scheduled.map((row) => row.name)).toContain("demoSourceCheckActions:runCheck");
 
-  expect(await t.mutation(internal.demoSourceChecks.requestAutomatic, { ownerId: ids.musicianId, requestId: "auto:mandate:0002" }))
+  expect(await t.mutation(internal.demoSourceChecks.requestAutomatic, { ownerId: ids.musicianId, requestId: "auto:need:0002" }))
     .toEqual({ accepted: false, status: "queued", reason: "busy" });
 
   await t.run(async (ctx) => {
@@ -96,7 +96,7 @@ it("starts one bounded automatic check per trigger, never interrupts a run, and 
 it("skips the automatic check without a Firecrawl key or a known owner", async () => {
   vi.stubEnv("FIRECRAWL_API_KEY", "");
   const { t, ids } = await fixture();
-  expect(await t.mutation(internal.demoSourceChecks.requestAutomatic, { ownerId: ids.musicianId, requestId: "auto:mandate:0004" }))
+  expect(await t.mutation(internal.demoSourceChecks.requestAutomatic, { ownerId: ids.musicianId, requestId: "auto:need:0004" }))
     .toEqual({ accepted: false, status: "idle", reason: "unconfigured" });
   vi.stubEnv("FIRECRAWL_API_KEY", "firecrawl-test-key");
   const missingOwner = await t.run(async (ctx) => {
@@ -104,7 +104,7 @@ it("skips the automatic check without a Firecrawl key or a known owner", async (
     await ctx.db.delete(id);
     return id;
   });
-  expect(await t.mutation(internal.demoSourceChecks.requestAutomatic, { ownerId: missingOwner, requestId: "auto:mandate:0005" }))
+  expect(await t.mutation(internal.demoSourceChecks.requestAutomatic, { ownerId: missingOwner, requestId: "auto:need:0005" }))
     .toEqual({ accepted: false, status: "idle", reason: "owner_missing" });
   expect(await t.run(async (ctx) => ctx.db.query("demoSourceChecks").take(1))).toEqual([]);
 });

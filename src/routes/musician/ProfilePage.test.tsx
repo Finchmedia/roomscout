@@ -46,14 +46,6 @@ vi.mock("../../../convex/_generated/api", () => ({
       setPreference: "searchSources.setPreference",
     },
     signals: { list: "signals.list" },
-    mandates: {
-      getActiveMine: "mandates.getActiveMine",
-      createDraft: "mandates.createDraft",
-      activate: "mandates.activate",
-      enableDefaultAutopilot: "mandates.enableDefaultAutopilot",
-      revoke: "mandates.revoke",
-      killSwitch: "mandates.killSwitch",
-    },
     scout: { getMine: "scout.getMine" },
   },
 }));
@@ -154,9 +146,6 @@ describe("ProfilePage settings routes", () => {
       screen.getByRole("heading", { name: "Sources & access" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Live portal controls")).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "Create a search first" }),
-    ).toBeInTheDocument();
     expect(screen.getByText(/portal access/i)).toBeInTheDocument();
   });
 

@@ -7,7 +7,7 @@ const completedRun: BrowserRun = {
   id: "run-1",
   sourceName: "Controlled portal",
   searchTitle: "Scout-assisted portal registration",
-  mandateLabel: "Policy-reviewed portal run",
+  policyLabel: "Policy-reviewed portal run",
   state: "approval_required",
   steps: [{ id: "verify", label: "Verify authentication in a new profile session", state: "active" }],
 };

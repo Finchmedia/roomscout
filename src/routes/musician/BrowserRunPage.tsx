@@ -38,7 +38,7 @@ export function BrowserRunPage() {
     sourceName: connection.platformName ?? connection.sourceName,
     sourceDomain: (() => { try { return new URL(connection.baseUrl).hostname; } catch { return undefined; } })(),
     searchTitle: storedRun.kind === "authenticate" ? storedRun.onboardingStage ? "Scout-assisted portal registration" : "Connect portal account" : storedRun.kind === "inbox_sync" ? "Sync portal inbox" : "Review portal source",
-    mandateLabel: "Policy-reviewed portal run",
+    policyLabel: "Policy-reviewed portal run",
     state: firecrawlRecoveryRequired ? "approval_required" : liveView && storedRun.status === "human_required" ? "human_controlling" : storedRun.status === "running" ? "agent_running" : storedRun.status === "expired" ? "failed" : storedRun.status,
     liveViewUrl: liveView?.url,
     humanPrompt: storedRun.status === "human_required" ? "The controlled automation stopped before an ambiguous or human-only step. Open Live View to review it; RoomScout will not accept terms, solve CAPTCHA, or guess a code." : undefined,

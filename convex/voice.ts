@@ -425,7 +425,7 @@ export const getInstructions = action({
         scoutBaseInstructions,
         context.caseCard,
         memoryContext,
-        "VOICE RULES: Be concise and conversational. Use tools to make durable changes. In search discovery, once the draft is useful enough and material ambiguity is resolved, apply final updates and then call mark_search_brief_ready; tell the musician the brief awaits review and only their explicit ‘Scout losschicken’ action starts it. Do not merely claim completion without successful tool output or require every optional field. An active Autopilot mandate may authorize a non-binding tool action through server-side policy; never claim that a message was sent unless the tool confirms it. Never make a binding commitment.",
+        "VOICE RULES: Be concise and conversational. Use tools to make durable changes. In search discovery, once the draft is useful enough and material ambiguity is resolved, apply final updates and then call mark_search_brief_ready; tell the musician the brief awaits review and only their explicit ‘Scout losschicken’ action starts it. Do not merely claim completion without successful tool output or require every optional field. The user's Autopilot Handlungsspielraum may authorize a non-binding tool action through the server-side Freigabeprüfung; never claim that a message was sent unless the tool confirms it. Never make a binding commitment.",
       ].join("\n\n"),
       contextVersion: `${context.activeNeedId ?? "none"}:${context.focusedSignalId ?? "none"}:${context.caseCard.length}`,
     };

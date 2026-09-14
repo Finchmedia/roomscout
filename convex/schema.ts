@@ -136,7 +136,7 @@ const actionPayload = v.union(
     parentMessageId: v.optional(v.string()),
   }),
 );
-const mandateActionType = v.union(
+const externalActionType = v.union(
   v.literal("send_email"),
   v.literal("submit_webform"),
   v.literal("send_platform_dm"),
@@ -145,7 +145,7 @@ const mandateActionType = v.union(
   v.literal("share_contact_details"),
   v.literal("propose_visit_time"),
 );
-const mandatePersonalData = v.union(
+const personalDataScope = v.union(
   v.literal("band_name"),
   v.literal("member_first_names"),
   v.literal("reply_email"),
@@ -1648,48 +1648,6 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_owner", ["ownerId"]),
 
-  searchMandates: defineTable({
-    ownerId: v.id("users"),
-    savedNeedId: v.id("savedNeeds"),
-    version: v.number(),
-    supersedesMandateId: v.optional(v.id("searchMandates")),
-    mode: v.union(
-      v.literal("guided"),
-      v.literal("research_autopilot"),
-      v.literal("outreach_autopilot"),
-      v.literal("negotiation_autopilot"),
-    ),
-    status: v.union(
-      v.literal("draft"),
-      v.literal("active"),
-      v.literal("superseded"),
-      v.literal("revoked"),
-      v.literal("expired"),
-    ),
-    platformIds: v.array(v.id("sourcePlatforms")),
-    allowedActionTypes: v.array(mandateActionType),
-    allowedPersonalData: v.array(mandatePersonalData),
-    maxContactsPerDay: v.number(),
-    maxBrowserMinutesPerDay: v.number(),
-    maxMonthlyPriceEur: v.optional(v.number()),
-    expiresAt: v.number(),
-    stopOnComplaint: v.boolean(),
-    stopWhenSuitableRoomConfirmed: v.boolean(),
-    commitmentBoundary: v.optional(v.literal("non_binding_outreach_only")),
-    contentHash: v.string(),
-    activatedAt: v.optional(v.number()),
-    stoppedAt: v.optional(v.number()),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-  })
-    .index("by_owner_and_status", ["ownerId", "status"])
-    .index("by_owner_and_saved_need_and_status", [
-      "ownerId",
-      "savedNeedId",
-      "status",
-    ])
-    .index("by_status_and_expires_at", ["status", "expiresAt"]),
-
   searchSourcePreferences: defineTable({
     ownerId: v.id("users"),
     savedNeedId: v.id("savedNeeds"),
@@ -1710,7 +1668,6 @@ export default defineSchema({
   opportunities: defineTable({
     ownerId: v.id("users"),
     savedNeedId: v.id("savedNeeds"),
-    mandateId: v.optional(v.id("searchMandates")),
     kind: v.union(
       v.literal("supply_match"),
       v.literal("demand_collaboration"),
@@ -1812,7 +1769,6 @@ export default defineSchema({
   handoffs: defineTable({
     ownerId: v.id("users"),
     savedNeedId: v.id("savedNeeds"),
-    mandateId: v.optional(v.id("searchMandates")),
     opportunityId: v.optional(v.id("opportunities")),
     connectionId: v.optional(v.id("portalConnections")),
     actionRequestId: v.optional(v.id("actionRequests")),
@@ -1857,7 +1813,6 @@ export default defineSchema({
     matchingNeedRevision: v.optional(v.number()),
     matchingSignalId: v.optional(v.id("signals")),
     matchingSignalRevision: v.optional(v.string()),
-    mandateId: v.optional(v.id("searchMandates")),
     opportunityId: v.optional(v.id("opportunities")),
     handoffId: v.optional(v.id("handoffs")),
     platformId: v.optional(v.id("sourcePlatforms")),
@@ -1865,10 +1820,10 @@ export default defineSchema({
     adapterBindingId: v.optional(v.id("sourceAdapterBindings")),
     automationMode: v.union(
       v.literal("exact_once"),
-      v.literal("standing_mandate"),
+      v.literal("autopilot"),
     ),
-    requestedActionType: mandateActionType,
-    personalDataScopes: v.array(mandatePersonalData),
+    requestedActionType: externalActionType,
+    personalDataScopes: v.array(personalDataScope),
     proposedMonthlyPriceEur: v.optional(v.number()),
     payload: actionPayload,
     contentVersion: v.number(),
@@ -1941,11 +1896,8 @@ export default defineSchema({
     decision: v.union(
       v.literal("approved"),
       v.literal("rejected"),
-      v.literal("authorized_by_mandate"),
+      v.literal("authorized_by_autonomy"),
     ),
-    mandateId: v.optional(v.id("searchMandates")),
-    mandateVersion: v.optional(v.number()),
-    mandateHash: v.optional(v.string()),
     /** Handlungsspielraum version the Freigabeprüfung acted on (ADR 0001). */
     autonomyVersion: v.optional(v.number()),
     autonomyHash: v.optional(v.string()),

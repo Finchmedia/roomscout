@@ -69,7 +69,7 @@ const stages = [
   "signalMatches",
   "searchSourcePreferences",
   "opportunities",
-  "searchMandates",
+  "scoutAutonomy",
   "scoutContexts",
   "memoryEvents",
   "memoryFacts",
@@ -196,18 +196,16 @@ export const pauseExactTarget = internalMutation({
   handler: async (ctx, args) => {
     fleetGuard();
     await requireExactTarget(ctx, args.userId, args.username);
-    const [needs, mandates, connections, runs, executions, sendingDrafts] = await Promise.all([
+    const [needs, connections, runs, executions, sendingDrafts] = await Promise.all([
       ctx.db.query("savedNeeds").withIndex("by_owner", (q) => q.eq("ownerId", args.userId)).take(101),
-      ctx.db.query("searchMandates").withIndex("by_owner_and_status", (q) => q.eq("ownerId", args.userId)).take(101),
       ctx.db.query("portalConnections").withIndex("by_owner", (q) => q.eq("ownerId", args.userId)).take(21),
       ctx.db.query("browserRuns").withIndex("by_owner", (q) => q.eq("ownerId", args.userId)).take(101),
       ctx.db.query("actionExecutions").withIndex("by_owner_and_created_at", (q) => q.eq("ownerId", args.userId)).order("desc").take(501),
       ctx.db.query("outreachDrafts").withIndex("by_owner_and_status", (q) => q.eq("ownerId", args.userId).eq("status", "sending")).take(21),
     ]);
-    if (needs.length > 100 || mandates.length > 100 || connections.length > 20 || runs.length > 100 || executions.length > 500 || sendingDrafts.length > 20) throw new ConvexError({ code: "FLEET_USER_RESET_QUIESCENCE_OVERFLOW" });
+    if (needs.length > 100 || connections.length > 20 || runs.length > 100 || executions.length > 500 || sendingDrafts.length > 20) throw new ConvexError({ code: "FLEET_USER_RESET_QUIESCENCE_OVERFLOW" });
     const now = Date.now();
     for (const need of needs) if (need.status === "active") await ctx.db.patch(need._id, { status: "paused", updatedAt: now });
-    for (const mandate of mandates) if (mandate.status === "active" || mandate.status === "draft") await ctx.db.patch(mandate._id, { status: "revoked", stoppedAt: now, updatedAt: now });
     for (const connection of connections) if (connection.status !== "disabled") await ctx.db.patch(connection._id, { status: "paused", nextPollAt: undefined, inboxSyncActiveGeneration: undefined, inboxSyncDeadlineAt: undefined, updatedAt: now });
     const portalBusy = connections.some((connection) => connection.activeWriteExecutionId !== undefined);
     const executionBusy = executions.some((execution) => execution.status === "claimed" || execution.status === "running");
@@ -410,7 +408,7 @@ async function eraseStage(
     case "signalMatches": return await eraseRows(ctx, await ctx.db.query("signalMatches").withIndex("by_owner_and_status_and_updated_at", (q) => q.eq("ownerId", ownerId)).take(DELETE_BATCH_SIZE));
     case "searchSourcePreferences": return await eraseRows(ctx, await ctx.db.query("searchSourcePreferences").withIndex("by_owner_and_updated_at", (q) => q.eq("ownerId", ownerId)).take(DELETE_BATCH_SIZE));
     case "opportunities": return await eraseRows(ctx, await ctx.db.query("opportunities").withIndex("by_owner_and_status_and_updated_at", (q) => q.eq("ownerId", ownerId)).take(DELETE_BATCH_SIZE));
-    case "searchMandates": return await eraseRows(ctx, await ctx.db.query("searchMandates").withIndex("by_owner_and_status", (q) => q.eq("ownerId", ownerId)).take(DELETE_BATCH_SIZE));
+    case "scoutAutonomy": return await eraseRows(ctx, await ctx.db.query("scoutAutonomy").withIndex("by_owner", (q) => q.eq("ownerId", ownerId)).take(DELETE_BATCH_SIZE));
     case "scoutContexts": return await eraseRows(ctx, await ctx.db.query("scoutContexts").withIndex("by_owner", (q) => q.eq("ownerId", ownerId)).take(DELETE_BATCH_SIZE));
     case "memoryEvents": return await eraseRows(ctx, await ctx.db.query("memoryEvents").withIndex("by_owner_and_occurred_at", (q) => q.eq("ownerId", ownerId)).take(DELETE_BATCH_SIZE));
     case "memoryFacts": return await eraseRows(ctx, await ctx.db.query("memoryFacts").withIndex("by_owner_and_status", (q) => q.eq("ownerId", ownerId)).take(DELETE_BATCH_SIZE));

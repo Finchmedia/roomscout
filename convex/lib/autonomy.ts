@@ -8,12 +8,29 @@
 
 import { v, type Infer } from "convex/values";
 import { contentHash } from "../integrations/contentHash";
-import type {
-  ExternalActionType,
-  PersonalDataScope,
-} from "./mandateAuthorization";
 
 export type AutonomyMode = "autopilot" | "review";
+
+/** Outbound action kinds the Freigabeprüfung decides over. */
+export type ExternalActionType =
+  | "send_email"
+  | "submit_webform"
+  | "send_platform_dm"
+  | "create_portal_account"
+  | "publish_listing"
+  | "share_contact_details"
+  | "propose_visit_time";
+
+/** Datenfelder: Bandprofil (band_name … music_profile) and Privat (phone, precise_location). */
+export type PersonalDataScope =
+  | "band_name"
+  | "member_first_names"
+  | "reply_email"
+  | "phone"
+  | "precise_location"
+  | "availability"
+  | "budget"
+  | "music_profile";
 
 export const autonomyRulesValidator = v.object({
   mode: v.union(v.literal("autopilot"), v.literal("review")),

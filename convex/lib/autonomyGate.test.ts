@@ -10,7 +10,7 @@ import {
   type GateReason,
   type GateVerdict,
 } from "./autonomyGate";
-import type { ExternalActionType } from "./mandateAuthorization";
+import type { ExternalActionType } from "./autonomy";
 
 const NOW = 1_700_000_000_000;
 const autopilot: AutonomyRules = DEFAULT_AUTONOMY_RULES;

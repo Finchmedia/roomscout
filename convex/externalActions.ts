@@ -136,7 +136,7 @@ function actionPublic(
   browserProvider?: PortalBrowserProvider,
 ) {
   return {
-    _id: row._id, savedNeedId: row.savedNeedId, mandateId: row.mandateId,
+    _id: row._id, savedNeedId: row.savedNeedId,
     opportunityId: row.opportunityId, handoffId: row.handoffId,
     platformId: row.platformId, connectionId: row.connectionId,
     automationMode: row.automationMode, requestedActionType: row.requestedActionType,
@@ -153,9 +153,9 @@ function actionPublic(
 
 const publicValidator = v.object({
   _id: v.id("actionRequests"), savedNeedId: v.optional(v.id("savedNeeds")),
-  mandateId: v.optional(v.id("searchMandates")), opportunityId: v.optional(v.id("opportunities")),
+  opportunityId: v.optional(v.id("opportunities")),
   handoffId: v.optional(v.id("handoffs")), platformId: v.optional(v.id("sourcePlatforms")),
-  connectionId: v.optional(v.id("portalConnections")), automationMode: v.union(v.literal("exact_once"), v.literal("standing_mandate")),
+  connectionId: v.optional(v.id("portalConnections")), automationMode: v.union(v.literal("exact_once"), v.literal("autopilot")),
   requestedActionType: actionTypeValidator, personalDataScopes: v.array(personalDataValidator),
   proposedMonthlyPriceEur: v.optional(v.number()), payload: payloadValidator,
   contentVersion: v.number(), contentHash: v.string(), status: statusValidator,
@@ -196,12 +196,12 @@ export const listMine = query({
 
 export const createDraft = mutation({
   args: {
-    savedNeedId: v.optional(v.id("savedNeeds")), mandateId: v.optional(v.id("searchMandates")),
+    savedNeedId: v.optional(v.id("savedNeeds")),
     opportunityId: v.optional(v.id("opportunities")), handoffId: v.optional(v.id("handoffs")),
     platformId: v.optional(v.id("sourcePlatforms")), connectionId: v.optional(v.id("portalConnections")),
     policyVersionId: v.optional(v.id("sourceFlowPolicies")),
     adapterBindingId: v.optional(v.id("sourceAdapterBindings")),
-    automationMode: v.union(v.literal("exact_once"), v.literal("standing_mandate")),
+    automationMode: v.union(v.literal("exact_once"), v.literal("autopilot")),
     requestedActionType: actionTypeValidator, personalDataScopes: v.array(personalDataValidator),
     proposedMonthlyPriceEur: v.optional(v.number()), payload: payloadValidator,
   },
@@ -211,7 +211,6 @@ export const createDraft = mutation({
     const need = args.savedNeedId ? await ctx.db.get(args.savedNeedId) : null;
     if (args.savedNeedId && need?.ownerId !== ownerId) throw new ConvexError({ code: "NEED_NOT_FOUND" });
     if (args.connectionId) { const connection = await ctx.db.get(args.connectionId); if (connection?.ownerId !== ownerId) throw new ConvexError({ code: "CONNECTION_NOT_FOUND" }); }
-    if (args.mandateId) { const mandate = await ctx.db.get(args.mandateId); if (mandate?.ownerId !== ownerId) throw new ConvexError({ code: "MANDATE_NOT_FOUND" }); }
     const opportunity = args.opportunityId ? await ctx.db.get(args.opportunityId) : null;
     if (args.opportunityId && (opportunity?.ownerId !== ownerId || opportunity.savedNeedId !== args.savedNeedId)) throw new ConvexError({ code: "OPPORTUNITY_NOT_FOUND" });
     const signal = opportunity?.signalId ? await ctx.db.get(opportunity.signalId) : null;
@@ -335,38 +334,33 @@ export const createContactFormFromScout = internalMutation({
     };
     const now = Date.now();
     const hash = await payloadHash(payload);
-    // Slice 3 removes the per-search mandate; until then the id is carried for the orchestrator only.
-    const mandate = await ctx.db.query("searchMandates").withIndex("by_owner_and_saved_need_and_status", (q) =>
-      q.eq("ownerId", args.ownerId).eq("savedNeedId", need._id).eq("status", "active"),
-    ).unique();
     const requestId = await ctx.db.insert("actionRequests", {
       ownerId: args.ownerId,
       savedNeedId: need._id,
       matchingNeedRevision: need.matchingRevision ?? 0,
       matchingSignalId: signal._id,
       matchingSignalRevision: await signalMatchRevision(signal),
-      mandateId: mandate?._id,
       platformId: source.platformId,
       adapterBindingId: binding._id,
       policyVersionId: policy._id,
-      automationMode: "standing_mandate",
+      automationMode: "autopilot",
       requestedActionType: "submit_webform",
       personalDataScopes: ["reply_email"],
       payload,
       contentVersion: 1,
       contentHash: hash,
       status: "drafted",
-      expiresAt: mandate ? Math.min(mandate.expiresAt, now + 24 * 60 * 60 * 1_000) : now + 24 * 60 * 60 * 1_000,
+      expiresAt: now + 24 * 60 * 60 * 1_000,
       createdAt: now,
       updatedAt: now,
     });
     await ctx.db.insert("auditEvents", { eventKey: `action:${requestId}:scout_drafted:1`, actorType: "system", actorUserId: args.ownerId, entityKey: `action:${requestId}`, eventType: "action.scout_drafted_webform", actionRequestId: requestId, policyId: policy._id, afterHash: hash, occurredAt: now });
     const result = await submitRequest(ctx, args.ownerId, requestId);
-    return { requestId, status: result.status, authorizedByAutopilot: result.authorizedByMandate };
+    return { requestId, status: result.status, authorizedByAutopilot: result.authorizedByAutonomy };
   },
 });
 
-const submitResult = v.object({ status: statusValidator, authorizedByMandate: v.boolean(), reasons: v.array(v.string()) });
+const submitResult = v.object({ status: statusValidator, authorizedByAutonomy: v.boolean(), reasons: v.array(v.string()) });
 export const submit = mutation({
   args: { requestId: v.id("actionRequests") },
   returns: submitResult,
@@ -375,9 +369,9 @@ export const submit = mutation({
 
 export const submitChecked = internalMutation({
   args: { ownerId: v.id("users"), requestId: v.id("actionRequests"), dispatch: v.optional(v.boolean()) }, returns: submitResult,
-  handler: async (ctx, args): Promise<{ status: Doc<"actionRequests">["status"]; authorizedByMandate: boolean; reasons: string[] }> => {
+  handler: async (ctx, args): Promise<{ status: Doc<"actionRequests">["status"]; authorizedByAutonomy: boolean; reasons: string[] }> => {
     const result = await submitRequest(ctx, args.ownerId, args.requestId);
-    if (args.dispatch && result.status === "approved" && result.authorizedByMandate) {
+    if (args.dispatch && result.status === "approved" && result.authorizedByAutonomy) {
       const request = await ctx.db.get(args.requestId);
       if (request !== null) await dispatchApproved(ctx, request);
     }
@@ -390,7 +384,7 @@ export const submitChecked = internalMutation({
  * (the user wrote them and confirms them); Scout drafts go through the gate.
  */
 async function submitRequest(ctx: MutationCtx, ownerId: Id<"users">, requestId: Id<"actionRequests">): Promise<{
-  status: Doc<"actionRequests">["status"]; authorizedByMandate: boolean; reasons: string[];
+  status: Doc<"actionRequests">["status"]; authorizedByAutonomy: boolean; reasons: string[];
 }> {
     const request = await ctx.db.get(requestId);
     if (request === null || request.ownerId !== ownerId) throw new ConvexError({ code: "ACTION_NOT_FOUND" });
@@ -402,25 +396,25 @@ async function submitRequest(ctx: MutationCtx, ownerId: Id<"users">, requestId: 
         .unique();
       return {
         status: request.status,
-        authorizedByMandate: request.status !== "queued" && approval?.decision === "authorized_by_mandate" && approval.ownerId === ownerId && approval.contentHash === request.contentHash,
+        authorizedByAutonomy: request.status !== "queued" && approval?.decision === "authorized_by_autonomy" && approval.ownerId === ownerId && approval.contentHash === request.contentHash,
         reasons: [],
       };
     }
     if (request.status !== "drafted" && !scheduledRetry) throw new ConvexError({ code: "INVALID_ACTION_STATE" });
     if (request.providerActionKind === "acceptance") throw new ConvexError({ code: "ACCEPTANCE_REVIEW_REQUIRED" });
-    if (request.automationMode !== "standing_mandate") {
+    if (request.automationMode !== "autopilot") {
       const autonomy = await loadAutonomyForOwner(ctx, ownerId);
       const status = await recordOutcome(ctx, request, {
-        outcome: "ask_user", reason: "review_mode", phase: "submit",
+        outcome: "ask_user", reason: "user_draft", phase: "submit",
         autonomyVersion: autonomy.version, autonomyHash: autonomy.contentHash,
       });
-      return { status, authorizedByMandate: false, reasons: [] };
+      return { status, authorizedByAutonomy: false, reasons: [] };
     }
     const outcome = await checkScoutAction(ctx, { ownerId, request, phase: "submit" });
     const status = await recordOutcome(ctx, request, outcome);
     return {
       status,
-      authorizedByMandate: outcome.outcome === "proceed",
+      authorizedByAutonomy: outcome.outcome === "proceed",
       reasons: outcome.outcome === "proceed" ? [] : [gateReasonText(outcome.reason), ...(outcome.detail ? [outcome.detail] : [])],
     };
 }
@@ -436,8 +430,10 @@ export async function dispatchApproved(ctx: MutationCtx, request: Doc<"actionReq
     const selectedProvider = resolvePortalBrowserProvider();
     if (!connection || connection.ownerId !== request.ownerId ||
       storedPortalBrowserProvider(connection.browserProvider) !== selectedProvider) {
-      await ctx.db.patch(request._id, {
-        status: "expired", error: "PORTAL_BROWSER_PROVIDER_RECONNECT_REQUIRED", updatedAt: Date.now(),
+      const autonomy = await loadAutonomyForOwner(ctx, request.ownerId);
+      await recordOutcome(ctx, request, {
+        outcome: "stop", reason: "provider_mismatch", phase: "claim",
+        autonomyVersion: autonomy.version, autonomyHash: autonomy.contentHash, attempts: request.gate?.attempts,
       });
       return;
     }
@@ -541,7 +537,7 @@ export const confirmHumanCompleted = mutation({
     if (args.submitted && request.opportunityId) {
       const opportunity = await ctx.db.get(request.opportunityId);
       if (opportunity?.ownerId === ownerId && opportunity.status !== "converted" && opportunity.status !== "dismissed") {
-        await ctx.db.patch(opportunity._id, { status: "contacted", mandateId: request.mandateId, updatedAt: now });
+        await ctx.db.patch(opportunity._id, { status: "contacted", updatedAt: now });
       }
     }
     await ctx.db.insert("auditEvents", { eventKey: `action:${request._id}:human_completed:${execution.idempotencyKey}`, actorType: "user", actorUserId: ownerId, entityKey: `action:${request._id}`, eventType: args.submitted ? "action.human_confirmed_submitted" : "action.human_cancelled", correlationId: execution.idempotencyKey, actionRequestId: request._id, executionId: execution._id, afterHash: request.contentHash, occurredAt: now });
@@ -575,7 +571,7 @@ export const confirmHumanExecution = internalMutation({
     if (args.submitted && request.opportunityId) {
       const opportunity = await ctx.db.get(request.opportunityId);
       if (opportunity?.ownerId === args.ownerId && opportunity.status !== "converted" && opportunity.status !== "dismissed") {
-        await ctx.db.patch(opportunity._id, { status: "contacted", mandateId: request.mandateId, updatedAt: now });
+        await ctx.db.patch(opportunity._id, { status: "contacted", updatedAt: now });
       }
     }
     await ctx.db.insert("auditEvents", { eventKey: `action:${request._id}:human_completed:${execution.idempotencyKey}`, actorType: "user", actorUserId: args.ownerId, entityKey: `action:${request._id}`, eventType: args.submitted ? "action.human_confirmed_submitted" : "action.human_cancelled", correlationId: execution.idempotencyKey, actionRequestId: request._id, executionId: execution._id, afterHash: request.contentHash, occurredAt: now });
@@ -915,7 +911,7 @@ export const claimForExecutor = internalMutation({
     });
     await ctx.db.insert("auditEvents", {
       eventKey: `action:${request._id}:claimed:${request.contentVersion}`,
-      actorType: approval.decision === "authorized_by_mandate" ? "system" : "user",
+      actorType: approval.decision === "authorized_by_autonomy" ? "system" : "user",
       actorUserId: args.ownerId,
       entityKey: `action:${request._id}`,
       eventType: "action.execution_claimed",
@@ -1068,7 +1064,7 @@ export const finishExecution = internalMutation({
     if (args.status === "succeeded" && request.opportunityId) {
       const opportunity = await ctx.db.get(request.opportunityId);
       if (opportunity?.ownerId === args.ownerId && opportunity.status !== "converted" && opportunity.status !== "dismissed") {
-        await ctx.db.patch(opportunity._id, { status: request.providerActionKind === "acceptance" ? "converted" : "contacted", mandateId: request.mandateId, updatedAt: now });
+        await ctx.db.patch(opportunity._id, { status: request.providerActionKind === "acceptance" ? "converted" : "contacted", updatedAt: now });
       }
     }
     if (args.status === "succeeded" && request.providerActionKind === "acceptance" && request.providerConversationId && request.providerOfferId && request.savedNeedId) {
@@ -1077,9 +1073,6 @@ export const finishExecution = internalMutation({
       if (conversation?.ownerId === args.ownerId && need?.ownerId === args.ownerId) {
         await ctx.db.patch(conversation._id, { acceptedOfferId: request.providerOfferId, acceptedAt: now, state: "closed", updatedAt: now });
         if (need.status === "active") await setNeedStatus(ctx, need, "paused");
-        const mandate = await ctx.db.query("searchMandates").withIndex("by_owner_and_saved_need_and_status", (q) =>
-          q.eq("ownerId", args.ownerId).eq("savedNeedId", need._id).eq("status", "active")).unique();
-        if (mandate) await ctx.db.patch(mandate._id, { stoppedAt: now, updatedAt: now });
         await ctx.db.insert("notifications", { ownerId: args.ownerId, kind: "system", title: "Offer acceptance sent",
           body: "Your approved confirmation was sent in the controlled portal. Your search is paused. No payment or contract signature was performed.", createdAt: now });
       }

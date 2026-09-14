@@ -18,52 +18,6 @@ export type SearchSourceCoverage = {
   note?: string;
 };
 
-export type ScoutMandateMode = "guided" | "research" | "outreach" | "negotiation";
-
-export type ScoutMandateStatus = "draft" | "active" | "paused" | "killed" | "expired";
-
-export type MandateActionType =
-  | "browse_public"
-  | "browse_connected"
-  | "read_messages"
-  | "extract_facts"
-  | "send_email"
-  | "submit_webform"
-  | "send_platform_dm"
-  | "create_portal_account"
-  | "publish_listing"
-  | "share_contact_details"
-  | "propose_visit"
-  | "accept_terms"
-  | "accept_contract"
-  | "confirm_booking"
-  | "make_payment"
-  | "pay_deposit"
-  | "enter_password"
-  | "complete_2fa"
-  | "solve_captcha";
-
-export type ScoutMandate = {
-  id?: string;
-  contentHash?: string;
-  mode: ScoutMandateMode;
-  version?: number;
-  status: ScoutMandateStatus;
-  goal: string;
-  sourceAllowlist: string[];
-  platformAllowlist: string[];
-  allowedActionTypes: MandateActionType[];
-  dataScopes: string[];
-  dailyContactLimit: number;
-  dailyBrowserMinutes: number;
-  usesDefaultUnlimitedUsage?: boolean;
-  maxMonthlyPriceEur?: number;
-  expiresAt?: number;
-  killSwitchEnabled: boolean;
-  stopConditions: string[];
-  persisted: boolean;
-};
-
 export type PortalConnectionStatus =
   | "connected"
   | "needs_attention"
@@ -114,7 +68,7 @@ export type BrowserRun = {
   sourceName: string;
   sourceDomain?: string;
   searchTitle: string;
-  mandateLabel: string;
+  policyLabel: string;
   state: BrowserRunState;
   liveViewUrl?: string;
   humanPrompt?: string;
@@ -143,9 +97,9 @@ export type ActionApprovalRequest = {
   authorization:
     | { mode: "approve_once" }
     | {
-        mode: "standing_mandate";
-        mandateVersion: number;
-        mandateLabel: string;
+        mode: "autopilot";
+        autonomyVersion: number;
+        autonomyLabel: string;
         executionAllowed: boolean;
       };
 };

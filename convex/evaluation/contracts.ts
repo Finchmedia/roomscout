@@ -16,7 +16,7 @@ export const hiddenProviderTruthSchema = z.object({
   controllerEvents: z.array(z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("update_need"), beforeRound: z.number().int().min(1).max(EVAL_MAX_ROUNDS),
       requirements: z.array(z.string()).optional(), schedule: z.array(z.string()).optional(), maxBudgetEur: z.number().nonnegative().optional() }),
-    z.object({ kind: z.literal("revoke_mandate"), beforeRound: z.number().int().min(1).max(EVAL_MAX_ROUNDS) }),
+    z.object({ kind: z.literal("pause_search"), beforeRound: z.number().int().min(1).max(EVAL_MAX_ROUNDS) }),
   ])).default([]),
   terminalCondition: z.string(),
 });

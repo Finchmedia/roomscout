@@ -1403,3 +1403,42 @@ during the profile proof was such an abort, swallowed and retried
 successfully); the 45-second registration session cannot survive a slow OTP.
 The production test account was promoted to operator so the manual check is
 reachable. Nothing is committed or deployed by this entry.
+
+### 2026-09-14 — Mandat entfernt, Handlungsspielraum pro Nutzer
+
+Das Mandat pro Suchauftrag ist weg (ADR 0001). Die Tabelle `searchMandates`,
+`convex/mandates.ts` und `convex/lib/mandateAuthorization.ts` sind gelöscht; die
+gemeinsam genutzten Typen `ExternalActionType` und `PersonalDataScope` leben jetzt
+in `convex/lib/autonomy.ts`. Opportunities, Handoffs, Anfragen und Freigaben tragen
+keine `mandateId` mehr; Freigaben halten nur noch `autonomyVersion` und
+`autonomyHash` fest. Die Literale heißen `autopilot` (statt `standing_mandate`),
+`authorized_by_autonomy` (statt `authorized_by_mandate`) und das Ergebnis von
+`submit` meldet `authorizedByAutonomy`. Keine Datenmigration: der Maintainer
+leert die Testzeilen vor dem Deploy.
+
+„Suche aktiv“ ist jetzt allein `savedNeed.status === "active"`. Die neue Mutation
+`savedNeeds.activate` prüft Besitz und vollständigen Ort (`INCOMPLETE_NEED`),
+setzt den Status, schreibt `search.activated` und plant Matching, den
+Orchestrator und den automatischen roomscout.dev-Check. Pausieren und Weiter
+bleiben `savedNeeds.setStatus`. Der Plattform-Umfang einer Suche ist alle
+aktiven Plattformen minus die Quellen-Ausschlüsse des Nutzers; eine
+`platformIds`-Liste gibt es nirgends mehr.
+
+`convex/mandateOrchestrator.ts` heißt jetzt `convex/scoutOrchestrator.ts` und
+läuft über aktive Suchaufträge statt über Mandate. Kontrollierte Registrierung
+und das Einreihen einer Opportunity setzen voraus, dass „Kontakt“ im
+Handlungsspielraum eingeschaltet ist; beide Modi laufen durch den Orchestrator,
+Rücksprache wirkt erst in der Freigabeprüfung beim Versand. Die geplante
+Registrierung trägt `savedNeedId` statt `mandateId` und stoppt mit
+`REGISTRATION_SEARCH_NO_LONGER_ACTIVE`. Zwei Nachträge aus der Freigabeprüfung:
+selbst entworfene Nachrichten werden mit dem Grund `user_draft` zur Entscheidung,
+und eine Portal-Verbindung mit falschem Browser-Provider stoppt mit
+`provider_mismatch` statt per rohem Patch.
+
+Im Shell-Frontend sind `MandatePanel`, `SearchControlSettings` und
+`mandatePolicy` gelöscht; „Meine Suche“ bekommt „Schick mich los“, Pause und
+Weiter, der Scout-Bildschirm aktiviert über `savedNeeds.activate`. Die Tests
+für Mandate sind ersetzt: der Orchestrator-Test arbeitet mit aktiven
+Suchaufträgen und gespeicherten Regeln, die übrigen Suiten säen keine
+Mandatszeile mehr und schalten stattdessen die Regeln um. Nichts ist
+committet oder deployt.

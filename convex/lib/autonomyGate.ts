@@ -7,11 +7,17 @@
  * Daily limits do not exist here on purpose.
  */
 
-import { allowedActions, allowedDataScopes, type AutonomyRules } from "./autonomy";
-import type { ExternalActionType, PersonalDataScope } from "./mandateAuthorization";
+import {
+  allowedActions,
+  allowedDataScopes,
+  type AutonomyRules,
+  type ExternalActionType,
+  type PersonalDataScope,
+} from "./autonomy";
 
 export type GateReason =
   | "review_mode"
+  | "user_draft"
   | "action_not_allowed"
   | "private_data"
   | "binding_content"
@@ -25,7 +31,8 @@ export type GateReason =
   | "controlled_portal_only"
   | "policy_not_executable"
   | "connection_not_ready"
-  | "browser_busy";
+  | "browser_busy"
+  | "provider_mismatch";
 
 export type GateOutcome =
   | { outcome: "proceed" }
@@ -84,6 +91,7 @@ export const MAX_SAFETY_WAITS = 3;
 
 const REASON_TEXT: Record<GateReason, string> = {
   review_mode: "Du prüfst Nachrichten vor dem Versand.",
+  user_draft: "Du hast diese Nachricht selbst entworfen und bestätigst sie.",
   action_not_allowed: "Dieser Schritt ist in deinem Handlungsspielraum ausgeschaltet.",
   private_data: "Die Nachricht enthält Angaben, die der Scout nicht teilen darf.",
   binding_content: "Die Nachricht enthält eine verbindliche Zusage.",
@@ -98,6 +106,7 @@ const REASON_TEXT: Record<GateReason, string> = {
   policy_not_executable: "Die Quelle erlaubt keine automatische Ausführung.",
   connection_not_ready: "Die Portal-Verbindung ist noch nicht bereit.",
   browser_busy: "Der Portal-Browser ist gerade belegt.",
+  provider_mismatch: "Die Portal-Verbindung muss neu verbunden werden.",
 };
 
 /** Short German sentence per reason for the UI. */

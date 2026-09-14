@@ -46,9 +46,9 @@ crons.interval(
 );
 
 crons.interval(
-  "orchestrate standing RoomScout mandates",
+  "orchestrate active RoomScout searches",
   { minutes: 10 },
-  internal.mandateOrchestrator.runBatch,
+  internal.scoutOrchestrator.runBatch,
   { limit: 8 },
 );
 

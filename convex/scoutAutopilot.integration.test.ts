@@ -150,27 +150,7 @@ async function seedScoutWebform(t: ReturnType<typeof convexTest>, domain = "band
       createdAt: now,
       updatedAt: now,
     });
-    const mandateId = await ctx.db.insert("searchMandates", {
-      ownerId,
-      savedNeedId,
-      version: 1,
-      mode: "negotiation_autopilot",
-      status: "active",
-      platformIds: [platformId],
-      allowedActionTypes: ["submit_webform"],
-      allowedPersonalData: ["reply_email"],
-      maxContactsPerDay: 10,
-      maxBrowserMinutesPerDay: 30,
-      expiresAt: now + 86_400_000,
-      stopOnComplaint: true,
-      stopWhenSuitableRoomConfirmed: true,
-      commitmentBoundary: "non_binding_outreach_only",
-      contentHash: "mandate-hash",
-      activatedAt: now,
-      createdAt: now,
-      updatedAt: now,
-    });
-    return { ownerId, savedNeedId, signalId, mandateId };
+    return { ownerId, savedNeedId, signalId };
   });
 }
 
@@ -195,8 +175,7 @@ it("stops legacy real-source Autopilot drafts with a reason instead of sending f
     audit: await ctx.db.query("auditEvents").collect(),
   }));
   expect(state.request).toMatchObject({
-    mandateId: fixture.mandateId,
-    automationMode: "standing_mandate",
+    automationMode: "autopilot",
     status: "blocked",
     error: "controlled_portal_only",
     gate: { outcome: "stop", reason: "controlled_portal_only", detail: "bandnet.hamburg", autonomyVersion: 0 },
@@ -220,14 +199,14 @@ it("turns a binding Scout draft into an Entscheidung with the reason, never sile
   // Wording alone never decides: the request waits for the safety verdict.
   expect(result).toMatchObject({ status: "queued", authorizedByAutopilot: false });
   expect(await t.run((ctx) => ctx.db.get(result.requestId))).toMatchObject({
-    automationMode: "standing_mandate", status: "queued", gate: { outcome: "wait", reason: "safety_pending" },
+    automationMode: "autopilot", status: "queued", gate: { outcome: "wait", reason: "safety_pending" },
   });
 
   const input = (await t.query(internal.messageSafety.getInput, { requestId: result.requestId }))!;
   const binding = messageSafetySchema.parse({ classification: "binding", explanation: "Accepts the contract and confirms a booking.", personalDataScopes: ["reply_email"], proposedMonthlyPriceEur: null, unsupportedClaims: [] });
   expect(await t.mutation(internal.messageSafety.recordAndAuthorize, { requestId: result.requestId, snapshotHash: input.snapshotHash, assessment: binding })).toBe(false);
   expect(await t.run((ctx) => ctx.db.get(result.requestId))).toMatchObject({
-    automationMode: "standing_mandate", status: "awaiting_approval",
+    automationMode: "autopilot", status: "awaiting_approval",
     gate: { outcome: "ask_user", reason: "binding_content", detail: "Accepts the contract and confirms a booking." },
   });
   expect(await t.run((ctx) => ctx.db.query("actionApprovals").collect())).toEqual([]);

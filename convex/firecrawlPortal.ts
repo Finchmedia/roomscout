@@ -994,15 +994,15 @@ export const startAgentRegistration = action({ args: { connectionId: v.id("porta
 export const startAgentRegistrationForOwnerAction = internalAction({ args: { ownerId: v.id("users"), connectionId: v.id("portalConnections"), runId: v.optional(v.id("browserRuns")) }, returns: registrationResultValidator, handler: async (ctx, args) => await startAgentRegistrationForOwner(ctx, args.ownerId, args.connectionId, args.runId) });
 
 export const runScheduledAgentRegistration = internalAction({
-  args: { ownerId: v.id("users"), mandateId: v.id("searchMandates"), connectionId: v.id("portalConnections"), runId: v.id("browserRuns") },
+  args: { ownerId: v.id("users"), savedNeedId: v.id("savedNeeds"), connectionId: v.id("portalConnections"), runId: v.id("browserRuns") },
   returns: v.null(),
   handler: async (ctx, args) => {
     try {
       requireSelectedFirecrawl();
       const valid = await ctx.runQuery(internal.portalConnections.validateRunProvider, { ownerId: args.ownerId, runId: args.runId, browserProvider: "firecrawl" });
-      const eligible = valid && await ctx.runQuery(internal.mandateOrchestrator.validateScheduledRegistration, args);
+      const eligible = valid && await ctx.runQuery(internal.scoutOrchestrator.validateScheduledRegistration, args);
       if (!eligible) {
-        await ctx.runMutation(internal.portalConnections.failReservedRun, { runId: args.runId, errorCode: "REGISTRATION_MANDATE_NO_LONGER_ACTIVE" });
+        await ctx.runMutation(internal.portalConnections.failReservedRun, { runId: args.runId, errorCode: "REGISTRATION_SEARCH_NO_LONGER_ACTIVE" });
         return null;
       }
       await startAgentRegistrationForOwner(ctx, args.ownerId, args.connectionId, args.runId);

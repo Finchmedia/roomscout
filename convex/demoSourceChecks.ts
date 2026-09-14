@@ -130,7 +130,7 @@ const automaticSkipReason = v.union(
 );
 
 /**
- * Automatic counterpart of `requestNow`, scheduled when a standing mandate is
+ * Automatic counterpart of `requestNow`, scheduled when a search is
  * activated and when a controlled portal registration completes, so the Scout
  * starts looking at roomscout.dev without an operator click. It reuses the
  * bounded manual run (one check, five detail pages). The run is global, so a

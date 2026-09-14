@@ -72,7 +72,7 @@ export type ScoutView = "scout" | "settings" | "operator";
 /** Discovery runs as a voice conversation or as a written one. */
 export type ScoutMode = "voice" | "text";
 
-/** Stages that are „in flow“ — the Scout is working on a mandate (App.jsx `inFlow`). */
+/** Stages that are „in flow“ — the Scout is working on a Suchauftrag (App.jsx `inFlow`). */
 export const FLOW_STAGES: readonly ScoutStage[] = [
   "scouting",
   "clarification",
@@ -187,7 +187,7 @@ export type WaitingFor = "source" | "access" | "release";
 
 /** The „Freigabe nötig“ card (ScreensB.jsx `pending`). */
 export interface PendingRelease {
-  /** Why the message needs a release: contacting is off, or the mandate is „Mit Rücksprache“. */
+  /** Why the message needs a release: contacting is off, or the Handlungsspielraum is „Mit Rücksprache“. */
   readonly reason: "contact" | "review";
   /** `facts.budget.lower.*`, or the documented fallback when the budget is free text. */
   readonly budgetKey: StringCopyKey;

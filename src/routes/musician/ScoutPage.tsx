@@ -27,7 +27,7 @@ export function ScoutPage() {
   const getOrCreateThread = useMutation(api.scout.getOrCreateThread);
   const setFocus = useMutation(api.scout.setFocus);
   const setStatus = useMutation(api.savedNeeds.setStatus);
-  const activate = useMutation(api.mandates.enableDefaultAutopilot);
+  const activate = useMutation(api.savedNeeds.activate);
   const sendMessage = useAction(api.scout.sendMessage);
   const [sending, setSending] = useState(false);
   const [working, setWorking] = useState(false);

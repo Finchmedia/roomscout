@@ -1319,7 +1319,7 @@ export async function startAgentRegistrationForOwner(
 export const runScheduledAgentRegistration = internalAction({
   args: {
     ownerId: v.id("users"),
-    mandateId: v.id("searchMandates"),
+    savedNeedId: v.id("savedNeeds"),
     connectionId: v.id("portalConnections"),
     runId: v.id("browserRuns"),
   },
@@ -1334,14 +1334,14 @@ export const runScheduledAgentRegistration = internalAction({
       return null;
     }
     const eligible: boolean = await ctx.runQuery(
-      internal.mandateOrchestrator.validateScheduledRegistration,
+      internal.scoutOrchestrator.validateScheduledRegistration,
       args,
     );
     if (!eligible) {
       await ctx.runMutation(internal.portalConnections.finishRun, {
         runId: args.runId,
         status: "stopped",
-        errorCode: "REGISTRATION_MANDATE_NO_LONGER_ACTIVE",
+        errorCode: "REGISTRATION_SEARCH_NO_LONGER_ACTIVE",
       });
       return null;
     }

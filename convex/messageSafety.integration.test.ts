@@ -36,7 +36,6 @@ async function fixture(options?: { initial?: boolean }) {
     const bindingId = await ctx.db.insert("sourceAdapterBindings", { platformId, sourceId, scopeKey: "controlled:contact", flow: "contact", adapterKey: "roomscout-dev-v1", adapterVersion: 1, status: "active", executor: "browserbase", config: { kind: "browserbase", workflowKey: "roomscout-dev.platform-message.v1", contextRequired: true }, configFingerprint: "test", policyVersionId: policyId, createdAt: now, updatedAt: now });
     const connectionId = await ctx.db.insert("portalConnections", { ownerId, sourceId, platformId, label: "Test connection", allowedDomains: ["roomscout.dev"], allowedPaths: ["/listings", "/inbox"], adapterKey: "roomscout-dev-v1", status: "active", policyDecision: "allowed", allowReadOnlyRecon: true, allowInboxPolling: true, pollIntervalMinutes: 30, failureCount: 0, createdAt: now, updatedAt: now });
     const threadId = await ctx.db.insert("platformThreads", { connectionId, ownerId, providerThreadId: "thread-1", participants: ["Test provider"], lastMessageAt: now, status: "open", createdAt: now, updatedAt: now });
-    const mandateId = await ctx.db.insert("searchMandates", { ownerId, savedNeedId: needId, version: 1, mode: "negotiation_autopilot", status: "active", platformIds: [platformId], allowedActionTypes: ["send_platform_dm"], allowedPersonalData: ["availability"], maxContactsPerDay: 1, maxBrowserMinutesPerDay: 30, maxMonthlyPriceEur: 250, expiresAt: now + 86_400_000, stopOnComplaint: true, stopWhenSuitableRoomConfirmed: true, commitmentBoundary: "non_binding_outreach_only", contentHash: "mandate-v1", createdAt: now, updatedAt: now });
     const conversationId = await ctx.db.insert("providerConversations", { ownerId, savedNeedId: needId, signalId, conversationKey: "controlled", agentThreadId: "test-agent-thread", platformThreadId: threadId, revision: 1, state: "needs_attention", createdAt: now, updatedAt: now });
     await ctx.db.patch(policyId, { sourceId: connectedSourceId });
     await ctx.db.patch(bindingId, { sourceId: connectedSourceId });
@@ -50,7 +49,7 @@ async function fixture(options?: { initial?: boolean }) {
     const assessment: ProviderAssessment = { summary: "Ask whether the room is still free", availability: { status: "unknown", evidence: [] }, monthlyPrice: { totalEur: null, allRecurringCostsKnown: false, evidence: [] }, terms: [], constraints: [], uncertainties: ["Availability"], contradictions: [], nextAction: "ask_provider", suggestedReply: { subject: "Room availability", body: "Is the room still available?" } };
     const offerId = await ctx.db.insert("offerRevisions", { ownerId, savedNeedId: needId, conversationId, eventId, revision: 1, needRevision: 1, signalRevision, assessment, ready: false, blockers: ["Availability unknown"], contentHash: "offer-v1", model: ai.ROOMSCOUT_MODEL_ID, promptVersion: "test", schemaVersion: "test", createdAt: now });
     await ctx.db.patch(conversationId, { currentOfferId: offerId });
-    return { ownerId, otherId, needId, platformId, connectionId, threadId, mandateId, conversationId, offerId, signalId, bindingId, policyId };
+    return { ownerId, otherId, needId, platformId, connectionId, threadId, conversationId, offerId, signalId, bindingId, policyId };
   });
   const requestId = (await t.mutation(internal.providerActions.stageReply, { offerId: f.offerId }))!;
   expect(requestId).toBeTruthy();
@@ -103,15 +102,15 @@ describe("semantic final-message gate and provider dispatch", () => {
   it("reports the persisted approval decision on repeated submission, not just the selected mode", async () => {
     const f = await fixture();
     const musician = f.t.withIdentity({ subject: f.ownerId });
-    expect((await musician.mutation(api.externalActions.submit, { requestId: f.requestId })).authorizedByMandate).toBe(false);
+    expect((await musician.mutation(api.externalActions.submit, { requestId: f.requestId })).authorizedByAutonomy).toBe(false);
     await f.authorize({ ...clear, classification: "uncertain" });
     const request = (await f.t.run((ctx) => ctx.db.get(f.requestId)))!;
     await musician.mutation(api.externalActions.decide, { requestId: f.requestId, decision: "approved", expectedContentVersion: request.contentVersion, expectedContentHash: request.contentHash, expectedPayload: request.payload });
-    expect(await musician.mutation(api.externalActions.submit, { requestId: f.requestId })).toMatchObject({ status: "approved", authorizedByMandate: false });
+    expect(await musician.mutation(api.externalActions.submit, { requestId: f.requestId })).toMatchObject({ status: "approved", authorizedByAutonomy: false });
 
     const automatic = await fixture();
     await automatic.authorize();
-    expect((await automatic.t.withIdentity({ subject: automatic.ownerId }).mutation(api.externalActions.submit, { requestId: automatic.requestId })).authorizedByMandate).toBe(true);
+    expect((await automatic.t.withIdentity({ subject: automatic.ownerId }).mutation(api.externalActions.submit, { requestId: automatic.requestId })).authorizedByAutonomy).toBe(true);
   });
 
   it("uses detected disclosures and unsupported claims, not the model author's empty declaration", async () => {
@@ -179,7 +178,7 @@ describe("semantic final-message gate and provider dispatch", () => {
     await exhausted(); await exhausted();
     expect(await f.request()).toMatchObject({ status: "queued", gate: { attempts: 3 } });
     const result = await f.t.mutation(internal.externalActions.submitChecked, { ownerId: f.ownerId, requestId: f.requestId });
-    expect(result).toMatchObject({ status: "awaiting_approval", authorizedByMandate: false, reasons: ["Die Prüfung der Nachricht ist mehrfach fehlgeschlagen."] });
+    expect(result).toMatchObject({ status: "awaiting_approval", authorizedByAutonomy: false, reasons: ["Die Prüfung der Nachricht ist mehrfach fehlgeschlagen."] });
     expect(await f.request()).toMatchObject({ status: "awaiting_approval", gate: { outcome: "ask_user", reason: "safety_unavailable", attempts: 3 } });
     expect(await f.t.run((ctx) => ctx.db.query("notifications").collect())).toEqual([]);
     expect(await f.t.run((ctx) => ctx.db.query("actionExecutions").collect())).toEqual([]);

@@ -468,7 +468,7 @@ export const sendMessage = action({
       });
       const createWebformDraft = createTool({
         description:
-          "Prepare a contact-form action for the focused listing when RoomScout has a reviewed webform adapter. You provide only subject and message prose; RoomScout resolves destination, sender identity, fields, policy, and adapter from trusted state. An active Autopilot mandate may authorize and execute a non-binding message. Otherwise it becomes a human review step.",
+          "Prepare a contact-form action for the focused listing when RoomScout has a reviewed webform adapter. You provide only subject and message prose; RoomScout resolves destination, sender identity, fields, policy, and adapter from trusted state. In Autopilot mode the Freigabeprüfung may authorize and execute a non-binding message; in Rücksprache mode it becomes a decision for the musician.",
         inputSchema: z.object({
           subject: z.string(),
           body: z.string(),
@@ -511,11 +511,11 @@ export const sendMessage = action({
     ) {
       const continueAutopilot = createTool({
         description:
-          "Use when the musician explicitly asks RoomScout to handle, contact, ask, or clarify the focused opportunity autonomously. This invokes only the existing persisted standing mandate and cannot widen permissions. Report the returned status honestly.",
+          "Use when the musician explicitly asks RoomScout to handle, contact, ask, or clarify the focused opportunity autonomously. This runs the Scout within the user's persisted Handlungsspielraum and cannot widen permissions. Report the returned status honestly.",
         inputSchema: z.object({}),
         execute: async () => {
           const result = await ctx.runMutation(
-            internal.mandateOrchestrator.runForOwner,
+            internal.scoutOrchestrator.runForOwner,
             { ownerId, limit: 3 },
           );
           return {

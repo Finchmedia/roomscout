@@ -439,7 +439,7 @@ export const finishMatching = internalMutation({
     if (!result.isDone) {
       await ctx.scheduler.runAfter(0, internal.matches.finishMatching, { ...args, cursor: result.continueCursor });
     } else {
-      await ctx.scheduler.runAfter(0, internal.mandateOrchestrator.runForOwner, { ownerId: args.ownerId });
+      await ctx.scheduler.runAfter(0, internal.scoutOrchestrator.runForOwner, { ownerId: args.ownerId });
     }
     return null;
   },

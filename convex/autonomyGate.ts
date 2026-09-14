@@ -2,7 +2,7 @@
  * Freigabeprüfung at runtime: gathers the facts for one action request,
  * asks the pure gate (`lib/autonomyGate.ts`) and persists the verdict in ONE
  * place (`recordOutcome`). Reads only `scoutAutonomy` via
- * `loadAutonomyForOwner` — never `searchMandates` (ADR 0001).
+ * `loadAutonomyForOwner` (ADR 0001).
  */
 
 import { ConvexError, v } from "convex/values";
@@ -17,7 +17,7 @@ import {
   type GateOutcome,
   type GateReason,
 } from "./lib/autonomyGate";
-import type { PersonalDataScope } from "./lib/mandateAuthorization";
+import type { PersonalDataScope } from "./lib/autonomy";
 import { messageSafetyContext } from "./lib/messageSafety";
 import { scoutWorkpool } from "./workpools";
 
@@ -166,7 +166,7 @@ export async function recordOutcome(
       await ctx.db.insert("actionApprovals", {
         requestId: request._id, ownerId, contentVersion: request.contentVersion,
         contentHash: request.contentHash, payloadSnapshot: request.payload,
-        policyVersionId: request.policyVersionId, decision: "authorized_by_mandate",
+        policyVersionId: request.policyVersionId, decision: "authorized_by_autonomy",
         autonomyVersion: outcome.autonomyVersion, autonomyHash: outcome.autonomyHash,
         decidedAt: now,
       });

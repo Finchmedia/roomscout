@@ -1187,7 +1187,7 @@ export const finishRun = internalMutation({
       });
     }
     if (terminalStatus === "completed" && contextReady) {
-      await ctx.scheduler.runAfter(0, internal.mandateOrchestrator.runForOwner, {
+      await ctx.scheduler.runAfter(0, internal.scoutOrchestrator.runForOwner, {
         ownerId: run.ownerId,
       });
       // A ready portal account is the moment outreach becomes possible; make

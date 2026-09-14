@@ -7,7 +7,7 @@ import { actionPayloadHash, normalizeText } from "./integrations/contentHash";
 import { opportunityMatchIsCurrent, signalMatchRevision } from "./lib/matchValidity";
 
 /** Translate a recorded proposal into an exact ledger payload. The model never
- * chooses a URL, recipient, connection, mandate or executor. */
+ * chooses a URL, recipient, connection or executor; the Freigabeprüfung decides at submit time. */
 export const stageReply = internalMutation({
   args: { offerId: v.id("offerRevisions") }, returns: v.union(v.id("actionRequests"), v.null()),
   handler: async (ctx, { offerId }) => {
@@ -37,11 +37,10 @@ export const stageReply = internalMutation({
       const bindings = platform ? await ctx.db.query("sourceAdapterBindings").withIndex("by_platform_and_flow_and_status", (q) => q.eq("platformId", platform._id).eq("flow", "reply").eq("status", "active")).take(2) : [];
       const binding = bindings.length === 1 && bindings[0]?.executor === "agentmail" && bindings[0].config.kind === "agentmail" && bindings[0].config.purpose === "reply" ? bindings[0] : null;
       const policy = binding?.policyVersionId ? await ctx.db.get(binding.policyVersionId) : null;
-      const mandate = await ctx.db.query("searchMandates").withIndex("by_owner_and_saved_need_and_status", (q) => q.eq("ownerId", offer.ownerId).eq("savedNeedId", need._id).eq("status", "active")).unique();
-      if (!thread || thread.ownerId !== offer.ownerId || !draft || draft.ownerId !== offer.ownerId || !mailbox || mailbox.ownerId !== offer.ownerId || mailbox.status !== "active" || !parent || !platform || !binding || !policy || policy.platformId !== platform._id || policy.flow !== "reply" || policy.status !== "approved" || policy.decision !== "allowed" || policy.maxAutomationLevel !== "approved_execute" || !mandate || mandate.stoppedAt || mandate.expiresAt <= Date.now()) return null;
+      if (!thread || thread.ownerId !== offer.ownerId || !draft || draft.ownerId !== offer.ownerId || !mailbox || mailbox.ownerId !== offer.ownerId || mailbox.status !== "active" || !parent || !platform || !binding || !policy || policy.platformId !== platform._id || policy.flow !== "reply" || policy.status !== "approved" || policy.decision !== "allowed" || policy.maxAutomationLevel !== "approved_execute") return null;
       const payload: Doc<"actionRequests">["payload"] = { kind: "email_message", recipientName: parent.from.slice(0, 160), recipientEmail: parent.from.trim().toLowerCase(), subject: normalizeText(offer.assessment.suggestedReply.subject).slice(0, 200), body: normalizeText(offer.assessment.suggestedReply.body).slice(0, 20_000), mailThreadId: thread._id, parentMessageId: parent.providerMessageId };
       const now = Date.now();
-      const requestId = await ctx.db.insert("actionRequests", { ownerId: offer.ownerId, savedNeedId: need._id, providerConversationId: conversation._id, providerOfferId: offerId, matchingNeedRevision: offer.needRevision, matchingSignalId: signal._id, matchingSignalRevision: offer.signalRevision, opportunityId: conversation.opportunityId, mandateId: mandate._id, platformId: platform._id, adapterBindingId: binding._id, policyVersionId: policy._id, automationMode: "standing_mandate", requestedActionType: "send_email", personalDataScopes: ["reply_email"], payload, contentVersion: 1, contentHash: await actionPayloadHash(payload), status: "drafted", expiresAt: Math.min(mandate.expiresAt, now + 86_400_000), createdAt: now, updatedAt: now });
+      const requestId = await ctx.db.insert("actionRequests", { ownerId: offer.ownerId, savedNeedId: need._id, providerConversationId: conversation._id, providerOfferId: offerId, matchingNeedRevision: offer.needRevision, matchingSignalId: signal._id, matchingSignalRevision: offer.signalRevision, opportunityId: conversation.opportunityId, platformId: platform._id, adapterBindingId: binding._id, policyVersionId: policy._id, automationMode: "autopilot", requestedActionType: "send_email", personalDataScopes: ["reply_email"], payload, contentVersion: 1, contentHash: await actionPayloadHash(payload), status: "drafted", expiresAt: now + 86_400_000, createdAt: now, updatedAt: now });
       await ctx.runMutation(internal.externalActions.submitChecked, { ownerId: offer.ownerId, requestId });
       return requestId;
     }
@@ -55,11 +54,6 @@ export const stageReply = internalMutation({
       const opportunity = conversation.opportunityId ? await ctx.db.get(conversation.opportunityId) : null;
       if (!opportunity || signal.status !== "published" || !await opportunityMatchIsCurrent(ctx, opportunity, true)) return null;
     } else if (thread.ownerId !== offer.ownerId) return null;
-    const mandate = await ctx.db.query("searchMandates").withIndex("by_owner_and_saved_need_and_status", (q) =>
-      q.eq("ownerId", offer.ownerId).eq("savedNeedId", need._id).eq("status", "active"),
-    ).unique();
-    // A withdrawn mandate is not silently replaced by a generic exact draft.
-    if (!mandate || mandate.stoppedAt || mandate.expiresAt <= Date.now()) return null;
     const payload: Doc<"actionRequests">["payload"] = {
       kind: "platform_message", threadId: thread?._id, targetPath: thread ? undefined : listingUrl.pathname,
       recipients: thread?.participants ?? ["Listing owner"], senderLabel: "RoomScout musician",
@@ -70,11 +64,11 @@ export const stageReply = internalMutation({
     const requestId = await ctx.db.insert("actionRequests", {
       ownerId: offer.ownerId, savedNeedId: need._id, providerConversationId: conversation._id, providerOfferId: offerId,
       matchingNeedRevision: offer.needRevision, matchingSignalId: signal._id, matchingSignalRevision: offer.signalRevision,
-      opportunityId: conversation.opportunityId, mandateId: mandate._id,
+      opportunityId: conversation.opportunityId,
       platformId: platform._id, connectionId: connection._id, adapterBindingId: binding._id, policyVersionId: policy._id,
-      automationMode: "standing_mandate", requestedActionType: "send_platform_dm", personalDataScopes: [],
+      automationMode: "autopilot", requestedActionType: "send_platform_dm", personalDataScopes: [],
       payload, contentVersion: 1, contentHash: await actionPayloadHash(payload), status: "drafted",
-      expiresAt: Math.min(mandate.expiresAt, now + 86_400_000), createdAt: now, updatedAt: now,
+      expiresAt: now + 86_400_000, createdAt: now, updatedAt: now,
     });
     await ctx.db.insert("auditEvents", {
       eventKey: `provider:${offerId}:draft`, actorType: "system", actorUserId: offer.ownerId,

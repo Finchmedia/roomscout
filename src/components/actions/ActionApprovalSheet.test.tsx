@@ -17,7 +17,7 @@ function request(authorization: ActionApprovalRequest["authorization"]): ActionA
 }
 
 describe("ActionApprovalSheet authorization state", () => {
-  it("shows exact one-time approval when no standing mandate authorizes execution", () => {
+  it("shows exact one-time approval when the Autopilot does not authorize execution", () => {
     render(<ActionApprovalSheet onOpenChange={vi.fn()} open request={request({ mode: "approve_once" })} />);
 
     expect(screen.getByRole("heading", { name: "This step needs you" })).toBeInTheDocument();
@@ -26,11 +26,11 @@ describe("ActionApprovalSheet authorization state", () => {
     expect(screen.queryByText("Covered by Autopilot")).not.toBeInTheDocument();
   });
 
-  it("labels execution authorized by an active standing mandate without asking for duplicate approval", () => {
+  it("labels execution authorized by the Autopilot without asking for duplicate approval", () => {
     render(<ActionApprovalSheet
       onOpenChange={vi.fn()}
       open
-      request={request({ mode: "standing_mandate", mandateVersion: 4, mandateLabel: "Stuttgart outreach", executionAllowed: true })}
+      request={request({ mode: "autopilot", autonomyVersion: 4, autonomyLabel: "Stuttgart outreach", executionAllowed: true })}
     />);
 
     expect(screen.getByRole("heading", { name: "Handled by Autopilot" })).toBeInTheDocument();

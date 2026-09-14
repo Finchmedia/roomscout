@@ -21,8 +21,7 @@ const clear = messageSafetySchema.parse({ classification: "non_binding", explana
  * One owner on the controlled portal (roomscout.dev) with an approved contact
  * policy, an active browserbase binding and connection, an active Suchauftrag,
  * a published signal and a provider conversation whose offer suggests a reply.
- * The searchMandates row only exists because stageReply still reads it in this
- * slice; the gate itself never looks at it.
+ * The gate reads only the owner's Handlungsspielraum (`scoutAutonomy`).
  */
 async function scenario(rules?: Partial<AutonomyRules>) {
   const t = convexTest(schema, modules);
@@ -42,7 +41,6 @@ async function scenario(rules?: Partial<AutonomyRules>) {
     await ctx.db.insert("sourceAdapterBindings", { platformId, sourceId: connectedSourceId, scopeKey: "controlled:contact", flow: "contact", adapterKey: "roomscout-dev-v1", adapterVersion: 1, status: "active", executor: "browserbase", config: { kind: "browserbase", workflowKey: "roomscout-dev.platform-message.v1", contextRequired: true }, configFingerprint: "test", policyVersionId: policyId, createdAt: now, updatedAt: now });
     const connectionId = await ctx.db.insert("portalConnections", { ownerId, sourceId: connectedSourceId, platformId, label: "Test connection", allowedDomains: ["roomscout.dev"], allowedPaths: ["/listings", "/inbox"], adapterKey: "roomscout-dev-v1", status: "active", policyDecision: "allowed", allowReadOnlyRecon: true, allowInboxPolling: true, pollIntervalMinutes: 30, failureCount: 0, createdAt: now, updatedAt: now });
     const threadId = await ctx.db.insert("platformThreads", { connectionId, ownerId, providerThreadId: "thread-1", participants: ["Test provider"], lastMessageAt: now, status: "open", createdAt: now, updatedAt: now });
-    await ctx.db.insert("searchMandates", { ownerId, savedNeedId: needId, version: 1, mode: "negotiation_autopilot", status: "active", platformIds: [platformId], allowedActionTypes: ["send_platform_dm"], allowedPersonalData: ["availability"], maxContactsPerDay: 1, maxBrowserMinutesPerDay: 30, maxMonthlyPriceEur: 250, expiresAt: now + 86_400_000, stopOnComplaint: true, stopWhenSuitableRoomConfirmed: true, commitmentBoundary: "non_binding_outreach_only", contentHash: "mandate-v1", createdAt: now, updatedAt: now });
     const conversationId = await ctx.db.insert("providerConversations", { ownerId, savedNeedId: needId, signalId, conversationKey: "controlled", agentThreadId: "test-agent-thread", platformThreadId: threadId, revision: 1, state: "needs_attention", createdAt: now, updatedAt: now });
     const eventId = await ctx.db.insert("providerTurns", { conversationId, sourceKey: "portal:one", kind: "portal_reply", revision: 1, status: "completed", createdAt: now });
     const assessment: ProviderAssessment = { summary: "Ask whether the room is still free", availability: { status: "unknown", evidence: [] }, monthlyPrice: { totalEur: null, allRecurringCostsKnown: false, evidence: [] }, terms: [], constraints: [], uncertainties: ["Availability"], contradictions: [], nextAction: "ask_provider", suggestedReply: { subject: "Room availability", body: "Is the room still available?" } };
@@ -77,8 +75,7 @@ describe("Freigabeprüfung at submit time", () => {
       gate: { outcome: "proceed", autonomyVersion: 1, autonomyHash: s.autonomy.contentHash },
     });
     const [approval] = await s.approvals();
-    expect(approval).toMatchObject({ decision: "authorized_by_mandate", autonomyVersion: 1, autonomyHash: s.autonomy.contentHash, contentVersion: 1 });
-    expect(approval?.mandateId).toBeUndefined();
+    expect(approval).toMatchObject({ decision: "authorized_by_autonomy", autonomyVersion: 1, autonomyHash: s.autonomy.contentHash, contentVersion: 1 });
     const audit = await s.t.run((ctx) => ctx.db.query("auditEvents").collect());
     expect(audit.map((event) => event.eventType)).toContain("action.authorized_by_autonomy");
   });
@@ -97,7 +94,7 @@ describe("Freigabeprüfung at submit time", () => {
     // The submit result carries the user-facing text.
     await s.t.run((ctx) => ctx.db.patch(s.requestId, { status: "drafted" }));
     expect(await s.t.mutation(internal.externalActions.submitChecked, { ownerId: s.ownerId, requestId: s.requestId }))
-      .toEqual({ status: "awaiting_approval", authorizedByMandate: false, reasons: ["Du prüfst Nachrichten vor dem Versand."] });
+      .toEqual({ status: "awaiting_approval", authorizedByAutonomy: false, reasons: ["Du prüfst Nachrichten vor dem Versand."] });
   });
 
   it("binding verdict -> awaiting_approval binding_content in both modes", async () => {

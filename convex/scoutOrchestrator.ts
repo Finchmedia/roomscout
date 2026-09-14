@@ -1,8 +1,18 @@
+/**
+ * Scout orchestrator: walks every active Suchauftrag and starts the next
+ * autonomous step — the controlled portal registration or the provider
+ * follow-up for a fresh opportunity. Eligibility reads the owner's
+ * Handlungsspielraum (ADR 0001); both modes run here, Rücksprache only
+ * changes what the Freigabeprüfung does when a message is about to go out.
+ */
+
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, mutation, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { loadAutonomyForOwner } from "./autonomy";
 import { requireUserId } from "./integrations/authz";
+import { allowedActions } from "./lib/autonomy";
 import { opportunityMatchIsCurrent } from "./lib/matchValidity";
 import { resolvePortalBrowserProvider } from "./integrations/portalBrowserEngine";
 
@@ -15,6 +25,12 @@ const CONTROLLED_SOURCE_SLUG = "roomscout-dev-connected";
 const CONTROLLED_ADAPTER_KEY = "roomscout-dev-v1";
 
 type ReadCtx = Pick<QueryCtx, "db">;
+
+/** Contact on: the Scout may write to providers, so registering and queuing follow-ups makes sense. */
+async function contactAllowed(ctx: ReadCtx, ownerId: Id<"users">): Promise<boolean> {
+  const autonomy = await loadAutonomyForOwner(ctx, ownerId);
+  return allowedActions(autonomy.rules).includes("send_platform_dm");
+}
 
 async function platformIsExcluded(
   ctx: ReadCtx,
@@ -60,27 +76,18 @@ async function controlledNeedsAuthConnection(
 
 async function eligibleControlledRegistration(
   ctx: ReadCtx,
-  mandate: Doc<"searchMandates">,
+  need: Doc<"savedNeeds">,
   expectedConnectionId?: Id<"portalConnections">,
 ): Promise<Id<"portalConnections"> | null> {
   const now = Date.now();
-  if (
-    mandate.status !== "active" ||
-    mandate.stoppedAt !== undefined ||
-    mandate.expiresAt <= now ||
-    (mandate.mode !== "outreach_autopilot" && mandate.mode !== "negotiation_autopilot") ||
-    !mandate.allowedActionTypes.includes("create_portal_account") ||
-    mandate.commitmentBoundary !== "non_binding_outreach_only"
-  ) return null;
-  const need = await ctx.db.get(mandate.savedNeedId);
-  if (!need || need.ownerId !== mandate.ownerId || need.status !== "active") return null;
-  const controlled = await controlledNeedsAuthConnection(ctx, mandate.ownerId);
+  if (need.status !== "active") return null;
+  if (!await contactAllowed(ctx, need.ownerId)) return null;
+  const controlled = await controlledNeedsAuthConnection(ctx, need.ownerId);
   if (!controlled || controlled.connection._id !== (expectedConnectionId ?? controlled.connection._id)) return null;
   const { connection, source, platform } = controlled;
-  if (!mandate.platformIds.includes(platform._id)) return null;
-  if (await platformIsExcluded(ctx, mandate.savedNeedId, platform._id)) return null;
+  if (await platformIsExcluded(ctx, need._id, platform._id)) return null;
   const mailbox = await ctx.db.query("userMailboxes").withIndex("by_owner", (q) =>
-    q.eq("ownerId", mandate.ownerId),
+    q.eq("ownerId", need.ownerId),
   ).unique();
   if (!mailbox || mailbox.status !== "active" || !mailbox.providerInboxId || !mailbox.emailAddress) return null;
   const policies = await ctx.db.query("sourceFlowPolicies").withIndex("by_platform_and_status_and_next_review_at", (q) =>
@@ -106,15 +113,15 @@ async function eligibleControlledRegistration(
 
 async function scheduleControlledRegistration(
   ctx: MutationCtx,
-  mandate: Doc<"searchMandates">,
+  need: Doc<"savedNeeds">,
 ): Promise<boolean> {
-  const connectionId = await eligibleControlledRegistration(ctx, mandate);
+  const connectionId = await eligibleControlledRegistration(ctx, need);
   if (!connectionId) return false;
   let runId: Id<"browserRuns">;
   const browserProvider = resolvePortalBrowserProvider();
   try {
     runId = await ctx.runMutation(internal.portalConnections.reserveRun, {
-      ownerId: mandate.ownerId,
+      ownerId: need.ownerId,
       connectionId,
       kind: "authenticate",
       browserProvider,
@@ -127,8 +134,8 @@ async function scheduleControlledRegistration(
     ? internal.firecrawlPortal.runScheduledAgentRegistration
     : internal.browserbasePortal.runScheduledAgentRegistration;
   await ctx.scheduler.runAfter(0, scheduledRegistration, {
-    ownerId: mandate.ownerId,
-    mandateId: mandate._id,
+    ownerId: need.ownerId,
+    savedNeedId: need._id,
     connectionId,
     runId,
   });
@@ -140,8 +147,8 @@ function boundedLimit(limit = 3) {
   return limit;
 }
 
-async function queueOpportunity(ctx: MutationCtx, mandate: Doc<"searchMandates">, opportunity: Doc<"opportunities">) {
-  if (!opportunity.signalId || opportunity.ownerId !== mandate.ownerId || opportunity.savedNeedId !== mandate.savedNeedId ||
+async function queueOpportunity(ctx: MutationCtx, need: Doc<"savedNeeds">, opportunity: Doc<"opportunities">) {
+  if (!opportunity.signalId || opportunity.ownerId !== need.ownerId || opportunity.savedNeedId !== need._id ||
     opportunity.kind !== "supply_match" || !await opportunityMatchIsCurrent(ctx, opportunity, true)) return false;
   const signal = await ctx.db.get(opportunity.signalId);
   const entry = signal?.sourceEntryId ? await ctx.db.get(signal.sourceEntryId) : null;
@@ -150,44 +157,38 @@ async function queueOpportunity(ctx: MutationCtx, mandate: Doc<"searchMandates">
   // This delivery block is explicitly a controlled-portal demo. Public sources
   // may be researched and indexed, never contacted by fictional demo bands.
   if (!source || source.status !== "active" || !platform || platform.status !== "active" ||
-    platform.canonicalDomain !== "roomscout.dev" || !mandate.platformIds.includes(platform._id)) return false;
-  if (await platformIsExcluded(ctx, mandate.savedNeedId, platform._id)) return false;
+    platform.canonicalDomain !== CONTROLLED_DOMAIN) return false;
+  if (await platformIsExcluded(ctx, need._id, platform._id)) return false;
   try {
-    if (new URL(source.baseUrl).origin !== "https://roomscout.dev" ||
-      new URL(entry!.detailUrl).origin !== "https://roomscout.dev") return false;
+    if (new URL(source.baseUrl).origin !== `https://${CONTROLLED_DOMAIN}` ||
+      new URL(entry!.detailUrl).origin !== `https://${CONTROLLED_DOMAIN}`) return false;
   } catch { return false; }
   const eventId: Id<"providerTurns"> | null = await ctx.runMutation(internal.providerConversations.enqueueOpportunity, { opportunityId: opportunity._id });
   if (!eventId) return false;
-  await ctx.db.patch(opportunity._id, { status: "reviewing", mandateId: mandate._id, updatedAt: Date.now() });
+  await ctx.db.patch(opportunity._id, { status: "reviewing", updatedAt: Date.now() });
   return true;
 }
 
-async function processNeed(ctx: MutationCtx, mandate: Doc<"searchMandates">, budget: number, cursor: string | null = null): Promise<Result> {
+async function processNeed(ctx: MutationCtx, need: Doc<"savedNeeds">, budget: number, cursor: string | null = null): Promise<Result> {
   const result = emptyResult();
-  if (mandate.status !== "active" || mandate.stoppedAt !== undefined) return result;
-  if (mandate.expiresAt <= Date.now()) {
-    await ctx.db.patch(mandate._id, { status: "expired", stoppedAt: Date.now(), updatedAt: Date.now() });
-    result.expired = 1; return result;
-  }
-  if (mandate.mode !== "outreach_autopilot" && mandate.mode !== "negotiation_autopilot") return result;
-  const need = await ctx.db.get(mandate.savedNeedId);
-  if (need?.ownerId !== mandate.ownerId || need.status !== "active") return result;
-  if (await controlledNeedsAuthConnection(ctx, mandate.ownerId)) {
-    if (await scheduleControlledRegistration(ctx, mandate)) result.scheduled = 1;
+  if (need.status !== "active") return result;
+  if (!await contactAllowed(ctx, need.ownerId)) return result;
+  if (await controlledNeedsAuthConnection(ctx, need.ownerId)) {
+    if (await scheduleControlledRegistration(ctx, need)) result.scheduled = 1;
     return result;
   }
   const page = await ctx.db.query("opportunities").withIndex("by_saved_need_and_status_and_updated_at", (q) =>
-    q.eq("savedNeedId", mandate.savedNeedId).eq("status", "new"),
+    q.eq("savedNeedId", need._id).eq("status", "new"),
   ).order("desc").paginate({ cursor, numItems: 25 });
   for (const opportunity of page.page) {
     result.checked++;
-    if (await queueOpportunity(ctx, mandate, opportunity)) {
+    if (await queueOpportunity(ctx, need, opportunity)) {
       result.created++; result.scheduled++; budget--;
       if (budget === 0) break;
     } else result.skipped++;
   }
-  if (budget > 0 && !page.isDone) await ctx.scheduler.runAfter(0, internal.mandateOrchestrator.continueNeed, {
-    mandateId: mandate._id, cursor: page.continueCursor, limit: budget,
+  if (budget > 0 && !page.isDone) await ctx.scheduler.runAfter(0, internal.scoutOrchestrator.continueNeed, {
+    savedNeedId: need._id, cursor: page.continueCursor, limit: budget,
   });
   return result;
 }
@@ -195,18 +196,18 @@ async function processNeed(ctx: MutationCtx, mandate: Doc<"searchMandates">, bud
 export const validateScheduledRegistration = internalQuery({
   args: {
     ownerId: v.id("users"),
-    mandateId: v.id("searchMandates"),
+    savedNeedId: v.id("savedNeeds"),
     connectionId: v.id("portalConnections"),
     runId: v.id("browserRuns"),
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
-    const [mandate, run] = await Promise.all([
-      ctx.db.get(args.mandateId),
+    const [need, run] = await Promise.all([
+      ctx.db.get(args.savedNeedId),
       ctx.db.get(args.runId),
     ]);
     if (
-      !mandate || mandate.ownerId !== args.ownerId ||
+      !need || need.ownerId !== args.ownerId ||
       !run || run.ownerId !== args.ownerId || run.connectionId !== args.connectionId ||
       run.kind !== "authenticate" || run.status !== "queued"
     ) return false;
@@ -214,26 +215,26 @@ export const validateScheduledRegistration = internalQuery({
     const connection = await ctx.db.get(args.connectionId);
     if (!connection || (run.browserProvider ?? "browserbase") !== selectedProvider ||
       (connection.browserProvider ?? "browserbase") !== selectedProvider) return false;
-    return await eligibleControlledRegistration(ctx, mandate, args.connectionId) !== null;
+    return await eligibleControlledRegistration(ctx, need, args.connectionId) !== null;
   },
 });
 
 export const continueNeed = internalMutation({
-  args: { mandateId: v.id("searchMandates"), cursor: v.optional(v.string()), limit: v.number() }, returns: resultValidator,
+  args: { savedNeedId: v.id("savedNeeds"), cursor: v.optional(v.string()), limit: v.number() }, returns: resultValidator,
   handler: async (ctx, args) => {
-    const mandate = await ctx.db.get(args.mandateId);
-    return mandate ? await processNeed(ctx, mandate, boundedLimit(args.limit), args.cursor ?? null) : emptyResult();
+    const need = await ctx.db.get(args.savedNeedId);
+    return need ? await processNeed(ctx, need, boundedLimit(args.limit), args.cursor ?? null) : emptyResult();
   },
 });
 
 async function orchestrateOwner(ctx: MutationCtx, ownerId: Id<"users">, limit: number, cursor: string | null = null): Promise<Result> {
   const result = emptyResult();
-  const page = await ctx.db.query("searchMandates").withIndex("by_owner_and_status", (q) => q.eq("ownerId", ownerId).eq("status", "active")).paginate({ cursor, numItems: 10 });
-  for (const mandate of page.page) {
-    const current: Result = await ctx.runMutation(internal.mandateOrchestrator.continueNeed, { mandateId: mandate._id, limit });
+  const page = await ctx.db.query("savedNeeds").withIndex("by_owner_and_status", (q) => q.eq("ownerId", ownerId).eq("status", "active")).paginate({ cursor, numItems: 10 });
+  for (const need of page.page) {
+    const current: Result = await ctx.runMutation(internal.scoutOrchestrator.continueNeed, { savedNeedId: need._id, limit });
     for (const key of Object.keys(result) as (keyof Result)[]) result[key] += current[key];
   }
-  if (!page.isDone) await ctx.scheduler.runAfter(0, internal.mandateOrchestrator.runForOwner, { ownerId, limit, cursor: page.continueCursor });
+  if (!page.isDone) await ctx.scheduler.runAfter(0, internal.scoutOrchestrator.runForOwner, { ownerId, limit, cursor: page.continueCursor });
   return result;
 }
 
@@ -253,12 +254,12 @@ export const runBatch = internalMutation({
     const result = emptyResult();
     const limit = args.limit ?? 8;
     if (!Number.isInteger(limit) || limit < 1 || limit > 12) throw new ConvexError({ code: "INVALID_ORCHESTRATION_LIMIT" });
-    const page = await ctx.db.query("searchMandates").withIndex("by_status_and_expires_at", (q) => q.eq("status", "active")).paginate({ cursor: args.cursor ?? null, numItems: limit });
-    for (const mandate of page.page) {
-      const current: Result = await ctx.runMutation(internal.mandateOrchestrator.continueNeed, { mandateId: mandate._id, limit: 3 });
+    const page = await ctx.db.query("savedNeeds").withIndex("by_status_and_city", (q) => q.eq("status", "active")).paginate({ cursor: args.cursor ?? null, numItems: limit });
+    for (const need of page.page) {
+      const current: Result = await ctx.runMutation(internal.scoutOrchestrator.continueNeed, { savedNeedId: need._id, limit: 3 });
       for (const key of Object.keys(result) as (keyof Result)[]) result[key] += current[key];
     }
-    if (!page.isDone) await ctx.scheduler.runAfter(0, internal.mandateOrchestrator.runBatch, { limit, cursor: page.continueCursor });
+    if (!page.isDone) await ctx.scheduler.runAfter(0, internal.scoutOrchestrator.runBatch, { limit, cursor: page.continueCursor });
     return result;
   },
 });

@@ -105,12 +105,12 @@ describe("live Scout route", () => {
     expect(fixtures.queries.mock.calls.some(([name]) => name === "signals:list")).toBe(false);
   });
 
-  it("opens a ready brief automatically without activating the mandate", () => {
+  it("opens a ready brief automatically without activating the search", () => {
     fixtures.context.briefReadiness = { status: "ready", needRevision: 3, readyAt: 100 };
     renderPage();
     expect(screen.getByRole("heading", { name: "So suche ich für euch." })).toBeInTheDocument();
     expect(screen.getByText(/Euer Suchauftrag ist bereit/)).toHaveAttribute("role", "status");
-    expect(mutation("mandates:enableDefaultAutopilot")).not.toHaveBeenCalled();
+    expect(mutation("savedNeeds:activate")).not.toHaveBeenCalled();
   });
 
   it("dismisses the current ready event for editing but opens a later ready revision", () => {
@@ -127,7 +127,7 @@ describe("live Scout route", () => {
   it("activates only after the explicit brief action", async () => {
     fixtures.context.briefReadiness = { status: "ready", needRevision: 3, readyAt: 100 };
     renderPage();
-    const enable = mutation("mandates:enableDefaultAutopilot");
+    const enable = mutation("savedNeeds:activate");
     expect(enable).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Scout losschicken" }));
     await waitFor(() => expect(enable).toHaveBeenCalledWith({ savedNeedId: "need-current" }));
@@ -139,7 +139,7 @@ describe("live Scout route", () => {
     fireEvent.click(screen.getByRole("button", { name: "Lieber schreiben" }));
     expect(screen.getByRole("region", { name: "Scout-Chat" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "So suche ich für euch." })).not.toBeInTheDocument();
-    expect(mutation("mandates:enableDefaultAutopilot")).not.toHaveBeenCalled();
+    expect(mutation("savedNeeds:activate")).not.toHaveBeenCalled();
   });
 
   it("cancels a starting voice session when switching to text and on route exit", () => {

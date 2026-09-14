@@ -1,17 +1,15 @@
-import { Bell, Pause, Pencil, Play } from "lucide-react";
+import { Bell, Pause, Pencil, Play, Send } from "lucide-react";
 import { useMutation, useQuery } from "convex/react";
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
-import { MandatePanel } from "../../components/mandate/MandatePanel";
 import { WorkspaceShell } from "../../components/navigation/WorkspaceShell";
 import { SearchProfileCard } from "../../components/scout/SearchProfileCard";
 import { SearchSourcesPanel } from "../../components/search/SearchSourcesPanel";
 import { EmptyState, LedgerCard, PageHeader } from "../../components/ui/LedgerCard";
 import { Table, TableBody, TableCell, TableRow } from "../../components/ui/table";
 import { savedNeedToSearch } from "../../data/convexAdapters";
-import type { ScoutMandate } from "../../features/agentOperations/types";
 
 type SearchTab = "overview" | "sources" | "activity";
 
@@ -29,18 +27,12 @@ export function MySearchPage() {
   const matches = useQuery(api.matches.listMine, need ? { savedNeedId: need._id, limit: 30 } : "skip");
   const indexedSignals = useQuery(api.signals.list, need?.locationQuery ? { city: need.locationQuery, limit: 50 } : "skip");
   const sourceCoverage = useQuery(api.searchSources.listForNeed, need ? { savedNeedId: need._id, limit: 100 } : "skip");
-  const activeMandate = useQuery(api.mandates.getActiveMine, need ? { savedNeedId: need._id } : "skip");
   const setNeedStatus = useMutation(api.savedNeeds.setStatus);
+  const activateNeed = useMutation(api.savedNeeds.activate);
   const updateMatchStatus = useMutation(api.matches.updateStatus);
   const setSourcePreference = useMutation(api.searchSources.setPreference);
-  const createMandateDraft = useMutation(api.mandates.createDraft);
-  const activateMandate = useMutation(api.mandates.activate);
-  const enableDefaultAutopilot = useMutation(api.mandates.enableDefaultAutopilot);
-  const revokeMandate = useMutation(api.mandates.revoke);
-  const killMandates = useMutation(api.mandates.killSwitch);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
-  const [defaultMandateExpiry] = useState(() => Date.now() + 30 * 24 * 60 * 60 * 1_000);
   const requestedTab = searchParams.get("tab");
   const activeTab: SearchTab = requestedTab === "sources" || requestedTab === "activity" ? requestedTab : "overview";
 
@@ -52,6 +44,20 @@ export function MySearchPage() {
       await setNeedStatus({ needId: need._id, status: need.status === "paused" ? "active" : "paused" });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The search status could not be changed.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  /** "Schick mich los": the search becomes active within the user's Handlungsspielraum. */
+  async function startSearch() {
+    if (!need) return;
+    setWorking(true);
+    setError("");
+    try {
+      await activateNeed({ savedNeedId: need._id });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The search could not be started.");
     } finally {
       setWorking(false);
     }
@@ -76,54 +82,6 @@ export function MySearchPage() {
       });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The source preference could not be saved.");
-    }
-  }
-
-  async function changeMandateStatus(status: "draft" | "active" | "paused" | "killed" | "expired") {
-    if (!need) return;
-    setError("");
-    try {
-      if (status === "killed") {
-        await killMandates({ savedNeedId: need._id });
-      } else if (status === "paused" && activeMandate) {
-        await revokeMandate({ mandateId: activeMandate._id });
-      } else if (status === "active") {
-        await enableDefaultAutopilot({ savedNeedId: need._id });
-      }
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The mandate could not be updated.");
-    }
-  }
-
-  async function saveMandate(next: ScoutMandate) {
-    if (!need) return;
-    setError("");
-    const mode = next.mode === "research" ? "research_autopilot" as const : next.mode === "outreach" ? "outreach_autopilot" as const : next.mode === "negotiation" ? "negotiation_autopilot" as const : "guided" as const;
-    const externalActions = new Set(["send_email", "submit_webform", "send_platform_dm", "create_portal_account", "publish_listing", "share_contact_details", "propose_visit"]);
-    const allowedActionTypes = mode === "guided" || mode === "research_autopilot" ? [] : next.allowedActionTypes
-      .filter((action) => externalActions.has(action))
-      .map((action) => action === "propose_visit" ? "propose_visit_time" as const : action as "send_email" | "submit_webform" | "send_platform_dm" | "create_portal_account" | "publish_listing" | "share_contact_details");
-    const personalData = new Set(["band_name", "member_first_names", "reply_email", "phone", "precise_location", "availability", "budget", "music_profile"]);
-    const allowedPersonalData = next.dataScopes.filter((scope) => personalData.has(scope)) as Array<"band_name" | "member_first_names" | "reply_email" | "phone" | "precise_location" | "availability" | "budget" | "music_profile">;
-    try {
-      const created = await createMandateDraft({
-        savedNeedId: need._id,
-        mode,
-        platformIds: next.platformAllowlist.map((id) => id as Id<"sourcePlatforms">),
-        allowedActionTypes,
-        allowedPersonalData,
-        maxContactsPerDay: Math.max(0, Math.floor(next.dailyContactLimit)),
-        maxBrowserMinutesPerDay: Math.max(0, Math.floor(next.dailyBrowserMinutes)),
-        maxMonthlyPriceEur: next.maxMonthlyPriceEur,
-        expiresAt: next.expiresAt ?? defaultMandateExpiry,
-        stopOnComplaint: true,
-        stopWhenSuitableRoomConfirmed: true,
-      });
-      await activateMandate({ mandateId: created.mandateId, expectedContentHash: created.contentHash });
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : "The mandate could not be saved and activated.";
-      setError(message);
-      throw caught instanceof Error ? caught : new Error(message);
     }
   }
 
@@ -155,41 +113,12 @@ export function MySearchPage() {
       note: `${coverageStates.join(" + ") || "Coverage status unavailable"} · ${Math.round(source.confidence * 100)}% confidence`,
     };
   });
-  const mandate: ScoutMandate = activeMandate ? {
-    id: activeMandate._id,
-    contentHash: activeMandate.contentHash,
-    mode: activeMandate.mode === "research_autopilot" ? "research" : activeMandate.mode === "outreach_autopilot" ? "outreach" : activeMandate.mode === "negotiation_autopilot" ? "negotiation" : "guided",
-    status: "active",
-    version: activeMandate.version,
-    goal: need.title,
-    sourceAllowlist: coverageSources.filter((source) => source.included).map((source) => source.domain),
-    platformAllowlist: activeMandate.platformIds,
-    allowedActionTypes: activeMandate.allowedActionTypes.map((action) => action === "propose_visit_time" ? "propose_visit" as const : action),
-    dataScopes: activeMandate.allowedPersonalData,
-        dailyContactLimit: activeMandate.maxContactsPerDay,
-        dailyBrowserMinutes: activeMandate.maxBrowserMinutesPerDay,
-        usesDefaultUnlimitedUsage: activeMandate.usesDefaultUnlimitedUsage,
-    maxMonthlyPriceEur: activeMandate.maxMonthlyPriceEur,
-    expiresAt: activeMandate.expiresAt,
-    killSwitchEnabled: true,
-    stopConditions: [activeMandate.stopOnComplaint ? "A complaint is received" : "Complaint stop disabled", activeMandate.stopWhenSuitableRoomConfirmed ? "A suitable room is confirmed" : "Confirmation stop disabled"],
-    persisted: true,
-  } : {
-    mode: "negotiation", status: "draft", goal: need.title,
-    sourceAllowlist: coverageSources.filter((source) => source.included).map((source) => source.domain),
-    platformAllowlist: coverageSources.filter((source) => source.included).map((source) => source.id),
-    allowedActionTypes: ["send_email", "submit_webform", "send_platform_dm", "create_portal_account", "publish_listing", "propose_visit"],
-    dataScopes: ["band_name", "reply_email", "availability", "budget", "music_profile"], dailyContactLimit: 10,
-    dailyBrowserMinutes: 30, maxMonthlyPriceEur: need.maxBudgetEur,
-    expiresAt: defaultMandateExpiry, killSwitchEnabled: true,
-    stopConditions: ["Search is paused", "A login or human-only step is required", "A suitable room reaches agreement handoff"], persisted: false,
-  };
   const maxEvidenceSources = Math.max(0, ...(indexedSignals ?? []).map((signal) => signal.sourceCount));
 
   return (
     <WorkspaceShell mode="musician">
       <PageHeader
-        meta={<div className="actionsrow"><span className="mono live"><span className="dot dot-pulse" />Convex live query</span>{need.status !== "draft" ? <button className="btn btn-g btn-sm" disabled={working} onClick={toggleSearch} type="button">{need.status === "paused" ? <Play aria-hidden="true" size={14} /> : <Pause aria-hidden="true" size={14} />}{working ? "Updating…" : need.status === "paused" ? "Resume" : "Pause"}</button> : null}</div>}
+        meta={<div className="actionsrow"><span className="mono live"><span className="dot dot-pulse" />Convex live query</span>{need.status === "draft" ? <button className="btn btn-p btn-sm" disabled={working || !need.locationQuery?.trim() || need.radiusKm === undefined} onClick={() => void startSearch()} type="button"><Send aria-hidden="true" size={14} />{working ? "Starting…" : "Schick mich los"}</button> : need.status !== "archived" ? <button className="btn btn-g btn-sm" disabled={working} onClick={() => void toggleSearch()} type="button">{need.status === "paused" ? <Play aria-hidden="true" size={14} /> : <Pause aria-hidden="true" size={14} />}{working ? "Updating…" : need.status === "paused" ? "Weiter" : "Pause"}</button> : null}</div>}
         title="My search"
       />
       <div aria-label="Search sections" className="rs-page-tabs" role="tablist">
@@ -202,7 +131,7 @@ export function MySearchPage() {
           <div className="stack">
             <SearchProfileCard search={search} />
             <div className="actionsrow"><Link className="btn btn-s" to="/app/scout?mode=search_discovery"><Pencil aria-hidden="true" size={14} />Edit with Scout</Link></div>
-            {activeMandate === undefined ? <EmptyState body="Loading the active version and authorization limits." title="Loading Scout mandate…" /> : <MandatePanel mandate={mandate} onSave={saveMandate} onStatusChange={changeMandateStatus} platformOptions={coverageSources.map((source) => ({ id: source.id, label: source.name }))} />}
+            <LedgerCard header={<><span className="type">Scout</span><span className="mono">{need.status === "active" ? "Suche aktiv" : need.status === "paused" ? "Pausiert" : need.status}</span></>}><p className="brief"><span>Der Scout arbeitet innerhalb deines Handlungsspielraums. Verbindliche Zusagen bleiben bei dir.</span></p></LedgerCard>
             <LedgerCard header={<span className="type">Updates</span>}><Table className="facts"><TableBody><TableRow><TableCell>Channel</TableCell><TableCell>In-app notifications</TableCell></TableRow><TableRow><TableCell>Cadence</TableCell><TableCell>As matches and replies arrive</TableCell></TableRow><TableRow><TableCell>Decision point</TableCell><TableCell>Agreements, bookings, or money</TableCell></TableRow></TableBody></Table></LedgerCard>
           </div>
           <div className="stack">

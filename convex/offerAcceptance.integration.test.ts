@@ -32,7 +32,6 @@ async function fixture() {
     const bindingId = await ctx.db.insert("sourceAdapterBindings", { platformId, sourceId: connectedSourceId, scopeKey: "controlled:contact", flow: "contact", adapterKey: "roomscout-dev-v1", adapterVersion: 1, status: "active", executor: "browserbase", config: { kind: "browserbase", workflowKey: "roomscout-dev.platform-message.v1", contextRequired: true }, configFingerprint: "test", policyVersionId: policyId, createdAt: now, updatedAt: now });
     const connectionId = await ctx.db.insert("portalConnections", { ownerId, sourceId: connectedSourceId, platformId, label: "Test connection", allowedDomains: ["roomscout.dev"], allowedPaths: ["/listings", "/inbox"], adapterKey: "roomscout-dev-v1", status: "active", policyDecision: "allowed", allowReadOnlyRecon: true, allowInboxPolling: true, pollIntervalMinutes: 30, failureCount: 0, createdAt: now, updatedAt: now });
     const threadId = await ctx.db.insert("platformThreads", { connectionId, ownerId, providerThreadId: "thread-1", participants: ["Test provider"], lastMessageAt: now, status: "open", createdAt: now, updatedAt: now });
-    const mandateId = await ctx.db.insert("searchMandates", { ownerId, savedNeedId: needId, version: 1, mode: "negotiation_autopilot", status: "active", platformIds: [platformId], allowedActionTypes: ["send_platform_dm"], allowedPersonalData: ["budget"], maxContactsPerDay: 10, maxBrowserMinutesPerDay: 30, maxMonthlyPriceEur: 250, expiresAt: now + 86_400_000, stopOnComplaint: true, stopWhenSuitableRoomConfirmed: true, commitmentBoundary: "non_binding_outreach_only", contentHash: "mandate-v1", createdAt: now, updatedAt: now });
     const conversationId = await ctx.db.insert("providerConversations", { ownerId, savedNeedId: needId, signalId, conversationKey: "controlled", agentThreadId: "test-agent-thread", platformThreadId: threadId, revision: 1, state: "offer_ready", createdAt: now, updatedAt: now });
     const eventId = await ctx.db.insert("providerTurns", { conversationId, sourceKey: "portal:provider-offer", kind: "portal_reply", revision: 1, status: "completed", completedAt: now, createdAt: now });
     const providerEvidence = [{ sourceId: "portal:provider-offer", quote: "Available Tuesday evenings for EUR 220 total monthly, drums are allowed." }];
@@ -50,7 +49,7 @@ async function fixture() {
     };
     const offerId = await ctx.db.insert("offerRevisions", { ownerId, savedNeedId: needId, conversationId, eventId, revision: 1, needRevision: 1, signalRevision, assessment, ready: true, blockers: [], contentHash: "offer-v1", model: ai.ROOMSCOUT_MODEL_ID, promptVersion: "test", schemaVersion: "test", createdAt: now });
     await ctx.db.patch(conversationId, { currentOfferId: offerId });
-    return { ownerId, otherId, needId, platformId, connectionId, threadId, mandateId, conversationId, eventId, offerId, signalId, bindingId, policyId, assessment, signalRevision };
+    return { ownerId, otherId, needId, platformId, connectionId, threadId, conversationId, eventId, offerId, signalId, bindingId, policyId, assessment, signalRevision };
   });
   const musician = t.withIdentity({ subject: f.ownerId });
   const prepare = () => musician.mutation(api.offerAcceptance.prepare, { offerId: f.offerId, expectedOfferHash: "offer-v1" });
@@ -187,7 +186,7 @@ describe("exact offer acceptance", () => {
     expect(await f.t.run((ctx) => ctx.db.query("actionApprovals").collect())).toEqual([]);
   });
 
-  it("does not allow the generic decision endpoint or a standing mandate to authorize acceptance", async () => {
+  it("does not allow the generic decision endpoint or the Autopilot to authorize acceptance", async () => {
     const f = await fixture(); const requestId = await f.prepare(); const view = await f.review(requestId);
     await expect(f.musician.mutation(api.externalActions.decide, { requestId, decision: "approved", expectedContentVersion: view.contentVersion, expectedContentHash: view.contentHash, expectedPayload: (await f.t.run((ctx) => ctx.db.get(requestId)))!.payload })).rejects.toThrow();
     await expect(f.musician.mutation(api.externalActions.submit, { requestId })).rejects.toThrow();

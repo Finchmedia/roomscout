@@ -25,7 +25,7 @@ export function BrowserRunWorkspace({ run, onTakeControl, onReturnControl, onSto
   return (
     <div className="rs-browser-run">
       <header className="rs-browser-run__bar">
-        <div><span className="type t-scout">Scout run · {run.sourceName}</span><h1>{run.searchTitle}</h1><span className="mono">{browserProvider === "firecrawl" ? "Firecrawl" : "Browserbase"} · {run.sourceDomain ? `${run.sourceDomain} · ` : ""}{run.mandateLabel}</span></div>
+        <div><span className="type t-scout">Scout run · {run.sourceName}</span><h1>{run.searchTitle}</h1><span className="mono">{browserProvider === "firecrawl" ? "Firecrawl" : "Browserbase"} · {run.sourceDomain ? `${run.sourceDomain} · ` : ""}{run.policyLabel}</span></div>
         <div className="actionsrow"><span className={`pill ${needsHuman || failed ? "warn" : "new"}`}>{run.state.replaceAll("_", " ")}</span><button className="btn btn-g btn-sm" disabled={!onStop} onClick={onStop} type="button"><CircleStop aria-hidden="true" size={14} />Stop run</button></div>
       </header>
 

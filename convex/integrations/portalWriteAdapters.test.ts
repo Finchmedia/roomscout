@@ -80,8 +80,8 @@ describe("reviewed portal write adapters", () => {
     await expect(runDeterministicPortalWrite({
       page: page as never, workflow, payload: { kind: "platform_message", targetPath: "/listings/room-1", recipients: ["Listing owner"], body: "Available?" },
       allowedDomains: ["roomscout.dev"], allowedPaths: ["/listings", "/inbox"], humanPresenceRequired: false,
-      beforeSubmit: async () => { throw new Error("MANDATE_CHANGED"); },
-    })).rejects.toThrow("MANDATE_CHANGED");
+      beforeSubmit: async () => { throw new Error("CONTEXT_CHANGED"); },
+    })).rejects.toThrow("CONTEXT_CHANGED");
     expect(locators.get('[data-roomscout-write="body"]')?.fill).toHaveBeenCalledWith("Available?");
     expect(locators.get('[data-roomscout-write="send"]')?.click).not.toHaveBeenCalled();
   });

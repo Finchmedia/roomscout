@@ -47,11 +47,11 @@ export const recordAndAuthorize = internalMutation({
     });
     await ctx.db.patch(request._id, { status: "drafted", updatedAt: Date.now() });
     const result = await ctx.runMutation(internal.externalActions.submitChecked, { ownerId: request.ownerId, requestId: request._id });
-    if (result.authorizedByMandate) {
+    if (result.authorizedByAutonomy) {
       const approved = await ctx.db.get(request._id);
       if (approved !== null && approved.status === "approved") await dispatchApproved(ctx, approved);
     }
-    return result.authorizedByMandate;
+    return result.authorizedByAutonomy;
   },
 });
 
