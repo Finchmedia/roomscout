@@ -1476,3 +1476,40 @@ imported and assessed within about ninety seconds. The Scout then chose
 ask_musician (Stuttgart-West statt Mitte? Dienstag oder Mittwoch?), which today
 reaches nobody: no chat question, no decision. That is the gap candidate B
 (Entscheidung im Chat) closes; it is the next piece of work.
+
+### 2026-09-14 — Entscheidung im Chat (Kandidat B): Vertrag und Bau
+
+Ausgangslage: die Freigabeprüfung liefert `ask_user`, die Anbieter-Einschätzung
+liefert `ask_musician`, die Registrierung meldet `humanRequired`, und ein fertiges
+Angebot wartet in einer Benachrichtigung. Keiner dieser Punkte erreicht den
+Musiker im Scout-Chat; die Konversation mit dem Demo-Vermieter steht seit
+Revision 4 bei einer Rückfrage (Stuttgart-West statt Mitte? Dienstag oder
+Mittwoch?), die niemand sieht.
+
+Vertrag nach zwei Grilling-Runden mit dem Maintainer: neue Tabelle `decisions`
+(Besitzer, Suchauftrag, Konversation, Art `scout_question` | `review_message` |
+`private_data` | `binding_content` | `unsupported_claims` | `safety_unavailable` |
+`offer_ready` | `human_step`, Status open/answered/superseded, Frage, Detail,
+Optionen, Verweise auf Anfrage/Angebot/Lauf, Antwort). Genau eine offene
+Entscheidung pro Konversation; eine neue ersetzt die alte. Gehoben wird sie in
+`recordOutcome` (ask_user), in `recordAssessment` (ask_musician und ready) und
+bei `humanRequired` der Registrierung. Bei `ask_musician` formuliert der Scout
+die Frage in einer eigenen Modellrunde im Chat-Thread des Musikers und
+speichert sie über ein Werkzeug; die Benachrichtigungszeile dafür entfällt.
+
+Antwortwege: Karte im Scout-Chat mit Buttons plus Freitext. „Ja“ genehmigt die
+exakte Nachricht und sendet sofort; „Nein“ lehnt ab und der Scout fragt, was
+anders sein soll; eigener Text wird als `humanDraft`-Anfrage durch die
+Freigabeprüfung geschickt, die ihn als vom Nutzer freigegeben behandelt.
+Antworten auf eine Scout-Frage werden als vertrauenswürdige Musiker-Aussage in
+einem neuen `providerTurns`-Eintrag `musician_input` festgehalten, die
+Einschätzung läuft erneut, die nächste Anbieter-Nachricht folgt. Text-Antworten
+laufen zusätzlich als Chat-Runde mit den bestehenden Merk- und Suchwerkzeugen,
+damit Fakten in Gedächtnis und Suchauftrag landen. Chat und Voice bekommen die
+Werkzeuge `answerDecision` und `replyToProvider`. Die Scout-Bühne zeigt „Hier
+brauche ich kurz deine Hilfe.“ mit der Frage als Untertitel und öffnet den
+Chat; das Aktivitäts-Panel wird zur reinen Historie ohne Freigabe-Buttons.
+
+Bau: Workflow mit vier Schritten (Backend, Prüfung, Frontend, Prüfung) auf
+Branch autopilot-policy, gestartet 2026-09-14 gegen 18:20Z. Ergebnis und
+Live-Prüfung an der wartenden Produktionskonversation folgen unten.

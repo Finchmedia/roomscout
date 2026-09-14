@@ -1,5 +1,15 @@
 # Hackathon log
 
+## Latest: Autopilot policy, first production autopilot run, proven webhook chain
+
+The per-search mandate is gone. Each musician has one Handlungsspielraum
+(Autopilot by default, no daily limits) and one Freigabeprüfung decides every
+outgoing action with a persisted outcome. The first production autopilot run
+reached the demo listing without a human step. The AgentMail account had no
+webhook for the Scout deployment; it exists now and a provider reply flows
+webhook, sync and assessment in about ninety seconds. The Scout's own question
+back to the musician (Entscheidung im Chat) is being built.
+
 ## Latest: autonomy settings fidelity
 
 Restored the designed mode cards, permission rows, limit control and commitment
@@ -18,7 +28,7 @@ read-only. No production rollout or external messages in this verification.
 
 - **Project:** RoomScout
 - **Event:** Convex All Gas Hackathon
-- **What it does:** Indexes public rehearsal-room supply and demand and gives musicians a context-aware text/voice Scout with revocable non-binding Autopilot mandates and explicit approval for commitments.
+- **What it does:** Indexes public rehearsal-room supply and demand and gives musicians a context-aware text/voice Scout that runs on Autopilot within a per-user Handlungsspielraum, checked by one Freigabeprüfung, with binding commitments left to the musician.
 - **Live app:** https://fleet-jackal-83.eu-west-1.convex.site
 - **Repo:** https://github.com/Finchmedia/roomscout
 - **Frontend:** Convex static hosting
@@ -28,7 +38,7 @@ read-only. No production rollout or external messages in this verification.
 - **Auth:** Convex Auth
 - **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-realtime-2.1`
 - **Started:** 2026-08-26T13:55:26Z
-- **Last updated:** 2026-09-13T21:43:00Z
+- **Last updated:** 2026-09-14T18:11:01Z
 
 ## Log
 
@@ -316,7 +326,7 @@ backend and contain the recovery UI. Retried a failed production asset upload
 successfully. The maintainer will test with a fresh band; existing accounts and
 data remain unchanged, and no registration or message was sent during rollout.
 
-### 2026-09-13 — working tree: Firecrawl registration diagnostics and progress
+### 2026-09-13 — 5e12b5f Firecrawl registration diagnostics and progress
 
 Confirmed automatic registration was scheduled during the manual test. Fresh
 uncached browser sessions, bounded read-only retries and idempotent cleanup now
@@ -328,3 +338,53 @@ tests passed, one skipped; build and lint passed. Dev and production functions
 and progress UI are deployed; production preflight returned ready/sign_up using
 the final unchanged source. No new account or message was created by these
 diagnostics; complete registration acceptance remains open.
+
+### 2026-09-14 — d2a0356 Firecrawl rate limits and automatic source check
+
+Activating a search now schedules an automatic check of the controlled demo
+portal with a fifteen-minute cooldown, skipped when the portal is unconfigured
+or a browser run is busy, so the Scout no longer waits for an operator click or
+the hourly poll. Firecrawl rate-limit responses are surfaced as typed errors
+with their retry hint instead of anonymous transport failures, and idle
+Interact sessions are cleaned up after such failures. Convex features:
+scheduled functions, internal mutations, internal actions
+(`convex/demoSourceChecks.ts`, `convex/firecrawlPortal.ts`,
+`convex/integrations/firecrawlPortalRuntime.ts`,
+`convex/components/firecrawlRoomScout/api.ts`).
+
+### 2026-09-14 — 14804cf Autopilot policy: Handlungsspielraum, Freigabeprüfung, production run
+
+Groups 4fe7225 through 14804cf on branch autopilot-policy. Replaced the
+per-search mandate with a per-user Handlungsspielraum (`scoutAutonomy`: mode,
+contact, viewings, publishAd, shareProfile, sharePrivate; versioned and hashed)
+and one Freigabeprüfung that returns proceed, wait, ask_user or stop with a
+reason for every outgoing action. The outcome is persisted on the request and a
+single `recordOutcome` writes approvals, audit events and follow-up scheduling.
+Autopilot has no daily limits; only binding commitments stay with the musician
+(ADR 0001 and 0002, glossary in `CONTEXT.md`). The message-safety review
+learned that the search area is not the musician's private data.
+
+Deployed to production and dev the same evening after clearing three tables of
+the day's manual-test rows with the maintainer's consent. The first production
+autopilot run went opportunity, assessment, gate proceed, Firecrawl write and
+portal thread in about seventy seconds. Matching now recreates a missing
+opportunity for a still-current match. The roomscout.dev portal (separate
+project) received the AgentMail component env mapping so its provider-reply
+notifications reach the Scout again.
+
+The slow reply loop had one cause: the AgentMail account had webhooks for the
+portal deployments only and none for the Scout's production site. An internal
+action now creates or reuses the pod-scoped account webhook, the notification
+hint tolerates AgentMail's plain-text footer, the inbox sync retries the first
+Interact call, the controlled portal is polled every five minutes as fallback
+and the Scout surface shows a Zwischenstand card until an offer is ready. Chain
+proven at 18:04Z: provider reply in the portal, webhook event on the Scout
+deployment within 25 seconds, import and assessment within about ninety
+seconds. The assessment then chose ask_musician, which today reaches nobody;
+candidate B (Entscheidung im Chat) closes that gap next. Convex features:
+schema, indexes, mutations, internal actions, scheduled functions, HTTP actions
+(`convex/schema.ts`, `convex/lib/autonomy.ts`, `convex/lib/autonomyGate.ts`,
+`convex/autonomyGate.ts`, `convex/externalActions.ts`,
+`convex/scoutOrchestrator.ts`, `convex/agentmailComponent.ts`,
+`convex/portalNotifications.ts`, `convex/matches.ts`,
+`src/ui/settings/pages/AutonomyPage.tsx`).
