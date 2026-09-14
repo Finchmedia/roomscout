@@ -16,12 +16,15 @@ import {
   PROVIDER_ASSESSMENT_VERSION, validateProviderAssessment, type OfferEvidence,
 } from "./lib/providerAssessment";
 import { OFFER_OPTIONS, OFFER_READY_QUESTION, raiseDecision } from "./lib/decisions";
+import { savedNeedLocationLabel } from "./lib/savedNeedLocation";
 import { runScoutTurn, scoutAgent, SCOUT_PROMPT_VERSION } from "./scoutRuntime";
 import { scoutWorkpool } from "./workpools";
 
 const needValidator = v.object({
   title: v.string(), city: v.string(), requirements: v.array(v.string()), schedule: v.array(v.string()),
   maxBudgetEur: v.optional(v.number()), arrangement: v.array(v.string()),
+  /** Search centre and radius, so an address inside the radius is not mistaken for a wrong district. */
+  searchCenter: v.optional(v.string()), searchRadiusKm: v.optional(v.number()),
 });
 const inputValidator = v.object({
   ownerId: v.id("users"), conversationId: v.id("providerConversations"),
@@ -239,7 +242,10 @@ async function inputForEvent(ctx: QueryCtx, eventId: Id<"providerTurns">) {
     ownerId: conversation.ownerId, conversationId: conversation._id, threadId: conversation.agentThreadId,
     promptMessageId: event.promptMessageId, revision: conversation.revision, needRevision: need.matchingRevision ?? 0,
     signalRevision: await signalMatchRevision(signal),
-    need: { title: need.title, city: need.city, requirements: need.requirements, schedule: need.schedule, maxBudgetEur: need.maxBudgetEur, arrangement: need.arrangement },
+    need: {
+      title: need.title, city: need.city, requirements: need.requirements, schedule: need.schedule, maxBudgetEur: need.maxBudgetEur, arrangement: need.arrangement,
+      searchCenter: savedNeedLocationLabel(need) || undefined, searchRadiusKm: need.radiusKm,
+    },
     evidence, previousAssessment: previous?.assessment ?? null, kind: event.kind, musicianStatements,
   };
 }
