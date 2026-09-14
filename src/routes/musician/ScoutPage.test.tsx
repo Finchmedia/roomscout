@@ -19,9 +19,30 @@ const fixtures = vi.hoisted(() => ({
 }));
 
 function mutation(name: string) {
-  const fn = fixtures.mutations.get(name) ?? vi.fn().mockResolvedValue(null);
+  const cached = fixtures.mutations.get(name);
+  if (cached) return cached;
+  const fn = vi.fn().mockResolvedValue(null);
+  // `api.scout.send` is wired through `.withOptimisticUpdate(...)`; the update
+  // itself is the Agent's helper and is mocked to the identity below.
+  Object.assign(fn, { withOptimisticUpdate: () => fn });
   fixtures.mutations.set(name, fn);
   return fn;
+}
+
+/** A row as `api.scout.listMessages` returns it (and as the stream materialises it). */
+function message(options: {
+  role: "user" | "assistant" | "system";
+  text?: string;
+  status?: "streaming" | "pending" | "success" | "failed";
+  order: number;
+  parts?: Array<Record<string, unknown>>;
+}) {
+  const { role, text = "", status = "success", order, parts } = options;
+  return {
+    key: `thread-${order}-0`, role, text, status, order, stepOrder: 0,
+    parts: parts ?? (text ? [{ type: "text", text }] : []),
+    _creationTime: order, createdAt: order,
+  };
 }
 
 function action(name: string) {
@@ -80,6 +101,14 @@ vi.mock("convex/react", () => ({
   useMutation: (ref: Parameters<typeof getFunctionName>[0]) => mutation(getFunctionName(ref)),
   useAction: (ref: Parameters<typeof getFunctionName>[0]) => action(getFunctionName(ref)),
   usePaginatedQuery: () => ({ results: fixtures.messages, status: "Exhausted", loadMore: vi.fn() }),
+}));
+
+// The thread is the only source of chat state: the page reads it through
+// `useUIMessages`, so the fixtures are the messages the server would hold.
+vi.mock("@convex-dev/agent/react", () => ({
+  useUIMessages: () => ({ results: fixtures.messages, status: "Exhausted", isLoading: false, loadMore: vi.fn() }),
+  optimisticallySendMessage: () => vi.fn(),
+  useSmoothText: (text: string) => [text, { cursor: text.length, isStreaming: false }],
 }));
 
 vi.mock("../../ui/chat/LiveVoiceChat", () => ({ LiveVoiceChat: () => <div>Voice Scout session</div> }));
@@ -229,6 +258,43 @@ describe("live Scout route", () => {
     expect(screen.getByRole("heading", { name: "Hier brauche ich kurz deine Hilfe." })).toBeInTheDocument();
     expect(screen.getByText("Voice Scout session")).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Scout-Chat" })).not.toBeInTheDocument();
+  });
+
+  it("sends a chat message as a mutation carrying the prompt", async () => {
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Lieber schreiben" }));
+    const composer = screen.getByRole("textbox", { name: "Nachricht an deinen Scout …" });
+    fireEvent.change(composer, { target: { value: "Wir suchen ab Mai." } });
+    fireEvent.keyDown(composer, { key: "Enter" });
+    await waitFor(() => expect(mutation("scout:send")).toHaveBeenCalledWith({
+      threadId: "thread", prompt: "Wir suchen ab Mai.",
+    }));
+  });
+
+  it("blocks sending while the reply streams, and names the reason", () => {
+    fixtures.messages = [
+      message({ role: "user", text: "Wir suchen ab Mai.", order: 0 }),
+      message({ role: "assistant", text: "Ich schaue", status: "streaming", order: 1 }),
+    ];
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Lieber schreiben" }));
+    const composer = screen.getByRole("textbox", { name: "Nachricht an deinen Scout …" });
+    fireEvent.change(composer, { target: { value: "Noch etwas" } });
+    expect(screen.getByRole("button", { name: "Senden" })).toBeDisabled();
+    expect(screen.getByText("Dein Scout antwortet gerade …")).toBeInTheDocument();
+  });
+
+  it("releases the composer once the reply is on the thread", () => {
+    fixtures.messages = [
+      message({ role: "user", text: "Wir suchen ab Mai.", order: 0 }),
+      message({ role: "assistant", text: "Ich schaue mal nach.", order: 1 }),
+    ];
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Lieber schreiben" }));
+    const composer = screen.getByRole("textbox", { name: "Nachricht an deinen Scout …" });
+    fireEvent.change(composer, { target: { value: "Noch etwas" } });
+    expect(screen.getByRole("button", { name: "Senden" })).toBeEnabled();
+    expect(screen.queryByText("Dein Scout antwortet gerade …")).not.toBeInTheDocument();
   });
 
   it("shows accepted completion even when the need is paused", () => {

@@ -3,10 +3,10 @@
  *
  * The DS `Sheet` on its `right` edge is exactly this drawer: 420px, warm left
  * hairline, drawer surface, the 40px subtle close in the header row. Turns are
- * `ChatBubble compact`, both speakers boxed at 88 %.
+ * `ChatTurn compact`, both speakers boxed at 88 %.
  */
 
-import { ChatBubble } from "@/components/ui/chat-bubble";
+import { ChatTurn } from "@/ui/chat/ChatTurn";
 import {
   Sheet,
   SheetBody,
@@ -43,7 +43,7 @@ export function TranscriptDrawer({ open, onOpenChange, transcript }: TranscriptD
             </div>
           ) : null}
           {transcript.map((turn) => (
-            <ChatBubble
+            <ChatTurn
               key={turn.id}
               who={turn.who}
               compact
@@ -52,10 +52,9 @@ export function TranscriptDrawer({ open, onOpenChange, transcript }: TranscriptD
                   ? t("scout.transcript.who.scout")
                   : t("scout.transcript.who.user")
               }
-              className="max-w-[88%]"
             >
               {turn.text ?? (turn.key ? t(turn.key) : "")}
-            </ChatBubble>
+            </ChatTurn>
           ))}
         </SheetBody>
       </SheetContent>

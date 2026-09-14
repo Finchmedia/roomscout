@@ -1,3 +1,4 @@
+import { useSmoothText } from "@convex-dev/agent/react"
 import * as React from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -20,25 +21,50 @@ import { cn } from "@/lib/utils"
 
 type ScoutChatAuthor = "scout" | "user" | "system"
 
+/** The Agent component's message status, as the thread reports it. */
+type ScoutChatMessageStatus = "streaming" | "pending" | "success" | "failed"
+
+/**
+ * The parts of a message the chat renders. Prose arrives as `text`; a tool call
+ * arrives as `tool-<toolName>` with the state of its input — the server strips
+ * the inputs and outputs themselves, the chat only ever says *that* it ran.
+ */
+interface ScoutChatMessagePart {
+  type: string
+  text?: string
+  toolCallId?: string
+  state?: string
+}
+
 interface ScoutChatMessage {
   id: string
   author: ScoutChatAuthor
   body: string
+  /** Absent for locally composed rows (the intro line, the gallery fixtures). */
+  status?: ScoutChatMessageStatus
+  parts?: readonly ScoutChatMessagePart[]
 }
 
 interface ScoutChatLabels {
   composer: string
   empty: string
+  failed: string
   history: string
   historyBusy: string
   loadError: string
+  replying: string
   restoreDraft: string
+  retry: string
   scout: string
   send: string
   sendError: string
   sending: string
   status: string
   system: string
+  thinking: string
+  /** One label per tool name; `toolDefault` covers a tool with no entry. */
+  tools: Record<string, string>
+  toolDefault: string
   user: string
   voice: string
 }
@@ -46,7 +72,8 @@ interface ScoutChatLabels {
 interface ScoutChatProps extends Omit<React.ComponentProps<"section">, "onError"> {
   messages: ScoutChatMessage[]
   onSend: (body: string) => Promise<boolean>
-  busy?: boolean
+  /** The thread has an unfinished turn on it — derived from the messages, never from a local flag. */
+  replying?: boolean
   error?: React.ReactNode
   onVoice?: () => void
   autoFocus?: boolean
@@ -75,16 +102,22 @@ interface DecisionEcho {
 const DEFAULT_LABELS: ScoutChatLabels = {
   composer: "Nachricht an deinen Scout …",
   empty: "Beginne ein Gespräch mit deinem Scout.",
+  failed: "Antwort fehlgeschlagen.",
   history: "Ältere Nachrichten laden",
   historyBusy: "Ältere Nachrichten werden geladen …",
   loadError: "Ältere Nachrichten konnten nicht geladen werden.",
+  replying: "Dein Scout antwortet gerade …",
   restoreDraft: "Fehlgeschlagenen Entwurf wiederherstellen",
+  retry: "Erneut senden",
   scout: "Dein Scout",
   send: "Senden",
   sendError: "Die Nachricht konnte nicht gesendet werden.",
   sending: "Nachricht wird gesendet …",
   status: "Gesprächsstatus",
   system: "System",
+  thinking: "Dein Scout denkt nach …",
+  tools: {},
+  toolDefault: "Arbeitet …",
   user: "Du",
   voice: "Mit Scout sprechen",
 }
@@ -108,10 +141,41 @@ function MarkdownMessage({ body }: { body: string }) {
   )
 }
 
+/**
+ * The Scout's prose. `useSmoothText` paces the deltas, which land in bursts,
+ * into an even line — and it keeps pacing after the message flipped to
+ * `success`, so the last burst is read rather than blinked in.
+ *
+ * Whether to pace at all is decided once, on mount, and held: a reply the
+ * musician walked in on keeps animating to the end, while history loaded after
+ * the fact is simply there. The message id keys this element, so the instance —
+ * and with it the decision — survives every status change of that message.
+ */
+function ScoutText({ body, streaming }: { body: string; streaming: boolean }) {
+  const [watched] = React.useState(streaming)
+  const [visible] = useSmoothText(body, { startStreaming: watched })
+  return <MarkdownMessage body={watched ? visible : body} />
+}
+
+/** The tool name behind an AI SDK tool part: `tool-rememberFact` → `rememberFact`. */
+function toolName(type: string) {
+  return type.startsWith("tool-") ? type.slice("tool-".length) : type
+}
+
+/** A tool call the Scout has started but not finished — the only ones worth a line. */
+function runningToolParts(message: ScoutChatMessage) {
+  if (message.status !== "streaming" && message.status !== "pending") return []
+  return (message.parts ?? []).filter(
+    (part) =>
+      part.toolCallId !== undefined &&
+      (part.state === "input-streaming" || part.state === "input-available"),
+  )
+}
+
 function ScoutChat({
   messages,
   onSend,
-  busy = false,
+  replying = false,
   error,
   onVoice,
   autoFocus = false,
@@ -129,13 +193,11 @@ function ScoutChat({
 }: ScoutChatProps) {
   const labels = { ...DEFAULT_LABELS, ...labelOverrides }
   const [echoes, setEchoes] = React.useState<DecisionEcho[]>([])
-  const [submitting, setSubmitting] = React.useState(false)
   const [localError, setLocalError] = React.useState<string | null>(null)
-  const isBusy = busy || submitting
 
   // The composer owns the draft, the failed-draft recovery and its own send
-  // error; the chat only needs to know that something is in flight (for the
-  // "sending" row and `aria-busy`) and to clear the errors it raised itself.
+  // error; the chat only clears the errors it raised itself. Everything the
+  // transcript shows about the turn in flight comes from `messages`.
   const submit = async (body: string) => {
     setLocalError(null)
     return await onSend(body)
@@ -168,9 +230,15 @@ function ScoutChat({
     }
   }
 
+  // The Scout is working and has not written anything yet — the pending reply,
+  // and the moment before the thread even carries it.
+  const newest = messages.at(-1)
+  const thinking =
+    replying && (newest === undefined || newest.author !== "scout" || newest.body.trim() === "")
+
   return (
     <section
-      aria-busy={isBusy || historyBusy}
+      aria-busy={replying || historyBusy}
       aria-label="Scout-Chat"
       className={cn("flex h-[min(44rem,80dvh)] min-h-0 flex-col overflow-hidden rounded-card border border-rs-border-card bg-rs-surface-card", className)}
       {...props}
@@ -193,7 +261,7 @@ function ScoutChat({
                 </p>
               )}
 
-              {messages.map((message) => {
+              {messages.map((message, index) => {
                 if (message.author === "system") {
                   return (
                     <MessageScrollerItem key={message.id} messageId={message.id}>
@@ -206,19 +274,58 @@ function ScoutChat({
 
                 const isUser = message.author === "user"
                 const speaker = isUser ? labels.user : labels.scout
+                const body = message.body.trim()
+                // A failed turn is resent from the message it failed on: the
+                // musician's own text, or the one the Scout could not answer.
+                const retryBody =
+                  message.status !== "failed"
+                    ? undefined
+                    : isUser
+                      ? body || undefined
+                      : messages.slice(0, index).filter((row) => row.author === "user").at(-1)?.body
+
                 return (
-                  <MessageScrollerItem key={message.id} messageId={message.id} scrollAnchor={isUser}>
-                    <Message align={isUser ? "end" : "start"} role="group" aria-label={speaker}>
-                      <MessageContent>
-                        <MessageHeader aria-hidden="true">{speaker}</MessageHeader>
-                        <Bubble align={isUser ? "end" : "start"}>
-                          <BubbleContent>
-                            <MarkdownMessage body={message.body} />
-                          </BubbleContent>
-                        </Bubble>
-                      </MessageContent>
-                    </Message>
-                  </MessageScrollerItem>
+                  <React.Fragment key={message.id}>
+                    {runningToolParts(message).map((part) => (
+                      <MessageScrollerItem key={part.toolCallId} messageId={`${message.id}-${part.toolCallId}`}>
+                        <Marker role="status" aria-label={labels.scout}>
+                          <MarkerContent>{labels.tools[toolName(part.type)] ?? labels.toolDefault}</MarkerContent>
+                        </Marker>
+                      </MessageScrollerItem>
+                    ))}
+
+                    {body ? (
+                      <MessageScrollerItem messageId={message.id} scrollAnchor={isUser}>
+                        <Message align={isUser ? "end" : "start"} role="group" aria-label={speaker}>
+                          <MessageContent>
+                            <MessageHeader aria-hidden="true">{speaker}</MessageHeader>
+                            <Bubble align={isUser ? "end" : "start"}>
+                              <BubbleContent>
+                                {isUser
+                                  ? <MarkdownMessage body={message.body} />
+                                  : <ScoutText body={message.body} streaming={message.status === "streaming"} />}
+                              </BubbleContent>
+                            </Bubble>
+                          </MessageContent>
+                        </Message>
+                      </MessageScrollerItem>
+                    ) : null}
+
+                    {message.status === "failed" ? (
+                      <MessageScrollerItem messageId={`${message.id}-failed`}>
+                        <Marker role="status" aria-label={labels.failed} className="text-rs-red-text">
+                          <MarkerContent className="flex items-center gap-[var(--space-3)]">
+                            {labels.failed}
+                            {retryBody ? (
+                              <Button type="button" variant="link" size="2xs" onClick={() => void submit(retryBody)}>
+                                {labels.retry}
+                              </Button>
+                            ) : null}
+                          </MarkerContent>
+                        </Marker>
+                      </MessageScrollerItem>
+                    ) : null}
+                  </React.Fragment>
                 )
               })}
 
@@ -247,18 +354,15 @@ function ScoutChat({
 
               {decision && onAnswerDecision ? (
                 <MessageScrollerItem key={decision._id} messageId={`decision-${decision._id}`} scrollAnchor>
-                  <DecisionCard decision={decision} offerHash={decisionOfferHash} onAnswer={answerDecision} busy={busy} />
+                  <DecisionCard decision={decision} offerHash={decisionOfferHash} onAnswer={answerDecision} busy={replying} />
                 </MessageScrollerItem>
               ) : null}
 
-              {isBusy && (
-                <MessageScrollerItem messageId="scout-status">
-                  <Message role="status" aria-label={labels.sending}>
-                    <MessageContent>
-                      <MessageHeader>{labels.scout}</MessageHeader>
-                      <p className="text-[length:var(--text-body-sm-size)] text-rs-ink-6">{labels.sending}</p>
-                    </MessageContent>
-                  </Message>
+              {thinking && (
+                <MessageScrollerItem messageId="scout-thinking">
+                  <Marker role="status" aria-label={labels.thinking}>
+                    <MarkerContent className="rs-shimmer">{labels.thinking}</MarkerContent>
+                  </Marker>
                 </MessageScrollerItem>
               )}
             </MessageScrollerContent>
@@ -270,15 +374,22 @@ function ScoutChat({
       <ChatComposer
         labels={labels}
         onSubmit={submit}
-        busy={busy}
+        busy={replying}
+        disabledHint={replying ? labels.replying : undefined}
         error={error || localError}
         onVoice={onVoice}
         autoFocus={autoFocus}
-        onBusyChange={setSubmitting}
       />
     </section>
   )
 }
 
 export { ScoutChat }
-export type { ScoutChatAuthor, ScoutChatLabels, ScoutChatMessage, ScoutChatProps }
+export type {
+  ScoutChatAuthor,
+  ScoutChatLabels,
+  ScoutChatMessage,
+  ScoutChatMessagePart,
+  ScoutChatMessageStatus,
+  ScoutChatProps,
+}

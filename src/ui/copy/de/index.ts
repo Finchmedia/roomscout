@@ -35,7 +35,9 @@ type NamespaceContract = {
   settings: { nav: { back: string } }; // §6.1 rule 1 — NOT settings.settings.nav.back
   operator: { nav: { back: string } }; // §6.1 rule 1 — NOT operator.operator.nav.back
   landing: { header: Record<string, unknown> };
-  liveScout: Record<string, string>;
+  // Flat, except `tools.*` — one label per Scout tool name, looked up by the
+  // name the chat sees on a running tool call.
+  liveScout: Record<string, string | Record<string, string>>;
   liveInbox: typeof liveInboxDe;
 };
 

@@ -15,7 +15,7 @@
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { ChatBubble } from "@/components/ui/chat-bubble"
+import { ChatTurn } from "@/ui/chat/ChatTurn"
 import { Overline } from "@/components/ui/overline"
 import { ScoutBlob } from "@/components/ui/scout-blob"
 import { useCopy } from "@/ui/copy"
@@ -84,7 +84,7 @@ export function ClarifyBeat({ choice, onChoose }: ClarifyBeatProps) {
         ref={threadRef}
         className="mt-4 flex min-h-[110px] w-[min(680px,100%)] flex-col gap-3 text-left"
       >
-        <ChatBubble
+        <ChatTurn
           who="user"
           className={cn(
             "transition-[opacity,transform] duration-[var(--duration-slow)] ease-out-soft",
@@ -92,9 +92,9 @@ export function ClarifyBeat({ choice, onChoose }: ClarifyBeatProps) {
           )}
         >
           {t(answerKey)}
-        </ChatBubble>
+        </ChatTurn>
 
-        <ChatBubble
+        <ChatTurn
           who="scout"
           className={cn(
             "transition-opacity delay-[.1s] duration-[var(--duration-slow)]",
@@ -102,7 +102,7 @@ export function ClarifyBeat({ choice, onChoose }: ClarifyBeatProps) {
           )}
         >
           {t(replyKey)}
-        </ChatBubble>
+        </ChatTurn>
 
         {alternative ? (
           <Button

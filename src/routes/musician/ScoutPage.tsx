@@ -1,4 +1,8 @@
-import { useAction, useMutation, usePaginatedQuery, useQuery } from "convex/react";
+import { optimisticallySendMessage, useUIMessages } from "@convex-dev/agent/react";
+import type { UIMessage } from "@convex-dev/agent/react";
+import type { StreamArgs, SyncStreamsReturnValue } from "@convex-dev/agent";
+import { useMutation, useQuery } from "convex/react";
+import type { FunctionReference, PaginationOptions, PaginationResult } from "convex/server";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../../../convex/_generated/api";
@@ -14,6 +18,23 @@ import { useCopy } from "../../ui/copy";
 import { ScoutChat } from "../../ui/chat/ScoutChat";
 import { LiveScoutSurface, deriveLiveScoutStage } from "../../ui/scout/live";
 
+/**
+ * `api.scout.listMessages` returns UIMessages whose parts are deliberately
+ * narrower than the Agent's: the server keeps the prose and the fact that a
+ * tool ran, and drops every tool input and output before they leave Convex.
+ * The Agent's hooks are typed against the full shape, so the reference is
+ * restated here. Only the fields both shapes really carry are read below:
+ * `key`, `role`, `text`, `status`, `order`, `stepOrder` and a part's
+ * `type` / `toolCallId` / `state`.
+ */
+type ScoutMessagesQuery = FunctionReference<
+  "query",
+  "public",
+  { threadId: string; paginationOpts: PaginationOptions; streamArgs?: StreamArgs },
+  PaginationResult<UIMessage> & { streams: SyncStreamsReturnValue }
+>;
+const listScoutMessages = api.scout.listMessages as unknown as ScoutMessagesQuery;
+
 /** Live queries and actions; no scripted demo transitions or fabricated facts. */
 export function ScoutPage() {
   const { t } = useCopy();
@@ -28,10 +49,13 @@ export function ScoutPage() {
   const setFocus = useMutation(api.scout.setFocus);
   const setStatus = useMutation(api.savedNeeds.setStatus);
   const activate = useMutation(api.savedNeeds.activate);
-  const sendMessage = useAction(api.scout.sendMessage);
+  // The musician's own bubble is on screen before the mutation resolves; the
+  // Scout's half of the turn arrives on the thread as deltas.
+  const sendMessage = useMutation(api.scout.send).withOptimisticUpdate(
+    optimisticallySendMessage(listScoutMessages),
+  );
   const decisions = useQuery(api.decisions.listOpenMine);
   const answerDecision = useMutation(api.decisions.answer);
-  const [sending, setSending] = useState(false);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
   const [textOpen, setTextOpen] = useState(false);
@@ -46,7 +70,7 @@ export function ScoutPage() {
     needs?.find(row => row._id === context?.activeNeedId && row.status !== "archived") ??
     needs?.find(row => row.status !== "archived");
   const threadId = need && context?.activeNeedId === need._id ? context.threadId : undefined;
-  const history = usePaginatedQuery(api.scout.listMessages, threadId ? { threadId } : "skip", { initialNumItems: 60 });
+  const history = useUIMessages(listScoutMessages, threadId ? { threadId } : "skip", { initialNumItems: 60, stream: true });
   const matches = useQuery(api.matches.listMine, need ? { savedNeedId: need._id, limit: 30 } : "skip");
   const conversationRows = useQuery(api.providerConversations.listMine, need ? { savedNeedId: need._id, limit: 50 } : "skip");
   const conversations = Array.isArray(conversationRows) && need ? conversationRows.filter(row => row.savedNeedId === need._id) : [];
@@ -72,12 +96,21 @@ export function ScoutPage() {
     if (need && fact.key === "connections") value = t(need.collaborationOpen ? "liveScout.connectionsYes" : "liveScout.connectionsNo");
     return { id: ({ location: "ort", budget: "budget", schedule: "zeit", requirements: "equip" } as Record<string, string>)[fact.key] ?? fact.key, label: value };
   });
-  const messages = [...history.results].sort((a, b) => a.createdAt - b.createdAt).map(row => ({
-    id: row.key, author: row.role === "assistant" ? "scout" as const : row.role, body: row.text,
-  }));
+  const messages = [...history.results]
+    .sort((a, b) => a.order - b.order || a.stepOrder - b.stepOrder)
+    .map(row => ({
+      id: row.key, author: row.role === "assistant" ? "scout" as const : row.role, body: row.text,
+      status: row.status, parts: row.parts,
+    }));
+  // The turn in flight, read off the thread: a musician message the Scout has
+  // not answered yet, or a reply that is still pending or streaming. Nothing
+  // here survives a reload that the server does not also know about.
+  const newestMessage = messages.at(-1);
+  const scoutBusy = newestMessage !== undefined && newestMessage.status !== "failed" &&
+    (newestMessage.author === "user" || newestMessage.status === "pending" || newestMessage.status === "streaming");
   const readiness = context?.briefReadiness;
   const readyKey = readiness?.status === "ready" ? `${need?._id}:${readiness.needRevision}:${readiness.readyAt}` : "";
-  const autoBrief = Boolean(readyKey && readyKey !== dismissedReady && !sending);
+  const autoBrief = Boolean(readyKey && readyKey !== dismissedReady && !scoutBusy);
   const stage = deriveLiveScoutStage({
     loading: !need || !threadId,
     complete: Boolean(accepted), paused: need?.status === "paused",
@@ -119,11 +152,10 @@ export function ScoutPage() {
     try { await task(); } catch { setError(t("liveScout.error")); } finally { setWorking(false); }
   }
   async function send(body: string) {
-    if (!threadId || sending) return false;
-    setSending(true); setError("");
-    try { await sendMessage({ threadId, message: body }); return true; }
+    if (!threadId) return false;
+    setError("");
+    try { await sendMessage({ threadId, prompt: body }); return true; }
     catch { setError(t("liveScout.error")); return false; }
-    finally { setSending(false); }
   }
   function openChat() {
     if (voiceOpen || voice.connected) voice.disconnect();
@@ -138,11 +170,28 @@ export function ScoutPage() {
   const blocked = latestSend?.status === "failed";
   const workHeading = blocked ? t("liveScout.blocked") : latestSend?.status === "executed" ? t("liveScout.waiting") :
     latestSend && ["approved", "queued", "executing"].includes(latestSend.status) ? t("liveScout.sending") : t("liveScout.working");
+  // The chat's live states; the tool line names what the Scout is doing, never
+  // what it passed or got back.
+  const chatLabels = {
+    thinking: t("liveScout.thinking"), replying: t("liveScout.replying"),
+    failed: t("liveScout.failed"), retry: t("liveScout.retry"),
+    toolDefault: t("liveScout.tools.default"),
+    tools: {
+      rememberFact: t("liveScout.tools.rememberFact"),
+      updateSearchDraft: t("liveScout.tools.updateSearchDraft"),
+      markSearchBriefReady: t("liveScout.tools.markSearchBriefReady"),
+      answerDecision: t("liveScout.tools.answerDecision"),
+      replyToProvider: t("liveScout.tools.replyToProvider"),
+      createOutreachDraft: t("liveScout.tools.createOutreachDraft"),
+      createWebformDraft: t("liveScout.tools.createWebformDraft"),
+      continueAutopilot: t("liveScout.tools.continueAutopilot"),
+    },
+  };
   const brief = <FactList facts={facts} variant="card" title={t("scout.brief.title")}>
     <div className="mt-[var(--space-8)] flex flex-col items-center gap-[var(--space-6)]">
       {need?.status === "draft" ? <>
         {autoBrief ? <p role="status" className="text-sm text-rs-ink-4">{t("liveScout.ready")}</p> : null}
-        <Button size="md" block disabled={working || sending || !need.locationQuery?.trim() || need.radiusKm === undefined} onClick={() => void run(() => activate({ savedNeedId: need._id }))}>{t(working ? "liveScout.activating" : "liveScout.activate")}</Button>
+        <Button size="md" block disabled={working || scoutBusy || !need.locationQuery?.trim() || need.radiusKm === undefined} onClick={() => void run(() => activate({ savedNeedId: need._id }))}>{t(working ? "liveScout.activating" : "liveScout.activate")}</Button>
         <p className="text-center text-sm leading-relaxed text-rs-ink-4">{t("liveScout.activateNote")}</p>
         <Button variant="link" size="sm" onClick={editBrief}>{t("liveScout.editBrief")}</Button>
       </> : null}
@@ -166,7 +215,7 @@ export function ScoutPage() {
     }}
     briefReviewSlot={brief}
     briefExpanded={manualBrief}
-    chatSlot={!voiceOpen && (stage === "discovery" || (chatOpen && stage !== "brief")) ? <ScoutChat key={threadId ?? "loading"} messages={messages.length ? messages : [{ id: "intro", author: "scout", body: t("liveScout.intro") }]} onSend={send} busy={sending || !threadId} error={error} onVoice={openVoice} autoFocus decision={openDecision} decisionOfferHash={decisionOfferHash} onAnswerDecision={async (decisionId, choice) => { await answerDecision({ decisionId, choice }); }} decisionAnsweredText={t("liveScout.decisionAnswered")} hasMoreHistory={history.status === "CanLoadMore"} historyBusy={history.status === "LoadingMore"} onLoadHistory={() => history.loadMore(60)} /> : undefined}
+    chatSlot={!voiceOpen && (stage === "discovery" || (chatOpen && stage !== "brief")) ? <ScoutChat key={threadId ?? "loading"} messages={messages.length ? messages : [{ id: "intro", author: "scout", body: t("liveScout.intro") }]} onSend={send} replying={scoutBusy || !threadId} labels={chatLabels} error={error} onVoice={openVoice} autoFocus decision={openDecision} decisionOfferHash={decisionOfferHash} onAnswerDecision={async (decisionId, choice) => { await answerDecision({ decisionId, choice }); }} decisionAnsweredText={t("liveScout.decisionAnswered")} hasMoreHistory={history.status === "CanLoadMore"} historyBusy={history.status === "LoadingMore"} onLoadHistory={() => history.loadMore(60)} /> : undefined}
     voiceSlot={voiceOpen ? <LiveVoiceChat onText={openChat} onEnd={() => { setVoiceOpen(false); setTextOpen(true); }} /> : undefined}
     providerUpdateSlot={offerSlot} offerSlot={offerSlot}
     completeSlot={<Link className="text-rs-ink-2 underline underline-offset-4" to="/app/inbox">{t("liveScout.viewMessages")}</Link>}

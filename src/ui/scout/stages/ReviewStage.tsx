@@ -8,8 +8,8 @@
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { ChatBubble } from "@/components/ui/chat-bubble";
 import { Composer } from "@/components/ui/composer";
+import { ChatTurn } from "@/ui/chat/ChatTurn";
 import { Icon } from "@/components/ui/icon";
 import { Overline } from "@/components/ui/overline";
 import { ScoutBlob } from "@/components/ui/scout-blob";
@@ -151,12 +151,12 @@ export function ReviewStage({ m }: StageProps) {
           ) : null}
           {answered ? (
             <div className="flex w-full flex-col gap-[var(--space-4)]">
-              <ChatBubble who="user" compact className="text-[length:var(--text-body-size)]">
+              <ChatTurn who="user" aria-label={t("scout.transcript.who.user")}>
                 {answered.question}
-              </ChatBubble>
-              <ChatBubble who="scout" className="text-[length:var(--text-body-size)]">
+              </ChatTurn>
+              <ChatTurn who="scout" aria-label={t("scout.transcript.who.scout")}>
                 {t("scout.review.question.answer")}
-              </ChatBubble>
+              </ChatTurn>
             </div>
           ) : null}
           <Composer

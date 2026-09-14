@@ -63,7 +63,6 @@ describe("ScoutChat", () => {
     fireEvent.keyDown(composer, { key: "Enter" })
     expect(composer).toHaveValue("")
     expect(onSend).toHaveBeenCalledTimes(1)
-    expect(screen.getByRole("status", { name: "Nachricht wird gesendet …" })).toBeInTheDocument()
     await act(async () => finish?.(true))
   })
 
@@ -115,6 +114,84 @@ describe("ScoutChat", () => {
     fireEvent.click(screen.getByRole("button", { name: "Ältere Nachrichten laden" }))
     expect(onVoice).toHaveBeenCalledOnce()
     expect(onLoadHistory).toHaveBeenCalledOnce()
+  })
+
+  it("reveals a streaming reply and keeps the same bubble once it succeeded", async () => {
+    const view = render(
+      <ScoutChat
+        messages={[{ id: "1", author: "scout", body: "Ich schaue mal nach.", status: "streaming" }]}
+        onSend={vi.fn()}
+        replying
+      />
+    )
+    // `useSmoothText` paces the deltas, so the line is still incomplete on the
+    // first frame and fills in over the next few.
+    expect(screen.queryByText("Ich schaue mal nach.")).toBeNull()
+    expect(await screen.findByText("Ich schaue mal nach.")).toBeInTheDocument()
+    expect(screen.queryByRole("status", { name: "Dein Scout denkt nach …" })).not.toBeInTheDocument()
+
+    view.rerender(
+      <ScoutChat
+        messages={[{ id: "1", author: "scout", body: "Ich schaue mal nach.", status: "success" }]}
+        onSend={vi.fn()}
+      />
+    )
+    expect(screen.getByRole("group", { name: "Dein Scout" })).toHaveTextContent("Ich schaue mal nach.")
+  })
+
+  it("shows the thinking marker while the reply is pending and has no prose yet", () => {
+    render(
+      <ScoutChat
+        messages={[
+          { id: "1", author: "user", body: "Wir suchen ab Mai.", status: "success" },
+          { id: "2", author: "scout", body: "", status: "pending" },
+        ]}
+        onSend={vi.fn()}
+        replying
+      />
+    )
+    expect(screen.getByRole("status", { name: "Dein Scout denkt nach …" })).toBeInTheDocument()
+    // An empty pending reply is a state, not an empty bubble.
+    expect(screen.queryByRole("group", { name: "Dein Scout" })).not.toBeInTheDocument()
+  })
+
+  it("names a running tool call and drops the line once the reply succeeded", () => {
+    const toolPart = { type: "tool-rememberFact", toolCallId: "call-1", state: "input-available" }
+    const labels = { tools: { rememberFact: "Merkt sich etwas" }, toolDefault: "Arbeitet …" }
+    const view = render(
+      <ScoutChat
+        messages={[{ id: "1", author: "scout", body: "", status: "streaming", parts: [toolPart] }]}
+        onSend={vi.fn()}
+        labels={labels}
+        replying
+      />
+    )
+    expect(screen.getByText("Merkt sich etwas")).toBeInTheDocument()
+
+    view.rerender(
+      <ScoutChat
+        messages={[{
+          id: "1", author: "scout", body: "Notiert.", status: "success",
+          parts: [{ ...toolPart, state: "output-available" }, { type: "text", text: "Notiert." }],
+        }]}
+        onSend={vi.fn()}
+        labels={labels}
+      />
+    )
+    expect(screen.queryByText("Merkt sich etwas")).not.toBeInTheDocument()
+  })
+
+  it("offers to resend a message whose turn failed", () => {
+    const onSend = vi.fn().mockResolvedValue(true)
+    render(
+      <ScoutChat
+        messages={[{ id: "1", author: "user", body: "Wir suchen ab Mai.", status: "failed" }]}
+        onSend={onSend}
+      />
+    )
+    expect(screen.getByRole("status", { name: "Antwort fehlgeschlagen." })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Erneut senden" }))
+    expect(onSend).toHaveBeenCalledWith("Wir suchen ab Mai.")
   })
 
   it("renders the open Entscheidung after the transcript and echoes the answer as bubbles", async () => {

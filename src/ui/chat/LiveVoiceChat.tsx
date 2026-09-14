@@ -1,7 +1,7 @@
 import * as React from "react"
 
 import { useVoiceSession } from "@/components/voice/VoiceSessionContext"
-import { ChatBubble } from "@/components/ui/chat-bubble"
+import { ChatTurn } from "@/ui/chat/ChatTurn"
 import { Icon } from "@/components/ui/icon"
 import { ScoutBlob, type ScoutBlobState } from "@/components/ui/scout-blob"
 import { VoiceControl } from "@/components/ui/voice-control"
@@ -148,9 +148,9 @@ function LiveVoiceChat({
           {latestTurns.map((turn) => {
             const user = turn.role === "user"
             return (
-              <ChatBubble key={turn.id} who={user ? "user" : "scout"} label={user ? labels.user : labels.scout} compact>
+              <ChatTurn key={turn.id} who={user ? "user" : "scout"} label={user ? labels.user : labels.scout} compact>
                 {turn.text}
-              </ChatBubble>
+              </ChatTurn>
             )
           })}
         </div>

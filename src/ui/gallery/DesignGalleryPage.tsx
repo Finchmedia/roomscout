@@ -17,7 +17,6 @@ import {
 import { Button } from "@/components/ui/button"
 import { Capsule } from "@/components/ui/capsule"
 import { Card } from "@/components/ui/card"
-import { ChatBubble } from "@/components/ui/chat-bubble"
 import { Composer } from "@/components/ui/composer"
 import {
   Dialog,
@@ -78,6 +77,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { VoiceControl } from "@/components/ui/voice-control"
 import { Wordmark } from "@/components/ui/wordmark"
 
+import { ChatTurn } from "@/ui/chat/ChatTurn"
 import { AppHeader } from "@/ui/chrome/AppHeader"
 import { PanelDialog } from "@/ui/chrome/PanelDialog"
 import { StageBackground } from "@/ui/chrome/StageBackground"
@@ -599,30 +599,31 @@ function DesignGalleryPage() {
           {/* Chat ---------------------------------------------------------- */}
           <Section
             title="Gespräch"
-            note="Im Hauptfluss hat die Scout-Antwort keine Blase; nur die Mitschrift rahmt beide Seiten."
+            note="Ein Blasensystem: Du rechts in Rost, Scout und Anbieter links auf dem stillen Wasch. Die Mitschrift zeigt zusätzlich die Sprecherzeile."
           >
-            <Specimen label="ChatBubble · Scout und Du, Größen lg/md/sm" className="flex-col items-stretch">
+            <Specimen label="ChatTurn · Scout, Du und Anbieter" className="flex-col items-stretch">
               <div className="flex w-full max-w-[var(--width-card)] flex-col gap-[var(--space-5)]">
-                <ChatBubble who="scout">
+                <ChatTurn who="scout">
                   Hey Herzbuben! Erzählt mir kurz: Wo sucht ihr und was ist euch wichtig?
-                </ChatBubble>
-                <ChatBubble who="user">Ja, Mittwoch passt auch.</ChatBubble>
-                <ChatBubble who="scout" size="md">
+                </ChatTurn>
+                <ChatTurn who="user">Ja, Mittwoch passt auch.</ChatTurn>
+                <ChatTurn who="scout">
                   Alles klar, Mittwoch geht also auch. Ich kläre den Rest.
-                </ChatBubble>
-                <ChatBubble who="user" size="md">
-                  Nein, Donnerstag ist wichtig.
-                </ChatBubble>
+                </ChatTurn>
+                <ChatTurn who="user">Nein, Donnerstag ist wichtig.</ChatTurn>
+                <ChatTurn who="provider">
+                  Mittwochs ist der Raum ab 19 Uhr frei.
+                </ChatTurn>
               </div>
             </Specimen>
-            <Specimen label="ChatBubble · compact (Mitschrift)" className="flex-col items-stretch">
-              <div className="flex w-full max-w-[var(--width-card-narrow)] flex-col gap-[var(--space-4)]">
-                <ChatBubble who="scout" compact>
+            <Specimen label="ChatTurn · compact mit Sprecherzeile (Mitschrift)" className="flex-col items-stretch">
+              <div className="flex w-full max-w-[var(--width-card-narrow)] flex-col gap-[var(--space-6)]">
+                <ChatTurn who="scout" compact label="Dein Scout">
                   Welche Tage passen euch zum Proben?
-                </ChatBubble>
-                <ChatBubble who="user" compact>
+                </ChatTurn>
+                <ChatTurn who="user" compact label="Du">
                   Mittwochs, 19–22 Uhr.
-                </ChatBubble>
+                </ChatTurn>
               </div>
             </Specimen>
           </Section>

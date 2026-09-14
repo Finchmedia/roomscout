@@ -5,7 +5,24 @@ export const liveScoutDe = {
   activeStatus: "Scout unterwegs",
   pausedLabel: "Pausiert",
   chatTitle: "Mit deinem Scout schreiben",
-  retry: "Erneut versuchen",
+  // Chat states, all read off the thread: the reply is on its way, is being
+  // written, or the turn failed and can be sent again.
+  thinking: "Dein Scout denkt nach …",
+  replying: "Dein Scout antwortet gerade …",
+  failed: "Antwort fehlgeschlagen.",
+  retry: "Erneut senden",
+  /** One line per running tool call, keyed by the tool name the Scout invoked. */
+  tools: {
+    rememberFact: "Merkt sich etwas",
+    updateSearchDraft: "Aktualisiert deinen Suchauftrag",
+    markSearchBriefReady: "Bereitet die Zusammenfassung vor",
+    answerDecision: "Übernimmt deine Entscheidung",
+    replyToProvider: "Schreibt dem Anbieter",
+    createOutreachDraft: "Bereitet eine Anfrage vor",
+    createWebformDraft: "Bereitet eine Anfrage vor",
+    continueAutopilot: "Übernimmt die Anfrage",
+    default: "Arbeitet …",
+  },
   error: "Dieser Schritt hat gerade nicht geklappt. Dein Suchauftrag bleibt gespeichert. Versuche es erneut.",
   intro: "Erzählt mir von eurer Band und dem Raum, den ihr sucht. Ich halte fest, was euch wichtig ist.",
   introKnown: "Ich habe euren Musik-Kontext gespeichert. Was für einen Proberaum sucht ihr jetzt?",

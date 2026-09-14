@@ -54,7 +54,11 @@ interface ChatComposerProps
   busy?: boolean
   /** The conversation cannot take a message at all (paused, closed, no channel). */
   disabled?: boolean
-  /** Why it is disabled, in German — rendered above the field. */
+  /**
+   * Why sending is not possible right now, in German — rendered above the
+   * field. Used with `disabled`, and with `busy` when the wait has a reason
+   * worth naming („Dein Scout antwortet gerade …“).
+   */
   disabledHint?: React.ReactNode
   /** An error the host owns (a failed decision answer, a failed reload). */
   error?: React.ReactNode

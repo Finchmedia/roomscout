@@ -13,8 +13,8 @@
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { ChatBubble } from "@/components/ui/chat-bubble";
 import { Composer } from "@/components/ui/composer";
+import { ChatTurn } from "@/ui/chat/ChatTurn";
 import { Icon } from "@/components/ui/icon";
 import { Overline } from "@/components/ui/overline";
 import { ScoutBlob } from "@/components/ui/scout-blob";
@@ -72,16 +72,16 @@ export function ClarificationStage({ m }: StageProps) {
 
       {answer ? (
         <div className="mt-[var(--space-8)] flex w-[min(740px,100%)] flex-col gap-[var(--space-5)]">
-          <ChatBubble who="user">
+          <ChatTurn who="user" aria-label={t("scout.transcript.who.user")}>
             {answer === "yes"
               ? t("scout.clarification.yes.userText")
               : t("scout.clarification.no.userText")}
-          </ChatBubble>
-          <ChatBubble who="scout">
+          </ChatTurn>
+          <ChatTurn who="scout" aria-label={t("scout.transcript.who.scout")}>
             {answer === "yes"
               ? t("scout.clarification.yes.reply")
               : t("scout.clarification.no.reply")}
-          </ChatBubble>
+          </ChatTurn>
         </div>
       ) : null}
 

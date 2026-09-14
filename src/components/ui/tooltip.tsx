@@ -49,7 +49,7 @@ import { Tooltip as TooltipPrimitive } from "radix-ui"
  *    balancing only takes effect once the text wraps.
  *  · `13.5px` (`--text-caption-sm-size`) in `--rs-ink-2` on
  *    `--text-body-leading` (1.5). The DS pins leading on every multi-line
- *    surface (`ChatBubble.jsx:10` 1.45); `src/styles/app.css` sets none on
+ *    surface (the bubble body in `bubble.tsx` is 1.45); `src/styles/app.css` sets none on
  *    `body`, and Tailwind's `text-[length:…]` emits no paired leading, so
  *    wrapped copy would otherwise fall back to `normal`.
  *  · `--shadow-toast` — `readme.md` → "Shadows": floating surfaces (menu,
@@ -84,7 +84,8 @@ import { Tooltip as TooltipPrimitive } from "radix-ui"
  *  · `showArrow` on `TooltipContent` — **off by default.** The DS draws no
  *    pointer on any floating surface (Toast, ProfileMenu, the settings popup
  *    menu); its idiom for "this points at that" is a clipped corner
- *    (`ChatBubble.jsx:10` `18px 18px 4px 18px`). Opt in per call site.
+ *    (the chat bubble's `18px 18px 4px 18px` in `bubble.tsx`). Opt in per
+ *    call site.
  *  · `portalProps` on `TooltipContent` — pass `{ container }` to portal into
  *    the dialog content. Settings and Operator run inside
  *    `Dialog > SidebarProvider` (sidebar-13) and `SETTINGS_SCREENS.md:1265`

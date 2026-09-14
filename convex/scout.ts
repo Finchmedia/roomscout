@@ -1,12 +1,12 @@
-import { createTool, listUIMessages } from "@convex-dev/agent";
+import { createTool, listUIMessages, saveMessage, syncStreams, vStreamArgs, vStreamMessagesReturnValue } from "@convex-dev/agent";
 import type { ToolSet } from "ai";
 import { paginationOptsValidator } from "convex/server";
 import { ConvexError, v } from "convex/values";
 import { z } from "zod";
 import type { Doc, Id } from "./_generated/dataModel";
 import { components, internal } from "./_generated/api";
-import { action, internalMutation, internalQuery, mutation, query } from "./_generated/server";
-import { requireActionUserId, requireUserId } from "./integrations/authz";
+import { internalAction, internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import { requireUserId } from "./integrations/authz";
 import { openDecisionCards } from "./decisions";
 import { buildDecisionCaseCard, buildScoutCaseCard } from "./scoutCaseCards";
 import { runScoutTurn, scoutAgent } from "./scoutRuntime";
@@ -264,8 +264,40 @@ export const setFocus = mutation({
   },
 });
 
+/** Only what the chat renders: prose, and that a tool ran. Tool inputs and outputs stay on the server. */
+const visiblePartValidator = v.union(
+  v.object({ type: v.literal("text"), text: v.string() }),
+  v.object({ type: v.string(), toolCallId: v.string(), state: v.string() }),
+);
+
+type VisiblePart =
+  | { type: "text"; text: string }
+  | { type: string; toolCallId: string; state: string };
+
+function visibleParts(parts: readonly unknown[]): VisiblePart[] {
+  const visible: VisiblePart[] = [];
+  for (const raw of parts) {
+    const part = raw as { type?: unknown; text?: unknown; toolCallId?: unknown; state?: unknown };
+    if (typeof part.type !== "string") continue;
+    if (part.type === "text") {
+      visible.push({ type: "text", text: typeof part.text === "string" ? part.text : "" });
+    } else if (typeof part.toolCallId === "string") {
+      visible.push({
+        type: part.type,
+        toolCallId: part.toolCallId,
+        state: typeof part.state === "string" ? part.state : "input-available",
+      });
+    }
+  }
+  return visible;
+}
+
 export const listMessages = query({
-  args: { threadId: v.string(), paginationOpts: paginationOptsValidator },
+  args: {
+    threadId: v.string(),
+    paginationOpts: paginationOptsValidator,
+    streamArgs: vStreamArgs,
+  },
   returns: v.object({
     page: v.array(
       v.object({
@@ -276,12 +308,26 @@ export const listMessages = query({
           v.literal("assistant"),
         ),
         text: v.string(),
-        status: v.string(),
+        status: v.union(
+          v.literal("streaming"),
+          v.literal("pending"),
+          v.literal("success"),
+          v.literal("failed"),
+        ),
+        order: v.number(),
+        stepOrder: v.number(),
+        parts: v.array(visiblePartValidator),
+        _creationTime: v.number(),
         createdAt: v.number(),
       }),
     ),
     isDone: v.boolean(),
     continueCursor: v.string(),
+    splitCursor: v.optional(v.union(v.string(), v.null())),
+    pageStatus: v.optional(
+      v.union(v.literal("SplitRecommended"), v.literal("SplitRequired"), v.null()),
+    ),
+    streams: vStreamMessagesReturnValue.fields.streams,
   }),
   handler: async (ctx, args) => {
     const ownerId = await requireUserId(ctx);
@@ -293,16 +339,24 @@ export const listMessages = query({
       throw new ConvexError({ code: "THREAD_NOT_FOUND" });
     }
     const result = await listUIMessages(ctx, components.agent, args);
+    const streams = await syncStreams(ctx, components.agent, {
+      threadId: args.threadId,
+      streamArgs: args.streamArgs,
+    });
     return {
+      ...result,
       page: result.page.map((message) => ({
         key: message.key,
         role: message.role,
         text: message.text,
         status: message.status,
+        order: message.order,
+        stepOrder: message.stepOrder,
+        parts: visibleParts(message.parts),
+        _creationTime: message._creationTime,
         createdAt: message._creationTime,
       })),
-      isDone: result.isDone,
-      continueCursor: result.continueCursor,
+      streams,
     };
   },
 });
@@ -379,15 +433,67 @@ function decisionTools(ctx: Parameters<typeof runScoutTurn>[0], ownerId: Id<"use
   return { answerDecision: answerDecisionTool, replyToProvider };
 }
 
-export const sendMessage = action({
-  args: { threadId: v.string(), message: v.string() },
-  returns: v.object({ text: v.string() }),
-  handler: async (ctx, args): Promise<{ text: string }> => {
-    const ownerId = await requireActionUserId(ctx);
-    const message = args.message.trim();
-    if (message.length === 0 || message.length > 4_000) {
+/** One musician turn, streamed. A failure is logged and rethrown so the Agent marks the reply failed on the thread. */
+async function streamReply(
+  ctx: Parameters<typeof runScoutTurn>[0],
+  turn: Parameters<typeof runScoutTurn>[1],
+): Promise<null> {
+  try {
+    await runScoutTurn(ctx, turn);
+  } catch (error) {
+    console.error("SCOUT_REPLY_FAILED", {
+      threadId: turn.threadId,
+      promptMessageId: turn.promptMessageId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+  return null;
+}
+
+/** The musician's message lands in the thread at once; the reply streams in from `internal.scout.reply`. */
+export const send = mutation({
+  args: { threadId: v.string(), prompt: v.string() },
+  returns: v.object({ messageId: v.string() }),
+  handler: async (ctx, args): Promise<{ messageId: string }> => {
+    const ownerId = await requireUserId(ctx);
+    const context = await ctx.db
+      .query("scoutContexts")
+      .withIndex("by_thread_id", (q) => q.eq("threadId", args.threadId))
+      .unique();
+    if (context === null || context.ownerId !== ownerId) {
+      throw new ConvexError({ code: "THREAD_NOT_FOUND" });
+    }
+    const prompt = args.prompt.trim();
+    if (prompt.length === 0 || prompt.length > 4_000) {
       throw new ConvexError({ code: "INVALID_MESSAGE" });
     }
+    const { messageId } = await saveMessage(ctx, components.agent, {
+      threadId: args.threadId,
+      userId: ownerId,
+      prompt,
+    });
+    await ctx.scheduler.runAfter(0, internal.scout.reply, {
+      ownerId,
+      threadId: args.threadId,
+      promptMessageId: messageId,
+      prompt,
+    });
+    return { messageId };
+  },
+});
+
+/** The Scout's half of a musician turn: server-owned tools, streamed reply, every state on the thread. */
+export const reply = internalAction({
+  args: {
+    ownerId: v.id("users"),
+    threadId: v.string(),
+    promptMessageId: v.string(),
+    prompt: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const ownerId = args.ownerId;
     const context: {
       mode: "search_discovery" | "signal_advisor" | "outreach_drafting";
       caseCard: string;
@@ -405,7 +511,8 @@ export const sendMessage = action({
     const turn = {
       ownerId, threadId: args.threadId, origin: "musician" as const,
       savedNeedId: context.activeNeedId,
-      caseCard: context.caseCard, memoryQuery: message, prompt: message,
+      caseCard: context.caseCard, memoryQuery: args.prompt,
+      promptMessageId: args.promptMessageId, stream: true,
     };
     const decisionToolSet = decisionTools(ctx, ownerId, context.hasOpenDecision);
 
@@ -468,10 +575,9 @@ export const sendMessage = action({
           return { readyForReview: true, ...result, activationRequired: true };
         },
       });
-      const responseText = (await runScoutTurn(ctx, {
+      return await streamReply(ctx, {
         ...turn, tools: { updateSearchDraft, markSearchBriefReady, rememberFact, ...decisionToolSet },
-      })).text;
-      return { text: responseText };
+      });
     }
 
     if (
@@ -533,10 +639,9 @@ export const sendMessage = action({
           };
         },
       });
-      const responseText = (await runScoutTurn(ctx, {
+      return await streamReply(ctx, {
         ...turn, tools: { createOutreachDraft, createWebformDraft, rememberFact, ...decisionToolSet },
-      })).text;
-      return { text: responseText };
+      });
     }
 
     if (
@@ -564,14 +669,12 @@ export const sendMessage = action({
           };
         },
       });
-      const responseText = (await runScoutTurn(ctx, {
+      return await streamReply(ctx, {
         ...turn,
         tools: { continueAutopilot, rememberFact, ...decisionToolSet },
-      })).text;
-      return { text: responseText };
+      });
     }
 
-    const responseText = (await runScoutTurn(ctx, { ...turn, tools: { rememberFact, ...decisionToolSet } })).text;
-    return { text: responseText };
+    return await streamReply(ctx, { ...turn, tools: { rememberFact, ...decisionToolSet } });
   },
 });
