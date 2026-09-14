@@ -9,6 +9,7 @@ import {
   type MutationCtx,
 } from "./_generated/server";
 import { requireOperatorId, requireUserId } from "./integrations/authz";
+import { isControlledDemoOrigin } from "./lib/demoProvenance";
 import { PORTAL_RUN_TTLS_MS, normalizeHostname } from "./integrations/portalSafety";
 import { PORTAL_WRITE_TTL_MS } from "./integrations/portalWriteAdapters";
 import {
@@ -27,6 +28,14 @@ const connectionStatusValidator = v.union(
   v.literal("disabled"),
 );
 const BROWSERBASE_HUMAN_INACTIVITY_MS = 5 * 60_000;
+/** The controlled demo portal (roomscout.dev) is polled faster than third-party portals. */
+export const CONTROLLED_PORTAL_POLL_MINUTES = 5;
+const DEFAULT_PORTAL_POLL_MINUTES = 60;
+const MAX_POLL_INTERVAL_MINUTES = 1440;
+
+function defaultPollIntervalMinutes(baseUrl: string): number {
+  return isControlledDemoOrigin(baseUrl) ? CONTROLLED_PORTAL_POLL_MINUTES : DEFAULT_PORTAL_POLL_MINUTES;
+}
 const PROVIDER_CLEANUP_LEASE_MAX_MS = 2 * 60_000;
 
 const policyDecisionValidator = v.union(
@@ -383,7 +392,7 @@ export async function requestConnectionForOwner(
     allowInboxPolling: false,
     allowedDomains: [domain],
     allowedPaths: [],
-    pollIntervalMinutes: 60,
+    pollIntervalMinutes: defaultPollIntervalMinutes(source.baseUrl),
     failureCount: 0,
     createdAt: now,
     updatedAt: now,
@@ -531,7 +540,8 @@ export async function approveControlledDemoConnectionCore(
     connection.allowedPaths.join("\n") === ["/", "/sign-up", "/sign-in", "/listings", "/inbox"].join("\n") &&
     connection.inboxPath === "/inbox" &&
     connection.adapterKey === "roomscout-dev-v1" &&
-    connection.pollIntervalMinutes === 60;
+    // Connections approved before the faster controlled interval keep their legacy 60 min.
+    (connection.pollIntervalMinutes === CONTROLLED_PORTAL_POLL_MINUTES || connection.pollIntervalMinutes === DEFAULT_PORTAL_POLL_MINUTES);
   if (options.preserveEstablishedState && exactScope && connection.status === "active") return "reused_active";
   if (options.preserveEstablishedState && exactScope && connection.status === "reauth_required") return "reauth_required";
   if (options.preserveEstablishedState && exactScope && connection.status === "needs_auth") return "prepared";
@@ -552,7 +562,7 @@ export async function approveControlledDemoConnectionCore(
     allowedPaths: ["/", "/sign-up", "/sign-in", "/listings", "/inbox"],
     inboxPath: "/inbox",
     adapterKey: "roomscout-dev-v1",
-    pollIntervalMinutes: 60,
+    pollIntervalMinutes: CONTROLLED_PORTAL_POLL_MINUTES,
     lastErrorCode: undefined,
     circuitOpenUntil: undefined,
     updatedAt: now,
@@ -1011,6 +1021,29 @@ export const markAgentOnboardingState = internalMutation({
       kind: args.humanRequired ? "human_required" : "progress",
       message: args.eventMessage.slice(0, 100),
       createdAt: now,
+    });
+    return null;
+  },
+});
+
+/** Operator-side interval change; pulls the next poll forward so it takes effect immediately. */
+export const setPollIntervalInternal = internalMutation({
+  args: { connectionId: v.id("portalConnections"), minutes: v.number() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    if (!Number.isInteger(args.minutes) || args.minutes < 1 || args.minutes > MAX_POLL_INTERVAL_MINUTES) {
+      throw new ConvexError({ code: "POLL_INTERVAL_INVALID" });
+    }
+    const connection = await ctx.db.get(args.connectionId);
+    if (connection === null) throw new ConvexError({ code: "CONNECTION_NOT_FOUND" });
+    const now = Date.now();
+    const soonest = now + args.minutes * 60_000;
+    await ctx.db.patch(connection._id, {
+      pollIntervalMinutes: args.minutes,
+      nextPollAt: connection.allowInboxPolling
+        ? Math.min(connection.nextPollAt ?? soonest, soonest)
+        : connection.nextPollAt,
+      updatedAt: now,
     });
     return null;
   },

@@ -35,6 +35,20 @@ const ONBOARDING_MAX_POLLS = 60;
 const RUN_TEARDOWN_RESERVE_MS = 5_000;
 const VERIFICATION_KEEPALIVE_EVERY_POLLS = 12;
 type RegistrationPhase = "mailbox" | "session_open" | "run_attach" | "progress" | "driver" | "session_stop" | "profile_proof";
+/**
+ * A freshly opened inbox session occasionally answers its first Interact call
+ * with a transport-class failure (e.g. the scrape's browser is not reachable,
+ * surfacing as REQUEST_REJECTED). Only that opening step is retried, with a
+ * new session each time; later batches keep failing fast.
+ */
+const INBOX_OPEN_RETRY_DELAYS_MS = [4_000, 8_000];
+const INBOX_OPEN_RETRYABLE_CODE = /^FIRECRAWL_PORTAL_((SCRAPE|INTERACT)_(TRANSPORT_FAILED|REQUEST_REJECTED|UNAVAILABLE|PROFILE_BUSY|RATE_LIMITED|TIMED_OUT)|SCRAPE_ID_MISSING)$/;
+const INBOX_SYNC_ERROR_CODE_MAX = 100;
+
+function inboxSyncInnerCode(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  return /^[A-Z0-9_]{3,80}$/.test(message) ? message : "UNKNOWN";
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -484,37 +498,64 @@ async function connectionForFirecrawl(ctx: ActionCtx, ownerId: Id<"users">, conn
   return connection as WorkerConnection;
 }
 
-async function syncInboxForOwner(ctx: ActionCtx, ownerId: Id<"users">, connectionId: Id<"portalConnections">, progress?: { generation: number; requestedThreadIds: string[]; startOffset: number }): Promise<SyncResult> {
+/**
+ * Open the inbox session and read its first batch, retrying the pair a bounded
+ * number of times on transport-class failures. A failed session is stopped
+ * (or its cleanup scheduled) before the next attempt.
+ */
+async function openInboxSessionWithFirstBatch(
+  ctx: ActionCtx,
+  input: { connection: WorkerConnection; ownerId: Id<"users">; runId: Id<"browserRuns">; startOffset: number; requestedThreadIds: string[] },
+): Promise<{ session: FirecrawlPortalSession; batch: Awaited<ReturnType<typeof readFirecrawlPortalInboxBatch>> }> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const session = await openFirecrawlPortalSession(ctx, {
+        baseUrl: input.connection.baseUrl,
+        adapterKey: input.connection.adapterKey ?? "",
+        profileName: input.connection.providerContextId!,
+        path: input.connection.inboxPath!,
+        saveChanges: false,
+        timeoutMs: 120_000,
+      });
+      try {
+        const batch = await readFirecrawlPortalInboxBatch({ session, startOffset: input.startOffset, requestedThreadIds: input.requestedThreadIds });
+        return { session, batch };
+      } catch (error) {
+        await stopRunSessionOrSchedule(ctx, session, input.ownerId, input.runId);
+        throw error;
+      }
+    } catch (error) {
+      const delayMs = INBOX_OPEN_RETRY_DELAYS_MS[attempt];
+      if (delayMs === undefined || !(error instanceof Error && INBOX_OPEN_RETRYABLE_CODE.test(error.message))) throw error;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
+export async function syncInboxForOwner(ctx: ActionCtx, ownerId: Id<"users">, connectionId: Id<"portalConnections">, progress?: { generation: number; requestedThreadIds: string[]; startOffset: number }): Promise<SyncResult> {
   const connection = await connectionForFirecrawl(ctx, ownerId, connectionId);
   if (!connection.allowInboxPolling || !connection.inboxPath) throw new ConvexError({ code: "INBOX_POLLING_NOT_ALLOWED" });
   const runId: Id<"browserRuns"> = await ctx.runMutation(internal.portalConnections.reserveRun, {
     ownerId, connectionId, kind: "inbox_sync", browserProvider: "firecrawl",
   });
-  let scrapeId: string | undefined;
   try {
-    const session = await openFirecrawlPortalSession(ctx, {
-      baseUrl: connection.baseUrl,
-      adapterKey: connection.adapterKey ?? "",
-      profileName: connection.providerContextId!,
-      path: connection.inboxPath,
-      saveChanges: false,
-      timeoutMs: 120_000,
-    });
-    scrapeId = session.scrapeId;
+    let startOffset = progress?.startOffset ?? 0;
+    const initialOffset = startOffset;
+    let requestedThreadIds = progress?.requestedThreadIds ?? [];
+    // The run can be attached to a provider session only once, so it binds to
+    // the session that survived the opening retries.
+    const { session, batch: firstBatch } = await openInboxSessionWithFirstBatch(ctx, { connection, ownerId, runId, startOffset, requestedThreadIds });
     await ctx.runMutation(internal.portalConnections.attachProviderRun, {
-      runId, ownerId, providerSessionId: scrapeId,
+      runId, ownerId, providerSessionId: session.scrapeId,
       providerContextId: connection.providerContextId,
       browserProvider: "firecrawl", humanRequired: false,
     });
     try {
-      let startOffset = progress?.startOffset ?? 0;
-      const initialOffset = startOffset;
-      let requestedThreadIds = progress?.requestedThreadIds ?? [];
       let threadsCreated = 0;
       let messagesCreated = 0;
       let complete = false;
       for (let batchIndex = 0; batchIndex < 5; batchIndex += 1) {
-        const batch = await readFirecrawlPortalInboxBatch({ session, startOffset, requestedThreadIds });
+        const batch = batchIndex === 0 ? firstBatch : await readFirecrawlPortalInboxBatch({ session, startOffset, requestedThreadIds });
         const threads = sanitizeInboxThreads(batch.threads);
         const result: { threadsCreated: number; messagesCreated: number } = await ctx.runMutation(internal.platformInbox.upsertReadOnlyBatch, { ownerId, connectionId, threads });
         threadsCreated += result.threadsCreated;
@@ -543,8 +584,11 @@ async function syncInboxForOwner(ctx: ActionCtx, ownerId: Id<"users">, connectio
     } finally { await stopRunSessionOrSchedule(ctx, session, ownerId, runId); }
   } catch (error) {
     if (error instanceof ConvexError && typeof error.data === "object" && error.data !== null && "code" in error.data && error.data.code === "FIRECRAWL_INBOX_PARTIAL") throw error;
-    await ctx.runMutation(internal.portalConnections.finishRun, { runId, status: "failed", errorCode: "FIRECRAWL_INBOX_SYNC_FAILED" });
-    throw new ConvexError({ code: "FIRECRAWL_INBOX_SYNC_FAILED" });
+    const inner = inboxSyncInnerCode(error);
+    await ctx.runMutation(internal.portalConnections.finishRun, {
+      runId, status: "failed", errorCode: `FIRECRAWL_INBOX_SYNC_FAILED:${inner}`.slice(0, INBOX_SYNC_ERROR_CODE_MAX),
+    });
+    throw new ConvexError({ code: "FIRECRAWL_INBOX_SYNC_FAILED", inner });
   }
 }
 

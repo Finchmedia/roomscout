@@ -26,6 +26,8 @@ export const liveScoutDe = {
   blockedDetail: "Ein Schritt konnte noch nicht abgeschlossen werden. Öffne die Einstellungen oder schreib mir, damit wir weitermachen können.",
   changed: "Der Suchauftrag hat sich geändert. Ich prüfe das Angebot erneut.",
   offerLabel: "Angebot eingegangen",
+  interimLabel: "Zwischenstand",
+  clarifying: "Ich kläre noch:",
   offerFallback: "Euer Proberaum",
   priceUnknown: "Preis noch zu klären",
   perMonth: "/ Monat",

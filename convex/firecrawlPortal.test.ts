@@ -1,10 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ConvexError } from "convex/values";
+import { getFunctionName } from "convex/server";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   createSession: vi.fn(),
   verify: vi.fn(),
   register: vi.fn(),
   send: vi.fn(),
+  readBatch: vi.fn(),
 }));
 
 vi.mock("./components/firecrawlRoomScout/client", () => ({
@@ -14,6 +17,9 @@ vi.mock("./integrations/firecrawlPortalRuntime", () => ({
   firecrawlComponentPortalTransport: vi.fn(() => ({})),
   createFirecrawlPortalSession: mocks.createSession,
 }));
+vi.mock("./integrations/firecrawlPortalEngine", () => ({
+  readFirecrawlPortalInboxBatch: mocks.readBatch,
+}));
 vi.mock("./integrations/stagehandPortalDriver", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./integrations/stagehandPortalDriver")>()),
   verifyControlledPortalContext: mocks.verify,
@@ -21,7 +27,7 @@ vi.mock("./integrations/stagehandPortalDriver", async (importOriginal) => ({
   sendControlledPortalMessage: mocks.send,
 }));
 
-import { inspectFirecrawlProfileForRecovery, proveFirecrawlProfile, runFirecrawlRegistrationStep } from "./firecrawlPortal";
+import { inspectFirecrawlProfileForRecovery, proveFirecrawlProfile, runFirecrawlRegistrationStep, syncInboxForOwner } from "./firecrawlPortal";
 
 function session(id: string) {
   return {
@@ -115,5 +121,100 @@ describe("Firecrawl portal orchestration", () => {
     expect(runAfter).toHaveBeenCalledWith(0, expect.anything(), expect.objectContaining({
       cleanupId: "cleanup_1", providerSessionId: "scrape_proof_cleanup",
     }));
+  });
+});
+
+describe("Firecrawl inbox sync resilience", () => {
+  const emptyBatch = {
+    threads: [], missingThreadIds: [], failedThreadIds: [], bodyTruncatedThreadIds: [], historyTruncatedThreadIds: [],
+    discoveredThreadIds: [], truncated: false, timedOut: false, nextOffset: 0,
+  };
+  const connection = {
+    connectionId: "connection_1", baseUrl: "https://roomscout.dev", allowedDomains: ["roomscout.dev"], allowedPaths: ["/inbox"],
+    inboxPath: "/inbox", adapterKey: "roomscout-dev-v1", allowReadOnlyRecon: false, allowInboxPolling: true,
+    providerContextId: "profile_1", browserProvider: "firecrawl", contextStatus: "ready",
+  };
+  function ctx() {
+    const runMutation = vi.fn(async (ref: unknown) => {
+      switch (getFunctionName(ref as never)) {
+        case "portalConnections:reserveRun": return "run_1";
+        case "portalConnections:attachProviderRun": return { contextId: "context_1" };
+        case "platformInbox:upsertReadOnlyBatch": return { threadsCreated: 0, messagesCreated: 0 };
+        default: return null;
+      }
+    });
+    const runQuery = vi.fn(async () => connection);
+    return { runMutation, runQuery, scheduler: { runAfter: vi.fn(async () => undefined) } };
+  }
+  function calls(runMutation: ReturnType<typeof vi.fn>, name: string) {
+    return runMutation.mock.calls.filter(([ref]) => getFunctionName(ref as never) === name).map(([, args]) => args);
+  }
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.useFakeTimers();
+    vi.stubEnv("PORTAL_BROWSER_ENGINE", "firecrawl");
+    vi.stubEnv("FIRECRAWL_API_KEY", "fc-test");
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+  });
+
+  it("retries the opening Interact call in a new session and binds the run to the surviving one", async () => {
+    const first = session("scrape_first");
+    const second = session("scrape_second");
+    mocks.createSession.mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+    mocks.readBatch.mockRejectedValueOnce(new Error("FIRECRAWL_PORTAL_INTERACT_REQUEST_REJECTED")).mockResolvedValueOnce(emptyBatch);
+    const actionCtx = ctx();
+    const pending = syncInboxForOwner(actionCtx as never, "owner" as never, "connection_1" as never);
+    await vi.runAllTimersAsync();
+    await expect(pending).resolves.toEqual({ runId: "run_1", threadsCreated: 0, messagesCreated: 0 });
+    expect(mocks.createSession).toHaveBeenCalledTimes(2);
+    expect(first.stop).toHaveBeenCalledOnce();
+    expect(second.stop).toHaveBeenCalledOnce();
+    expect(calls(actionCtx.runMutation, "portalConnections:attachProviderRun")).toEqual([
+      expect.objectContaining({ runId: "run_1", providerSessionId: "scrape_second" }),
+    ]);
+    expect(calls(actionCtx.runMutation, "portalConnections:finishRun")).toEqual([
+      expect.objectContaining({ runId: "run_1", status: "completed" }),
+    ]);
+  });
+
+  it("fails after three opening attempts and records the inner error code", async () => {
+    const sessions = [session("scrape_1"), session("scrape_2"), session("scrape_3")];
+    for (const opened of sessions) mocks.createSession.mockResolvedValueOnce(opened);
+    mocks.readBatch.mockRejectedValue(new Error("FIRECRAWL_PORTAL_INTERACT_REQUEST_REJECTED"));
+    const actionCtx = ctx();
+    const pending = syncInboxForOwner(actionCtx as never, "owner" as never, "connection_1" as never);
+    pending.catch(() => undefined);
+    await vi.runAllTimersAsync();
+    await expect(pending).rejects.toSatisfy((error: unknown) =>
+      error instanceof ConvexError && (error.data as { code: string; inner: string }).code === "FIRECRAWL_INBOX_SYNC_FAILED" &&
+      (error.data as { inner: string }).inner === "FIRECRAWL_PORTAL_INTERACT_REQUEST_REJECTED");
+    expect(mocks.createSession).toHaveBeenCalledTimes(3);
+    for (const opened of sessions) expect(opened.stop).toHaveBeenCalledOnce();
+    expect(calls(actionCtx.runMutation, "portalConnections:attachProviderRun")).toEqual([]);
+    expect(calls(actionCtx.runMutation, "portalConnections:finishRun")).toEqual([
+      expect.objectContaining({ runId: "run_1", status: "failed", errorCode: "FIRECRAWL_INBOX_SYNC_FAILED:FIRECRAWL_PORTAL_INTERACT_REQUEST_REJECTED" }),
+    ]);
+  });
+
+  it("does not retry a transport failure on a later batch", async () => {
+    const opened = session("scrape_only");
+    mocks.createSession.mockResolvedValue(opened);
+    mocks.readBatch
+      .mockResolvedValueOnce({ ...emptyBatch, truncated: true, nextOffset: 10 })
+      .mockRejectedValueOnce(new Error("FIRECRAWL_PORTAL_INTERACT_REQUEST_REJECTED"));
+    const actionCtx = ctx();
+    const pending = syncInboxForOwner(actionCtx as never, "owner" as never, "connection_1" as never);
+    pending.catch(() => undefined);
+    await vi.runAllTimersAsync();
+    await expect(pending).rejects.toBeInstanceOf(ConvexError);
+    expect(mocks.createSession).toHaveBeenCalledOnce();
+    expect(opened.stop).toHaveBeenCalledOnce();
+    expect(calls(actionCtx.runMutation, "portalConnections:finishRun")).toEqual([
+      expect.objectContaining({ status: "failed", errorCode: "FIRECRAWL_INBOX_SYNC_FAILED:FIRECRAWL_PORTAL_INTERACT_REQUEST_REJECTED" }),
+    ]);
   });
 });

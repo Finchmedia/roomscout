@@ -109,8 +109,9 @@ export function offerReadiness(assessment: ProviderAssessment, need: OfferNeed) 
   for (const condition of assessment.constraints) {
     if (condition.verdict !== "satisfied") blockers.push(condition.explanation);
   }
-  if (assessment.nextAction !== "present_offer") blockers.push("The Scout has not proposed presenting this offer.");
-  return { ready: blockers.length === 0, blockers };
+  // The Scout's own next action gates readiness but is not a user-facing blocker.
+  const ready = blockers.length === 0 && assessment.nextAction === "present_offer";
+  return { ready, blockers };
 }
 
 export const providerCaseInstructions = `MODE: PROVIDER CONVERSATION

@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { liveScoutDe } from "../../ui/copy/de/liveScout";
 import { LiveProviderOffer } from "./LiveProviderOffer";
 
 vi.mock("../../ui/copy", () => ({
@@ -64,6 +65,37 @@ describe("LiveProviderOffer acceptance gating", () => {
     }));
     expect(screen.getByText("Confirm recurring electricity costs")).toBeVisible();
     expect(screen.queryByRole("button", { name: "liveScout.review" })).not.toBeInTheDocument();
+  });
+
+  it("renders a compact interim state while the Scout is still clarifying", () => {
+    expect(liveScoutDe.interimLabel).toBe("Zwischenstand");
+    expect(liveScoutDe.clarifying).toBe("Ich kläre noch:");
+    renderOffer(conversation({
+      offer: {
+        ...baseOffer,
+        ready: false,
+        blockers: ["One", "Two", "Three", "Four"],
+      },
+    }));
+    expect(screen.getByText("liveScout.interimLabel")).toBeVisible();
+    expect(screen.getByText("liveScout.clarifying")).toBeVisible();
+    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual(["One", "Two", "Three"]);
+    expect(screen.getByRole("link", { name: "liveScout.viewMessages" })).toBeVisible();
+    expect(screen.queryByText("liveScout.offerLabel")).not.toBeInTheDocument();
+    expect(screen.queryByText("liveScout.terms")).not.toBeInTheDocument();
+    expect(screen.queryByText("liveScout.offerNote")).not.toBeInTheDocument();
+    expect(screen.queryByText("Tuesday room")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "liveScout.review" })).not.toBeInTheDocument();
+  });
+
+  it("renders the full offer card with review once the offer is ready on a platform thread", () => {
+    expect(liveScoutDe.offerLabel).toBe("Angebot eingegangen");
+    renderOffer(conversation());
+    expect(screen.getByText("liveScout.offerLabel")).toBeVisible();
+    expect(screen.getByText("liveScout.terms")).toBeVisible();
+    expect(screen.getByText("Tuesday room")).toBeVisible();
+    expect(screen.getByRole("button", { name: "liveScout.review" })).toBeVisible();
+    expect(screen.queryByText("liveScout.interimLabel")).not.toBeInTheDocument();
   });
 
   it("opens exact acceptance flow only for a current ready platform offer", () => {

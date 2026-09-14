@@ -67,6 +67,7 @@ it("seeds the controlled portal idempotently and scopes a user connection", asyn
     "/inbox",
   ]);
   expect(stored?.adapterKey).toBe("roomscout-dev-v1");
+  expect(stored?.pollIntervalMinutes).toBe(5);
 
   await t.run(async (ctx) => {
     const now = Date.now();
@@ -84,6 +85,39 @@ it("seeds the controlled portal idempotently and scopes a user connection", asyn
     { ownerId: ids.ownerId, connectionId },
   );
   expect(workerConnection?.providerContextId).toBeUndefined();
+});
+
+it("polls the controlled portal every 5 minutes by default and lets an operator tighten it immediately", async () => {
+  const t = convexTest(schema, modules);
+  const ids = await t.run(async (ctx) => {
+    const now = Date.now();
+    const operatorId = await ctx.db.insert("users", { username: "operator", role: "operator", createdAt: now, lastSeenAt: now });
+    const ownerId = await ctx.db.insert("users", { username: "owner", role: "musician", createdAt: now, lastSeenAt: now });
+    return { operatorId, ownerId };
+  });
+  const operator = t.withIdentity({ subject: ids.operatorId });
+  const owner = t.withIdentity({ subject: ids.ownerId });
+  const seeded = await operator.mutation(api.sourceRegistry.seedControlledDemoPortal, { baseUrl: "https://roomscout.dev" });
+  const connectionId = await owner.mutation(api.portalConnections.requestConnection, {
+    sourceId: seeded.authenticatedSourceId,
+    label: "Scout portal identity",
+  });
+  const requested = await t.run(async (ctx) => await ctx.db.get(connectionId));
+  expect(requested?.pollIntervalMinutes).toBe(5);
+
+  await operator.mutation(api.portalConnections.approveControlledDemoConnection, { connectionId });
+  const far = Date.now() + 60 * 60_000;
+  await t.run(async (ctx) => { await ctx.db.patch(connectionId, { nextPollAt: far }); });
+  await expect(
+    t.mutation(internal.portalConnections.setPollIntervalInternal, { connectionId, minutes: 0 }),
+  ).rejects.toThrow("POLL_INTERVAL_INVALID");
+  const before = Date.now();
+  await t.mutation(internal.portalConnections.setPollIntervalInternal, { connectionId, minutes: 2 });
+  const updated = await t.run(async (ctx) => await ctx.db.get(connectionId));
+  expect(updated?.pollIntervalMinutes).toBe(2);
+  expect(updated?.nextPollAt).toBeGreaterThanOrEqual(before + 2 * 60_000);
+  expect(updated?.nextPollAt).toBeLessThanOrEqual(Date.now() + 2 * 60_000);
+  expect(updated?.nextPollAt).toBeLessThan(far);
 });
 
 it("does not let a musician create approved first-party source records", async () => {

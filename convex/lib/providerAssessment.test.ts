@@ -57,6 +57,10 @@ describe("evidence-backed provider offers", () => {
     const listing = assessment(); listing.availability.evidence = [{ sourceId: "listing", quote }];
     expect(offerReadiness(listing, need).ready).toBe(false);
   });
+  it("keeps an offer unready without a present_offer action but does not surface that as a blocker", () => {
+    const input = assessment(); input.nextAction = "ask_musician";
+    expect(offerReadiness(input, need)).toEqual({ ready: false, blockers: [] });
+  });
   it("does not create an outgoing proposal when handing an offer to the musician", () => {
     const input = assessment(); input.suggestedReply = { subject: "Reply", body: "We accept." };
     expect(() => validateProviderAssessment(input, evidence, need)).toThrow("UNEXPECTED_REPLY_PROPOSAL");

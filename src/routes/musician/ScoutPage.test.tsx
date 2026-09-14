@@ -168,7 +168,11 @@ describe("live Scout route", () => {
     fixtures.needs = [need("active")]; fixtures.conversations = [providerConversation({ ready: false })];
     renderPage();
     expect(screen.getByRole("heading", { name: "Der Anbieter hat geantwortet." })).toBeInTheDocument();
-    expect(screen.getByText("Der Anbieter hat geantwortet, aber eine Bedingung ist noch offen.")).toBeInTheDocument();
+    expect(screen.getByText("Zwischenstand")).toBeInTheDocument();
+    expect(screen.getByText("Bitte bestätigt noch die Nutzungszeiten.")).toBeInTheDocument();
+    expect(screen.queryByText("Der Anbieter hat geantwortet, aber eine Bedingung ist noch offen.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Angebot eingegangen")).not.toBeInTheDocument();
+    expect(screen.queryByText("Alle Konditionen")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Angebot prüfen" })).not.toBeInTheDocument();
   });
 
