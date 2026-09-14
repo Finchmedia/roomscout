@@ -250,10 +250,13 @@ function ProviderTile({
   provider,
   onOpen,
   footer,
+  checking = false,
 }: {
   provider: { id: LiveOperatorProvider["id"]; status: LiveOperatorProvider["status"] | null };
   onOpen: () => void;
   footer?: React.ReactNode;
+  /** The configuration check is running: an unchecked tile says so instead of "Noch nicht geprüft". */
+  checking?: boolean;
 }) {
   const { t } = useCopy();
   return (
@@ -278,7 +281,7 @@ function ProviderTile({
           </span>
         </span>
         <StatusDot tone={statusTone(provider.status)}>
-          {t(statusKey(provider.status))}
+          {t(provider.status === null && checking ? "liveOperator.refreshing" : statusKey(provider.status))}
         </StatusDot>
       </button>
       {footer}
@@ -473,6 +476,7 @@ export function LiveOperatorSurface(props: LiveOperatorSurfaceProps) {
                 <ProviderTile
                   key={provider.id}
                   provider={provider}
+                  checking={props.readinessLoading}
                   footer={
                     provider.id === "firecrawl" ? <EnginePicker /> : undefined
                   }
@@ -760,7 +764,7 @@ export function LiveOperatorSurface(props: LiveOperatorSurfaceProps) {
                           {t(`liveOperator.providerRoles.${provider.id}`)}
                         </span>
                         <StatusDot tone={statusTone(provider.status)}>
-                          {t(statusKey(provider.status))}
+                          {t(provider.status === null && props.readinessLoading ? "liveOperator.refreshing" : statusKey(provider.status))}
                         </StatusDot>
                         <Icon
                           name="chevron-down"
@@ -775,7 +779,7 @@ export function LiveOperatorSurface(props: LiveOperatorSurfaceProps) {
                           <span className="text-rs-ink-6">
                             {t("liveOperator.configuration")}{" "}
                           </span>
-                          {t(statusKey(provider.status))}
+                          {t(provider.status === null && props.readinessLoading ? "liveOperator.refreshing" : statusKey(provider.status))}
                         </div>
                         <div>
                           <span className="text-rs-ink-6">

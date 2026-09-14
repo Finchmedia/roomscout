@@ -64,6 +64,13 @@ export function LiveOperatorPage() {
       .catch(() => setReadinessError(t("liveOperator.checkFailed")))
       .finally(() => setReadinessLoading(false));
   }, [checkReadiness, isOperator, readinessLoading, t]);
+  // The tiles start green without a click: check the configuration once per mount.
+  const autoChecked = React.useRef(false);
+  React.useEffect(() => {
+    if (!isOperator || autoChecked.current) return;
+    autoChecked.current = true;
+    refreshReadiness();
+  }, [isOperator, refreshReadiness]);
 
   const toggleSource = React.useCallback(
     async (sourceId: string, active: boolean) => {
@@ -104,7 +111,10 @@ export function LiveOperatorPage() {
     { id: "activeVoiceSessions", value: overview.metrics.activeVoiceSessions },
     { id: "activeMailboxes", value: overview.metrics.activeMailboxes },
   ];
-  const providers: LiveOperatorProvider[] = readiness ? (["firecrawl", "agentmail", "mapbox", "openaiDirect"] as const).map((id) => ({ id, status: readiness[id].status })) : [];
+  // The AI Gateway needs no key of its own: it is configured whenever this deployment runs.
+  const providers: LiveOperatorProvider[] = readiness
+    ? [{ id: "convexAiGateway" as const, status: "configured" as const }, ...(["agentmail", "openaiDirect", "firecrawl", "mapbox"] as const).map((id) => ({ id, status: readiness[id].status }))]
+    : [];
 
   return <LiveOperatorSurface
     section={section}

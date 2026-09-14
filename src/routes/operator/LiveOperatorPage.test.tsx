@@ -69,12 +69,13 @@ it("renders only real overview metrics and preserves links to operational tools"
   expect(screen.getByRole("button", { name: /^Feature-Flags$/ })).toBeInTheDocument();
 });
 
-it("loads the operator-gated provider snapshot only after explicit refresh", async () => {
+it("checks the provider configuration once on mount and again on explicit refresh", async () => {
   renderRoute("/ops/integrations");
-  expect(fixtures.readiness).not.toHaveBeenCalled();
+  await waitFor(() => expect(fixtures.readiness).toHaveBeenCalledWith({}));
+  expect(fixtures.readiness).toHaveBeenCalledTimes(1);
   expect(screen.getByText("Nur Konfigurationsprüfung, kein Live-Test")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Konfiguration neu prüfen" }));
-  await waitFor(() => expect(fixtures.readiness).toHaveBeenCalledWith({}));
+  await waitFor(() => expect(fixtures.readiness).toHaveBeenCalledTimes(2));
   expect(await screen.findByText("Firecrawl")).toBeInTheDocument();
   expect(screen.getByText("Deaktiviert")).toBeInTheDocument();
   expect(screen.getByText("Nur im Client prüfbar")).toBeInTheDocument();
@@ -84,14 +85,14 @@ it("loads the operator-gated provider snapshot only after explicit refresh", asy
 it("reports a readiness transport failure separately from incomplete configuration", async () => {
   fixtures.readiness.mockRejectedValueOnce(new Error("private provider detail"));
   renderRoute("/ops/integrations");
-  fireEvent.click(screen.getByRole("button", { name: "Konfiguration neu prüfen" }));
+  // The automatic check on mount fails; no click needed.
   expect(await screen.findByRole("alert")).toHaveTextContent("Die Konfigurationsprüfung ist fehlgeschlagen. Bitte erneut versuchen.");
   expect(screen.queryByText("private provider detail")).not.toBeInTheDocument();
 });
 
-it("does not run provider readiness while mounting integrations in StrictMode", () => {
+it("runs provider readiness exactly once when mounting integrations in StrictMode", async () => {
   render(<StrictMode><MemoryRouter initialEntries={["/ops/integrations"]}><Routes><Route path="/ops/:section?" element={<LiveOperatorPage />} /></Routes></MemoryRouter></StrictMode>);
-  expect(fixtures.readiness).not.toHaveBeenCalled();
+  await waitFor(() => expect(fixtures.readiness).toHaveBeenCalledTimes(1));
 });
 
 it("keeps a local authorization boundary if mounted outside the guarded router", () => {
