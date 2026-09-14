@@ -67,7 +67,7 @@ it("seeds the controlled portal idempotently and scopes a user connection", asyn
     "/inbox",
   ]);
   expect(stored?.adapterKey).toBe("roomscout-dev-v1");
-  expect(stored?.pollIntervalMinutes).toBe(5);
+  expect(stored?.pollIntervalMinutes).toBe(0);
 
   await t.run(async (ctx) => {
     const now = Date.now();
@@ -87,7 +87,7 @@ it("seeds the controlled portal idempotently and scopes a user connection", asyn
   expect(workerConnection?.providerContextId).toBeUndefined();
 });
 
-it("polls the controlled portal every 5 minutes by default and lets an operator tighten it immediately", async () => {
+it("leaves the controlled portal without an automatic poll and lets an operator schedule one", async () => {
   const t = convexTest(schema, modules);
   const ids = await t.run(async (ctx) => {
     const now = Date.now();
@@ -103,13 +103,13 @@ it("polls the controlled portal every 5 minutes by default and lets an operator 
     label: "Scout portal identity",
   });
   const requested = await t.run(async (ctx) => await ctx.db.get(connectionId));
-  expect(requested?.pollIntervalMinutes).toBe(5);
+  expect(requested?.pollIntervalMinutes).toBe(0);
 
   await operator.mutation(api.portalConnections.approveControlledDemoConnection, { connectionId });
   const far = Date.now() + 60 * 60_000;
   await t.run(async (ctx) => { await ctx.db.patch(connectionId, { nextPollAt: far }); });
   await expect(
-    t.mutation(internal.portalConnections.setPollIntervalInternal, { connectionId, minutes: 0 }),
+    t.mutation(internal.portalConnections.setPollIntervalInternal, { connectionId, minutes: -1 }),
   ).rejects.toThrow("POLL_INTERVAL_INVALID");
   const before = Date.now();
   await t.mutation(internal.portalConnections.setPollIntervalInternal, { connectionId, minutes: 2 });

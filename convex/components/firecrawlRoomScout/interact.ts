@@ -4,15 +4,30 @@ import { firecrawlRequest } from "./api.js";
 import { firecrawlId, normalizeInteractArgs } from "./contracts.js";
 
 const RESULT_MARKER = "__ROOMSCOUT_RESULT__";
+/**
+ * How much of `output`/`stdout` travels back to the caller. Enough for the app
+ * layer to run its own marker scan and to keep a failing program's diagnostic
+ * tail, short enough that a runaway log cannot dominate the response.
+ */
+const DIAGNOSTIC_TAIL_CHARS = 2_000;
 
-function safeMarkerResult(value: unknown): string | undefined {
+/**
+ * The line our own program prints behind an owned marker. This is the
+ * authoritative result: Firecrawl's node runtime sometimes fills `result` with
+ * an unrelated structured value, which used to win here and surfaced
+ * downstream as EVIDENCE_INVALID.
+ */
+function markerResult(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const markerIndex = value.lastIndexOf(RESULT_MARKER);
   if (markerIndex < 0) return undefined;
-  return value.slice(markerIndex + RESULT_MARKER.length).split(/\r?\n/, 1)[0];
+  const line = value.slice(markerIndex + RESULT_MARKER.length).split(/\r?\n/, 1)[0];
+  return line === undefined || line.length === 0 ? undefined : line;
 }
 
-function safeNativeResult(value: unknown): unknown {
+/** Provider fallback: a JSON string stays a string, a structured value passes through. */
+function nativeResult(value: unknown): unknown {
+  if (value === null || value === undefined) return undefined;
   if (typeof value !== "string") return value;
   try {
     JSON.parse(value);
@@ -22,13 +37,43 @@ function safeNativeResult(value: unknown): unknown {
   }
 }
 
+/** Shape only, never content: what the provider returned instead of our line. */
+function describeShape(value: unknown): { type: string; keys?: string[] } {
+  if (value === null) return { type: "null" };
+  if (Array.isArray(value)) return { type: "array" };
+  if (typeof value === "object") {
+    return { type: "object", keys: Object.keys(value as object).slice(0, 12) };
+  }
+  return { type: typeof value };
+}
+
+function diagnosticTail(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0
+    ? value.slice(-DIAGNOSTIC_TAIL_CHARS)
+    : undefined;
+}
+
 function safeInteractEnvelope(value: Record<string, any>) {
-  const result = safeNativeResult(value.result) ?? safeMarkerResult(value.output) ?? safeMarkerResult(value.stdout);
+  const marker = markerResult(value.output) ?? markerResult(value.stdout);
+  const fallback = marker === undefined ? nativeResult(value.result) : undefined;
+  const result = marker ?? fallback;
+  if (marker === undefined && typeof fallback !== "string") {
+    console.error("FIRECRAWL_INTERACT_RESULT_SHAPE", {
+      marker: false,
+      ...describeShape(value.result),
+    });
+  }
+  const output = diagnosticTail(value.output);
+  const stdout = diagnosticTail(value.stdout);
   return {
     success: value.success === true,
     ...(result !== undefined ? { result } : {}),
     ...(typeof value.exitCode === "number" ? { exitCode: value.exitCode } : {}),
     ...(typeof value.killed === "boolean" ? { killed: value.killed } : {}),
+    // Forwarded so the app-layer parser can scan for the marker itself and so a
+    // failing program's diagnostics survive the component boundary.
+    ...(output !== undefined ? { output } : {}),
+    ...(stdout !== undefined ? { stdout } : {}),
     ...(typeof value.liveViewUrl === "string"
       ? { liveViewUrl: value.liveViewUrl }
       : {}),

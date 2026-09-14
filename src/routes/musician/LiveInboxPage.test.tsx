@@ -113,13 +113,16 @@ function renderRoute(path = "/app/inbox/c1") {
 }
 
 describe("LiveInboxPage", () => {
-  afterEach(cleanup);
+  afterEach(() => { cleanup(); vi.useRealTimers(); });
   beforeAll(() => {
     vi.stubGlobal("ResizeObserver", ResizeObserverStub);
     Element.prototype.scrollTo = () => {};
     Element.prototype.scrollIntoView = () => {};
   });
   beforeEach(() => {
+    // The stamps are relative to "now": freeze the clock on the fixture's day.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 8, 14, 12, 0));
     fixture();
     mutations.reply.mockClear();
     mutations.markRead.mockClear();

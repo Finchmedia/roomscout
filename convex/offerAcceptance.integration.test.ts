@@ -155,7 +155,7 @@ describe("exact offer acceptance", () => {
     expect((await f.t.run((ctx) => ctx.db.get(f.conversationId)))?.acceptedAt).toBeUndefined();
   });
 
-  it.each(["running", "unknown", "provider-started"] as const)("does not refresh a cancelled request with ambiguous %s execution history", async (history) => {
+  it.each(["running", "unknown"] as const)("does not refresh a cancelled request with ambiguous %s execution history", async (history) => {
     const f = await fixture(); const requestId = await f.prepare(); await f.approve(requestId); const claim = await f.claim(requestId);
     if (history === "running") {
       await f.t.mutation(internal.externalActions.attachProviderExecution, { ownerId: f.ownerId, executionId: claim.executionId });
@@ -164,7 +164,6 @@ describe("exact offer acceptance", () => {
       await f.t.mutation(internal.externalActions.finishExecution, { ownerId: f.ownerId, executionId: claim.executionId, status: "unknown", error: "receipt uncertain" });
     }
     await f.t.run(async (ctx) => {
-      if (history === "provider-started") await ctx.db.patch(claim.executionId, { status: "failed", providerActionId: "provider-session-started", completedAt: Date.now(), error: "cancelled after provider start" });
       await ctx.db.patch(requestId, { status: "cancelled" });
     });
     const before = (await f.t.run((ctx) => ctx.db.get(requestId)))!;
@@ -172,6 +171,18 @@ describe("exact offer acceptance", () => {
     expect(await f.t.run((ctx) => ctx.db.get(requestId))).toMatchObject({ status: "cancelled", contentVersion: before.contentVersion, executionIdempotencyKey: before.executionIdempotencyKey });
     expect(await f.t.run((ctx) => ctx.db.query("actionApprovals").collect())).toHaveLength(1);
     expect(await f.t.run((ctx) => ctx.db.query("actionExecutions").collect())).toHaveLength(1);
+  });
+
+  it("refreshes a cancelled request whose only execution failed before any submission", async () => {
+    // The Firecrawl write attaches the provider session id at open and reports "unknown" whenever a
+    // submission may have happened, so a failed execution never sent anything and is safe to redo.
+    const f = await fixture(); const requestId = await f.prepare(); await f.approve(requestId); const claim = await f.claim(requestId);
+    await f.t.run(async (ctx) => {
+      await ctx.db.patch(claim.executionId, { status: "failed", providerActionId: "provider-session-started", completedAt: Date.now(), error: "FIRECRAWL_PORTAL_WRITE_FAILED:FIRECRAWL_PORTAL_EVIDENCE_INVALID" });
+      await ctx.db.patch(requestId, { status: "cancelled" });
+    });
+    expect(await f.prepare()).toBe(requestId);
+    expect(await f.t.run((ctx) => ctx.db.get(requestId))).toMatchObject({ status: "awaiting_approval", contentVersion: 2 });
   });
 
   it.each(["need", "signal", "conversation", "memory"] as const)("rejects stale %s after review", async (change) => {

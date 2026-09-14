@@ -86,6 +86,16 @@ same provider-specific profile, verify the reviewed origin and authenticated
 portal contract, then stop that probe. Only that successful fresh-session proof
 may mark the connection ready.
 
+An approved write opens the profile read-only (`profile.saveChanges: false`).
+Sending a message does not rotate the Clerk session, so the write needs no
+profile write lock, and without that lock the session that follows cannot hit
+409 `FIRECRAWL_PORTAL_SCRAPE_PROFILE_BUSY`. The proof of the write is the send
+program's own last step: it navigates to `/`, reads the Clerk state there, and
+that observation feeds `recordWriteContextProbe` — no second session is opened.
+Set `FIRECRAWL_WRITE_SAVE_CHANGES=true` to restore the writable open if a live
+run ever shows the saved login does not survive a write; it is an environment
+switch, so it takes effect without a deploy.
+
 A pending, busy, or delayed profile remains pending. Retry within the bounded
 profile-readiness budget. Exhaustion is recoverable `profile not ready`, not
 permission to create a new profile or repeat signup blindly. A connection made
@@ -99,8 +109,13 @@ sessions per team in parallel. Measured on 2026-09-13: the Free plan allows
 counts against the same minute window. Hobby allows 100 executes and 5 browsers,
 Standard 500 and 25. The 429 body announces the wait ("retry after 57s").
 
-The reviewed portal driver issues one Interact request per primitive, so a
-registration is roughly 20 requests. Three rules keep that inside the window:
+The Firecrawl paths run one coarse program per phase instead of one request
+per primitive: an inbox sync costs three round trips and an approved write four
+(scrape, prepare, send, stop). Each program carries its own sandbox timeout
+(60 s to prepare, 90 s to send) and an HTTP timeout of that plus 30 seconds,
+both clamped to what is left of the 120-second session, so one hanging program
+no longer consumes the budget of the steps behind it. Three rules keep the
+remaining traffic inside the window:
 
 1. Requests of one session are spaced by `FIRECRAWL_INTERACT_MIN_INTERVAL_MS`
    (default 700 ms, about 85 requests per minute). Waits run locally, the page

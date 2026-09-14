@@ -7,7 +7,9 @@ const readiness = {
   configuredProviders: 3,
   serverProviderCount: 5,
   firecrawl: {
-    status: "disabled" as const,
+    // Firecrawl reports "configured" or "incomplete"; the monitor flag alone no
+    // longer disables it (see deriveProviderReadiness).
+    status: "incomplete" as const,
     apiKeyConfigured: true,
     webhookSecretConfigured: true,
     monitorWebhookBearerConfigured: true,

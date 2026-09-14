@@ -4,8 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   createSession: vi.fn(),
+  pageState: vi.fn(),
+  signUp: vi.fn(),
   verify: vi.fn(),
-  register: vi.fn(),
   send: vi.fn(),
   readBatch: vi.fn(),
 }));
@@ -13,31 +14,42 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./components/firecrawlRoomScout/client", () => ({
   FirecrawlRoomScoutClient: class {},
 }));
-vi.mock("./integrations/firecrawlPortalRuntime", () => ({
+vi.mock("./integrations/firecrawlPortalRuntime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./integrations/firecrawlPortalRuntime")>()),
   firecrawlComponentPortalTransport: vi.fn(() => ({})),
   createFirecrawlPortalSession: mocks.createSession,
 }));
 vi.mock("./integrations/firecrawlPortalEngine", () => ({
   readFirecrawlPortalInboxBatch: mocks.readBatch,
-}));
-vi.mock("./integrations/stagehandPortalDriver", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./integrations/stagehandPortalDriver")>()),
-  verifyControlledPortalContext: mocks.verify,
-  ensureControlledPortalRegistration: mocks.register,
-  sendControlledPortalMessage: mocks.send,
+  writeFirecrawlPortalMessage: mocks.send,
+  readFirecrawlPortalPageState: mocks.pageState,
+  signUpOnFirecrawlPortal: mocks.signUp,
+  submitFirecrawlPortalVerification: mocks.verify,
 }));
 
-import { inspectFirecrawlProfileForRecovery, proveFirecrawlProfile, runFirecrawlRegistrationStep, syncInboxForOwner } from "./firecrawlPortal";
+import { executeFirecrawlApprovedWrite, inspectFirecrawlProfileForRecovery, runFirecrawlRegistrationStep, syncInboxForOwner } from "./firecrawlPortal";
 
 function session(id: string) {
   return {
     scrapeId: id,
     profileName: "profile_1",
     openedAt: 1,
-    primitives: {},
     stop: vi.fn(async () => undefined),
     liveView: vi.fn(),
+    lastErrorCode: vi.fn(() => null),
     runProgram: vi.fn(),
+  };
+}
+
+function pageState(overrides: Record<string, unknown> = {}) {
+  return {
+    url: "https://roomscout.dev/",
+    authenticated: false,
+    stage: "sign_in",
+    hasPasswordField: true,
+    hasCodeField: false,
+    captcha: false,
+    ...overrides,
   };
 }
 
@@ -47,80 +59,180 @@ describe("Firecrawl portal orchestration", () => {
   it("closes an OTP session instead of exposing a fake resume", async () => {
     const opened = session("scrape_otp");
     mocks.createSession.mockResolvedValue(opened);
-    mocks.register.mockResolvedValue({ outcome: "authenticated" });
+    mocks.verify.mockResolvedValue({ authenticated: true, url: "https://roomscout.dev/" });
     await expect(runFirecrawlRegistrationStep({} as never, {
       baseUrl: "https://roomscout.dev", adapterKey: "roomscout-dev-v1",
       profileName: "profile_1", verificationCode: "123456",
     })).resolves.toEqual({ outcome: "authenticated" });
     expect(opened.stop).toHaveBeenCalledOnce();
+    expect(mocks.verify).toHaveBeenCalledWith(expect.objectContaining({ session: opened, code: "123456" }));
     expect(mocks.createSession).toHaveBeenCalledWith(expect.objectContaining({ profileName: "profile_1", saveChanges: true }));
   });
 
-  it("does not begin profile proof when registration session stop fails", async () => {
+  it("reports an unverified continuation as a human stop instead of a saved login", async () => {
+    const opened = session("scrape_otp_failed");
+    mocks.createSession.mockResolvedValue(opened);
+    mocks.verify.mockResolvedValue({ authenticated: false, url: "https://roomscout.dev/sign-up" });
+    await expect(runFirecrawlRegistrationStep({} as never, {
+      baseUrl: "https://roomscout.dev", adapterKey: "roomscout-dev-v1",
+      profileName: "profile_1", verificationCode: "123456",
+    })).resolves.toEqual({ outcome: "human_required", blocker: "policy_human_presence" });
+    expect(opened.stop).toHaveBeenCalledOnce();
+  });
+
+  it("surfaces a failed session stop instead of reporting a saved profile", async () => {
     const opened = session("scrape_otp");
     opened.stop.mockRejectedValue(new Error("stop failed"));
     mocks.createSession.mockResolvedValue(opened);
-    mocks.register.mockResolvedValue({ outcome: "authenticated" });
+    mocks.verify.mockResolvedValue({ authenticated: true, url: "https://roomscout.dev/" });
     await expect(runFirecrawlRegistrationStep({} as never, {
       baseUrl: "https://roomscout.dev", adapterKey: "roomscout-dev-v1",
       profileName: "profile_1", verificationCode: "123456",
     })).rejects.toThrow("stop failed");
-    expect(mocks.verify).not.toHaveBeenCalled();
-  });
-
-  it("proves persistence only in a new read-only session", async () => {
-    const probe = session("scrape_probe");
-    mocks.createSession.mockResolvedValue(probe);
-    mocks.verify.mockResolvedValue(true);
-    await expect(proveFirecrawlProfile({} as never, {
-      baseUrl: "https://roomscout.dev", adapterKey: "roomscout-dev-v1",
-      profileName: "profile_1", now: () => 10,
-    })).resolves.toEqual({ verified: true, attempts: 1 });
-    expect(mocks.createSession).toHaveBeenCalledWith(expect.objectContaining({ saveChanges: false }));
-    expect(probe.stop).toHaveBeenCalledOnce();
   });
 
   it("inspects the same profile read-only without starting registration", async () => {
     const probe = session("scrape_recovery");
-    probe.primitives = { extract: vi.fn(async () => ({ authenticated: false, stage: "verification", blocker: null })) };
     mocks.createSession.mockResolvedValue(probe);
+    mocks.pageState.mockResolvedValue(pageState({ stage: "verification", hasCodeField: true }));
     await expect(inspectFirecrawlProfileForRecovery({} as never, {
       baseUrl: "https://roomscout.dev", adapterKey: "roomscout-dev-v1", profileName: "profile_1",
     })).resolves.toEqual({ outcome: "awaiting_verification" });
-    expect(mocks.register).not.toHaveBeenCalled();
+    expect(mocks.signUp).not.toHaveBeenCalled();
+    // A page that already waits for a code is not looked up a second time.
+    expect(mocks.pageState).toHaveBeenCalledOnce();
+    expect(mocks.pageState).toHaveBeenCalledWith(expect.objectContaining({ session: probe, path: "/" }));
     expect(mocks.createSession).toHaveBeenCalledWith(expect.objectContaining({ profileName: "profile_1", saveChanges: false }));
     expect(probe.stop).toHaveBeenCalledOnce();
   });
 
+  it("looks at the sign-up route only when the home page is neither signed in nor blocked", async () => {
+    const probe = session("scrape_recovery_signup");
+    mocks.createSession.mockResolvedValue(probe);
+    mocks.pageState
+      .mockResolvedValueOnce(pageState({ stage: "sign_in" }))
+      .mockResolvedValueOnce(pageState({ url: "https://roomscout.dev/sign-up", stage: "sign_up", hasPasswordField: false }));
+    await expect(inspectFirecrawlProfileForRecovery({} as never, {
+      baseUrl: "https://roomscout.dev", adapterKey: "roomscout-dev-v1", profileName: "profile_1",
+    })).resolves.toEqual({ outcome: "auth_needed" });
+    expect(mocks.pageState.mock.calls.map(([call]) => (call as { path: string }).path)).toEqual(["/", "/sign-up"]);
+  });
+
   it("does not report profile recovery when the read-only session cannot be saved", async () => {
     const probe = session("scrape_recovery");
-    probe.primitives = { extract: vi.fn(async () => ({ authenticated: true, stage: "authenticated", blocker: null })) };
     probe.stop.mockRejectedValue(new Error("stop failed"));
     mocks.createSession.mockResolvedValue(probe);
+    mocks.pageState.mockResolvedValue(pageState({ authenticated: true, stage: "authenticated", hasPasswordField: false }));
     await expect(inspectFirecrawlProfileForRecovery({} as never, {
       baseUrl: "https://roomscout.dev", adapterKey: "roomscout-dev-v1", profileName: "profile_1",
     })).rejects.toThrow("stop failed");
   });
 
-  it("durably schedules the exact proof scrape when teardown fails", async () => {
-    const probe = session("scrape_proof_cleanup");
+  it("durably schedules the exact recovery scrape when teardown fails", async () => {
+    const probe = session("scrape_recovery_cleanup");
     probe.stop.mockRejectedValue(new Error("stop failed"));
     mocks.createSession.mockResolvedValue(probe);
-    mocks.verify.mockResolvedValue(true);
+    mocks.pageState.mockRejectedValue(new Error("FIRECRAWL_PORTAL_PAGE_STATE_INVALID"));
     const runMutation = vi.fn(async () => ({ cleanupId: "cleanup_1", generation: 1 }));
     const runAfter = vi.fn(async () => undefined);
-    let clockReads = 0;
-    await expect(proveFirecrawlProfile({ runMutation, scheduler: { runAfter } } as never, {
+    await expect(inspectFirecrawlProfileForRecovery({ runMutation, scheduler: { runAfter } } as never, {
       baseUrl: "https://roomscout.dev", adapterKey: "roomscout-dev-v1", profileName: "profile_1",
-      deadlineAt: 50_000, now: () => clockReads++ === 0 ? 0 : 50_000,
-      cleanup: { ownerId: "owner" as never, connectionId: "connection" as never, contextId: "context" as never, purpose: "profile_proof" },
-    })).resolves.toMatchObject({ verified: false, attempts: 1 });
+      cleanup: { ownerId: "owner" as never, connectionId: "connection" as never, contextId: "context" as never },
+    })).rejects.toThrow("FIRECRAWL_PORTAL_PAGE_STATE_INVALID");
     expect(runMutation).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-      providerSessionId: "scrape_proof_cleanup", provider: "firecrawl", purpose: "profile_proof",
+      providerSessionId: "scrape_recovery_cleanup", provider: "firecrawl", purpose: "recovery",
     }));
     expect(runAfter).toHaveBeenCalledWith(0, expect.anything(), expect.objectContaining({
-      cleanupId: "cleanup_1", providerSessionId: "scrape_proof_cleanup",
+      cleanupId: "cleanup_1", providerSessionId: "scrape_recovery_cleanup",
     }));
+  });
+});
+
+describe("Firecrawl write failure reporting", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.useFakeTimers();
+    vi.stubEnv("PORTAL_BROWSER_ENGINE", "firecrawl");
+    vi.stubEnv("FIRECRAWL_API_KEY", "fc-test");
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+  });
+
+  it("carries the sandbox reason into the thrown write failure", async () => {
+    const sessions = [session("write_1"), session("write_2"), session("write_3")];
+    for (const opened of sessions) mocks.createSession.mockResolvedValueOnce(opened);
+    // The in-band sandbox failure arrives as code plus a sanitised detail; the
+    // retry ladder still classifies it by its code alone.
+    mocks.send.mockRejectedValue(new Error("FIRECRAWL_INTERACT_EXECUTION_FAILED:locator.fill: Timeout 5000ms exceeded"));
+    const beforeSubmit = vi.fn(async () => undefined);
+    const pending = executeFirecrawlApprovedWrite({} as never, {
+      baseUrl: "https://roomscout.dev", adapterKey: "roomscout-dev-v1", profileName: "profile_1",
+      body: "Hallo", providerThreadId: "thread_1", beforeSubmit,
+    });
+    pending.catch(() => undefined);
+    await vi.runAllTimersAsync();
+
+    await expect(pending).rejects.toThrow(
+      "FIRECRAWL_PORTAL_WRITE_FAILED:FIRECRAWL_INTERACT_EXECUTION_FAILED:locator.fill: Timeout 5000ms exceeded",
+    );
+    expect(mocks.createSession).toHaveBeenCalledTimes(3);
+    expect(beforeSubmit).not.toHaveBeenCalled();
+    for (const opened of sessions) expect(opened.stop).toHaveBeenCalledOnce();
+  });
+
+  it("opens the write profile read-only unless the save switch is set", async () => {
+    mocks.createSession.mockResolvedValue(session("write_save"));
+    mocks.send.mockResolvedValue({
+      outcome: "succeeded", submitted: true, providerThreadId: "thread_1",
+      providerMessageId: "message_1", profileAuthenticated: true,
+    });
+    const write = async () => await executeFirecrawlApprovedWrite({} as never, {
+      baseUrl: "https://roomscout.dev", adapterKey: "roomscout-dev-v1", profileName: "profile_1",
+      body: "Hallo", providerThreadId: "thread_1", beforeSubmit: async () => undefined,
+    });
+    await expect(write()).resolves.toMatchObject({ outcome: "succeeded", profileStopFailed: false });
+    expect(mocks.createSession).toHaveBeenLastCalledWith(expect.objectContaining({ saveChanges: false }));
+    vi.stubEnv("FIRECRAWL_WRITE_SAVE_CHANGES", "true");
+    await write();
+    expect(mocks.createSession).toHaveBeenLastCalledWith(expect.objectContaining({ saveChanges: true }));
+  });
+
+  it("retries a preparation mismatch in a fresh session instead of reporting a human stop", async () => {
+    const sessions = [session("write_mismatch"), session("write_retry")];
+    for (const opened of sessions) mocks.createSession.mockResolvedValueOnce(opened);
+    mocks.send
+      .mockRejectedValueOnce(new Error("FIRECRAWL_WRITE_PREPARE_MISMATCH"))
+      .mockResolvedValueOnce({
+        outcome: "succeeded", submitted: true, providerThreadId: "thread_1",
+        providerMessageId: "message_1", profileAuthenticated: true,
+      });
+    const pending = executeFirecrawlApprovedWrite({} as never, {
+      baseUrl: "https://roomscout.dev", adapterKey: "roomscout-dev-v1", profileName: "profile_1",
+      body: "Hallo", providerThreadId: "thread_1", beforeSubmit: async () => undefined,
+    });
+    await vi.runAllTimersAsync();
+    await expect(pending).resolves.toMatchObject({ outcome: "succeeded", providerMessageId: "message_1" });
+    expect(mocks.createSession).toHaveBeenCalledTimes(2);
+    for (const opened of sessions) expect(opened.stop).toHaveBeenCalledOnce();
+  });
+
+  it("does not put an unrecognised provider message into the failure", async () => {
+    const opened = session("write_only");
+    mocks.createSession.mockResolvedValue(opened);
+    mocks.send.mockRejectedValue(new Error("Firecrawl says: synthetic-secret"));
+    const pending = executeFirecrawlApprovedWrite({} as never, {
+      baseUrl: "https://roomscout.dev", adapterKey: "roomscout-dev-v1", profileName: "profile_1",
+      body: "Hallo", providerThreadId: "thread_1", beforeSubmit: async () => undefined,
+    });
+    pending.catch(() => undefined);
+    await vi.runAllTimersAsync();
+
+    const thrown = await pending.catch((error: unknown) => String(error));
+    expect(thrown).toContain("FIRECRAWL_PORTAL_WRITE_FAILED:UNKNOWN");
+    expect(thrown).not.toContain("synthetic-secret");
+    expect(mocks.createSession).toHaveBeenCalledOnce();
   });
 });
 

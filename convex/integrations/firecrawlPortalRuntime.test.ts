@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { createFirecrawlPortalSession, firecrawlComponentPortalTransport, type FirecrawlPortalTransport } from "./firecrawlPortalRuntime";
+import {
+  createFirecrawlPortalSession,
+  firecrawlComponentPortalTransport,
+  FIRECRAWL_PORTAL_URL_PROGRAM,
+  type FirecrawlPortalTransport,
+} from "./firecrawlPortalRuntime";
 import type { FirecrawlRoomScoutClient } from "../components/firecrawlRoomScout/client";
 
 function successful(result: unknown, liveViewUrl?: string) {
@@ -27,7 +32,7 @@ describe("firecrawlPortalRuntime", () => {
       timeoutMs: 30_000,
       now: () => 1_000,
     });
-    await session.primitives.navigate({ url: "https://roomscout.dev/inbox" });
+    await session.runProgram("return { url: await page.url() };", { path: "/inbox" }, false);
 
     expect(scrapeOnce).toHaveBeenCalledWith(expect.anything(), "https://roomscout.dev/inbox", expect.objectContaining({
       timeout: 30_000, maxAge: 0, storeInCache: false,
@@ -38,7 +43,7 @@ describe("firecrawlPortalRuntime", () => {
       mutating: false,
     }));
     const code = interact.mock.calls[0]?.[2]?.code;
-    expect(code).toContain('"timeoutMs":30000');
+    expect(code).toContain('"path":"/inbox"');
   });
 
   it("creates one reviewed scrape with the stable profile and stops idempotently", async () => {
@@ -61,7 +66,7 @@ describe("firecrawlPortalRuntime", () => {
     expect(transport.stop).toHaveBeenCalledOnce();
   });
 
-  it("puts a fresh origin assertion inside every fill and click program", async () => {
+  it("keeps exact values out of the program text and inside the injected variables", async () => {
     const programs: Array<{ code: string; mutating: boolean }> = [];
     const transport: FirecrawlPortalTransport = {
       scrape: async () => ({ metadata: { scrapeId: "scrape_1" } }),
@@ -74,40 +79,62 @@ describe("firecrawlPortalRuntime", () => {
     const session = await createFirecrawlPortalSession({
       transport, url: "https://roomscout.dev", profileName: "profile_1", saveChanges: false,
     });
-    await session.primitives.fillSelector?.({ selector: "#field", value: "synthetic-secret" });
-    await session.primitives.clickSelector?.({ selector: "#submit" });
-    expect(programs).toHaveLength(2);
-    for (const program of programs) {
-      expect(program.mutating).toBe(true);
-      expect(program.code.indexOf("await page.url()"))
-        .toBeLessThan(program.code.indexOf("page.locator"));
-      expect(program.code).toContain('page.locator(vars.selector).');
-      expect(program.code).not.toContain('.fill("synthetic-secret")');
-    }
+    await session.runProgram(
+      "await page.locator(vars.selector).fill(vars.value);\n    return { ok: true };",
+      { selector: "#field", value: "synthetic-secret" },
+      true,
+    );
+    expect(programs).toHaveLength(1);
+    const [program] = programs;
+    expect(program!.mutating).toBe(true);
+    expect(program!.code).toContain("page.locator(vars.selector).fill(vars.value)");
+    expect(program!.code).not.toContain('.fill("synthetic-secret")');
+    // The value travels once, as a JSON variable of the wrapper.
+    expect(program!.code).toContain('"value":"synthetic-secret"');
   });
 
-  it("coerces protected-page DOM evidence to a boolean auth result", async () => {
-    let extractProgram = "";
+  it("gives every program its own sandbox budget and the request thirty seconds more", async () => {
+    const dispatched: unknown[] = [];
+    const interact = vi.fn(async (_scrapeId: string, options: unknown) => {
+      dispatched.push(options);
+      return successful({ ok: true });
+    });
     const session = await createFirecrawlPortalSession({
-      transport: {
-        scrape: async () => ({ metadata: { scrapeId: "scrape_1" } }),
-        interact: async (_id, options) => {
-          extractProgram = options.code;
-          return successful({ authenticated: false, stage: "sign_in", blocker: null });
-        },
-        stop: async () => ({}),
-      },
-      url: "https://roomscout.dev/sign-in", profileName: "profile_1", saveChanges: false,
+      transport: { scrape: async () => ({ metadata: { scrapeId: "scrape_1" } }), interact, stop: async () => ({}) },
+      url: "https://roomscout.dev", profileName: "profile_1", saveChanges: false,
+      timeoutMs: 420_000, now: () => 1_000,
     });
-    await session.primitives.extract({
-      instruction: "classify",
-      schema: { parse: (value: unknown) => value } as never,
-    });
-    expect(extractProgram).toContain("const auth = Boolean(");
-    expect(extractProgram).toContain("document.querySelector");
+    await session.runProgram("return { ok: true };", {}, false, 60_000);
+    await session.runProgram("return { ok: true };", {}, true, 90_000);
+    expect(dispatched).toEqual([
+      expect.objectContaining({ timeout: 60, requestTimeoutMs: 90_000, mutating: false }),
+      expect.objectContaining({ timeout: 90, requestTimeoutMs: 120_000, mutating: true }),
+    ]);
   });
 
-  it("shares one absolute deadline and refuses a later primitive before dispatch", async () => {
+  it("caps one program at two minutes even inside a long registration session", async () => {
+    const interact = vi.fn(async () => successful({ ok: true }));
+    const session = await createFirecrawlPortalSession({
+      transport: { scrape: async () => ({ metadata: { scrapeId: "scrape_1" } }), interact, stop: async () => ({}) },
+      url: "https://roomscout.dev", profileName: "profile_1", saveChanges: true,
+      timeoutMs: 420_000, now: () => 1_000,
+    });
+    await session.runProgram("return { ok: true };", {}, false);
+    expect(interact).toHaveBeenCalledWith("scrape_1", expect.objectContaining({ timeout: 120 }));
+    await expect(session.runProgram("return { ok: true };", {}, false, 300_000))
+      .rejects.toThrow("FIRECRAWL_PORTAL_TIMEOUT_INVALID");
+  });
+
+  it("refuses a session budget beyond ten minutes", async () => {
+    const scrape = vi.fn(async () => ({ metadata: { scrapeId: "unused" } }));
+    await expect(createFirecrawlPortalSession({
+      transport: { scrape, interact: vi.fn(), stop: vi.fn() },
+      url: "https://roomscout.dev", profileName: "profile_1", saveChanges: false, timeoutMs: 900_000,
+    })).rejects.toThrow("FIRECRAWL_PORTAL_TIMEOUT_INVALID");
+    expect(scrape).not.toHaveBeenCalled();
+  });
+
+  it("shares one absolute deadline and refuses a later program before dispatch", async () => {
     let now = 1_000;
     const interact = vi.fn(async () => successful({ url: "https://roomscout.dev/inbox" }));
     const session = await createFirecrawlPortalSession({
@@ -122,61 +149,11 @@ describe("firecrawlPortalRuntime", () => {
       timeoutMs: 30_000,
       now: () => now,
     });
-    await session.primitives.getUrl();
+    await session.runProgram(FIRECRAWL_PORTAL_URL_PROGRAM, {}, false);
     expect(interact).toHaveBeenCalledTimes(1);
     now = 31_000;
-    await expect(session.primitives.getUrl()).rejects.toThrow("FIRECRAWL_PORTAL_DEADLINE_EXCEEDED");
+    await expect(session.runProgram(FIRECRAWL_PORTAL_URL_PROGRAM, {}, false)).rejects.toThrow("FIRECRAWL_PORTAL_DEADLINE_EXCEEDED");
     expect(interact).toHaveBeenCalledTimes(1);
-  });
-
-  it("pauses locally instead of spending an Interact request on wait()", async () => {
-    const interact = vi.fn(async () => successful({ url: "https://roomscout.dev" }));
-    const session = await createFirecrawlPortalSession({
-      transport: { scrape: async () => ({ metadata: { scrapeId: "scrape_1" } }), interact, stop: async () => ({}) },
-      url: "https://roomscout.dev", profileName: "profile_1", saveChanges: false, timeoutMs: 30_000,
-    });
-    const before = Date.now();
-    await session.primitives.wait?.(30);
-    expect(Date.now() - before).toBeGreaterThanOrEqual(25);
-    expect(interact).not.toHaveBeenCalled();
-  });
-
-  it("serves getUrl from the URL returned by the previous program", async () => {
-    let now = 1_000;
-    const interact = vi.fn(async () => successful({ ok: true, url: "https://roomscout.dev/sign-up" }));
-    const session = await createFirecrawlPortalSession({
-      transport: { scrape: async () => ({ metadata: { scrapeId: "scrape_1" } }), interact, stop: async () => ({}) },
-      url: "https://roomscout.dev/sign-up", profileName: "profile_1", saveChanges: false, timeoutMs: 60_000, now: () => now,
-    });
-    await session.primitives.clickSelector?.({ selector: "#submit" });
-    await expect(session.primitives.getUrl()).resolves.toBe("https://roomscout.dev/sign-up");
-    expect(interact).toHaveBeenCalledTimes(1);
-    now = 4_000;
-    await session.primitives.getUrl();
-    expect(interact).toHaveBeenCalledTimes(2);
-  });
-
-  it("lets a field or evidence element appear inside the sandbox before inspecting", async () => {
-    const programs: string[] = [];
-    const session = await createFirecrawlPortalSession({
-      transport: {
-        scrape: async () => ({ metadata: { scrapeId: "scrape_1" } }),
-        interact: async (_id, options) => {
-          programs.push(options.code);
-          return options.code.includes("waitForSelector(vars.selector")
-            ? successful({ count: 1, visible: true, editable: true, name: "emailAddress", type: "email", autocomplete: null, required: true, value: "", formValid: null, url: "https://roomscout.dev/sign-up" })
-            : successful({ url: "https://roomscout.dev/sign-up", raw: { visible: true, providerThreadId: "t1", providerMessageId: "m1" } });
-        },
-        stop: async () => ({}),
-      },
-      url: "https://roomscout.dev/sign-up", profileName: "profile_1", saveChanges: false,
-    });
-    await session.primitives.inspectForm({ selector: 'input[name="emailAddress"]', role: "email" });
-    await session.primitives.readEvidence({ kind: "receipt" });
-    expect(programs[0]).toContain("waitForSelector(vars.selector");
-    expect(programs[0]).toContain('"selector":"input[name=\\"emailAddress\\"]"');
-    expect(programs[1]).toContain("waitForSelector(vars.waitSelector");
-    expect(programs[1]).toContain('"waitSelector":"[data-roomscout-write-result]"');
   });
 
   it("still stops the provider session after the run budget is exhausted", async () => {
@@ -202,8 +179,8 @@ describe("firecrawlPortalRuntime", () => {
       url: "https://roomscout.dev", profileName: "profile_1", saveChanges: false, timeoutMs: 30_000,
       pacing: { minIntervalMs: 60 },
     });
-    await session.primitives.clickSelector?.({ selector: "#a" });
-    await session.primitives.clickSelector?.({ selector: "#b" });
+    await session.runProgram("return { ok: true };", {}, true);
+    await session.runProgram("return { ok: true };", {}, true);
     expect(dispatchedAt).toHaveLength(2);
     expect(dispatchedAt[1]! - dispatchedAt[0]!).toBeGreaterThanOrEqual(55);
   });
@@ -214,7 +191,9 @@ describe("firecrawlPortalRuntime", () => {
       transport: { scrape: async () => ({ metadata: { scrapeId: "scrape_1" } }), interact: async () => { throw busy; }, stop: async () => ({}) },
       url: "https://roomscout.dev", profileName: "profile_1", saveChanges: true,
     });
-    await expect(session.primitives.getUrl()).rejects.toThrow("FIRECRAWL_PORTAL_INTERACT_PROFILE_BUSY");
+    await expect(session.runProgram(FIRECRAWL_PORTAL_URL_PROGRAM, {}, false))
+      .rejects.toThrow("FIRECRAWL_PORTAL_INTERACT_PROFILE_BUSY");
+    expect(session.lastErrorCode()).toBe("FIRECRAWL_PORTAL_INTERACT_PROFILE_BUSY");
   });
 
   it("rejects other origins before allocating a scrape", async () => {

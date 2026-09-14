@@ -1,7 +1,6 @@
 "use node";
 
 import { ConvexError, v } from "convex/values";
-import { z } from "zod";
 import { components, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { action, internalAction, type ActionCtx } from "./_generated/server";
@@ -14,27 +13,38 @@ import { FirecrawlRoomScoutClient } from "./components/firecrawlRoomScout/client
 import {
   createFirecrawlPortalSession,
   firecrawlComponentPortalTransport,
+  FIRECRAWL_PORTAL_URL_PROGRAM,
   type FirecrawlPortalSession,
 } from "./integrations/firecrawlPortalRuntime";
-import { readFirecrawlPortalInboxBatch } from "./integrations/firecrawlPortalEngine";
-import { scheduleContextCleanup, scheduleExecutionCleanup, scheduleProviderCleanup } from "./portalBrowserCleanup";
 import {
-  ensureControlledPortalRegistration,
-  sendControlledPortalMessage,
-  verifyControlledPortalContext,
-  type PortalHumanBlocker,
-} from "./integrations/stagehandPortalDriver";
+  readFirecrawlPortalInboxBatch,
+  readFirecrawlPortalPageState,
+  signUpOnFirecrawlPortal,
+  submitFirecrawlPortalVerification,
+  writeFirecrawlPortalMessage,
+  type FirecrawlPortalHumanBlocker,
+  type FirecrawlPortalPageState,
+} from "./integrations/firecrawlPortalEngine";
+import { scheduleContextCleanup, scheduleExecutionCleanup, scheduleProviderCleanup } from "./portalBrowserCleanup";
 
 const client = new FirecrawlRoomScoutClient(components.firecrawlRoomScout);
-const PROFILE_PROOF_DEADLINE_MS = 120_000;
-const PROFILE_PROOF_STOP_RESERVE_MS = 5_000;
-const PROFILE_PROOF_RETRY_BASE_MS = 2_000;
-const WRITE_PROFILE_PROOF_DEADLINE_MS = 120_000;
+const RECOVERY_STOP_RESERVE_MS = 5_000;
+/**
+ * Outer bound of one registration session. It stays open across the AgentMail
+ * verification wait, so it must outlast the OTP poll, not just one program.
+ */
+const REGISTRATION_SESSION_DEADLINE_MS = 420_000;
+/** A continuation session only runs the verification program. */
+const VERIFICATION_SESSION_DEADLINE_MS = 150_000;
+/** Outer bound of one write session; each program inside it has its own budget. */
+const WRITE_SESSION_DEADLINE_MS = 120_000;
 const ONBOARDING_POLL_MS = 5_000;
 const ONBOARDING_MAX_POLLS = 60;
 const RUN_TEARDOWN_RESERVE_MS = 5_000;
 const VERIFICATION_KEEPALIVE_EVERY_POLLS = 12;
-type RegistrationPhase = "mailbox" | "session_open" | "run_attach" | "progress" | "driver" | "session_stop" | "profile_proof";
+/** A keepalive only reads the page URL; it never needs a program budget. */
+const KEEPALIVE_TIMEOUT_MS = 15_000;
+type RegistrationPhase = "mailbox" | "session_open" | "run_attach" | "progress" | "signup" | "verification" | "session_stop" | "profile_proof";
 /**
  * A freshly opened inbox session occasionally answers its first Interact call
  * with a transport-class failure (e.g. the scrape's browser is not reachable,
@@ -44,14 +54,47 @@ type RegistrationPhase = "mailbox" | "session_open" | "run_attach" | "progress" 
 const INBOX_OPEN_RETRY_DELAYS_MS = [4_000, 8_000];
 /** The write path retries only its side-effect-free opening (session, navigate, fill, verify). */
 const WRITE_OPEN_RETRY_DELAYS_MS = [4_000, 8_000];
-/** Before beforeSubmit nothing reached the portal, so sandbox and result-decoding failures are retryable too. */
-const WRITE_OPEN_RETRYABLE_CODE = /^(FIRECRAWL_PORTAL_((SCRAPE|INTERACT)_(TRANSPORT_FAILED|REQUEST_REJECTED|UNAVAILABLE|PROFILE_BUSY|RATE_LIMITED|TIMED_OUT)|SCRAPE_ID_MISSING|EVIDENCE_INVALID|URL_INVALID)|FIRECRAWL_INTERACT_(EXECUTION_FAILED|RESULT_INVALID|RESULT_MISSING|KILLED|ENVELOPE_INVALID))$/;
+/**
+ * Before beforeSubmit nothing reached the portal, so sandbox and
+ * result-decoding failures are retryable too. `FIRECRAWL_WRITE_PREPARE_MISMATCH`
+ * belongs here as well: a field that is not editable yet is a timing fault, and
+ * the preparation program left nothing behind on the portal.
+ */
+const WRITE_OPEN_RETRYABLE_CODE = /^(FIRECRAWL_PORTAL_((SCRAPE|INTERACT)_(TRANSPORT_FAILED|REQUEST_REJECTED|UNAVAILABLE|PROFILE_BUSY|RATE_LIMITED|TIMED_OUT)|SCRAPE_ID_MISSING|EVIDENCE_INVALID|URL_INVALID|WRITE_RESULT_INVALID)|FIRECRAWL_INTERACT_(EXECUTION_FAILED|RESULT_INVALID|RESULT_MISSING|KILLED|ENVELOPE_INVALID)|FIRECRAWL_WRITE_PREPARE_MISMATCH)$/;
 const INBOX_OPEN_RETRYABLE_CODE = /^FIRECRAWL_PORTAL_((SCRAPE|INTERACT)_(TRANSPORT_FAILED|REQUEST_REJECTED|UNAVAILABLE|PROFILE_BUSY|RATE_LIMITED|TIMED_OUT)|SCRAPE_ID_MISSING)$/;
 const INBOX_SYNC_ERROR_CODE_MAX = 100;
+/** `actionExecutions.error` is stored truncated at 1000 characters. */
+const WRITE_FAILURE_ERROR_MAX = 500;
 
+/**
+ * The leading UPPER_SNAKE code of a thrown message, used for retry
+ * classification. A program failure now carries a sanitised `:<detail>` tail
+ * (see `parseInteractEnvelope`); the classification ignores it.
+ */
 function inboxSyncInnerCode(error: unknown): string {
   const message = error instanceof Error ? error.message : "";
-  return /^[A-Z0-9_]{3,80}$/.test(message) ? message : "UNKNOWN";
+  const code = message.split(":", 1)[0] ?? "";
+  return /^[A-Z0-9_]{3,80}$/.test(code) ? code : "UNKNOWN";
+}
+
+/**
+ * Code plus the detail our own program attached, bounded for persistence. A
+ * message that is not one of our codes stays "UNKNOWN": provider text never
+ * reaches a stored record.
+ */
+function firecrawlErrorDetail(error: unknown, maxLength: number): string {
+  if (inboxSyncInnerCode(error) === "UNKNOWN") return "UNKNOWN";
+  return (error as Error).message.trim().slice(0, maxLength);
+}
+
+/** What `finishExecution` stores for a failed write: the reason, not the label. */
+function firecrawlWriteFailureError(error: unknown): string {
+  const message = error instanceof Error ? error.message.trim() : "";
+  if (!message) return "FIRECRAWL_PORTAL_WRITE_FAILED";
+  const detail = message.startsWith("FIRECRAWL_PORTAL_WRITE_FAILED")
+    ? message
+    : `FIRECRAWL_PORTAL_WRITE_FAILED:${message}`;
+  return detail.slice(0, WRITE_FAILURE_ERROR_MAX);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -123,7 +166,7 @@ async function waitForFirecrawlVerification(input: {
 
 function firecrawlRegistrationFailureCode(error: unknown, phase: RegistrationPhase): string {
   const message = error instanceof Error ? error.message : "";
-  if (/^CONTROLLED_REGISTRATION_[A-Z_]+_FAILED$/.test(message)) return message.slice(0, 100);
+  if (/^FIRECRAWL_(SIGNUP_VALUE_MISMATCH|PORTAL_(REGISTRATION_RESULT_INVALID|VERIFICATION_RESULT_INVALID|PAGE_STATE_INVALID))$/.test(message)) return message;
   if (/^FIRECRAWL_PORTAL_(SCRAPE_(AUTH_FAILED|TIMED_OUT|RATE_LIMITED|PROFILE_BUSY|UNAVAILABLE|REQUEST_REJECTED|TRANSPORT_FAILED)|SCRAPE_ID_MISSING|PROFILE_INVALID|TIMEOUT_INVALID|DEADLINE_EXCEEDED|INTERACT_(AUTH_FAILED|TIMED_OUT|RATE_LIMITED|PROFILE_BUSY|UNAVAILABLE|REQUEST_REJECTED|TRANSPORT_FAILED))$/.test(message)) {
     return message;
   }
@@ -147,19 +190,13 @@ type WorkerConnection = {
   browserProvider: "firecrawl" | "browserbase"; contextStatus?: "creating" | "ready" | "reauth_required" | "deleting" | "deleted" | "failed";
 };
 type SyncResult = { runId: Id<"browserRuns">; threadsCreated: number; messagesCreated: number };
-type WriteResult = { executionId: Id<"actionExecutions">; status: "succeeded" | "human_required" | "unknown" | "in_progress"; blocker?: PortalHumanBlocker; alreadyCompleted: boolean };
+type WriteResult = { executionId: Id<"actionExecutions">; status: "succeeded" | "human_required" | "unknown" | "in_progress"; blocker?: FirecrawlPortalHumanBlocker; alreadyCompleted: boolean };
 type WriteClaim = {
   executionId: Id<"actionExecutions">; executionStatus: string; alreadyClaimed: boolean;
   browserProvider?: "firecrawl" | "browserbase"; connectionId?: Id<"portalConnections">;
   platformId?: Id<"sourcePlatforms">; requestedActionType: string;
   payload: { kind: string; body: string; threadId?: Id<"platformThreads">; targetPath?: string; senderLabel?: string; recipients: string[]; subject?: string };
 };
-
-const recoveryPageStateSchema = z.object({
-  authenticated: z.boolean(),
-  stage: z.enum(["authenticated", "sign_in", "sign_up", "verification", "unknown"]),
-  blocker: z.enum(["captcha", "terms", "payment", "contract", "two_factor", "password", "policy_human_presence"]).nullable(),
-});
 
 const registrationPreflightResultValidator = v.union(
   v.object({ status: v.literal("ready"), stage: v.union(v.literal("authenticated"), v.literal("sign_in"), v.literal("sign_up"), v.literal("verification"), v.literal("unknown")) }),
@@ -170,7 +207,7 @@ export type FirecrawlProfileRecoveryInspection =
   | { outcome: "authenticated" }
   | { outcome: "awaiting_verification" }
   | { outcome: "auth_needed" }
-  | { outcome: "review"; blocker?: PortalHumanBlocker };
+  | { outcome: "review"; blocker?: FirecrawlPortalHumanBlocker };
 
 function transport(ctx: ActionCtx) {
   return firecrawlComponentPortalTransport({ ctx, client });
@@ -232,6 +269,18 @@ function interactMinIntervalMs(): number {
   return Number.isFinite(raw) && raw >= 0 && raw <= 10_000 ? Math.floor(raw) : DEFAULT_INTERACT_MIN_INTERVAL_MS;
 }
 
+/**
+ * Whether an approved write opens the portal profile writably. Default false:
+ * sending a message does not rotate the Clerk session, so the write needs no
+ * profile write lock, and without that lock the self-inflicted 409 on the
+ * following session disappears. `FIRECRAWL_WRITE_SAVE_CHANGES=true` restores
+ * the old behaviour without a code change if a live run ever shows the saved
+ * login does not survive.
+ */
+export function firecrawlWriteSaveChanges(): boolean {
+  return (envValue("FIRECRAWL_WRITE_SAVE_CHANGES") ?? "").trim().toLowerCase() === "true";
+}
+
 export async function openFirecrawlPortalSession(
   ctx: ActionCtx,
   input: FirecrawlPortalContext & { path: string; saveChanges: boolean; timeoutMs?: number },
@@ -246,87 +295,37 @@ export async function openFirecrawlPortalSession(
   });
 }
 
-/** Registration always closes its session; an OTP continuation opens a new one. */
+/**
+ * Enter a verification code in a fresh session on the saved profile. Used only
+ * by the scheduler continuation; the inline registration keeps its own session
+ * open and calls the verification program there.
+ */
 export async function runFirecrawlRegistrationStep(
   ctx: ActionCtx,
   input: FirecrawlPortalContext & {
-    email?: string;
-    password?: string;
-    verificationCode?: string;
+    verificationCode: string;
     deadlineAt?: number;
     cleanup?: { ownerId: Id<"users">; runId: Id<"browserRuns"> } | {
       ownerId: Id<"users">; connectionId: Id<"portalConnections">; contextId: Id<"browserContexts">;
     };
   },
-): Promise<{ outcome: "awaiting_code" | "authenticated" | "human_required"; blocker?: PortalHumanBlocker }> {
+): Promise<{ outcome: "authenticated" | "human_required"; blocker?: FirecrawlPortalHumanBlocker }> {
   const session = await openFirecrawlPortalSession(ctx, {
     ...input,
     path: "/sign-up",
     saveChanges: true,
-    timeoutMs: input.deadlineAt ? Math.min(45_000, remainingRunMs(input.deadlineAt)) : 45_000,
+    timeoutMs: input.deadlineAt
+      ? Math.min(VERIFICATION_SESSION_DEADLINE_MS, remainingRunMs(input.deadlineAt))
+      : VERIFICATION_SESSION_DEADLINE_MS,
   });
   try {
-    return await ensureControlledPortalRegistration({
-      client: session.primitives,
-      email: input.email,
-      password: input.password,
-      verificationCode: input.verificationCode,
-    });
+    const verified = await submitFirecrawlPortalVerification({ session, code: input.verificationCode });
+    return verified.authenticated
+      ? { outcome: "authenticated" as const }
+      : { outcome: "human_required" as const, blocker: "policy_human_presence" as const };
   } finally {
     await stopRegistrationSession(ctx, session, input.cleanup);
   }
-}
-
-/** A saved profile becomes ready only after authentication in a fresh session. */
-export async function proveFirecrawlProfile(
-  ctx: ActionCtx,
-  input: FirecrawlPortalContext & {
-    deadlineAt?: number; now?: () => number;
-    cleanup?: { ownerId: Id<"users">; connectionId: Id<"portalConnections">; contextId: Id<"browserContexts">; purpose: "write_proof" | "profile_proof" };
-  },
-): Promise<{ verified: boolean; attempts: number; errorCode?: string }> {
-  const now = input.now ?? Date.now;
-  const deadlineAt = input.deadlineAt ?? now() + PROFILE_PROOF_DEADLINE_MS;
-  let attempts = 0;
-  do {
-    const availableMs = deadlineAt - now() - PROFILE_PROOF_STOP_RESERVE_MS;
-    if (availableMs <= 0) break;
-    attempts += 1;
-    let session: FirecrawlPortalSession | undefined;
-    let verified = false;
-    let stopFailed = false;
-    try {
-      session = await openFirecrawlPortalSession(ctx, {
-        ...input,
-        path: "/",
-        saveChanges: false,
-        timeoutMs: Math.min(30_000, availableMs),
-      });
-      verified = await verifyControlledPortalContext({
-        client: session.primitives,
-        baseUrl: input.baseUrl,
-        adapterKey: input.adapterKey,
-      });
-    } catch {
-      // A busy/not-yet-persisted profile is retried only inside this bounded proof.
-    } finally {
-      if (session) {
-        try { await session.stop(); }
-        catch {
-          stopFailed = true;
-          if (input.cleanup) await scheduleContextCleanup(ctx, {
-            ...input.cleanup, provider: "firecrawl", providerSessionId: session.scrapeId,
-          }).catch(() => undefined);
-        }
-      }
-    }
-    if (verified && !stopFailed) return { verified: true, attempts };
-    const retryDelay = Math.min(PROFILE_PROOF_RETRY_BASE_MS * attempts, 10_000);
-    if (now() + retryDelay + PROFILE_PROOF_STOP_RESERVE_MS < deadlineAt) {
-      await new Promise((resolve) => setTimeout(resolve, retryDelay));
-    }
-  } while (now() < deadlineAt);
-  return { verified: false, attempts, errorCode: "CONTEXT_PROFILE_NOT_READY" };
 }
 
 /** Inspect an existing saved profile without registering, mutating, or resuming a stopped scrape. */
@@ -339,7 +338,7 @@ export async function inspectFirecrawlProfileForRecovery(
 ): Promise<FirecrawlProfileRecoveryInspection> {
   const now = input.now ?? Date.now;
   const deadlineAt = input.deadlineAt ?? now() + 30_000;
-  const availableMs = deadlineAt - now() - PROFILE_PROOF_STOP_RESERVE_MS;
+  const availableMs = deadlineAt - now() - RECOVERY_STOP_RESERVE_MS;
   if (availableMs <= 0) throw new Error("FIRECRAWL_RECOVERY_DEADLINE_EXCEEDED");
   let session: FirecrawlPortalSession | undefined;
   try {
@@ -349,22 +348,17 @@ export async function inspectFirecrawlProfileForRecovery(
       saveChanges: false,
       timeoutMs: Math.min(30_000, availableMs),
     });
-    let state = await session.primitives.extract({
-      instruction: "Inspect only the current reviewed portal page and classify its authentication state.",
-      schema: recoveryPageStateSchema,
-    });
-    if (!state.authenticated && state.stage !== "verification" && !state.blocker) {
-      await session.primitives.navigate({ url: new URL("/sign-up", input.baseUrl).toString() });
-      state = await session.primitives.extract({
-        instruction: "Inspect only the current reviewed signup page and classify whether the saved profile is already waiting for verification.",
-        schema: recoveryPageStateSchema,
-      });
+    let state: FirecrawlPortalPageState = await readFirecrawlPortalPageState({ session, path: "/" });
+    // Only a page that is neither signed in, nor already waiting for a code,
+    // nor blocked is worth a second look on the sign-up route.
+    if (!state.authenticated && state.stage !== "verification" && !state.captcha) {
+      state = await readFirecrawlPortalPageState({ session, path: "/sign-up" });
     }
     await session.stop();
     session = undefined;
     if (state.authenticated || state.stage === "authenticated") return { outcome: "authenticated" };
     if (state.stage === "verification") return { outcome: "awaiting_verification" };
-    if (state.blocker) return { outcome: "review", blocker: state.blocker };
+    if (state.captcha) return { outcome: "review", blocker: "captcha" };
     if (state.stage === "sign_in" || state.stage === "sign_up") return { outcome: "auth_needed" };
     return { outcome: "review" };
   } finally {
@@ -394,13 +388,8 @@ export const registrationPreflight = internalAction({
         profileName: `preflight_${crypto.randomUUID().replaceAll("-", "")}`,
         path: "/sign-up", saveChanges: false, timeoutMs: 30_000,
       });
-      phase = "get_url";
-      await session.primitives.getUrl();
       phase = "inspect";
-      const state = await session.primitives.extract({
-        instruction: "Classify only the current reviewed portal page without interacting with any form.",
-        schema: recoveryPageStateSchema,
-      });
+      const state = await readFirecrawlPortalPageState({ session, path: "/sign-up" });
       if (state.stage === "unknown") throw new Error("FIRECRAWL_PREFLIGHT_STAGE_UNKNOWN");
       phase = "stop";
       await session.stop();
@@ -408,9 +397,12 @@ export const registrationPreflight = internalAction({
       return { status: "ready" as const, stage: state.stage };
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
+      // The phase says where it stopped; the inner code says why, when our own
+      // program or the transport named one.
+      const inner = inboxSyncInnerCode(error);
       const errorCode = /^FIRECRAWL_[A-Z0-9_]{1,90}$/.test(message)
         ? message
-        : `FIRECRAWL_PREFLIGHT_${phase.toUpperCase()}_FAILED`;
+        : `FIRECRAWL_PREFLIGHT_${phase.toUpperCase()}_FAILED${inner === "UNKNOWN" ? "" : `:${inner}`}`;
       return { status: "failed" as const, phase, errorCode };
     } finally {
       await session?.stop().catch(() => undefined);
@@ -462,13 +454,13 @@ export async function executeFirecrawlApprovedWrite(
   for (let attempt = 0; ; attempt += 1) {
     let session: FirecrawlPortalSession;
     try {
-      session = await openFirecrawlPortalSession(ctx, { ...input, path, saveChanges: true, timeoutMs: 120_000 });
+      session = await openFirecrawlPortalSession(ctx, { ...input, path, saveChanges: firecrawlWriteSaveChanges(), timeoutMs: WRITE_SESSION_DEADLINE_MS });
     } catch (error) {
       const delayMs = WRITE_OPEN_RETRY_DELAYS_MS[attempt];
       const code = inboxSyncInnerCode(error);
       if (delayMs === undefined || !WRITE_OPEN_RETRYABLE_CODE.test(code)) {
         console.error("FIRECRAWL_PORTAL_WRITE_FAILED", { phase: "open", code, attempt });
-        throw new Error(`FIRECRAWL_PORTAL_WRITE_FAILED:${code}`, { cause: error });
+        throw new Error(`FIRECRAWL_PORTAL_WRITE_FAILED:${firecrawlErrorDetail(error, WRITE_FAILURE_ERROR_MAX)}`, { cause: error });
       }
       await new Promise((resolve) => setTimeout(resolve, delayMs));
       continue;
@@ -479,10 +471,8 @@ export async function executeFirecrawlApprovedWrite(
     let retryDelayMs: number | undefined;
     try {
       await input.onSessionOpened?.(session.scrapeId);
-      const result = await sendControlledPortalMessage({
-        client: session.primitives,
-        baseUrl: input.baseUrl,
-        adapterKey: input.adapterKey,
+      const result = await writeFirecrawlPortalMessage({
+        session,
         body: input.body,
         providerThreadId: input.providerThreadId,
         targetPath: input.targetPath,
@@ -499,7 +489,9 @@ export async function executeFirecrawlApprovedWrite(
       if (submissionMayHaveOccurred) {
         let profileStopFailed = false;
         try { await session.stop(); sessionStopped = true; } catch { profileStopFailed = true; await input.onStopFailure?.(session.scrapeId); cleanupScheduled = true; }
-        return { outcome: "unknown" as const, submitted: true, errorCode: "SUBMIT_RESULT_UNKNOWN", profileStopFailed };
+        // The click may have landed and the session is gone: no home
+        // observation exists, so the profile probe has nothing to go on.
+        return { outcome: "unknown" as const, submitted: true, errorCode: "SUBMIT_RESULT_UNKNOWN" as const, profileAuthenticated: undefined, profileStopFailed };
       }
       const code = inboxSyncInnerCode(error);
       const delayMs = WRITE_OPEN_RETRY_DELAYS_MS[attempt];
@@ -507,7 +499,7 @@ export async function executeFirecrawlApprovedWrite(
         retryDelayMs = delayMs;
       } else {
         console.error("FIRECRAWL_PORTAL_WRITE_FAILED", { phase: "prepare", code, attempt });
-        throw new Error(`FIRECRAWL_PORTAL_WRITE_FAILED:${code}`, { cause: error });
+        throw new Error(`FIRECRAWL_PORTAL_WRITE_FAILED:${firecrawlErrorDetail(error, WRITE_FAILURE_ERROR_MAX)}`, { cause: error });
       }
     } finally {
       if (!sessionStopped) {
@@ -661,63 +653,6 @@ const writeResultValidator = v.object({
   alreadyCompleted: v.boolean(),
 });
 
-type PendingWriteProof = {
-  ownerId: Id<"users">;
-  connectionId: Id<"portalConnections">;
-  contextId: Id<"browserContexts">;
-  executionId: Id<"actionExecutions">;
-  generation: number;
-  attempt: number;
-  deadlineAt: number;
-};
-
-async function runPendingWriteProfileProof(ctx: ActionCtx, input: PendingWriteProof): Promise<void> {
-  requireSelectedFirecrawl();
-  const pending: { profileName: string } | null = await ctx.runQuery(
-    internal.portalConnections.validatePendingWriteProfileProof,
-    {
-      ownerId: input.ownerId, connectionId: input.connectionId, contextId: input.contextId,
-      executionId: input.executionId, generation: input.generation, browserProvider: "firecrawl",
-    },
-  );
-  if (!pending) return;
-  const connection = await ctx.runQuery(internal.portalConnections.getConnectionForWorker, {
-    ownerId: input.ownerId, connectionId: input.connectionId,
-  });
-  if (!connection || connection.browserProvider !== "firecrawl") return;
-  const proof = await proveFirecrawlProfile(ctx, {
-    baseUrl: connection.baseUrl,
-    adapterKey: connection.adapterKey ?? "",
-    profileName: pending.profileName,
-    deadlineAt: Math.min(input.deadlineAt, Date.now() + 35_000),
-    cleanup: { ownerId: input.ownerId, connectionId: input.connectionId, contextId: input.contextId, purpose: "write_proof" },
-  });
-  const exhausted = Date.now() + PROFILE_PROOF_RETRY_BASE_MS >= input.deadlineAt;
-  await ctx.runMutation(internal.portalConnections.recordWriteContextProbe, {
-    ownerId: input.ownerId, connectionId: input.connectionId, contextId: input.contextId,
-    executionId: input.executionId, browserProvider: "firecrawl", generation: input.generation,
-    success: proof.verified, errorCode: proof.errorCode, attempt: input.attempt,
-    deadlineAt: proof.verified ? undefined : exhausted ? Date.now() : input.deadlineAt,
-  });
-  if (!proof.verified && !exhausted) {
-    await ctx.scheduler.runAfter(
-      Math.min(PROFILE_PROOF_RETRY_BASE_MS * input.attempt, 10_000),
-      internal.firecrawlPortal.retryWriteProfileProof,
-      { ...input, attempt: input.attempt + 1 },
-    );
-  }
-}
-
-export const retryWriteProfileProof = internalAction({
-  args: {
-    ownerId: v.id("users"), connectionId: v.id("portalConnections"),
-    contextId: v.id("browserContexts"), executionId: v.id("actionExecutions"),
-    generation: v.number(), attempt: v.number(), deadlineAt: v.number(),
-  },
-  returns: v.null(),
-  handler: async (ctx, args) => { await runPendingWriteProfileProof(ctx, args); return null; },
-});
-
 async function executeWriteForOwner(ctx: ActionCtx, ownerId: Id<"users">, requestId: Id<"actionRequests">): Promise<WriteResult> {
   requireSelectedFirecrawl();
   const gate = await ctx.runMutation(internal.externalActions.prepareClaim, { ownerId, requestId, executor: "browserbase" });
@@ -743,36 +678,28 @@ async function executeWriteForOwner(ctx: ActionCtx, ownerId: Id<"users">, reques
     { ownerId, connectionId: connection.connectionId, executionId: claim.executionId, browserProvider: "firecrawl" },
   );
   let proofRecorded = false;
-  const refreshProfile = async (stopFailed: boolean) => {
-    const deadlineAt = Date.now() + WRITE_PROFILE_PROOF_DEADLINE_MS;
+  /**
+   * The profile proof no longer opens a second session (plan S3): the send
+   * program ends on `/` and reports whether Clerk is still authenticated there.
+   * Without that observation the profile is unchanged when the session was
+   * opened read-only, so it stays ready; with `FIRECRAWL_WRITE_SAVE_CHANGES`
+   * on, an unobserved run is treated as unproven.
+   */
+  const recordProfileProbe = async (probe: { authenticated?: boolean; stopFailed: boolean }) => {
+    const success = !probe.stopFailed && (
+      probe.authenticated === true ||
+      (probe.authenticated === undefined && !firecrawlWriteSaveChanges())
+    );
+    const errorCode = probe.stopFailed ? "CONTEXT_PROFILE_STOP_FAILED" : "CONTEXT_PROFILE_NOT_READY";
     try {
-      if (stopFailed) {
-        await ctx.runMutation(internal.portalConnections.recordWriteContextProbe, {
-          ownerId, connectionId: connection.connectionId, contextId: pendingProof.contextId,
-          executionId: claim.executionId, browserProvider: "firecrawl", generation: pendingProof.generation,
-          success: false, errorCode: "CONTEXT_PROFILE_STOP_FAILED", attempt: 1, deadlineAt,
-        });
-        await ctx.scheduler.runAfter(PROFILE_PROOF_RETRY_BASE_MS, internal.firecrawlPortal.retryWriteProfileProof, {
-          ownerId, connectionId: connection.connectionId, contextId: pendingProof.contextId,
-          executionId: claim.executionId, generation: pendingProof.generation, attempt: 2, deadlineAt,
-        });
-      } else {
-        const proof = await proveFirecrawlProfile(ctx, {
-          baseUrl: connection.baseUrl, adapterKey: connection.adapterKey ?? "",
-          profileName: pendingProof.profileName, deadlineAt: Math.min(deadlineAt, Date.now() + 35_000),
-          cleanup: { ownerId, connectionId: connection.connectionId, contextId: pendingProof.contextId, purpose: "write_proof" },
-        });
-        await ctx.runMutation(internal.portalConnections.recordWriteContextProbe, {
-          ownerId, connectionId: connection.connectionId, contextId: pendingProof.contextId,
-          executionId: claim.executionId, browserProvider: "firecrawl", generation: pendingProof.generation,
-          success: proof.verified, errorCode: proof.errorCode, attempt: proof.attempts,
-          deadlineAt: proof.verified ? undefined : deadlineAt,
-        });
-        if (!proof.verified) await ctx.scheduler.runAfter(PROFILE_PROOF_RETRY_BASE_MS, internal.firecrawlPortal.retryWriteProfileProof, {
-          ownerId, connectionId: connection.connectionId, contextId: pendingProof.contextId,
-          executionId: claim.executionId, generation: pendingProof.generation, attempt: 2, deadlineAt,
-        });
-      }
+      await ctx.runMutation(internal.portalConnections.recordWriteContextProbe, {
+        ownerId, connectionId: connection.connectionId, contextId: pendingProof.contextId,
+        executionId: claim.executionId, browserProvider: "firecrawl", generation: pendingProof.generation,
+        success, errorCode: success ? undefined : errorCode, attempt: 1,
+        // There is no second attempt left to wait for, so a failed probe is
+        // immediately exhausted and the connection asks for reconnection.
+        deadlineAt: success ? undefined : Date.now(),
+      });
       proofRecorded = true;
     } catch {
       // The context remains non-ready. Delivery state is intentionally independent.
@@ -799,12 +726,12 @@ async function executeWriteForOwner(ctx: ActionCtx, ownerId: Id<"users">, reques
     });
     if (result.outcome === "human_required") {
       await ctx.runMutation(internal.externalActions.finishExecution, { ownerId, executionId: claim.executionId, status: "failed", error: `FIRECRAWL_${result.blocker.toUpperCase()}_REQUIRES_HUMAN` });
-      await refreshProfile(result.profileStopFailed);
+      await recordProfileProbe({ authenticated: result.profileAuthenticated, stopFailed: result.profileStopFailed });
       return { executionId: claim.executionId, status: "human_required" as const, blocker: result.blocker, alreadyCompleted: false };
     }
     if (result.outcome === "unknown") {
       await ctx.runMutation(internal.externalActions.finishExecution, { ownerId, executionId: claim.executionId, status: "unknown", error: result.errorCode });
-      await refreshProfile(result.profileStopFailed);
+      await recordProfileProbe({ authenticated: result.profileAuthenticated, stopFailed: result.profileStopFailed });
       return { executionId: claim.executionId, status: "unknown" as const, alreadyCompleted: false };
     }
     deliveryConfirmed = true;
@@ -816,22 +743,13 @@ async function executeWriteForOwner(ctx: ActionCtx, ownerId: Id<"users">, reques
       subject: claim.payload.subject, bodyText: claim.payload.body, sentAt: Date.now(),
     });
     await ctx.runMutation(internal.externalActions.finishExecution, { ownerId, executionId: claim.executionId, status: "succeeded", providerThreadId: result.providerThreadId, providerMessageId: result.providerMessageId });
-    await refreshProfile(result.profileStopFailed);
+    await recordProfileProbe({ authenticated: result.profileAuthenticated, stopFailed: result.profileStopFailed });
     return { executionId: claim.executionId, status: "succeeded" as const, alreadyCompleted: false };
   } catch (error) {
-    if (!proofRecorded) {
-      const deadlineAt = Date.now() + WRITE_PROFILE_PROOF_DEADLINE_MS;
-      await ctx.runMutation(internal.portalConnections.recordWriteContextProbe, {
-        ownerId, connectionId: connection.connectionId, contextId: pendingProof.contextId,
-        executionId: claim.executionId, browserProvider: "firecrawl", generation: pendingProof.generation,
-        success: false, errorCode: "CONTEXT_PROFILE_NOT_READY", attempt: 1,
-        deadlineAt,
-      }).catch(() => undefined);
-      await ctx.scheduler.runAfter(PROFILE_PROOF_RETRY_BASE_MS, internal.firecrawlPortal.retryWriteProfileProof, {
-        ownerId, connectionId: connection.connectionId, contextId: pendingProof.contextId,
-        executionId: claim.executionId, generation: pendingProof.generation, attempt: 2, deadlineAt,
-      }).catch(() => undefined);
-    }
+    // The write threw before any home observation. The session carried no
+    // profile changes unless the save switch is on, so the probe decides from
+    // that alone; there is no scheduled retry to wait for any more.
+    if (!proofRecorded) await recordProfileProbe({ stopFailed: false });
     if (deliveryConfirmed && confirmedReceipt) {
       try {
         await ctx.runMutation(internal.externalActions.finishExecution, { ownerId, executionId: claim.executionId, status: "succeeded", ...confirmedReceipt });
@@ -842,7 +760,9 @@ async function executeWriteForOwner(ctx: ActionCtx, ownerId: Id<"users">, reques
     }
     const message = error instanceof Error ? error.message : "FIRECRAWL_PORTAL_WRITE_FAILED";
     if (message !== "SUBMIT_RESULT_UNKNOWN") {
-      await ctx.runMutation(internal.externalActions.finishExecution, { ownerId, executionId: claim.executionId, status: "failed", error: "FIRECRAWL_PORTAL_WRITE_FAILED" });
+      // The full reason, not the bare label: without it a production failure is
+      // unreadable in the execution record.
+      await ctx.runMutation(internal.externalActions.finishExecution, { ownerId, executionId: claim.executionId, status: "failed", error: firecrawlWriteFailureError(error) });
     }
     throw error;
   } finally {
@@ -983,24 +903,31 @@ export async function startAgentRegistrationForOwner(ctx: ActionCtx, ownerId: Id
     const mailbox = await ctx.runAction(internal.mailboxes.ensureForOwner, { ownerId });
     if (mailbox.status !== "active") throw new ConvexError({ code: mailbox.status === "pending" ? "AGENTMAIL_PROVISIONING" : "AGENTMAIL_NOT_CONFIGURED" });
     phase = "session_open";
-    session = await openFirecrawlPortalSession(ctx, { baseUrl: connection.baseUrl, adapterKey: connection.adapterKey, profileName, path: "/sign-up", saveChanges: true, timeoutMs: Math.min(45_000, remainingRunMs(deadlineAt)) });
+    // The session stays open across the AgentMail wait, so its budget is the
+    // run's, not one program's; every program inside carries its own timeout.
+    session = await openFirecrawlPortalSession(ctx, { baseUrl: connection.baseUrl, adapterKey: connection.adapterKey, profileName, path: "/sign-up", saveChanges: true, timeoutMs: Math.min(REGISTRATION_SESSION_DEADLINE_MS, remainingRunMs(deadlineAt)) });
     phase = "run_attach";
     await ctx.runMutation(internal.portalConnections.attachProviderRun, { runId, ownerId, providerSessionId: session.scrapeId, providerContextId: profileName, browserProvider: "firecrawl", humanRequired: false });
     phase = "progress";
     await ctx.runMutation(internal.portalConnections.markAgentOnboardingState, { ownerId, runId, stage: "opening_signup", mailboxId: mailbox.mailboxId, pollAttempt: 0, humanRequired: false, eventMessage: "AGENT_SIGNUP_OPENED" });
-    phase = "driver";
-    const access = await ensureControlledPortalRegistration({ client: session.primitives, email: mailbox.emailAddress, password: `Rs!${crypto.randomUUID().replaceAll("-", "")}aA1` });
+    phase = "signup";
+    // One program: terms gate, both fields, the exact readback, one submit and
+    // the OTP field awaited inside the sandbox (plan S4).
+    const access = await signUpOnFirecrawlPortal({ session, email: mailbox.emailAddress, password: `Rs!${crypto.randomUUID().replaceAll("-", "")}aA1` });
     remainingRunMs(deadlineAt);
     if (access.outcome === "human_required") {
       await ctx.runMutation(internal.portalConnections.markAgentOnboardingState, { ownerId, runId, stage: "human_required", mailboxId: mailbox.mailboxId, humanRequired: true, eventMessage: `SIGNUP_${access.blocker.toUpperCase()}_REQUIRES_HUMAN` });
       return { runId, status: "human_required" as const };
     }
+    // A field that did not read back exactly is a timing fault on a form that
+    // was never submitted, so it fails the run instead of asking for a human.
+    if (access.outcome === "mismatch") throw new Error("FIRECRAWL_SIGNUP_VALUE_MISMATCH");
     if (access.outcome === "authenticated") {
       phase = "session_stop";
       await stopRegistrationSession(ctx, session, { ownerId, runId });
       session = undefined;
       phase = "profile_proof";
-      return await finishRegistrationWithProof(ctx, { ownerId, runId, connectionId, baseUrl: connection.baseUrl, adapterKey: connection.adapterKey, profileName, deadlineAt });
+      return await finishRegistrationWithProof(ctx, { ownerId, runId, connectionId, authenticated: true, deadlineAt });
     }
     // OTP continuation runs INLINE in the same Firecrawl session. A Firecrawl
     // scrape-bound session cannot be reconnected, and Clerk's in-progress
@@ -1017,7 +944,7 @@ export async function startAgentRegistrationForOwner(ctx: ActionCtx, ownerId: Id
       receivedAfter: verificationRequestedAt,
       portalDomain: new URL(connection.baseUrl).hostname,
       deadlineAt,
-      keepAlive: async () => { await session!.primitives.getUrl().catch(() => undefined); },
+      keepAlive: async () => { await session!.runProgram(FIRECRAWL_PORTAL_URL_PROGRAM, {}, false, KEEPALIVE_TIMEOUT_MS).catch(() => undefined); },
     });
     if (!verification) {
       await ctx.runMutation(internal.portalConnections.markAgentOnboardingState, { ownerId, runId, stage: "human_required", mailboxId: mailbox.mailboxId, pollAttempt: ONBOARDING_MAX_POLLS, humanRequired: true, eventMessage: "VERIFICATION_EMAIL_NOT_FOUND" });
@@ -1028,18 +955,32 @@ export async function startAgentRegistrationForOwner(ctx: ActionCtx, ownerId: Id
     // Stagehand inline path omits it too).
     await ctx.runMutation(internal.portalConnections.markAgentOnboardingState, { ownerId, runId, stage: "submitting_verification", mailboxId: mailbox.mailboxId, humanRequired: false, eventMessage: "VERIFICATION_CODE_RECEIVED" });
     remainingRunMs(deadlineAt);
-    const verified = await ensureControlledPortalRegistration({ client: session.primitives, verificationCode: verification.code });
-    if (verified.outcome !== "authenticated") {
-      await ctx.runMutation(internal.portalConnections.markAgentOnboardingState, { ownerId, runId, stage: "human_required", mailboxId: mailbox.mailboxId, humanRequired: true, eventMessage: verified.outcome === "human_required" && verified.blocker ? `VERIFICATION_${verified.blocker.toUpperCase()}_REQUIRES_HUMAN` : "VERIFICATION_REQUIRES_HUMAN" });
+    phase = "verification";
+    // Second and last program of the registration: fill the code, submit once,
+    // and wait for Clerk's authenticated session inside the sandbox.
+    const verified = await submitFirecrawlPortalVerification({ session, code: verification.code });
+    if (!verified.authenticated) {
+      await ctx.runMutation(internal.portalConnections.markAgentOnboardingState, { ownerId, runId, stage: "human_required", mailboxId: mailbox.mailboxId, humanRequired: true, eventMessage: "VERIFICATION_REQUIRES_HUMAN" });
       return { runId, status: "human_required" as const };
     }
     phase = "session_stop";
     await stopRegistrationSession(ctx, session, { ownerId, runId });
     session = undefined;
     phase = "profile_proof";
-    return await finishRegistrationWithProof(ctx, { ownerId, runId, connectionId, baseUrl: connection.baseUrl, adapterKey: connection.adapterKey, profileName, deadlineAt });
+    // The authenticated session observed by the verification program IS the
+    // proof (plan S3/S4); no second session is opened on the saved profile.
+    return await finishRegistrationWithProof(ctx, { ownerId, runId, connectionId, authenticated: true, deadlineAt });
   } catch (error) {
     const errorCode = firecrawlRegistrationFailureCode(error, phase);
+    // The phase code names the step; the session's own last failure names the
+    // cause, so it is recorded on the run timeline next to it.
+    const innerCode = session?.lastErrorCode?.() ?? null;
+    if (innerCode !== null && innerCode !== errorCode) {
+      await ctx.runMutation(internal.portalConnections.markAgentOnboardingState, {
+        ownerId, runId, stage: "failed", humanRequired: false,
+        eventMessage: `${errorCode}:${innerCode}`,
+      }).catch(() => undefined);
+    }
     await ctx.runMutation(internal.portalConnections.finishRun, { runId, status: "failed", errorCode });
     throw new ConvexError({ code: errorCode });
   } finally {
@@ -1047,19 +988,26 @@ export async function startAgentRegistrationForOwner(ctx: ActionCtx, ownerId: Id
   }
 }
 
-async function finishRegistrationWithProof(ctx: ActionCtx, input: { ownerId: Id<"users">; runId: Id<"browserRuns">; connectionId: Id<"portalConnections">; baseUrl: string; adapterKey: string; profileName: string; deadlineAt?: number }) {
+/**
+ * Close the registration run on the proof the registration session itself
+ * produced. The authenticated Clerk session observed by the last program is the
+ * proof (plan S3/S4); a second session on the same profile only ever created
+ * the 409 it then reported as `CONTEXT_PROFILE_NOT_READY`.
+ */
+async function finishRegistrationWithProof(ctx: ActionCtx, input: { ownerId: Id<"users">; runId: Id<"browserRuns">; connectionId: Id<"portalConnections">; authenticated: boolean; deadlineAt?: number }) {
   const context = await ctx.runQuery(internal.portalConnections.getContextForOwner, { ownerId: input.ownerId, connectionId: input.connectionId });
   if (!context || context.browserProvider !== "firecrawl") throw new Error("PORTAL_BROWSER_PROVIDER_MISMATCH");
   const run = input.deadlineAt === undefined ? await ctx.runQuery(internal.portalConnections.getRunForOwner, { ownerId: input.ownerId, runId: input.runId }) : null;
   const deadlineAt = input.deadlineAt ?? run?.expiresAt;
   if (!deadlineAt) throw new Error("RUN_NOT_FOUND");
   remainingRunMs(deadlineAt);
-  const proof = await proveFirecrawlProfile(ctx, {
-    ...input, deadlineAt: Math.min(deadlineAt, Date.now() + PROFILE_PROOF_DEADLINE_MS),
-    cleanup: { ownerId: input.ownerId, connectionId: input.connectionId, contextId: context.contextId, purpose: "profile_proof" },
+  await ctx.runMutation(internal.portalConnections.recordContextProbeResult, {
+    ownerId: input.ownerId, connectionId: input.connectionId, contextId: context.contextId, runId: input.runId,
+    browserProvider: "firecrawl", success: input.authenticated,
+    errorCode: input.authenticated ? undefined : "CONTEXT_PROFILE_NOT_READY",
+    attempt: 1, deadlineAt: Date.now(),
   });
-  await ctx.runMutation(internal.portalConnections.recordContextProbeResult, { ownerId: input.ownerId, connectionId: input.connectionId, contextId: context.contextId, runId: input.runId, browserProvider: "firecrawl", success: proof.verified, errorCode: proof.errorCode, attempt: proof.attempts, deadlineAt: Date.now() });
-  if (!proof.verified) throw new Error("CONTEXT_PROFILE_NOT_READY");
+  if (!input.authenticated) throw new Error("CONTEXT_PROFILE_NOT_READY");
   await ctx.runMutation(internal.portalConnections.finishRun, { runId: input.runId, status: "completed", resultCount: 1, contextReady: true });
   return { runId: input.runId, status: "completed" as const };
 }
@@ -1128,10 +1076,10 @@ export const continueAgentRegistration = internalAction({
         await ctx.runMutation(internal.portalConnections.finishRun, { runId: run.runId, status: "failed", errorCode: "VERIFICATION_REQUIRES_HUMAN", reauthRequired: true });
         return null;
       }
-      await finishRegistrationWithProof(ctx, { ownerId: args.ownerId, runId: run.runId, connectionId: run.connectionId, baseUrl: connection.baseUrl, adapterKey: connection.adapterKey ?? "", profileName: context.providerContextId, deadlineAt: run.expiresAt });
+      await finishRegistrationWithProof(ctx, { ownerId: args.ownerId, runId: run.runId, connectionId: run.connectionId, authenticated: true, deadlineAt: run.expiresAt });
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
-      const errorCode = /^(CONTROLLED_REGISTRATION|FIRECRAWL_)[A-Z0-9_]{1,90}$/.test(message)
+      const errorCode = /^FIRECRAWL_[A-Z0-9_]{1,90}$/.test(message)
         ? message
         : "FIRECRAWL_VERIFICATION_FAILED";
       await ctx.runMutation(internal.portalConnections.finishRun, { runId: run.runId, status: "failed", errorCode, reauthRequired: true });

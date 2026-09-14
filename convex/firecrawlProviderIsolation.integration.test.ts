@@ -13,6 +13,9 @@ const providerSpies = vi.hoisted(() => ({
   register: vi.fn(),
   verify: vi.fn(),
   send: vi.fn(),
+  signUp: vi.fn(),
+  submitCode: vi.fn(),
+  pageState: vi.fn(),
 }));
 
 vi.mock("./integrations/firecrawlPortalRuntime", async (importOriginal) => ({
@@ -38,7 +41,17 @@ vi.mock("./integrations/stagehandPortalDriver", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./integrations/stagehandPortalDriver")>()),
   ensureControlledPortalRegistration: providerSpies.register,
   verifyControlledPortalContext: providerSpies.verify,
-  sendControlledPortalMessage: providerSpies.send,
+}));
+
+// The Firecrawl write, registration and page-state paths are program-native:
+// what they delegate to lives in the engine, not in the reviewed Browserbase
+// driver (which stays mocked above for the Browserbase-selected cases).
+vi.mock("./integrations/firecrawlPortalEngine", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./integrations/firecrawlPortalEngine")>()),
+  writeFirecrawlPortalMessage: providerSpies.send,
+  signUpOnFirecrawlPortal: providerSpies.signUp,
+  submitFirecrawlPortalVerification: providerSpies.submitCode,
+  readFirecrawlPortalPageState: providerSpies.pageState,
 }));
 
 const modules = import.meta.glob("./**/*.ts");
@@ -223,28 +236,27 @@ describe("exclusive controlled-portal provider isolation", () => {
     expect(providerSpies.firecrawlCreateSession).not.toHaveBeenCalled();
   });
 
-  it("stops the writable registration session before opening the fresh proof session", async () => {
+  it("closes the writable registration session and opens no second proof session", async () => {
     vi.stubEnv("PORTAL_BROWSER_ENGINE", "firecrawl");
     const fixture = await portalFixture("firecrawl");
     await fixture.t.run((ctx) => ctx.db.patch(fixture.connectionId, { status: "needs_auth" }));
     const events: string[] = [];
     const registrationSession = {
-      scrapeId: "registration", profileName: "profile", openedAt: 1, primitives: {},
-      stop: vi.fn(async () => { events.push("registration-stop"); }), liveView: vi.fn(), runProgram: vi.fn(),
-    };
-    const proofSession = {
-      scrapeId: "proof", profileName: "profile", openedAt: 2, primitives: {},
-      stop: vi.fn(async () => undefined), liveView: vi.fn(), runProgram: vi.fn(),
+      scrapeId: "registration", profileName: "profile", openedAt: 1,
+      stop: vi.fn(async () => { events.push("registration-stop"); }), liveView: vi.fn(),
+      lastErrorCode: vi.fn(() => null), runProgram: vi.fn(),
     };
     providerSpies.firecrawlCreateSession
-      .mockImplementationOnce(async () => { events.push("registration-open"); return registrationSession; })
-      .mockImplementationOnce(async () => { events.push("proof-open"); return proofSession; });
-    providerSpies.register.mockResolvedValueOnce({ outcome: "authenticated" });
-    providerSpies.verify.mockResolvedValueOnce(true);
+      .mockImplementationOnce(async () => { events.push("registration-open"); return registrationSession; });
+    providerSpies.signUp.mockResolvedValueOnce({ outcome: "authenticated", url: "https://roomscout.dev/" });
 
     await expect(fixture.owner.action(api.firecrawlPortal.startAgentRegistration, { connectionId: fixture.connectionId }))
       .resolves.toMatchObject({ status: "completed" });
-    expect(events).toEqual(["registration-open", "registration-stop", "proof-open"]);
+    // The authenticated sign-up program IS the proof; the second session that
+    // used to fight the first one for the profile write lock is gone.
+    expect(events).toEqual(["registration-open", "registration-stop"]);
+    expect(providerSpies.firecrawlCreateSession).toHaveBeenCalledOnce();
+    expect(providerSpies.verify).not.toHaveBeenCalled();
   });
 
   it("dispatches the exported compatibility registration entrypoint through Firecrawl proof", async () => {
@@ -252,20 +264,16 @@ describe("exclusive controlled-portal provider isolation", () => {
     const fixture = await portalFixture("firecrawl");
     await fixture.t.run((ctx) => ctx.db.patch(fixture.connectionId, { status: "needs_auth" }));
     const registrationSession = {
-      scrapeId: "registration-exported", profileName: "profile", openedAt: 1, primitives: {},
-      stop: vi.fn(async () => undefined), liveView: vi.fn(), runProgram: vi.fn(),
+      scrapeId: "registration-exported", profileName: "profile", openedAt: 1,
+      stop: vi.fn(async () => undefined), liveView: vi.fn(),
+      lastErrorCode: vi.fn(() => null), runProgram: vi.fn(),
     };
-    const proofSession = {
-      scrapeId: "proof-exported", profileName: "profile", openedAt: 2, primitives: {},
-      stop: vi.fn(async () => undefined), liveView: vi.fn(), runProgram: vi.fn(),
-    };
-    providerSpies.firecrawlCreateSession.mockResolvedValueOnce(registrationSession).mockResolvedValueOnce(proofSession);
-    providerSpies.register.mockResolvedValueOnce({ outcome: "authenticated" });
-    providerSpies.verify.mockResolvedValueOnce(true);
+    providerSpies.firecrawlCreateSession.mockResolvedValueOnce(registrationSession);
+    providerSpies.signUp.mockResolvedValueOnce({ outcome: "authenticated", url: "https://roomscout.dev/" });
 
     await expect(fixture.owner.action(api.browserbasePortal.startAgentRegistration, { connectionId: fixture.connectionId }))
       .resolves.toMatchObject({ status: "completed" });
-    expect(providerSpies.firecrawlCreateSession).toHaveBeenCalledTimes(2);
+    expect(providerSpies.firecrawlCreateSession).toHaveBeenCalledTimes(1);
     expect(providerSpies.browserbaseLaunch).not.toHaveBeenCalled();
     const { connection, context } = await fixture.t.run(async (ctx) => {
       const [connection, context] = await Promise.all([
@@ -310,18 +318,20 @@ describe("exclusive controlled-portal provider isolation", () => {
     const fixture = await portalFixture("firecrawl");
     const preflightSession = {
       scrapeId: "preflight", profileName: "preflight", openedAt: 1,
-      primitives: {
-        getUrl: vi.fn(async () => "https://roomscout.dev/sign-up"),
-        extract: vi.fn(async () => ({ authenticated: false, stage: "sign_up", blocker: null })),
-      },
-      stop: vi.fn(async () => undefined), liveView: vi.fn(), runProgram: vi.fn(),
+      stop: vi.fn(async () => undefined), liveView: vi.fn(),
+      lastErrorCode: vi.fn(() => null), runProgram: vi.fn(),
     };
     providerSpies.firecrawlCreateSession.mockResolvedValueOnce(preflightSession);
+    providerSpies.pageState.mockResolvedValueOnce({
+      url: "https://roomscout.dev/sign-up", authenticated: false, stage: "sign_up",
+      hasPasswordField: true, hasCodeField: false, captcha: false,
+    });
     const preflight = makeFunctionReference<"action">("firecrawlPortal:registrationPreflight");
     await expect(fixture.t.action(preflight, { ownerId: fixture.ownerId, connectionId: fixture.connectionId }))
       .resolves.toEqual({ status: "ready", stage: "sign_up" });
-    expect(providerSpies.register).not.toHaveBeenCalled();
+    expect(providerSpies.signUp).not.toHaveBeenCalled();
     expect(providerSpies.firecrawlCreateSession).toHaveBeenCalledWith(expect.objectContaining({ saveChanges: false }));
+    expect(providerSpies.pageState).toHaveBeenCalledWith(expect.objectContaining({ path: "/sign-up" }));
     expect(preflightSession.stop).toHaveBeenCalledOnce();
   });
 
@@ -330,18 +340,19 @@ describe("exclusive controlled-portal provider isolation", () => {
     const fixture = await portalFixture("firecrawl");
     const preflightSession = {
       scrapeId: "preflight-unknown", profileName: "preflight-unknown", openedAt: 1,
-      primitives: {
-        getUrl: vi.fn(async () => "https://roomscout.dev/unclassified"),
-        extract: vi.fn(async () => ({ authenticated: false, stage: "unknown", blocker: null })),
-      },
-      stop: vi.fn(async () => undefined), liveView: vi.fn(), runProgram: vi.fn(),
+      stop: vi.fn(async () => undefined), liveView: vi.fn(),
+      lastErrorCode: vi.fn(() => null), runProgram: vi.fn(),
     };
     providerSpies.firecrawlCreateSession.mockResolvedValueOnce(preflightSession);
+    providerSpies.pageState.mockResolvedValueOnce({
+      url: "https://roomscout.dev/unclassified", authenticated: false, stage: "unknown",
+      hasPasswordField: false, hasCodeField: false, captcha: false,
+    });
     const preflight = makeFunctionReference<"action">("firecrawlPortal:registrationPreflight");
 
     await expect(fixture.t.action(preflight, { ownerId: fixture.ownerId, connectionId: fixture.connectionId }))
       .resolves.toEqual({ status: "failed", phase: "inspect", errorCode: "FIRECRAWL_PREFLIGHT_STAGE_UNKNOWN" });
-    expect(providerSpies.register).not.toHaveBeenCalled();
+    expect(providerSpies.signUp).not.toHaveBeenCalled();
     expect(preflightSession.stop).toHaveBeenCalledOnce();
   });
 
@@ -349,7 +360,7 @@ describe("exclusive controlled-portal provider isolation", () => {
     vi.stubEnv("PORTAL_BROWSER_ENGINE", "firecrawl");
     const fixture = await portalFixture("firecrawl");
     const writeSession = {
-      scrapeId: "write", profileName: "profile", openedAt: 1, primitives: {},
+      scrapeId: "write", profileName: "profile", openedAt: 1,
       stop: vi.fn(async () => { throw new Error("PROFILE_STOP_FAILED"); }), liveView: vi.fn(), runProgram: vi.fn(),
     };
     providerSpies.firecrawlCreateSession.mockResolvedValueOnce(writeSession);
@@ -375,17 +386,14 @@ describe("exclusive controlled-portal provider isolation", () => {
     vi.stubEnv("PORTAL_BROWSER_ENGINE", "firecrawl");
     const fixture = await portalFixture("firecrawl");
     const writeSession = {
-      scrapeId: "write-unknown", profileName: "profile", openedAt: 1, primitives: {},
+      scrapeId: "write-unknown", profileName: "profile", openedAt: 1,
       stop: vi.fn(async () => undefined), liveView: vi.fn(), runProgram: vi.fn(),
     };
-    providerSpies.firecrawlCreateSession.mockResolvedValueOnce(writeSession).mockResolvedValue({
-      ...writeSession, scrapeId: "proof", primitives: {},
-    });
+    providerSpies.firecrawlCreateSession.mockResolvedValueOnce(writeSession);
     providerSpies.send.mockImplementationOnce(async ({ beforeSubmit }) => {
       await beforeSubmit();
       throw new Error("connection lost after click");
     });
-    providerSpies.verify.mockResolvedValueOnce(true);
 
     await expect(fixture.t.action(internal.firecrawlPortal.executeApprovedWriteForOwner, {
       ownerId: fixture.ownerId, requestId: fixture.requestId,
@@ -396,7 +404,9 @@ describe("exclusive controlled-portal provider isolation", () => {
       ownerId: fixture.ownerId, requestId: fixture.requestId,
     });
     expect(again).toMatchObject({ status: "unknown", alreadyCompleted: true });
-    expect(providerSpies.firecrawlCreateSession).toHaveBeenCalledTimes(2);
+    // One session for the whole write: the profile proof is the send program's
+    // own last navigation, so no second session is opened afterwards.
+    expect(providerSpies.firecrawlCreateSession).toHaveBeenCalledTimes(1);
   });
 
   it("binds post-write readiness proof to the exact execution generation", async () => {
@@ -459,14 +469,18 @@ describe("exclusive controlled-portal provider isolation", () => {
     });
     const recoverySession = {
       scrapeId: "recovery", profileName: "firecrawl-profile", openedAt: 1,
-      primitives: { extract: vi.fn(async () => ({ authenticated: true, stage: "authenticated", blocker: null })) },
-      stop: vi.fn(async () => undefined), liveView: vi.fn(), runProgram: vi.fn(),
+      stop: vi.fn(async () => undefined), liveView: vi.fn(),
+      lastErrorCode: vi.fn(() => null), runProgram: vi.fn(),
     };
     providerSpies.firecrawlCreateSession.mockResolvedValueOnce(recoverySession);
+    providerSpies.pageState.mockResolvedValueOnce({
+      url: "https://roomscout.dev/", authenticated: true, stage: "authenticated",
+      hasPasswordField: false, hasCodeField: false, captcha: false,
+    });
 
     await expect(fixture.owner.action(api.firecrawlPortal.recoverProfile, { connectionId: fixture.connectionId }))
       .resolves.toEqual({ status: "completed" });
-    expect(providerSpies.register).not.toHaveBeenCalled();
+    expect(providerSpies.signUp).not.toHaveBeenCalled();
     expect(providerSpies.firecrawlCreateSession).toHaveBeenCalledWith(expect.objectContaining({
       profileName: "firecrawl-profile", saveChanges: false,
     }));
@@ -514,13 +528,14 @@ describe("exclusive controlled-portal provider isolation", () => {
     });
     providerSpies.firecrawlCreateSession.mockResolvedValueOnce({
       scrapeId: "otp-session", profileName: "firecrawl-profile", openedAt: now,
-      primitives: {}, stop: vi.fn(async () => undefined), liveView: vi.fn(), runProgram: vi.fn(),
+      stop: vi.fn(async () => undefined), liveView: vi.fn(),
+      lastErrorCode: vi.fn(() => null), runProgram: vi.fn(),
     });
-    providerSpies.register.mockRejectedValueOnce(new Error("FIRECRAWL_PORTAL_INTERACT_REQUEST_REJECTED"));
+    providerSpies.submitCode.mockRejectedValueOnce(new Error("FIRECRAWL_PORTAL_INTERACT_REQUEST_REJECTED"));
 
     await fixture.t.action(internal.firecrawlPortal.continueAgentRegistration, { ownerId: fixture.ownerId, runId });
 
-    expect(providerSpies.register).toHaveBeenCalledWith(expect.objectContaining({ verificationCode: "123456" }));
+    expect(providerSpies.submitCode).toHaveBeenCalledWith(expect.objectContaining({ code: "123456" }));
     const { run, events } = await fixture.t.run(async (ctx) => ({
       run: await ctx.db.get(runId),
       events: await ctx.db.query("browserRunEvents").withIndex("by_run", (q) => q.eq("runId", runId)).collect(),

@@ -102,21 +102,24 @@ describe("Interact extension", () => {
     });
   });
 
-  test("normalizes owned marker output without exposing provider diagnostics", async () => {
+  test("normalizes owned marker output and keeps the provider error channels closed", async () => {
     const t = initConvexTest();
     mockFetch([{ body: {
       success: true, result: "undefined", exitCode: 0,
-      stdout: 'sensitive provider diagnostic\n__ROOMSCOUT_RESULT__{"stage":"sign_up"}\nmore diagnostics',
+      stdout: 'provider diagnostic\n__ROOMSCOUT_RESULT__{"stage":"sign_up"}\nmore diagnostics',
       stderr: "sensitive stderr",
+      error: "sensitive error",
     } }]);
 
     const envelope = await t.action(api.interact.execute, {
       jobId: "job-1", code: "return { stage: 'sign_up' };", mutating: false,
     });
 
-    expect(envelope).toEqual({ success: true, result: '{"stage":"sign_up"}', exitCode: 0 });
+    // The marker line is the result; the stdout tail travels with it so the
+    // app-layer parser can scan for the marker itself and diagnostics survive.
+    expect(envelope).toMatchObject({ success: true, result: '{"stage":"sign_up"}', exitCode: 0 });
+    expect(envelope.stdout).toContain("more diagnostics");
     expect(JSON.stringify(envelope)).not.toContain("sensitive");
-    expect(JSON.stringify(envelope)).not.toContain("diagnostics");
   });
 
   test("does not automatically replay a mutating Interact program", async () => {

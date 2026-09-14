@@ -1,6 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import {
   internalMutation,
   internalQuery,
@@ -29,13 +29,26 @@ const connectionStatusValidator = v.union(
   v.literal("disabled"),
 );
 const BROWSERBASE_HUMAN_INACTIVITY_MS = 5 * 60_000;
-/** The controlled demo portal (roomscout.dev) is polled faster than third-party portals. */
-export const CONTROLLED_PORTAL_POLL_MINUTES = 5;
+/**
+ * The controlled demo portal (roomscout.dev) has no automatic poll: 0 means
+ * "never schedule a poll". The webhook is the primary path; the manual source
+ * check and a webhook-triggered `requestSync` still sync on demand.
+ */
+export const CONTROLLED_PORTAL_POLL_MINUTES = 0;
 const DEFAULT_PORTAL_POLL_MINUTES = 60;
+/** Intervals a controlled connection may carry from an earlier approval. */
+const LEGACY_CONTROLLED_POLL_MINUTES = [5, DEFAULT_PORTAL_POLL_MINUTES];
 const MAX_POLL_INTERVAL_MINUTES = 1440;
+/** Bound for the one-shot poll-off maintenance mutation. */
+const MAX_DISABLE_POLLING_SOURCES = 200;
 
 function defaultPollIntervalMinutes(baseUrl: string): number {
   return isControlledDemoOrigin(baseUrl) ? CONTROLLED_PORTAL_POLL_MINUTES : DEFAULT_PORTAL_POLL_MINUTES;
+}
+
+/** A connection polls automatically only with a positive interval. */
+function pollsAutomatically(connection: { pollIntervalMinutes: number; allowInboxPolling: boolean }): boolean {
+  return connection.allowInboxPolling && connection.pollIntervalMinutes > 0;
 }
 const PROVIDER_CLEANUP_LEASE_MAX_MS = 2 * 60_000;
 
@@ -441,7 +454,12 @@ export const reviewConnection = mutation({
     if (args.allowInboxPolling && source.accessMode !== "authenticated") {
       throw new ConvexError({ code: "AUTHENTICATED_SOURCE_REQUIRED" });
     }
-    if (!Number.isInteger(args.pollIntervalMinutes) || args.pollIntervalMinutes <= 0) {
+    // 0 is a valid choice: it turns the automatic poll off for this connection.
+    if (
+      !Number.isInteger(args.pollIntervalMinutes) ||
+      args.pollIntervalMinutes < 0 ||
+      args.pollIntervalMinutes > MAX_POLL_INTERVAL_MINUTES
+    ) {
       throw new ConvexError({ code: "INVALID_POLL_INTERVAL" });
     }
 
@@ -541,8 +559,10 @@ export async function approveControlledDemoConnectionCore(
     connection.allowedPaths.join("\n") === ["/", "/sign-up", "/sign-in", "/listings", "/inbox"].join("\n") &&
     connection.inboxPath === "/inbox" &&
     connection.adapterKey === "roomscout-dev-v1" &&
-    // Connections approved before the faster controlled interval keep their legacy 60 min.
-    (connection.pollIntervalMinutes === CONTROLLED_PORTAL_POLL_MINUTES || connection.pollIntervalMinutes === DEFAULT_PORTAL_POLL_MINUTES);
+    // Connections approved under an earlier interval keep it; the approval below
+    // moves them to the current one.
+    (connection.pollIntervalMinutes === CONTROLLED_PORTAL_POLL_MINUTES ||
+      LEGACY_CONTROLLED_POLL_MINUTES.includes(connection.pollIntervalMinutes));
   if (options.preserveEstablishedState && exactScope && connection.status === "active") return "reused_active";
   if (options.preserveEstablishedState && exactScope && connection.status === "reauth_required") return "reauth_required";
   if (options.preserveEstablishedState && exactScope && connection.status === "needs_auth") return "prepared";
@@ -1034,12 +1054,15 @@ export const markAgentOnboardingState = internalMutation({
   },
 });
 
-/** Operator-side interval change; pulls the next poll forward so it takes effect immediately. */
+/**
+ * Operator-side interval change; pulls the next poll forward so it takes effect
+ * immediately. 0 turns the automatic poll off and drops the pending poll.
+ */
 export const setPollIntervalInternal = internalMutation({
   args: { connectionId: v.id("portalConnections"), minutes: v.number() },
   returns: v.null(),
   handler: async (ctx, args) => {
-    if (!Number.isInteger(args.minutes) || args.minutes < 1 || args.minutes > MAX_POLL_INTERVAL_MINUTES) {
+    if (!Number.isInteger(args.minutes) || args.minutes < 0 || args.minutes > MAX_POLL_INTERVAL_MINUTES) {
       throw new ConvexError({ code: "POLL_INTERVAL_INVALID" });
     }
     const connection = await ctx.db.get(args.connectionId);
@@ -1048,12 +1071,54 @@ export const setPollIntervalInternal = internalMutation({
     const soonest = now + args.minutes * 60_000;
     await ctx.db.patch(connection._id, {
       pollIntervalMinutes: args.minutes,
-      nextPollAt: connection.allowInboxPolling
-        ? Math.min(connection.nextPollAt ?? soonest, soonest)
-        : connection.nextPollAt,
+      nextPollAt: args.minutes === 0
+        ? undefined
+        : connection.allowInboxPolling
+          ? Math.min(connection.nextPollAt ?? soonest, soonest)
+          : connection.nextPollAt,
       updatedAt: now,
     });
     return null;
+  },
+});
+
+/**
+ * Switch the automatic poll off for the controlled demo connections (or one
+ * given connection) and drop any pending poll. Run once after a deploy; the
+ * webhook and the manual source check keep syncing.
+ */
+export const disableAutomaticPolling = internalMutation({
+  args: { connectionId: v.optional(v.id("portalConnections")) },
+  returns: v.object({ updated: v.number() }),
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const candidates: Doc<"portalConnections">[] = [];
+    if (args.connectionId) {
+      const connection = await ctx.db.get(args.connectionId);
+      if (connection === null) throw new ConvexError({ code: "CONNECTION_NOT_FOUND" });
+      candidates.push(connection);
+    } else {
+      const sources = await ctx.db.query("sources").take(MAX_DISABLE_POLLING_SOURCES);
+      for (const source of sources) {
+        if (!isControlledDemoOrigin(source.baseUrl)) continue;
+        candidates.push(
+          ...(await ctx.db.query("portalConnections")
+            .withIndex("by_source", (q) => q.eq("sourceId", source._id))
+            .collect()),
+        );
+      }
+    }
+    let updated = 0;
+    for (const connection of candidates) {
+      if (connection.pollIntervalMinutes === 0 && connection.nextPollAt === undefined) continue;
+      await ctx.db.patch(connection._id, {
+        pollIntervalMinutes: 0,
+        nextPollAt: undefined,
+        updatedAt: now,
+      });
+      updated += 1;
+    }
+    return { updated };
   },
 });
 
@@ -1223,12 +1288,16 @@ export const finishRun = internalMutation({
         circuitOpenUntil: undefined,
         lastSuccessAt: terminalStatus === "completed" ? now : connection.lastSuccessAt,
         lastErrorCode: terminalStatus === "failed" ? terminalErrorCode : undefined,
+        // An interval of 0 means no automatic poll at all: never schedule one,
+        // and drop a poll a previous interval left behind.
         nextPollAt:
-          terminalStatus === "completed" && connection.allowInboxPolling
-            ? now + connection.pollIntervalMinutes * 60_000
-            : terminalStatus === "failed" && connection.allowInboxPolling && !reauthRequired
-              ? now + failureBackoffMs
-              : undefined,
+          !pollsAutomatically(connection)
+            ? undefined
+            : terminalStatus === "completed"
+              ? now + connection.pollIntervalMinutes * 60_000
+              : terminalStatus === "failed" && !reauthRequired
+                ? now + failureBackoffMs
+                : undefined,
         updatedAt: now,
       });
     }
@@ -1405,26 +1474,6 @@ export const recordWriteContextProbe = internalMutation({
       });
     }
     return null;
-  },
-});
-
-export const validatePendingWriteProfileProof = internalQuery({
-  args: {
-    ownerId: v.id("users"), connectionId: v.id("portalConnections"), contextId: v.id("browserContexts"),
-    executionId: v.id("actionExecutions"), generation: v.number(), browserProvider: v.literal("firecrawl"),
-  },
-  returns: v.union(v.object({ profileName: v.string() }), v.null()),
-  handler: async (ctx, args) => {
-    const maintenance = await ctx.db.query("portalBrowserMaintenance").withIndex("by_key", (q) => q.eq("key", "controlled_portal")).unique();
-    if (maintenance?.paused || resolvePortalBrowserProvider() !== args.browserProvider) return null;
-    const [connection, context, execution] = await Promise.all([
-      ctx.db.get(args.connectionId), ctx.db.get(args.contextId), ctx.db.get(args.executionId),
-    ]);
-    if (!connection || connection.ownerId !== args.ownerId || connection.browserProvider !== args.browserProvider ||
-      !context || context.ownerId !== args.ownerId || context.connectionId !== connection._id || context.browserProvider !== args.browserProvider ||
-      context.status !== "creating" || context.pendingWriteExecutionId !== execution?._id || context.writeProofGeneration !== args.generation ||
-      !execution || execution.ownerId !== args.ownerId || execution.connectionId !== connection._id || execution.browserProvider !== args.browserProvider) return null;
-    return { profileName: context.providerContextId };
   },
 });
 
@@ -1685,6 +1734,12 @@ export const listDueInboxSyncs = internalQuery({
     const rows = page.page
       .filter(
         (connection) =>
+          // A missing nextPollAt sorts below every timestamp in the index, so
+          // "not scheduled" must be excluded here, not by the range bound.
+          // An interval of 0 never schedules one (see finishRun), but a failure
+          // backoff still may, and that retry is kept.
+          connection.nextPollAt !== undefined &&
+          connection.nextPollAt <= args.now &&
           connection.policyDecision === "allowed" &&
           connection.allowInboxPolling,
       )
