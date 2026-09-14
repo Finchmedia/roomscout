@@ -1442,3 +1442,10 @@ für Mandate sind ersetzt: der Orchestrator-Test arbeitet mit aktiven
 Suchaufträgen und gespeicherten Regeln, die übrigen Suiten säen keine
 Mandatszeile mehr und schalten stattdessen die Regeln um. Nichts ist
 committet oder deployt.
+
+Deployed 2026-09-14 evening from branch autopilot-policy: production tables
+searchMandates, opportunities and actionRequests (five, three and one row of
+the same day's manual test) were cleared with the maintainer's consent because
+the mandate-free schema rejects them; the backend was pushed to production and
+dev, the frontend rebuilt and uploaded to both. Signals, listings, portal
+connections and the registered Firecrawl profile were left untouched.
