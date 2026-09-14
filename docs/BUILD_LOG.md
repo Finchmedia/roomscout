@@ -1513,3 +1513,21 @@ Chat; das Aktivitäts-Panel wird zur reinen Historie ohne Freigabe-Buttons.
 Bau: Workflow mit vier Schritten (Backend, Prüfung, Frontend, Prüfung) auf
 Branch autopilot-policy, gestartet 2026-09-14 gegen 18:20Z. Ergebnis und
 Live-Prüfung an der wartenden Produktionskonversation folgen unten.
+
+Ergebnis (2026-09-14, Commit 2cfe436): der Workflow hat alle vier Schritte
+abgeschlossen. Backend: Tabelle `decisions` mit drei Indizes, `convex/decisions.ts`
+und `convex/lib/decisions.ts`, Hebepunkte in `recordOutcome`, `recordAssessment`,
+`markAgentOnboardingState`, `attachProviderRun` und `finishRun`; `providerTurns`
+kennt `musician_input`; Anfragen tragen `humanDraft`; die Freigabeprüfung wertet
+`userApproved` jetzt in beiden Phasen (submit und claim), sonst bliebe ein
+diktierter Text bei `prepareClaim` im Sicherheits-Wartezustand hängen. Frontend:
+`DecisionCard` als letztes Element im Scout-Chat, Bühne „Hier brauche ich kurz
+deine Hilfe.“ mit der Frage als Status, Chat öffnet sich automatisch ohne
+Voice-Session; `ActionApprovalSheet` gelöscht, das Aktivitäts-Panel ist reine
+Historie. Prüfung: Typecheck, ESLint auf allen geänderten Dateien und die volle
+Suite grün (139 Dateien, 979 Tests, 1 übersprungen). Bekannte Lücken: eine
+fehlgeschlagene Antwort zeigt im Chat den generischen Sendefehler; ohne
+zugängliche Angebotszeile degradiert „Angebot prüfen“ zu einem Link in die
+Nachrichten; bei einer Suche im Entwurf trägt die blockierte Bühne noch den
+„Scout unterwegs“-Punkt. Nicht deployt; der Maintainer prüft später selbst im
+Portal, danach gemeinsam mit der Inbox ausrollen.

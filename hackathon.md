@@ -38,7 +38,7 @@ read-only. No production rollout or external messages in this verification.
 - **Auth:** Convex Auth
 - **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-realtime-2.1`
 - **Started:** 2026-08-26T13:55:26Z
-- **Last updated:** 2026-09-14T18:11:01Z
+- **Last updated:** 2026-09-14T19:09:48Z
 
 ## Log
 
@@ -388,3 +388,26 @@ schema, indexes, mutations, internal actions, scheduled functions, HTTP actions
 `convex/scoutOrchestrator.ts`, `convex/agentmailComponent.ts`,
 `convex/portalNotifications.ts`, `convex/matches.ts`,
 `src/ui/settings/pages/AutonomyPage.tsx`).
+
+### 2026-09-14 — 2cfe436 Entscheidung im Chat
+
+The Scout's questions to the musician now exist as data instead of dead ends.
+A `decisions` table holds one open Entscheidung per provider conversation
+(message review, private data, binding content, unsupported claims, safety
+unavailable, the Scout's own question, offer ready, portal human step); the
+Freigabeprüfung, the provider assessment and portal registration raise them,
+and a newer one supersedes the older. For ask_musician the Scout formulates the
+question in one model round inside the musician's chat thread and records it
+through a tool. The Scout chat renders the open decision as a card with buttons
+and free text: yes sends the exact message immediately, no rejects and asks what
+should change, own text becomes a human-drafted request the gate treats as
+user-approved. Answers to a Scout question are stored as trusted musician
+statements in a new provider-turn kind and re-run the assessment, so the next
+provider message follows without a human step. Chat and voice gained the tools
+to answer a decision or dictate a provider reply; the inbox activity panel lost
+its approval buttons. Full suite green (979 tests). Not yet deployed. Convex
+features: schema, indexes, queries, mutations, internal actions, scheduled
+functions (`convex/schema.ts`, `convex/decisions.ts`, `convex/lib/decisions.ts`,
+`convex/autonomyGate.ts`, `convex/providerConversations.ts`,
+`convex/providerActions.ts`, `convex/scout.ts`, `convex/voice.ts`,
+`src/components/scout/DecisionCard.tsx`, `src/ui/chat/ScoutChat.tsx`).
