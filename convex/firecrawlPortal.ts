@@ -44,6 +44,8 @@ type RegistrationPhase = "mailbox" | "session_open" | "run_attach" | "progress" 
 const INBOX_OPEN_RETRY_DELAYS_MS = [4_000, 8_000];
 /** The write path retries only its side-effect-free opening (session, navigate, fill, verify). */
 const WRITE_OPEN_RETRY_DELAYS_MS = [4_000, 8_000];
+/** Before beforeSubmit nothing reached the portal, so sandbox and result-decoding failures are retryable too. */
+const WRITE_OPEN_RETRYABLE_CODE = /^(FIRECRAWL_PORTAL_((SCRAPE|INTERACT)_(TRANSPORT_FAILED|REQUEST_REJECTED|UNAVAILABLE|PROFILE_BUSY|RATE_LIMITED|TIMED_OUT)|SCRAPE_ID_MISSING|EVIDENCE_INVALID|URL_INVALID)|FIRECRAWL_INTERACT_(EXECUTION_FAILED|RESULT_INVALID|RESULT_MISSING|KILLED|ENVELOPE_INVALID))$/;
 const INBOX_OPEN_RETRYABLE_CODE = /^FIRECRAWL_PORTAL_((SCRAPE|INTERACT)_(TRANSPORT_FAILED|REQUEST_REJECTED|UNAVAILABLE|PROFILE_BUSY|RATE_LIMITED|TIMED_OUT)|SCRAPE_ID_MISSING)$/;
 const INBOX_SYNC_ERROR_CODE_MAX = 100;
 
@@ -464,7 +466,7 @@ export async function executeFirecrawlApprovedWrite(
     } catch (error) {
       const delayMs = WRITE_OPEN_RETRY_DELAYS_MS[attempt];
       const code = inboxSyncInnerCode(error);
-      if (delayMs === undefined || !INBOX_OPEN_RETRYABLE_CODE.test(code)) {
+      if (delayMs === undefined || !WRITE_OPEN_RETRYABLE_CODE.test(code)) {
         console.error("FIRECRAWL_PORTAL_WRITE_FAILED", { phase: "open", code, attempt });
         throw new Error(`FIRECRAWL_PORTAL_WRITE_FAILED:${code}`, { cause: error });
       }
@@ -501,7 +503,7 @@ export async function executeFirecrawlApprovedWrite(
       }
       const code = inboxSyncInnerCode(error);
       const delayMs = WRITE_OPEN_RETRY_DELAYS_MS[attempt];
-      if (delayMs !== undefined && INBOX_OPEN_RETRYABLE_CODE.test(code)) {
+      if (delayMs !== undefined && WRITE_OPEN_RETRYABLE_CODE.test(code)) {
         retryDelayMs = delayMs;
       } else {
         console.error("FIRECRAWL_PORTAL_WRITE_FAILED", { phase: "prepare", code, attempt });

@@ -30,6 +30,11 @@ describe("Firecrawl program transport", () => {
     })).toEqual({ stage: "sign_up" });
   });
 
+  it("prefers the owned marker line over an unrelated structured provider result", () => {
+    const envelope = { success: true, exitCode: 0, result: { logs: [] }, stdout: "noise\n__ROOMSCOUT_RESULT__{\"url\":\"https://portal.test/inbox/t1\",\"raw\":{\"ok\":true}}\n" };
+    expect(parseInteractEnvelope(envelope)).toEqual({ url: "https://portal.test/inbox/t1", raw: { ok: true } });
+  });
+
   it("returns only a successful structured result", () => {
     expect(
       parseInteractEnvelope({

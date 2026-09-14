@@ -303,6 +303,8 @@ function createPrimitives(input: {
         waitMs: kind === "access" ? authWaitMs() : inSandboxWaitMs(),
       }, false));
       if (typeof result?.url !== "string" || !("raw" in (result ?? {}))) {
+        // Shape only, never content: which keys came back instead of { url, raw }.
+        console.error("FIRECRAWL_PORTAL_EVIDENCE_INVALID", { kind, type: result === null ? "null" : typeof result, keys: Object.keys(result ?? {}).slice(0, 12) });
         throw new Error("FIRECRAWL_PORTAL_EVIDENCE_INVALID");
       }
       return await readPortalDomEvidenceFromPage({

@@ -40,34 +40,32 @@ export function parseInteractEnvelope(envelope: unknown): unknown {
     throw new Error("FIRECRAWL_INTERACT_EXECUTION_FAILED");
   }
 
-  let result: unknown = value.result;
+  // Our program prints its result behind an owned marker; that line is the
+  // authoritative result. The provider's `result` field is only a fallback:
+  // node mode sometimes fills it with an unrelated structured value, which
+  // used to surface downstream as EVIDENCE_INVALID.
+  let markerLine: string | undefined;
+  for (const candidate of [value.output, value.stdout]) {
+    if (typeof candidate !== "string") continue;
+    const markerIndex = candidate.lastIndexOf(RESULT_MARKER);
+    if (markerIndex < 0) continue;
+    markerLine = candidate.slice(markerIndex + RESULT_MARKER.length).split(/\r?\n/, 1)[0];
+    break;
+  }
+  let result: unknown;
+  if (markerLine !== undefined) {
+    try { result = JSON.parse(markerLine); } catch { result = undefined; }
+  }
   let invalidStructuredResult = false;
-  if (typeof result === "string") {
-    try {
-      result = JSON.parse(result);
-    } catch {
-      invalidStructuredResult = true;
-      result = undefined;
+  if (result === undefined) {
+    let fallback: unknown = value.result;
+    if (typeof fallback === "string") {
+      try { fallback = JSON.parse(fallback); } catch { fallback = undefined; invalidStructuredResult = true; }
     }
+    result = fallback;
   }
   if (result === undefined) {
-    for (const candidate of [value.output, value.stdout]) {
-      if (typeof candidate !== "string") continue;
-      const markerIndex = candidate.lastIndexOf(RESULT_MARKER);
-      if (markerIndex < 0) continue;
-      result = candidate.slice(markerIndex + RESULT_MARKER.length).split(/\r?\n/, 1)[0];
-      break;
-    }
-  }
-  if (typeof result === "string") {
-    try {
-      result = JSON.parse(result);
-    } catch {
-      throw new Error("FIRECRAWL_INTERACT_RESULT_INVALID");
-    }
-  }
-  if (result === undefined) {
-    if (invalidStructuredResult) throw new Error("FIRECRAWL_INTERACT_RESULT_INVALID");
+    if (markerLine !== undefined || invalidStructuredResult) throw new Error("FIRECRAWL_INTERACT_RESULT_INVALID");
     throw new Error("FIRECRAWL_INTERACT_RESULT_MISSING");
   }
   if (typeof result === "function" || typeof result === "symbol") {
