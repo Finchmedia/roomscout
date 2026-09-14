@@ -25,6 +25,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet"
+import { StatusDot } from "@/components/ui/status-dot"
 import {
   Sidebar,
   SidebarContent,
@@ -122,6 +123,32 @@ interface PanelDialogItem {
   current?: boolean
   /** Per-item handler. When set it replaces the panel-level `onSelect`. */
   onSelect?: () => void
+  /**
+   * Turns the row into the two-line list row Nachrichten needs: avatar, title
+   * over a preview, and a right column of time / state / unread dot. A row
+   * with `meta` drops the DS's fixed 50px height (`h-auto`, `items-start`)
+   * and ignores {@link PanelDialogItem.icon} — the avatar replaces it.
+   *
+   * `label` stays the row's name, so the breadcrumb leaf, the mobile picker
+   * and the content region's `aria-label` are unchanged.
+   */
+  meta?: PanelDialogItemMeta
+}
+
+/** The two-line row's payload — see {@link PanelDialogItem.meta}. */
+interface PanelDialogItemMeta {
+  /** Left column, e.g. `<Avatar variant="provider" size="sm">`. */
+  avatar?: React.ReactNode
+  /** Second line under the title; truncated to one line. */
+  preview?: string
+  /** Right column, first line — a short stamp ("09:41", "Gestern"). */
+  time?: string
+  /** Right column, second line — a state word ("Angebot liegt vor"). */
+  status?: string
+  /** Unread mark. A dot alone says nothing, so it is always named. */
+  dot?: boolean
+  /** Accessible name of the dot; defaults to the row's own label. */
+  dotLabel?: string
 }
 
 /** A labelled block of nav rows — „Dein Scout“, „Dein Konto“, „Betrieb“. */
@@ -167,6 +194,50 @@ const panelDialogNavVariants = cva(
     },
   }
 )
+
+/**
+ * The `meta` row's interior — rendered inside `SidebarMenuButton`, so it is
+ * identical in both placements (desktop column and mobile `Sheet`) by
+ * construction: `PanelDialogNav` is the only thing that renders a nav row.
+ *
+ * Everything is a `<span>`: the button is the interactive element and a `<div>`
+ * inside it would be invalid phrasing content.
+ */
+function PanelDialogItemRow({
+  item,
+  meta,
+}: {
+  item: PanelDialogItem
+  meta: PanelDialogItemMeta
+}) {
+  return (
+    <>
+      {meta.avatar}
+      <span className="flex min-w-0 flex-1 flex-col gap-[2px]">
+        <span className="truncate text-[length:var(--text-body-size)] text-rs-ink">
+          {item.label}
+        </span>
+        {meta.preview ? (
+          <span className="truncate text-[length:var(--text-caption-sm-size)] text-rs-ink-6">
+            {meta.preview}
+          </span>
+        ) : null}
+      </span>
+      <span className="flex flex-none flex-col items-end gap-[2px] text-[length:var(--text-micro-size)] text-rs-ink-6">
+        {meta.time ? <span>{meta.time}</span> : null}
+        {meta.status ? <span>{meta.status}</span> : null}
+        {meta.dot ? (
+          <StatusDot
+            tone="accent"
+            size={7}
+            aria-label={meta.dotLabel ?? item.label}
+            className="mt-[2px]"
+          />
+        ) : null}
+      </span>
+    </>
+  )
+}
 
 type PanelDialogNavProps = React.ComponentProps<"nav"> &
   VariantProps<typeof panelDialogNavVariants> & {
@@ -238,9 +309,20 @@ function PanelDialogNav({
                     <SidebarMenuButton
                       isActive={isCurrent(item)}
                       onClick={() => onItemSelect(item)}
+                      className={
+                        item.meta
+                          ? "h-auto items-start gap-[var(--space-4)] py-[var(--space-4)]"
+                          : undefined
+                      }
                     >
-                      {item.icon}
-                      <span>{item.label}</span>
+                      {item.meta ? (
+                        <PanelDialogItemRow item={item} meta={item.meta} />
+                      ) : (
+                        <>
+                          {item.icon}
+                          <span>{item.label}</span>
+                        </>
+                      )}
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ))}
@@ -704,5 +786,6 @@ export type {
   PanelDialogProps,
   PanelDialogGroup,
   PanelDialogItem,
+  PanelDialogItemMeta,
   PanelDialogBackAction,
 }

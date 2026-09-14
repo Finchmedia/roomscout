@@ -19,6 +19,7 @@ import { operatorDe } from "./operator";
 import { scoutDe } from "./scout";
 import { settingsDe } from "./settings";
 import { liveScoutDe } from "./liveScout";
+import { liveInboxDe } from "./liveInbox";
 
 /**
  * The paths the two hand-edits of §6.1 are supposed to produce, plus the hoist of rule 3.
@@ -35,6 +36,7 @@ type NamespaceContract = {
   operator: { nav: { back: string } }; // §6.1 rule 1 — NOT operator.operator.nav.back
   landing: { header: Record<string, unknown> };
   liveScout: Record<string, string>;
+  liveInbox: typeof liveInboxDe;
 };
 
 export const de = {
@@ -47,6 +49,7 @@ export const de = {
   operator: operatorDe,
   landing: landingDe,
   liveScout: liveScoutDe,
+  liveInbox: liveInboxDe,
 } as const satisfies NamespaceContract;
 
 export type DeDict = typeof de;

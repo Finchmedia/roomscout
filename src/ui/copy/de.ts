@@ -18,6 +18,7 @@ import { appRoutesDe } from "./de/appRoutes";
 import { liveOperatorCopy } from "../operator/live/copy";
 import { liveSettingsCopy } from "../settings/liveCopy";
 import { liveScoutDe } from "./de/liveScout";
+import { liveInboxDe } from "./de/liveInbox";
 import type { DeDict } from "./de/index";
 import { landingDe } from "./de/landing";
 import { operatorDe } from "./de/operator";
@@ -30,6 +31,7 @@ export const de = {
   liveOperator: liveOperatorCopy,
   liveSettings: liveSettingsCopy,
   liveScout: liveScoutDe,
+  liveInbox: liveInboxDe,
   scout: scoutDe,
   settings: settingsDe,
   operator: operatorDe,

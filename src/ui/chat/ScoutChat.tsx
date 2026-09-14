@@ -2,10 +2,10 @@ import * as React from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
+import { ChatComposer } from "@/ui/chat/ChatComposer"
 import { DecisionCard, type OpenDecision } from "@/components/scout/DecisionCard"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
-import { Icon } from "@/components/ui/icon"
 import { Marker, MarkerContent } from "@/components/ui/marker"
 import { Message, MessageContent, MessageHeader } from "@/components/ui/message"
 import {
@@ -128,42 +128,17 @@ function ScoutChat({
   ...props
 }: ScoutChatProps) {
   const labels = { ...DEFAULT_LABELS, ...labelOverrides }
-  const [draft, setDraft] = React.useState("")
   const [echoes, setEchoes] = React.useState<DecisionEcho[]>([])
   const [submitting, setSubmitting] = React.useState(false)
   const [localError, setLocalError] = React.useState<string | null>(null)
-  const [failedDraft, setFailedDraft] = React.useState<string | null>(null)
-  const submittingRef = React.useRef(false)
   const isBusy = busy || submitting
-  const statusId = React.useId()
 
-  const submit = async () => {
-    const body = draft.trim()
-    if (!body || busy || submittingRef.current) return
-
-    submittingRef.current = true
-    setSubmitting(true)
+  // The composer owns the draft, the failed-draft recovery and its own send
+  // error; the chat only needs to know that something is in flight (for the
+  // "sending" row and `aria-busy`) and to clear the errors it raised itself.
+  const submit = async (body: string) => {
     setLocalError(null)
-    setFailedDraft(null)
-    // The parent action persists the user turn before generating the reply, but
-    // its promise covers the whole round trip. Clear at enqueue time so the
-    // already-visible user bubble is not duplicated in the composer.
-    setDraft("")
-    try {
-      const sent = await onSend(body)
-      if (!sent) {
-        setFailedDraft(body)
-        setDraft((current) => (current === "" ? body : current))
-        setLocalError(labels.sendError)
-      }
-    } catch {
-      setFailedDraft(body)
-      setDraft((current) => (current === "" ? body : current))
-      setLocalError(labels.sendError)
-    } finally {
-      submittingRef.current = false
-      setSubmitting(false)
-    }
+    return await onSend(body)
   }
 
   const answerDecision = async (choice: string, label: string) => {
@@ -292,61 +267,15 @@ function ScoutChat({
         </MessageScroller>
       </MessageScrollerProvider>
 
-      <div className="border-t border-rs-border-divider p-[var(--space-5)]">
-        {(error || localError) && (
-          <div id={statusId} role="alert" className="mb-[var(--space-4)] flex flex-wrap items-center gap-[var(--space-3)] text-[length:var(--text-caption-size)] text-rs-red-text">
-            <span>{error || localError}</span>
-            {failedDraft && draft !== failedDraft ? (
-              <Button
-                type="button"
-                variant="link"
-                size="2xs"
-                onClick={() => {
-                  setDraft((current) => current ? `${failedDraft}\n\n${current}` : failedDraft)
-                  setFailedDraft(null)
-                }}
-              >
-                {labels.restoreDraft}
-              </Button>
-            ) : null}
-          </div>
-        )}
-        <form
-          className="flex items-end gap-[var(--space-3)] rounded-[var(--radius-card-md)] border border-rs-border-panel bg-rs-surface-composer py-[var(--space-3)] pr-[var(--space-3)] pl-[var(--space-7)] focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-rs-orange"
-          onSubmit={(event) => {
-            event.preventDefault()
-            void submit()
-          }}
-        >
-          <textarea
-            autoFocus={autoFocus}
-            aria-describedby={error || localError ? statusId : undefined}
-            aria-label={labels.composer}
-            maxLength={4000}
-            rows={1}
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
-              event.preventDefault()
-              void submit()
-            }}
-            placeholder={labels.composer}
-            className="max-h-40 min-h-[2.25rem] min-w-0 flex-1 resize-y border-0 bg-transparent py-[var(--space-2)] text-[length:var(--text-body-size)] text-rs-ink outline-none! placeholder:text-rs-ink-7"
-          />
-          {onVoice && (
-            <Button type="button" variant="primary" size="icon-sm" aria-label={labels.voice} onClick={onVoice} disabled={isBusy}>
-              <Icon name="mic" />
-            </Button>
-          )}
-          <Button type="submit" variant="secondary" size="icon-sm" aria-label={labels.send} disabled={isBusy || draft.trim().length === 0}>
-            <Icon name="send" />
-          </Button>
-        </form>
-        <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-          {submitting ? labels.sending : labels.status}
-        </span>
-      </div>
+      <ChatComposer
+        labels={labels}
+        onSubmit={submit}
+        busy={busy}
+        error={error || localError}
+        onVoice={onVoice}
+        autoFocus={autoFocus}
+        onBusyChange={setSubmitting}
+      />
     </section>
   )
 }

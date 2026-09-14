@@ -1531,3 +1531,99 @@ zugängliche Angebotszeile degradiert „Angebot prüfen“ zu einem Link in die
 Nachrichten; bei einer Suche im Entwurf trägt die blockierte Bühne noch den
 „Scout unterwegs“-Punkt. Nicht deployt; der Maintainer prüft später selbst im
 Portal, danach gemeinsam mit der Inbox ausrollen.
+
+### 2026-09-14 — Nachrichten (Kandidat C): Vertrag und Bau
+
+Ausgangslage: `/app/inbox` ist die alte Dreispalten-Seite auf der Legacy-Shell
+(englische Texte, kein Composer, Handoff-Knopf ohne Nutzer, Verifizierungs-
+Mails des Scout-Postfachs, aus Anfragen synthetisierte Webform-Threads). Der
+Maintainer will die Nachrichten als eigenen Menüpunkt, nicht als Reiter der
+Einstellungen, aber im selben Panel-Stil: Unterhaltungen links, Verlauf rechts,
+eigene Nachrichten möglich.
+
+Vertrag: Route `/app/inbox/:conversationId?` mit `LiveInboxPage` im gleichen
+Chrome wie die Einstellungen (`PanelDialog`, Brotkrume „Nachrichten“, „Zurück
+zum Scout“). Die Nav-Zeile von `PanelDialog` bekommt ein optionales `meta`
+(Avatar, Vorschau, Zeit, Status, Punkt) und rendert damit zweizeilige
+Unterhaltungszeilen in beiden Platzierungen (Seitenleiste und Sheet unter 900
+px). Rechts der Verlauf mit dem Vokabular des Scout-Chats: Anbieter links,
+„Dein Scout“ und „Du“ rechts, Antworten an den Scout rechts als „Du an deinen
+Scout“, Einschätzungen als eingeklappte Marker-Zeilen, offene Entscheidungen
+als dieselbe `DecisionCard` wie im Scout-Chat, wartende Nachrichten als Blase
+mit Statuszeile (wird gesendet, wartet auf Freigabe, blockiert mit Grund). Bei
+fertigem Angebot steht die bestehende Angebotskarte samt Annahme oben. Der
+Composer aus dem Scout-Chat wird als `ChatComposer` herausgelöst und in beiden
+Flächen genutzt; er ist gesperrt, während der Scout auswertet, die Unterhaltung
+beendet ist oder der Kanal nicht bereit ist.
+
+Backend: neues tiefes Modul `convex/conversations.ts`, das Mail- und
+Portal-Kanal hinter einer Schnittstelle versteckt: `listMine` (Titel aus der
+Anzeige, Vorschau der neuesten Nachricht, ungelesen, offene Entscheidung,
+wartende Anfrage), `getMine` (chronologische Einträge: Anbieter-Nachricht,
+gesendete Nachricht mit Urheber über `actionExecutions`, wartende Anfrage mit
+Gate-Text, Scout-Notiz, Musiker-Antwort, Entscheidung; Composer-Zustand),
+`reply` (läuft bei offener Nachricht-Entscheidung über `answerDecision` mit
+eigenem Text, sonst über `stageCustomReplyForOwner`; behauptet nie „gesendet“)
+und `markRead`. Schema: `providerConversations.lastReadAt` und ein Index auf
+`actionRequests.providerConversationId`.
+
+Bewusst weggelassen: Verifizierungs-Mails des Scout-Postfachs (die Registrierung
+liest sie serverseitig und hebt sonst eine `human_step`-Entscheidung), der
+Handoff-Fluss (halb defekt, kein anderer Nutzer; die Backend-Funktionen
+bleiben), Webform-Pseudo-Threads. Die alte Seite und ihre vier Nur-dort-
+Komponenten werden mit Tests gelöscht. Bau als Workflow in vier Schritten auf
+autopilot-policy, gestartet 2026-09-14 gegen 19:40Z; Ergebnis folgt unten.
+
+Ergebnis (2026-09-14): der Workflow hat alle vier Schritte abgeschlossen.
+Backend: `convex/conversations.ts` mit `listMine`, `getMine`, `reply`, `markRead`;
+`replyChannelReady` ist aus `draftReplyRequest` als reine Vorbedingung
+herausgelöst und wird von beiden genutzt; Validatoren werden aus dem Schema
+abgeleitet statt neu deklariert; zehn Integrationstests. Frontend:
+`LiveInboxPage` unter `/app/inbox/:conversationId?`, `PanelDialog`-Zeilen mit
+`meta` in beiden Platzierungen, `ConversationThread` mit dem Vokabular des
+Scout-Chats, `ChatComposer` aus dem Scout-Chat herausgelöst (dessen Tests
+unverändert grün), Copy-Namespace `liveInbox`, `formatMessageStamp` mit Test,
+Angebotskarte ohne eigenen Nachrichten-Link in der Inbox. Alte Seite, vier
+Nur-dort-Komponenten, deren Tests und die toten Inbox-Selektoren in `app.css`
+und `design-system.css` sind gelöscht. Nachprüfung durch den Maintainer-Agenten:
+`getMine` las die ältesten statt der neuesten hundert Nachrichten (kein
+`order("desc")`), die Liste war nicht nach letzter Aktivität sortiert, ein
+diktierter Text verlor über den Entscheidungspfad seine Absätze, und die
+Fehlerkarte des Composers kannte die Codes dieses Pfads nicht; alles behoben.
+Prüfung danach: Typecheck, ESLint, volle Suite (141 Dateien, 1000 Tests, 1
+übersprungen) und Vite-Build grün. Offen und notiert: die Angebotskarte holt die
+Annahme-Felder über eine zweite Listen-Query; `markRead` läuft pro eingehender
+Nachricht ohne Drosselung; `docs/UI_PORT/DATA_MAP.md` und
+`docs/SCAFFOLD_PORT_PLAN.md` beschreiben noch die alte Seite; verwaiste
+Nachbar-Selektoren in `app.css` (`.pane`, `.convo`, `.rs-handoff-sheet` u. a.)
+warten auf einen Sweep; `api.opportunities.createHandoff/updateStatus/listMine`
+haben keinen UI-Aufrufer mehr.
+
+### 2026-09-14 — Scout-Chat (Kandidat K): Streaming und ein Blasen-System
+
+Befund: der Live-Chat antwortet über `generateText`, die Antwort erscheint erst
+nach der ganzen Runde; der Client ruft eine Action und wartet, die eigene
+Nachricht steht erst nach dem Speichern im Verlauf, „Nachricht wird gesendet“
+ist ein lokales Flag; `scout.listMessages` nutzt `listUIMessages` ohne
+`syncStreams`, der Client `usePaginatedQuery` statt `useUIMessages`. Daneben
+zwei Blasen-Systeme (`ChatBubble` aus dem Design-Kit in Bühnen, Mitschrift,
+Voice, Landing; `Message`/`Bubble`/`Marker` von shadcn im Scout-Chat und der
+Entscheidungs-Karte) und zwei Composer.
+
+Vertrag: `scout.send` wird eine Mutation, die die Nachricht des Musikers per
+`saveMessage` speichert und `internal.scout.reply` plant; die Action baut die
+Werkzeuge wie heute und ruft `streamText` mit `saveStreamDeltas` (wortweise,
+gedrosselt). `scout.listMessages` nimmt `streamArgs` an und liefert
+`syncStreams` mit; der Client nutzt `useUIMessages` mit `stream: true`,
+`useSmoothText` für laufende Antworten und `optimisticallySendMessage`, damit
+die eigene Nachricht sofort steht. Zustände kommen aus der letzten
+Scout-Nachricht: `pending` ohne Text zeigt „Dein Scout denkt nach …“ als Marker
+mit Schimmer, Tool-Parts zeigen deutsche Marker-Zeilen (Merkt sich etwas,
+Aktualisiert deinen Suchauftrag, Übernimmt deine Entscheidung, Schreibt dem
+Anbieter), `failed` eine Fehlerzeile mit Wiederholen. Die Bühne liest „Ich
+denke kurz nach“ aus demselben Zustand, nicht mehr aus dem Action-Versprechen.
+`ChatBubble` wird gelöscht; Bühnen, Mitschrift, Voice-Chat, Landing und Galerie
+wechseln auf `Message`/`Bubble`. Chat-Flächen nutzen den aus der Inbox
+herausgelösten `ChatComposer`; der Pill-Composer bleibt nur auf der Bühne.
+Voice bleibt unverändert. Start nach Abschluss der Inbox, weil beide den
+Scout-Chat und den Composer anfassen.

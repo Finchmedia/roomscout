@@ -1719,6 +1719,8 @@ export default defineSchema({
     acceptedAt: v.optional(v.number()),
     state: v.union(v.literal("waiting"), v.literal("thinking"), v.literal("needs_attention"), v.literal("offer_ready"), v.literal("closed")),
     lastErrorCode: v.optional(v.string()),
+    /** Nachrichten: when the musician last opened this conversation; absent means never read. */
+    lastReadAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -1915,6 +1917,7 @@ export default defineSchema({
     .index("by_status_and_updated_at", ["status", "updatedAt"])
     .index("by_opportunity", ["opportunityId"])
     .index("by_provider_offer", ["providerOfferId"])
+    .index("by_provider_conversation_and_updated_at", ["providerConversationId", "updatedAt"])
     .index("by_handoff", ["handoffId"])
     .index("by_execution_idempotency_key", ["executionIdempotencyKey"]),
 

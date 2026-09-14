@@ -169,8 +169,12 @@ describe("the German dictionary", () => {
     expect([...COPY_VAR_NAMES].filter((name) => !used.has(name))).toEqual([]);
   });
 
-  it("carries the four plural leaves as one leaf each (COMPONENT_MAP.md §6.3)", () => {
+  it("carries every plural leaf as one leaf each (COMPONENT_MAP.md §6.3)", () => {
     expect(leaves.filter((leaf) => leaf.plural).map((leaf) => leaf.path).sort()).toEqual([
+      // The port's own fifth plural leaf: „{count} Unterhaltungen“ in the
+      // Nachrichten nav header. §6.3 predates the surface; the rule it states
+      // (a plural is one leaf, read only through `tp`) is what is under test.
+      "liveInbox.count",
       "scout.brief.sheet.count",
       "settings.billing.usage.searches",
       "settings.knowledge.import.done",

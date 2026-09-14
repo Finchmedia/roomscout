@@ -248,25 +248,6 @@ textarea {
   font-size: 15px;
   line-height: 1.5;
 }
-.rs-consumer-workspace .rs-inbox {
-  border-radius: 22px;
-  overflow: hidden;
-  border-color: #625346;
-}
-.rs-consumer-workspace .rs-inbox .pane {
-  background: rgb(22 19 16 / 78%);
-}
-.rs-consumer-workspace .rs-inbox .titem {
-  border-radius: 14px;
-  margin: 6px;
-  width: calc(100% - 12px);
-}
-.rs-consumer-workspace .rs-inbox .mail {
-  border-radius: 18px;
-}
-.rs-consumer-workspace .rs-inbox-filterbar h1 {
-  font-size: 40px;
-}
 @media (max-width: 800px) {
   .rs-consumer-header {
     padding: 22px 24px;

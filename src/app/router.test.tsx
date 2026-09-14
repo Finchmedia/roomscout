@@ -11,9 +11,10 @@ vi.mock("@convex-dev/auth/react", () => ({
 vi.mock("convex/react", () => ({ useQuery: () => ({ role: auth.role }) }));
 vi.mock("../routes", () => Object.fromEntries([
   "AppExplorePage", "BrowserRunPage", "ExplorePage", "LandingPage", "MapPage",
-  "MusicianInboxPage", "MySearchPage", "OpsAuditPage", "OpsInboxPage", "OpsOutreachPage",
+  "MySearchPage", "OpsAuditPage", "OpsInboxPage", "OpsOutreachPage",
   "OpsOverviewPage", "OpsSignalsPage", "OpsSourcesPage", "ProfilePage", "ScoutPage", "SignalDetailPage",
 ].map((name) => [name, () => <h1>{name}</h1>])));
+vi.mock("../routes/musician/LiveInboxPage", () => ({ LiveInboxPage: () => <h1>Live inbox</h1> }));
 vi.mock("../routes/musician/LiveSettingsPage", () => ({ LiveSettingsPage: () => <h1>Live settings</h1> }));
 vi.mock("../routes/operator/LiveOperatorPage", () => ({ LiveOperatorPage: () => <h1>Live operator</h1> }));
 vi.mock("./AuthRoute", () => ({ AuthRoute: () => <h1>Sign in</h1> }));
@@ -35,6 +36,14 @@ describe("live UI routing", () => {
     open("/app/settings/profile");
     expect(screen.getByRole("heading", { name: "Live settings" })).toBeInTheDocument();
     expect(screen.queryByText("ProfilePage")).not.toBeInTheDocument();
+  });
+  it("opens Nachrichten at the bare /app/inbox the existing links point at", () => {
+    open("/app/inbox");
+    expect(screen.getByRole("heading", { name: "Live inbox" })).toBeInTheDocument();
+  });
+  it("opens Nachrichten on one conversation", () => {
+    open("/app/inbox/abc123");
+    expect(screen.getByRole("heading", { name: "Live inbox" })).toBeInTheDocument();
   });
   it("protects settings and preserves its return destination", () => {
     auth.signedIn = false;

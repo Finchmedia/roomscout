@@ -20,6 +20,7 @@ import type * as communications from "../communications.js";
 import type * as controlledPersonalInboxProof from "../controlledPersonalInboxProof.js";
 import type * as controlledSourceProof from "../controlledSourceProof.js";
 import type * as controlledSourceProofActions from "../controlledSourceProofActions.js";
+import type * as conversations from "../conversations.js";
 import type * as crons from "../crons.js";
 import type * as decisions from "../decisions.js";
 import type * as demoSourceBootstrap from "../demoSourceBootstrap.js";
@@ -154,6 +155,7 @@ declare const fullApi: ApiFromModules<{
   controlledPersonalInboxProof: typeof controlledPersonalInboxProof;
   controlledSourceProof: typeof controlledSourceProof;
   controlledSourceProofActions: typeof controlledSourceProofActions;
+  conversations: typeof conversations;
   crons: typeof crons;
   decisions: typeof decisions;
   demoSourceBootstrap: typeof demoSourceBootstrap;

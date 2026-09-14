@@ -17,7 +17,6 @@ import {
   ExplorePage,
   LandingPage,
   MapPage,
-  MusicianInboxPage,
   MySearchPage,
   OpsAuditPage,
   OpsInboxPage,
@@ -30,6 +29,7 @@ import {
   SignalDetailPage,
 } from "../routes";
 import { AuthRoute } from "./AuthRoute";
+import { LiveInboxPage } from "../routes/musician/LiveInboxPage";
 import { LiveSettingsPage } from "../routes/musician/LiveSettingsPage";
 import { LiveOperatorPage } from "../routes/operator/LiveOperatorPage";
 import { RouteErrorBoundary } from "./RouteErrorBoundary";
@@ -103,7 +103,7 @@ function AppRoutes() {
         <Route element={<AppExplorePage />} path="/app/explore" />
         <Route element={<MapPage workspace />} path="/app/map" />
         <Route element={<MySearchPage />} path="/app/search" />
-        <Route element={<MusicianInboxPage />} path="/app/inbox" />
+        <Route element={<LiveInboxPage />} path="/app/inbox/:conversationId?" />
         <Route element={<ProfilePage />} path="/app/profile" />
         <Route element={<LiveSettingsPage />} path="/app/settings/:section?" />
         <Route element={<BrowserRunPage />} path="/app/runs/:runId" />

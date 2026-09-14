@@ -85,3 +85,49 @@ export function formatCurrencyEUR(locale: Locale | string, n: number): string {
     currency: "EUR",
   }).format(n);
 }
+
+/**
+ * Day words for {@link formatMessageStamp}. The stamp is punctuation plus one
+ * of these two words, so it stays in the copy layer instead of being assembled
+ * from dictionary keys at every call site; `Intl` supplies the rest.
+ */
+const MESSAGE_DAY_WORDS: Record<string, { today: string; yesterday: string }> = {
+  de: { today: "Heute", yesterday: "Gestern" },
+  en: { today: "Today", yesterday: "Yesterday" },
+};
+
+/** Local midnight of `date`, so "yesterday" is a calendar day and not 24 hours. */
+function startOfLocalDay(date: Date): number {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+/**
+ * The timestamp under a message and next to a conversation row:
+ * „Heute, 09:41“ · „Gestern, 18:02“ · „12. Sep., 09:41“ (de).
+ *
+ * `short` is the conversation-list form, which drops the time on every day but
+ * today: „09:41“ · „Gestern“ · „12. Sep.“.
+ *
+ * `now` is always passed in — nothing in the copy layer reads the wall clock,
+ * so a render is reproducible and the unit test does not need a fake timer.
+ */
+export function formatMessageStamp(
+  locale: Locale | string,
+  timestamp: number,
+  now: number,
+  options: { short?: boolean } = {},
+): string {
+  const date = new Date(timestamp);
+  const words = MESSAGE_DAY_WORDS[String(locale).slice(0, 2)] ?? MESSAGE_DAY_WORDS.en!;
+  const time = new Intl.DateTimeFormat(locale, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+  const days = Math.round((startOfLocalDay(new Date(now)) - startOfLocalDay(date)) / 86_400_000);
+  // A clock skew that puts a message in the future still reads as "today".
+  if (days <= 0) return options.short ? time : `${words.today}, ${time}`;
+  if (days === 1) return options.short ? words.yesterday : `${words.yesterday}, ${time}`;
+  const day = new Intl.DateTimeFormat(locale, { day: "numeric", month: "short" }).format(date);
+  return options.short ? day : `${day}, ${time}`;
+}

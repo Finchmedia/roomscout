@@ -11,8 +11,15 @@ import { OfferAcceptanceFlow } from "./OfferAcceptanceDialog";
 
 type Conversation = FunctionReturnType<typeof api.providerConversations.listMine>[number];
 
-/** Actual provider facts, presented with the design port's offer-card anatomy. */
-export function LiveProviderOffer({ conversation, title }: { conversation: Conversation; title?: string }) {
+/**
+ * Actual provider facts, presented with the design port's offer-card anatomy.
+ *
+ * `hideMessagesLink` drops the „Nachrichten ansehen“ link: inside Nachrichten
+ * the card already sits on top of the conversation it would link to.
+ */
+export function LiveProviderOffer({ conversation, title, hideMessagesLink = false }: {
+  conversation: Conversation; title?: string; hideMessagesLink?: boolean;
+}) {
   const { t } = useCopy();
   const [reviewing, setReviewing] = useState(false);
   const offer = conversation.offer;
@@ -29,7 +36,8 @@ export function LiveProviderOffer({ conversation, title }: { conversation: Conve
     {unknown ? <p role="alert" className="mt-[var(--space-6)]">{t("liveScout.unknownAcceptance")}</p> : null}
     {conversation.acceptanceStatus === "failed" ? <p role="alert">{t("liveScout.failedAcceptance")}</p> : null}
   </>;
-  const messagesLink = <Link className="mt-[var(--space-5)] text-sm text-rs-ink-4 underline underline-offset-4" to="/app/inbox">{t("liveScout.viewMessages")}</Link>;
+  const messagesLink = hideMessagesLink ? null
+    : <Link className="mt-[var(--space-5)] text-sm text-rs-ink-4 underline underline-offset-4" to="/app/inbox">{t("liveScout.viewMessages")}</Link>;
   const head = <>
     <Overline tone="accent">{t(interim ? "liveScout.interimLabel" : "liveScout.offerLabel")}</Overline>
     <h2 className="mt-[var(--space-8)] text-[length:var(--text-card-title-size)]">{title || t("liveScout.offerFallback")}</h2>

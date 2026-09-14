@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { resolveControlledPortal } from "./lib/providerPortal";
 import { internal } from "./_generated/api";
-import { internalMutation, type MutationCtx } from "./_generated/server";
+import { internalMutation, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { actionPayloadHash, normalizeText } from "./integrations/contentHash";
 import { opportunityMatchIsCurrent, signalMatchRevision } from "./lib/matchValidity";
@@ -14,6 +14,60 @@ const stagedValidator = v.object({
   dispatched: v.boolean(),
   sent: v.literal(false),
 });
+
+type PortalTarget = NonNullable<Awaited<ReturnType<typeof resolveControlledPortal>>>;
+
+/** The conversation's reply channel once every precondition holds, or why it does not. */
+export type ReplyChannel =
+  | {
+    kind: "mail";
+    thread: Doc<"mailThreads">;
+    parent: Doc<"mailMessages">;
+    platform: Doc<"sourcePlatforms">;
+    binding: Doc<"sourceAdapterBindings">;
+    policy: Doc<"sourceFlowPolicies">;
+  }
+  | { kind: "platform"; target: PortalTarget; thread: Doc<"platformThreads"> | null }
+  | { kind: "unavailable"; portalMissing: boolean };
+
+/**
+ * The one precondition set for replying on this conversation's channel: an
+ * owned mail thread with an inbound parent and an approved reply policy, or
+ * the reviewed controlled portal with an active connection of this owner.
+ * Read-only, so the Nachrichten surface can ask the same question the staging
+ * mutation answers. `now` is the caller's clock: mutations pass `Date.now()`,
+ * a query must not read the wall clock and passes a stored timestamp instead.
+ */
+export async function replyChannelReady(ctx: QueryCtx, args: {
+  conversation: Doc<"providerConversations">;
+  signal: Doc<"signals">;
+  ownerId: Id<"users">;
+  now: number;
+}): Promise<ReplyChannel> {
+  const { conversation, signal, ownerId } = args;
+  if (conversation.mailThreadId) {
+    const thread = await ctx.db.get(conversation.mailThreadId);
+    const draft = thread ? await ctx.db.get(thread.draftId) : null;
+    const mailbox = thread?.mailboxId ? await ctx.db.get(thread.mailboxId) : null;
+    const messages = thread ? await ctx.db.query("mailMessages").withIndex("by_thread_and_received_at", (q) => q.eq("threadId", thread._id)).order("desc").take(20) : [];
+    const parent = messages.find((message) => message.direction === "inbound");
+    const entry = signal.sourceEntryId ? await ctx.db.get(signal.sourceEntryId) : null;
+    const source = entry ? await ctx.db.get(entry.sourceId) : null;
+    const platform = source?.platformId ? await ctx.db.get(source.platformId) : null;
+    const bindings = platform ? await ctx.db.query("sourceAdapterBindings").withIndex("by_platform_and_flow_and_status", (q) => q.eq("platformId", platform._id).eq("flow", "reply").eq("status", "active")).take(2) : [];
+    const binding = bindings.length === 1 && bindings[0]?.executor === "agentmail" && bindings[0].config.kind === "agentmail" && bindings[0].config.purpose === "reply" ? bindings[0] : null;
+    const policy = binding?.policyVersionId ? await ctx.db.get(binding.policyVersionId) : null;
+    if (!thread || thread.ownerId !== ownerId || !draft || draft.ownerId !== ownerId || !mailbox || mailbox.ownerId !== ownerId || mailbox.status !== "active" || !parent || !platform || !binding || !policy || policy.platformId !== platform._id || policy.flow !== "reply" || policy.status !== "approved" || policy.decision !== "allowed" || policy.maxAutomationLevel !== "approved_execute") return { kind: "unavailable", portalMissing: false };
+    return { kind: "mail", thread, parent, platform, binding, policy };
+  }
+  const target = await resolveControlledPortal(ctx, conversation, signal, args.now);
+  if (!target) return { kind: "unavailable", portalMissing: true };
+  if (!target.thread) {
+    const opportunity = conversation.opportunityId ? await ctx.db.get(conversation.opportunityId) : null;
+    if (!opportunity || signal.status !== "published" || !await opportunityMatchIsCurrent(ctx, opportunity, true)) return { kind: "unavailable", portalMissing: false };
+  } else if (target.thread.ownerId !== ownerId) return { kind: "unavailable", portalMissing: false };
+  return { kind: "platform", target, thread: target.thread };
+}
 
 /**
  * Turns one reply text into an exact ledger request on the conversation's
@@ -39,34 +93,22 @@ async function draftReplyRequest(ctx: MutationCtx, args: {
     opportunityId: conversation.opportunityId,
     ...(args.humanDraft ? { humanDraft: true } : {}),
   };
-  if (conversation.mailThreadId) {
-    const thread = await ctx.db.get(conversation.mailThreadId);
-    const draft = thread ? await ctx.db.get(thread.draftId) : null;
-    const mailbox = thread?.mailboxId ? await ctx.db.get(thread.mailboxId) : null;
-    const messages = thread ? await ctx.db.query("mailMessages").withIndex("by_thread_and_received_at", (q) => q.eq("threadId", thread._id)).order("desc").take(20) : [];
-    const parent = messages.find((message) => message.direction === "inbound");
-    const entry = signal.sourceEntryId ? await ctx.db.get(signal.sourceEntryId) : null;
-    const source = entry ? await ctx.db.get(entry.sourceId) : null;
-    const platform = source?.platformId ? await ctx.db.get(source.platformId) : null;
-    const bindings = platform ? await ctx.db.query("sourceAdapterBindings").withIndex("by_platform_and_flow_and_status", (q) => q.eq("platformId", platform._id).eq("flow", "reply").eq("status", "active")).take(2) : [];
-    const binding = bindings.length === 1 && bindings[0]?.executor === "agentmail" && bindings[0].config.kind === "agentmail" && bindings[0].config.purpose === "reply" ? bindings[0] : null;
-    const policy = binding?.policyVersionId ? await ctx.db.get(binding.policyVersionId) : null;
-    if (!thread || thread.ownerId !== offer.ownerId || !draft || draft.ownerId !== offer.ownerId || !mailbox || mailbox.ownerId !== offer.ownerId || mailbox.status !== "active" || !parent || !platform || !binding || !policy || policy.platformId !== platform._id || policy.flow !== "reply" || policy.status !== "approved" || policy.decision !== "allowed" || policy.maxAutomationLevel !== "approved_execute") return null;
+  const channel = await replyChannelReady(ctx, { conversation, signal, ownerId: offer.ownerId, now: Date.now() });
+  if (channel.kind === "unavailable") {
+    if (channel.portalMissing) {
+      await ctx.db.patch(conversation._id, { state: "needs_attention", lastErrorCode: "PORTAL_CONNECTION_REQUIRED", updatedAt: Date.now() });
+    }
+    return null;
+  }
+  if (channel.kind === "mail") {
+    const { thread, parent, platform, binding, policy } = channel;
     const subject = normalizeText(args.subject || thread.subject).slice(0, 200);
     const payload: Doc<"actionRequests">["payload"] = { kind: "email_message", recipientName: parent.from.slice(0, 160), recipientEmail: parent.from.trim().toLowerCase(), subject, body, mailThreadId: thread._id, parentMessageId: parent.providerMessageId };
     const now = Date.now();
     return await ctx.db.insert("actionRequests", { ...common, platformId: platform._id, adapterBindingId: binding._id, policyVersionId: policy._id, automationMode: "autopilot", requestedActionType: "send_email", personalDataScopes: ["reply_email"], payload, contentVersion: 1, contentHash: await actionPayloadHash(payload), status: "drafted", expiresAt: now + 86_400_000, createdAt: now, updatedAt: now });
   }
-  const target = await resolveControlledPortal(ctx, conversation, signal, Date.now());
-  if (!target) {
-    await ctx.db.patch(conversation._id, { state: "needs_attention", lastErrorCode: "PORTAL_CONNECTION_REQUIRED", updatedAt: Date.now() });
-    return null;
-  }
-  const { platform, listingUrl, binding, policy, connection, thread } = target;
-  if (!thread) {
-    const opportunity = conversation.opportunityId ? await ctx.db.get(conversation.opportunityId) : null;
-    if (!opportunity || signal.status !== "published" || !await opportunityMatchIsCurrent(ctx, opportunity, true)) return null;
-  } else if (thread.ownerId !== offer.ownerId) return null;
+  const { platform, listingUrl, binding, policy, connection } = channel.target;
+  const thread = channel.thread;
   const subject = normalizeText(args.subject || thread?.subject || `Re: ${signal.title}`).slice(0, 200);
   const payload: Doc<"actionRequests">["payload"] = {
     kind: "platform_message", threadId: thread?._id, targetPath: thread ? undefined : listingUrl.pathname,

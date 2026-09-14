@@ -128,7 +128,7 @@ export async function answerDecision(ctx: MutationCtx, args: {
 }): Promise<AnswerResult> {
   const decision = await ownedOpenDecision(ctx, args.ownerId, args.decisionId);
   const choice = args.choice.trim().slice(0, 40);
-  const text = args.text?.replace(/\s+/g, " ").trim().slice(0, 4_000) || undefined;
+  const text = args.text?.replace(/[^\S\n]+/g, " ").replace(/\n{3,}/g, "\n\n").trim().slice(0, 4_000) || undefined;
   if (!choice) throw new ConvexError({ code: "INVALID_CHOICE" });
   if (choice === "custom" && !text) throw new ConvexError({ code: "TEXT_REQUIRED" });
 
