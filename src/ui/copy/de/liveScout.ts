@@ -23,6 +23,27 @@ export const liveScoutDe = {
     continueAutopilot: "Übernimmt die Anfrage",
     default: "Arbeitet …",
   },
+  /** The candidate rail beside the stage: one row per laufendes Gespräch. */
+  candidatesTitle: "Kandidaten",
+  candidatesEmpty: "Noch keine Kandidaten. Ich melde mich, sobald ich Räume anfrage.",
+  /** What a candidate row is waiting on, in the musician's words. */
+  candidateState: {
+    question: "Frage an dich",
+    offer: "Angebot liegt vor",
+    reply: "Antwort da",
+    asked: "angefragt",
+  },
+  /** The brief, permanently beside the stage instead of behind a toggle. */
+  asideTitle: "Euer Suchauftrag",
+  asideEdit: "Bearbeiten",
+  radius: "{count} km Umkreis",
+  /** The Entscheidung answered on the stage, next to its options. */
+  decisionWrite: "Oder lieber schreiben",
+  decisionReviewOffer: "Angebot prüfen",
+  decisionOpenChat: "Im Chat ansehen",
+  /** Below 1100px the two side columns move into sheets. */
+  openCandidates: "Kandidaten",
+  openBrief: "Suchauftrag",
   error: "Dieser Schritt hat gerade nicht geklappt. Dein Suchauftrag bleibt gespeichert. Versuche es erneut.",
   intro: "Erzählt mir von eurer Band und dem Raum, den ihr sucht. Ich halte fest, was euch wichtig ist.",
   introKnown: "Ich habe euren Musik-Kontext gespeichert. Was für einen Proberaum sucht ihr jetzt?",

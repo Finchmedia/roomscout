@@ -9,6 +9,8 @@ const fixtures = vi.hoisted(() => ({
   context: {} as Record<string, unknown>,
   matches: [] as Array<Record<string, unknown>>,
   conversations: [] as Array<Record<string, unknown>>,
+  /** `api.conversations.listMine` — the rows behind the „Kandidaten“ rail. */
+  inbox: [] as Array<Record<string, unknown>>,
   actions: [] as Array<Record<string, unknown>>,
   messages: [] as Array<Record<string, unknown>>,
   decisions: [] as Array<Record<string, unknown>>,
@@ -85,6 +87,35 @@ function providerConversation(options: {
   };
 }
 
+/** A row as `api.conversations.listMine` returns it — the rail reads these. */
+function candidate(options: {
+  id: string; savedNeedId?: string; title?: string;
+  state?: "waiting" | "thinking" | "needs_attention" | "offer_ready" | "closed";
+  unread?: boolean; at?: number; openDecision?: boolean;
+}) {
+  const {
+    id, savedNeedId = "need-current", title = `Raum ${id}`, state = "waiting",
+    unread = false, at = 1_000, openDecision = false,
+  } = options;
+  return {
+    conversationId: id, savedNeedId, signalId: `signal-${id}`, title, subtitle: "Proberaum",
+    channel: "email", state, revision: 1, lastActivityAt: at, unread, providerLabel: "Anbieter",
+    ...(openDecision
+      ? { openDecision: { decisionId: `decision-${id}`, kind: "scout_question", question: "Passt der Termin?" } }
+      : {}),
+  };
+}
+
+/** The open Entscheidung the working stage blocks on, with two prepared answers. */
+function reviewDecision() {
+  return {
+    _id: "decision-1", kind: "review_message", status: "open",
+    question: "Soll ich diese Nachricht so senden?", detail: "Hallo, ist der Raum noch frei?",
+    options: [{ id: "yes", label: "Ja, so senden" }, { id: "no", label: "Nein, anders" }],
+    refs: { requestId: "send-1" }, conversationId: "conversation-2", createdAt: 1, updatedAt: 1,
+  };
+}
+
 vi.mock("convex/react", () => ({
   useQuery: (ref: Parameters<typeof getFunctionName>[0], args: unknown) => {
     const name = getFunctionName(ref);
@@ -94,6 +125,7 @@ vi.mock("convex/react", () => ({
     if (name === "scout:getMine") return fixtures.context;
     if (name === "matches:listMine") return fixtures.matches;
     if (name === "providerConversations:listMine") return fixtures.conversations;
+    if (name === "conversations:listMine") return fixtures.inbox;
     if (name === "externalActions:listMine") return fixtures.actions;
     if (name === "decisions:listOpenMine") return fixtures.decisions;
     return null;
@@ -121,7 +153,7 @@ afterEach(cleanup);
 beforeEach(() => {
   fixtures.needs = [need()];
   fixtures.context = { threadId: "thread", activeNeedId: "need-current", mode: "search_discovery" };
-  fixtures.matches = []; fixtures.conversations = []; fixtures.actions = []; fixtures.messages = []; fixtures.decisions = [];
+  fixtures.matches = []; fixtures.conversations = []; fixtures.inbox = []; fixtures.actions = []; fixtures.messages = []; fixtures.decisions = [];
   fixtures.queries.mockClear(); fixtures.mutations.clear(); fixtures.actionFns.clear();
   fixtures.voice.connected = false; fixtures.voice.connect.mockClear(); fixtures.voice.disconnect.mockClear();
 });
@@ -207,17 +239,46 @@ describe("live Scout route", () => {
     expect(screen.queryByRole("button", { name: "Angebot prüfen" })).not.toBeInTheDocument();
   });
 
-  it("keeps chat and the saved brief accessible while the Scout is working", () => {
+  it("keeps the saved brief beside the working stage instead of behind a toggle", () => {
     fixtures.needs = [need("active")];
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "Suchauftrag ansehen" }));
-    expect(screen.getByRole("group", { name: "Euer Suchauftrag" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Suchauftrag ansehen" })).not.toBeInTheDocument();
+    const aside = screen.getByRole("group", { name: "Euer Suchauftrag" });
+    expect(aside).toHaveTextContent("Stuttgart · 20 km Umkreis");
+    expect(aside).toHaveTextContent("Bis 350 € / Monat");
+    expect(aside).toHaveTextContent("Geteilter Raum");
+    expect(screen.getByRole("button", { name: "Bearbeiten" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Lieber schreiben" }));
     expect(screen.getByRole("region", { name: "Scout-Chat" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Schließen" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("lists the running candidates of this Suchauftrag, newest first", () => {
+    fixtures.needs = [need("active")];
+    fixtures.inbox = [
+      candidate({ id: "c-old", title: "Raum Süd", at: 1_000 }),
+      candidate({ id: "c-new", title: "Raum West", state: "offer_ready", unread: true, at: 9_000 }),
+      candidate({ id: "c-other", title: "Fremder Raum", savedNeedId: "need-other", at: 8_000 }),
+      candidate({ id: "c-closed", title: "Beendeter Raum", state: "closed", at: 7_000 }),
+    ];
+    renderPage();
+
+    const rail = screen.getByRole("navigation", { name: "Kandidaten" });
+    expect(rail).toHaveTextContent("Angebot liegt vor");
+    expect(rail).not.toHaveTextContent("Fremder Raum");
+    expect(rail).not.toHaveTextContent("Beendeter Raum");
+    const rows = screen.getAllByRole("button").filter(row => rail.contains(row));
+    expect(rows.map(row => row.textContent?.split("Proberaum")[0])).toEqual(["Raum West", "Raum Süd"]);
+  });
+
+  it("names the empty rail rather than leaving the column blank", () => {
+    fixtures.needs = [need("active")];
+    renderPage();
+    expect(screen.getByRole("navigation", { name: "Kandidaten" }))
+      .toHaveTextContent("Noch keine Kandidaten. Ich melde mich, sobald ich Räume anfrage.");
   });
 
   it("does not claim a provider reply merely because an outbound thread exists", () => {
@@ -227,28 +288,43 @@ describe("live Scout route", () => {
     expect(screen.queryByRole("heading", { name: "Der Anbieter hat geantwortet." })).not.toBeInTheDocument();
   });
 
-  it("shows the open Entscheidung as the blocked headline, opens the chat and answers from the card", async () => {
+  it("answers the open Entscheidung on the stage without opening the chat", async () => {
     fixtures.needs = [need("active")];
     fixtures.actions = [{ _id: "send-1", savedNeedId: "need-current", requestedActionType: "send_platform_dm", status: "awaiting_approval" }];
-    fixtures.decisions = [{
-      _id: "decision-1", kind: "review_message", status: "open",
-      question: "Soll ich diese Nachricht so senden?", detail: "Hallo, ist der Raum noch frei?",
-      options: [{ id: "yes", label: "Ja, so senden" }, { id: "no", label: "Nein, anders" }],
-      refs: { requestId: "send-1" }, conversationId: "conversation-2", createdAt: 1, updatedAt: 1,
-    }];
+    fixtures.decisions = [reviewDecision()];
     renderPage();
-    // The chat dialog opened by itself, so the stage behind it is aria-hidden: match the headline by text.
     expect(document.querySelector("[data-live-scout-stage]")).toHaveAttribute("data-live-scout-stage", "blocked");
     expect(screen.getByText("Hier brauche ich kurz deine Hilfe.").tagName).toBe("H1");
-    expect(screen.getAllByText("Soll ich diese Nachricht so senden?").length).toBeGreaterThan(0);
+    expect(screen.getByText("Soll ich diese Nachricht so senden?")).toBeInTheDocument();
     expect(screen.queryByText("Ein Schritt konnte noch nicht abgeschlossen werden.", { exact: false })).not.toBeInTheDocument();
-    const chat = screen.getByRole("region", { name: "Scout-Chat" });
-    expect(chat).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "Entscheidung" })).toHaveTextContent("Hallo, ist der Raum noch frei?");
+    // The answer is on the stage now, so nothing opens by itself.
+    expect(screen.queryByRole("region", { name: "Scout-Chat" })).not.toBeInTheDocument();
     const answer = mutation("decisions:answer");
     fireEvent.click(screen.getByRole("button", { name: "Ja, so senden" }));
     await waitFor(() => expect(answer).toHaveBeenCalledWith({ decisionId: "decision-1", choice: "yes" }));
     expect(fixtures.voice.connect).not.toHaveBeenCalled();
+  });
+
+  it("hands an Entscheidung to the chat card when the musician would rather write", () => {
+    fixtures.needs = [need("active")];
+    fixtures.decisions = [reviewDecision()];
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Oder lieber schreiben" }));
+    expect(screen.getByRole("region", { name: "Scout-Chat" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Entscheidung" })).toHaveTextContent("Hallo, ist der Raum noch frei?");
+  });
+
+  it("sends an Entscheidung without prepared answers to the chat", () => {
+    fixtures.needs = [need("active")];
+    fixtures.decisions = [{
+      _id: "decision-3", kind: "human_step", status: "open",
+      question: "Bitte melde dich einmal selbst im Portal an.", options: [],
+      refs: {}, createdAt: 1, updatedAt: 1,
+    }];
+    renderPage();
+    expect(screen.queryByRole("region", { name: "Scout-Chat" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Im Chat ansehen" }));
+    expect(screen.getByRole("region", { name: "Scout-Chat" })).toBeInTheDocument();
   });
 
   it("does not open the chat for an Entscheidung while a voice session is running", () => {

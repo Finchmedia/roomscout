@@ -1,9 +1,10 @@
-import type * as React from "react";
+import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
 import { ScoutBlob } from "@/components/ui/scout-blob";
+import { Sheet, SheetBody, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { StatusDot } from "@/components/ui/status-dot";
 import { AppHeader } from "@/ui/chrome/AppHeader";
 import { StageBackground } from "@/ui/chrome/StageBackground";
@@ -12,6 +13,24 @@ import type { LiveScoutStage, LiveScoutSurfaceProps } from "./types";
 
 const STAGE_SHELL =
   "flex flex-1 flex-col items-center justify-center px-[var(--space-11)] pt-[var(--space-7)] pb-[var(--space-15)] text-center";
+
+/**
+ * The stages that carry the two side columns: everything the Scout does after
+ * the brief is signed off. Discovery keeps the single centred column, because
+ * the conversation is the whole screen there.
+ *
+ * 1100px is this layout's own threshold, not the app's narrow breakpoint
+ * (959px): three columns need 260 + 300 of side rail before the centre still
+ * has room for a headline.
+ */
+const COLUMN_STAGES: ReadonlySet<LiveScoutStage> = new Set<LiveScoutStage>([
+  "working",
+  "blocked",
+  "provider-update",
+  "paused",
+  "offer",
+  "complete",
+]);
 
 function initials(displayName: string): string {
   return displayName
@@ -61,6 +80,11 @@ function WorkChrome({ props, stage }: { props: LiveScoutSurfaceProps; stage: Liv
       <p aria-live="polite" className="mt-[var(--space-8)] max-w-[620px] text-[length:var(--text-body-lg-size)] leading-[1.5] text-rs-ink-2">
         {status}
       </p>
+      {blocked && props.decisionSlot ? (
+        <div className="mt-[var(--space-11)] w-[min(620px,100%)]">
+          {props.decisionSlot}
+        </div>
+      ) : null}
       {providerUpdate && props.providerUpdateSlot ? (
         <div className="mt-[var(--space-10)] w-[min(960px,100%)]">
           {props.providerUpdateSlot}
@@ -77,8 +101,12 @@ function WorkChrome({ props, stage }: { props: LiveScoutSurfaceProps; stage: Liv
 
 export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
   const narrow = useNarrow();
+  const [sheet, setSheet] = React.useState<"candidates" | "brief" | null>(null);
   const { stage, copy } = props;
   const working = stage === "working" || stage === "blocked" || stage === "provider-update" || stage === "paused";
+  // The side columns exist only where there is something to put in them; a
+  // screen that passes neither slot keeps the plain centred stage.
+  const columns = COLUMN_STAGES.has(stage) && Boolean(props.railSlot || props.asideSlot);
   const briefReview = typeof props.briefReviewSlot === "function"
     ? props.briefReviewSlot({ onReviewBrief: props.onReviewBrief, onActivate: props.onActivate })
     : props.briefReviewSlot;
@@ -187,19 +215,48 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
             {props.errorSlot}
           </div>
         ) : null}
-        {content}
+        {columns ? (
+          <div className="flex min-h-0 w-full flex-1 items-start">
+            <div className="hidden w-[260px] shrink-0 pt-[var(--space-7)] pr-[var(--space-7)] pl-[var(--space-11)] min-[1100px]:block">
+              {props.railSlot}
+            </div>
+            <div className="flex min-w-0 flex-1 flex-col">{content}</div>
+            <div className="hidden w-[300px] shrink-0 pt-[var(--space-7)] pr-[var(--space-11)] pl-[var(--space-7)] min-[1100px]:block">
+              {props.asideSlot}
+            </div>
+          </div>
+        ) : content}
         {stage !== "welcome" && stage !== "loading" ? (
           <div className="mx-auto flex w-[min(760px,calc(100%_-_var(--space-11)_*_2))] shrink-0 flex-col items-center gap-[var(--space-7)] pb-[var(--space-8)]">
             <div className="flex flex-wrap justify-center gap-[var(--space-4)]">
               <Button variant="ghost" size="sm" icon={<Icon name="mic" size={16} />} onClick={props.onVoice}>{copy.welcomeVoiceAction}</Button>
               <Button variant="ghost" size="sm" icon={<Icon name="keyboard" size={16} />} onClick={props.onChat}>{copy.welcomeChatAction}</Button>
-              {stage !== "brief" ? <Button variant="ghost" size="sm" onClick={props.onReviewBrief} aria-expanded={props.briefExpanded}>{copy.briefReviewAction}</Button> : null}
+              {/* The side columns are folded away below 1100px; these two reach them. */}
+              {columns && props.railSlot ? <Button variant="ghost" size="sm" className="min-[1100px]:hidden" onClick={() => setSheet("candidates")}>{copy.openCandidates}</Button> : null}
+              {columns && props.asideSlot ? <Button variant="ghost" size="sm" className="min-[1100px]:hidden" onClick={() => setSheet("brief")}>{copy.openBrief}</Button> : null}
+              {stage !== "brief" && !columns ? <Button variant="ghost" size="sm" onClick={props.onReviewBrief} aria-expanded={props.briefExpanded}>{copy.briefReviewAction}</Button> : null}
             </div>
-            {stage !== "brief" && props.briefExpanded ? <div className="w-full">{briefReview}</div> : null}
+            {stage !== "brief" && !columns && props.briefExpanded ? <div className="w-full">{briefReview}</div> : null}
             {stage !== "discovery" && props.voiceSlot ? <div className="w-full">{props.voiceSlot}</div> : null}
           </div>
         ) : null}
       </main>
+      {columns && props.railSlot ? (
+        <Sheet open={sheet === "candidates"} onOpenChange={open => { if (!open) setSheet(null); }}>
+          <SheetContent side="left" aria-describedby={undefined}>
+            <SheetHeader><SheetTitle>{copy.openCandidates}</SheetTitle></SheetHeader>
+            <SheetBody>{props.railSlot}</SheetBody>
+          </SheetContent>
+        </Sheet>
+      ) : null}
+      {columns && props.asideSlot ? (
+        <Sheet open={sheet === "brief"} onOpenChange={open => { if (!open) setSheet(null); }}>
+          <SheetContent side="right" aria-describedby={undefined}>
+            <SheetHeader><SheetTitle>{copy.openBrief}</SheetTitle></SheetHeader>
+            <SheetBody>{props.asideSlot}</SheetBody>
+          </SheetContent>
+        </Sheet>
+      ) : null}
       {stage !== "discovery" ? <Dialog open={Boolean(props.chatSlot)} onOpenChange={open => { if (!open) props.onCloseChat(); }}>
         <DialogContent tone="dialog" size="md" className="max-w-[800px]" aria-describedby={undefined}>
           <DialogHeader><DialogTitle>{copy.chatTitle}</DialogTitle></DialogHeader>

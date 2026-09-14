@@ -15,8 +15,9 @@ import { LiveVoiceChat } from "../../ui/chat/LiveVoiceChat";
 import { useVoiceSession } from "../../components/voice/VoiceSessionContext";
 import { factsFromNeed } from "../../features/scout/viewModel";
 import { useCopy } from "../../ui/copy";
+import { formatMessageStamp } from "../../ui/copy/format";
 import { ScoutChat } from "../../ui/chat/ScoutChat";
-import { LiveScoutSurface, deriveLiveScoutStage } from "../../ui/scout/live";
+import { CandidateList, LiveScoutSurface, deriveLiveScoutStage } from "../../ui/scout/live";
 
 /**
  * `api.scout.listMessages` returns UIMessages whose parts are deliberately
@@ -37,7 +38,7 @@ const listScoutMessages = api.scout.listMessages as unknown as ScoutMessagesQuer
 
 /** Live queries and actions; no scripted demo transitions or fabricated facts. */
 export function ScoutPage() {
-  const { t } = useCopy();
+  const { t, locale } = useCopy();
   const voice = useVoiceSession();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -59,8 +60,9 @@ export function ScoutPage() {
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
   const [textOpen, setTextOpen] = useState(false);
-  // The Entscheidung the musician closed the chat on; a newer one opens the chat again.
-  const [dismissedDecisionId, setDismissedDecisionId] = useState<string | undefined>(undefined);
+  // One Entscheidung is answered at a time; the buttons on the stage go quiet
+  // while the mutation is in flight.
+  const [answeringDecision, setAnsweringDecision] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(() => voice.connected);
   const [manualBrief, setManualBrief] = useState(false);
   const [dismissedReady, setDismissedReady] = useState("");
@@ -74,6 +76,12 @@ export function ScoutPage() {
   const matches = useQuery(api.matches.listMine, need ? { savedNeedId: need._id, limit: 30 } : "skip");
   const conversationRows = useQuery(api.providerConversations.listMine, need ? { savedNeedId: need._id, limit: 50 } : "skip");
   const conversations = Array.isArray(conversationRows) && need ? conversationRows.filter(row => row.savedNeedId === need._id) : [];
+  // The candidate rail: the same rows the Nachrichten list shows, narrowed to
+  // this Suchauftrag and to the conversations that are still running.
+  const inboxRows = useQuery(api.conversations.listMine, { limit: 20 });
+  const candidates = (Array.isArray(inboxRows) && need ? inboxRows : [])
+    .filter(row => row.savedNeedId === need?._id && row.state !== "closed")
+    .sort((a, b) => b.lastActivityAt - a.lastActivityAt);
   const actions = useQuery(api.externalActions.listMine, need ? { savedNeedId: need._id, limit: 50 } : "skip");
   const latestSend = (actions ?? []).find(row => row.savedNeedId === need?._id && ["send_email", "submit_webform", "send_platform_dm"].includes(row.requestedActionType));
   const ready = conversations.find(row => row.offer?.current && row.offer.ready);
@@ -85,17 +93,40 @@ export function ScoutPage() {
   const decisionOfferHash = openDecision?.kind === "offer_ready" && openDecision.refs.offerId
     ? (Array.isArray(conversationRows) ? conversationRows : []).find(row => row.offer?.offerId === openDecision.refs.offerId)?.offer?.contentHash
     : undefined;
-  // A new Entscheidung opens the chat by itself unless the musician is talking or closed it already.
-  const chatOpen = textOpen || Boolean(openDecision && openDecision._id !== dismissedDecisionId && !voiceOpen && !voice.connected);
+  // The Entscheidung is answered on the stage now, so a new one no longer
+  // opens the chat by itself — „Lieber schreiben“ is the way in.
+  const chatOpen = textOpen;
+  // One clock reading per mount: the rail's stamps must not re-render on their own.
+  const [now] = useState(() => Date.now());
   const rawFacts = need ? factsFromNeed(need) : [];
   const facts = rawFacts.map(fact => {
     let value = fact.value;
+    if (need && fact.key === "location") {
+      const place = need.locationLabel?.trim() || need.locationQuery?.trim();
+      value = [place, need.radiusKm === undefined ? undefined : t("liveScout.radius", { count: need.radiusKm })]
+        .filter(Boolean).join(" · ");
+    }
     if (need && fact.key === "arrangement") value = need.arrangement.map(item => t(`liveScout.${item}`)).join(" · ");
     if (need && fact.key === "budget") value = `Bis ${need.maxBudgetEur} € / Monat`;
     if (need && fact.key === "sharing") value = t(need.openToSharing ? "liveScout.sharingYes" : "liveScout.sharingNo");
     if (need && fact.key === "connections") value = t(need.collaborationOpen ? "liveScout.connectionsYes" : "liveScout.connectionsNo");
     return { id: ({ location: "ort", budget: "budget", schedule: "zeit", requirements: "equip" } as Record<string, string>)[fact.key] ?? fact.key, label: value };
   });
+  // The aside is the brief at a glance: at most five rows with the DS fact
+  // glyphs (arrangement borrows „band“'s people icon), and the equipment cut
+  // to its first entry so the column stays a list and not a paragraph.
+  const asideFacts = need
+    ? [
+      facts.find(row => row.id === "ort"),
+      facts.find(row => row.id === "budget"),
+      facts.find(row => row.id === "arrangement"),
+      facts.find(row => row.id === "zeit"),
+      need.requirements.length ? { id: "equip", label: need.requirements[0]! } : undefined,
+    ]
+      .filter((row): row is { id: string; label: string } => row !== undefined)
+      .map(row => ({ id: row.id === "arrangement" ? "band" : row.id, label: row.label }))
+      .slice(0, 5)
+    : [];
   const messages = [...history.results]
     .sort((a, b) => a.order - b.order || a.stepOrder - b.stepOrder)
     .map(row => ({
@@ -164,6 +195,15 @@ export function ScoutPage() {
   }
   function openVoice() { setVoiceOpen(true); if (!voice.connected) void voice.connect(); }
   function editBrief() { setManualBrief(false); setDismissedReady(readyKey); openChat(); }
+  // Answering closes the Entscheidung server-side; `listOpenMine` drops it and
+  // the stage leaves „blocked“ on its own — nothing is hidden optimistically.
+  async function answerOpenDecision(decisionId: Id<"decisions">, choice: string) {
+    if (answeringDecision) return;
+    setAnsweringDecision(true); setError("");
+    try { await answerDecision({ decisionId, choice }); }
+    catch { setError(t("liveScout.error")); }
+    finally { setAnsweringDecision(false); }
+  }
   const offerTitle = matches?.find(row => row.signal._id === selected?.signalId)?.signal.title;
   const offerSlot = selected ? <LiveProviderOffer key={selected.conversationId} conversation={selected} title={offerTitle} /> : null;
   // Approval waits are Entscheidungen now (stage "blocked"); only a failed send still blocks here.
@@ -187,6 +227,47 @@ export function ScoutPage() {
       continueAutopilot: t("liveScout.tools.continueAutopilot"),
     },
   };
+  // The Entscheidung on the stage: the prepared answers first, the chat as the
+  // way out. A kind without options has nothing to press here, so its one
+  // button hands over to the chat, where the card carries the detail.
+  const decisionSlot = openDecision ? (
+    <div className="flex flex-col items-center gap-[var(--space-7)]">
+      <div className="flex flex-wrap justify-center gap-[var(--space-4)]">
+        {openDecision.options.length ? openDecision.options.map((option, index) => (
+          <Button key={option.id} variant={index === 0 ? "tint" : "secondary"} size="sm" disabled={answeringDecision}
+            onClick={() => void answerOpenDecision(openDecision._id, option.id)}>{option.label}</Button>
+        )) : (
+          <Button variant="tint" size="sm" onClick={openChat}>
+            {t(openDecision.kind === "offer_ready" ? "liveScout.decisionReviewOffer" : "liveScout.decisionOpenChat")}
+          </Button>
+        )}
+      </div>
+      {openDecision.options.length ? <Button variant="ghost" size="sm" onClick={openChat}>{t("liveScout.decisionWrite")}</Button> : null}
+    </div>
+  ) : undefined;
+  const railSlot = need ? (
+    <CandidateList
+      candidates={candidates.map(row => ({
+        conversationId: row.conversationId, title: row.title || row.providerLabel, subtitle: row.subtitle,
+        state: row.state, lastActivityAt: row.lastActivityAt, unread: row.unread,
+        hasOpenDecision: row.openDecision !== undefined,
+      }))}
+      copy={{
+        title: t("liveScout.candidatesTitle"), empty: t("liveScout.candidatesEmpty"),
+        question: t("liveScout.candidateState.question"), offer: t("liveScout.candidateState.offer"),
+        reply: t("liveScout.candidateState.reply"), asked: t("liveScout.candidateState.asked"),
+      }}
+      formatStamp={at => formatMessageStamp(locale, at, now, { short: true })}
+      onOpen={conversationId => navigate(`/app/inbox/${conversationId}`)}
+    />
+  ) : undefined;
+  const asideSlot = need ? (
+    <FactList facts={asideFacts} variant="compact" title={t("liveScout.asideTitle")} className="w-full">
+      <Button variant="link" size="sm" className="mt-[var(--space-5)] self-start" onClick={() => navigate("/app/search")}>
+        {t("liveScout.asideEdit")}
+      </Button>
+    </FactList>
+  ) : undefined;
   const brief = <FactList facts={facts} variant="card" title={t("scout.brief.title")}>
     <div className="mt-[var(--space-8)] flex flex-col items-center gap-[var(--space-6)]">
       {need?.status === "draft" ? <>
@@ -211,6 +292,7 @@ export function ScoutPage() {
       pauseAction: t("scout.chrome.pause.pause"), resumeAction: t("scout.chrome.pause.resume"), settingsAction: t("scout.chrome.menu.settings"),
       briefReviewAction: t("liveScout.briefReviewAction"), activeStatus: t("liveScout.activeStatus"), pausedLabel: t("liveScout.pausedLabel"),
       chatTitle: t("liveScout.chatTitle"),
+      openCandidates: t("liveScout.openCandidates"), openBrief: t("liveScout.openBrief"),
       offerHeadline: t("liveScout.offer"), completeHeadline: t("liveScout.complete"), completeStatus: t("liveScout.completeDetail"),
     }}
     briefReviewSlot={brief}
@@ -218,9 +300,10 @@ export function ScoutPage() {
     chatSlot={!voiceOpen && (stage === "discovery" || (chatOpen && stage !== "brief")) ? <ScoutChat key={threadId ?? "loading"} messages={messages.length ? messages : [{ id: "intro", author: "scout", body: t("liveScout.intro") }]} onSend={send} replying={scoutBusy || !threadId} labels={chatLabels} error={error} onVoice={openVoice} autoFocus decision={openDecision} decisionOfferHash={decisionOfferHash} onAnswerDecision={async (decisionId, choice) => { await answerDecision({ decisionId, choice }); }} decisionAnsweredText={t("liveScout.decisionAnswered")} hasMoreHistory={history.status === "CanLoadMore"} historyBusy={history.status === "LoadingMore"} onLoadHistory={() => history.loadMore(60)} /> : undefined}
     voiceSlot={voiceOpen ? <LiveVoiceChat onText={openChat} onEnd={() => { setVoiceOpen(false); setTextOpen(true); }} /> : undefined}
     providerUpdateSlot={offerSlot} offerSlot={offerSlot}
+    decisionSlot={decisionSlot} railSlot={railSlot} asideSlot={asideSlot}
     completeSlot={<Link className="text-rs-ink-2 underline underline-offset-4" to="/app/inbox">{t("liveScout.viewMessages")}</Link>}
     errorSlot={error ? <p role="alert">{error}</p> : undefined}
-    onChat={openChat} onCloseChat={() => { setTextOpen(false); setDismissedDecisionId(openDecision?._id); }} onVoice={openVoice} onReviewBrief={() => setManualBrief(value => !value)}
+    onChat={openChat} onCloseChat={() => setTextOpen(false)} onVoice={openVoice} onReviewBrief={() => setManualBrief(value => !value)}
     onActivate={() => { if (need) void run(() => activate({ savedNeedId: need._id })); }}
     onPause={() => { if (need) void run(() => setStatus({ needId: need._id, status: "paused" })); }}
     onResume={() => { if (need) void run(() => setStatus({ needId: need._id, status: "active" })); }}

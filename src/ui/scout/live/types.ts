@@ -69,6 +69,9 @@ export interface LiveScoutCopy {
   activeStatus: string;
   pausedLabel: string;
   chatTitle: string;
+  /** Names the two side columns; below 1100px they are the sheet openers. */
+  openCandidates: string;
+  openBrief: string;
   offerHeadline: React.ReactNode;
   completeHeadline: React.ReactNode;
   completeStatus: React.ReactNode;
@@ -87,6 +90,21 @@ export interface LiveScoutSurfaceProps {
     | React.ReactNode
     | ((actions: { onReviewBrief: () => void; onActivate: () => void }) => React.ReactNode);
   providerUpdateSlot?: React.ReactNode;
+  /**
+   * The open Entscheidung's options, answered on the stage itself. Rendered
+   * under the status line in `blocked` — the musician no longer has to go
+   * through the chat for a question that has prepared answers.
+   */
+  decisionSlot?: React.ReactNode;
+  /**
+   * „Kandidaten“ — the left column of the working stages, a sheet below 1100px.
+   */
+  railSlot?: React.ReactNode;
+  /**
+   * „Euer Suchauftrag“ — the right column of the working stages, a sheet below
+   * 1100px. It replaces the `briefReviewAction` toggle on those stages.
+   */
+  asideSlot?: React.ReactNode;
   offerSlot?: React.ReactNode;
   completeSlot?: React.ReactNode;
   errorSlot?: React.ReactNode;
