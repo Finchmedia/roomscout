@@ -7,6 +7,7 @@ import {
   GptLiveFragmentBuffer,
   isClientDelegationEvent,
   isLiveTranscriptEvent,
+  isRetryablePreclaimFailure,
   safeLiveError,
   safeLiveProviderError,
   type LiveCaptionRow,
@@ -252,6 +253,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   const fragmentBufferRef = useRef(new GptLiveFragmentBuffer());
   const queueRef = useRef<QueuedInput[]>([]);
   const activeInputRef = useRef<QueuedInput | undefined>(undefined);
+  const failedInputRef = useRef<QueuedInput | undefined>(undefined);
   const uncertainInputRef = useRef<
     {
       input: QueuedInput;
@@ -365,6 +367,9 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       const unadmittedTextIds = new Set(
         queueRef.current.filter((input) => input.source === "text").map((input) => input.requestId),
       );
+      if (failedInputRef.current?.source === "text") {
+        unadmittedTextIds.add(failedInputRef.current.requestId);
+      }
       if (preservePendingText) {
         setPendingTextInputs((current) => current.filter((entry) => unadmittedTextIds.has(entry.id)));
       } else {
@@ -372,6 +377,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       }
       queueRef.current = [];
       activeInputRef.current = undefined;
+      failedInputRef.current = undefined;
       uncertainInputRef.current = undefined;
       waitingForServerIdleRef.current = false;
       peerRef.current = null;
@@ -402,6 +408,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   const pumpQueue = useCallback(async () => {
     if (
       activeInputRef.current ||
+      failedInputRef.current ||
       waitingForServerIdleRef.current ||
       blockedByUnknownRef.current ||
       connectionState !== "active" ||
@@ -461,7 +468,11 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         return;
       }
       if (result.status === "needs_clarification") setBackendState("waiting_for_clarification");
-      else if (result.status === "failed") setBackendState("failed");
+      else if (result.status === "failed") {
+        failedInputRef.current = next;
+        setBackendState("failed");
+        settleFlushWaiters(false);
+      }
       else if (result.status === "outcome_unknown") {
         blockedByUnknownRef.current = true;
         setBackendState("outcome_unknown");
@@ -474,13 +485,26 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       if (result.spokenSummary && !hasNewerInput && contextIsCurrent) {
         appendContext(result.spokenSummary, true, next.delegationId ?? null);
       }
-    } catch {
+    } catch (cause) {
       if (generationRef.current !== generation || voiceSessionIdRef.current !== sessionId) return;
-      uncertainInputRef.current = { input: next, snapshot, contextEpoch, locale: requestLocale };
-      waitingForServerIdleRef.current = true;
-      blockedByUnknownRef.current = true;
-      setBackendState("outcome_unknown");
-      settleFlushWaiters(false);
+      if (isRetryablePreclaimFailure(cause)) {
+        failedInputRef.current = next;
+        if (next.source === "text" && next.text) {
+          setPendingTextInputs((current) =>
+            current.some((entry) => entry.id === next.requestId)
+              ? current
+              : [...current, { id: next.requestId, text: next.text! }],
+          );
+        }
+        setBackendState("failed");
+        settleFlushWaiters(false);
+      } else {
+        uncertainInputRef.current = { input: next, snapshot, contextEpoch, locale: requestLocale };
+        waitingForServerIdleRef.current = true;
+        blockedByUnknownRef.current = true;
+        setBackendState("outcome_unknown");
+        settleFlushWaiters(false);
+      }
     } finally {
       if (generationRef.current === generation && activeInputRef.current?.requestId === next.requestId) {
         activeInputRef.current = undefined;
@@ -776,9 +800,19 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   }, [connectionState]);
 
   const clearPendingTextDraft = useCallback(() => setPendingTextInputs([]), []);
+  const retryFailedInput = useCallback(() => {
+    const failed = failedInputRef.current;
+    if (!failed || connectionState !== "active") return false;
+    failedInputRef.current = undefined;
+    queueRef.current.unshift(failed);
+    setPendingInputCount(queueRef.current.length);
+    setBackendState("queued");
+    pumpRef.current();
+    return true;
+  }, [connectionState]);
   const flushPendingInputs = useCallback(() => {
+    if (failedInputRef.current || blockedByUnknownRef.current) return Promise.resolve(false);
     if (!activeInputRef.current && queueRef.current.length === 0) return Promise.resolve(true);
-    if (blockedByUnknownRef.current) return Promise.resolve(false);
     return new Promise<boolean>((resolve) => {
       flushWaitersRef.current.push(resolve);
       pumpRef.current();
@@ -906,6 +940,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     setModality,
     sendText,
     flushPendingInputs,
+    retryFailedInput,
     clearPendingTextDraft,
     interrupt: stopSpeaking,
     stopSpeaking,

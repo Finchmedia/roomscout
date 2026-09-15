@@ -315,6 +315,26 @@ describe("useGptLiveVoiceScout", () => {
     await act(async () => resolveDelegate(completed("ignored", [])));
   });
 
+  it("keeps a deterministically rejected typed input for explicit manual retry", async () => {
+    const rejection = Object.assign(new Error("INVALID_VOICE_REQUEST"), {
+      data: { code: "INVALID_VOICE_REQUEST" },
+    });
+    const delegate = vi.fn()
+      .mockRejectedValueOnce(rejection)
+      .mockImplementation(async (args: { requestId: string }) => completed(args.requestId, []));
+    const { result } = await connect(delegate as never);
+    act(() => {
+      expect(result.current.sendText("Start the search now")).toBe(true);
+    });
+    await waitFor(() => expect(result.current.backendState).toBe("failed"));
+    expect(result.current.pendingTextDraft).toBe("Start the search now");
+    await expect(result.current.flushPendingInputs()).resolves.toBe(false);
+    act(() => expect(result.current.retryFailedInput()).toBe(true));
+    await waitFor(() => expect(delegate).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(result.current.backendState).toBe("idle"));
+    expect(result.current.pendingTextDraft).toBe("");
+  });
+
   it("sends verified focus and background context with documented append events", async () => {
     const { result, sent } = await connect(vi.fn().mockResolvedValue(completed("none", [])) as never);
     act(() => result.current.setFocus({ summary: "The selected room is West Room; no offer is accepted." }));

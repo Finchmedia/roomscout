@@ -3,6 +3,7 @@ import {
   GptLiveFragmentBuffer,
   isClientDelegationEvent,
   isLiveTranscriptEvent,
+  isRetryablePreclaimFailure,
 } from "./gptLiveRuntime";
 
 describe("GptLiveFragmentBuffer", () => {
@@ -154,4 +155,11 @@ it("accepts only documented transcript and client-delegation event shapes", () =
       delegation: { id: "d1", type: "delegation", target: "responses" },
     }),
   ).toBe(false);
+});
+
+it("distinguishes deterministic pre-claim rejection from an ambiguous failure", () => {
+  expect(isRetryablePreclaimFailure({ data: { code: "INVALID_VOICE_REQUEST" } })).toBe(true);
+  expect(isRetryablePreclaimFailure(new Error("Authentication_required"))).toBe(true);
+  expect(isRetryablePreclaimFailure(new TypeError("network connection lost"))).toBe(false);
+  expect(isRetryablePreclaimFailure({ data: { code: "VOICE_FIELD_CONFLICT" } })).toBe(false);
 });

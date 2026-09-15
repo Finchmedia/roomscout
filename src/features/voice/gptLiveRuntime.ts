@@ -198,3 +198,34 @@ export function safeLiveProviderError(event: LiveServerEvent): string {
   if (/audio|microphone/i.test(code)) return "The voice service could not process microphone audio.";
   return "The Live session reported an error.";
 }
+
+const SAFE_PRECLAIM_FAILURE_CODES = new Set([
+  "INVALID_VOICE_REQUEST",
+  "INVALID_VOICE_FRAGMENT",
+  "INVALID_VOICE_TEXT",
+  "VOICE_USER_INPUT_REQUIRED",
+  "VOICE_SESSION_NOT_FOUND",
+  "USER_NOT_FOUND",
+  "UNAUTHENTICATED",
+  "AUTHENTICATION_REQUIRED",
+  "AUTHORIZATION_REQUIRED",
+]);
+
+/** Errors known to occur before a delegate claim are safe for an explicit retry. */
+export function isRetryablePreclaimFailure(cause: unknown): boolean {
+  const record = cause && typeof cause === "object" ? cause as Record<string, unknown> : undefined;
+  const data = record?.data;
+  const dataCode = data && typeof data === "object"
+    ? (data as Record<string, unknown>).code
+    : undefined;
+  const candidates = [
+    typeof dataCode === "string" ? dataCode : "",
+    typeof data === "string" ? data : "",
+    typeof record?.message === "string" ? record.message : "",
+  ];
+  return candidates.some((value) =>
+    [...SAFE_PRECLAIM_FAILURE_CODES].some((code) =>
+      new RegExp(`(?:^|[^A-Z_])${code}(?:$|[^A-Z_])`).test(value.toUpperCase()),
+    ),
+  );
+}

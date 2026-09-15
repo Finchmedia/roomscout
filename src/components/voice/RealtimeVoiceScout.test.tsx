@@ -42,6 +42,7 @@ function session(
     setModality: vi.fn(),
     sendText: vi.fn().mockReturnValue(true),
     flushPendingInputs: vi.fn().mockResolvedValue(true),
+    retryFailedInput: vi.fn().mockReturnValue(false),
     clearPendingTextDraft: vi.fn(),
     interrupt: vi.fn(),
     stopSpeaking: vi.fn(),

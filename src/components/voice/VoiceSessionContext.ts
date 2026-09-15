@@ -41,6 +41,7 @@ export type VoiceSessionValue = {
   setModality: (modality: VoiceScoutModality) => void;
   sendText: (text: string) => boolean;
   flushPendingInputs: () => Promise<boolean>;
+  retryFailedInput: () => boolean;
   clearPendingTextDraft: () => void;
   interrupt: () => void;
   stopSpeaking: () => void;

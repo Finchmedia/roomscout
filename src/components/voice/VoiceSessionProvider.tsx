@@ -118,6 +118,7 @@ export function VoiceSessionProvider({
       pendingTextDraft: "",
       sessionLocale: uiLocale,
       flushPendingInputs: async () => true,
+      retryFailedInput: () => false,
       clearPendingTextDraft: () => undefined,
       stopSpeaking: realtime.interrupt,
       setLanguage,
