@@ -2,31 +2,8 @@ import * as React from "react";
 import { Capsule } from "@/components/ui/capsule";
 import { FactList } from "@/components/ui/fact-list";
 
-/**
- * „Euer Suchauftrag“ while it is still being written — the fact list plus
- * SCOUT_SCREENS.md §4.3's arrival choreography, driven by live data instead of
- * by the prototype's script.
- *
- * The caller passes the facts it has; this component compares them with what
- * it rendered last and animates the difference:
- *
- *  · a **new** fact is pushed as §4.3's placeholder row (`arriving`, height 0,
- *    invisible), a `Capsule` carrying its value flies from the conversation to
- *    the row's box over ~580 ms, and 400 ms into that flight the row grows and
- *    lights up orange for ~1 s;
- *  · a **changed** value only flashes the orange highlight, no flight — the row
- *    is already on screen and only its text is corrected;
- *  · several new facts in one update fly one after another, 880 ms apart, so
- *    two capsules are never in the air at once.
- *
- * Both flags are cleared here, as `fact-list.tsx` requires of its caller: the
- * atom holds no timer.
- *
- * Reduced motion skips the flight and the growth (the row simply appears) and
- * keeps the highlight, which `tokens.css` renders as a static wash. A browser
- * without `Element.animate` (and jsdom) takes the same path, so nothing depends
- * on the animation having run.
- */
+/** Saved facts render immediately. Flights and highlights only decorate committed
+ * query updates; they never hide a row or stand in for a successful save. */
 export interface ArrivingFact {
   /** `FactList` row id — `ort` · `band` · `budget` · `zeit` · `equip` · … */
   id: string;
@@ -45,17 +22,18 @@ export interface ArrivingFactListProps {
    * value was just spoken into. A missing element flies from the list itself.
    */
   originSelector?: string;
+  /** Changing the search or UI language must not replay old facts. */
+  animationKey?: string;
   children?: React.ReactNode;
 }
 
-/** §4.3: 580 ms flight, the row grows 400 ms in, the wash lasts ~1 s. */
+/** Short, decorative flights; every destination is already visible. */
 const FLIGHT_MS = 580;
-const COMMIT_MS = 400;
 const HIGHLIGHT_MS = 1000;
 /** One capsule at a time: the next fact leaves once the previous has landed. */
-const STAGGER_MS = 880;
+const STAGGER_MS = 620;
 
-type Flags = { arriving?: boolean; changed?: boolean };
+type Flags = { changed?: boolean };
 
 /** The chip in the air: what it says, and the point it leaves from. */
 type Flight = ArrivingFact & { origin: { left: number; top: number } | null };
@@ -70,7 +48,8 @@ export function ArrivingFactList({
   title,
   variant = "floating",
   className,
-  originSelector = '[aria-label="Scout-Chat"]',
+  originSelector = "[data-scout-conversation]",
+  animationKey,
   children,
 }: ArrivingFactListProps) {
   const listRef = React.useRef<HTMLDivElement>(null);
@@ -79,6 +58,7 @@ export function ArrivingFactList({
   // What the last render committed, so an update only animates the difference.
   // Seeded on the first pass, so a reload does not replay the whole brief.
   const seen = React.useRef<Map<string, string> | null>(null);
+  const seenKey = React.useRef(animationKey);
   const [flags, setFlags] = React.useState<Record<string, Flags>>({});
   const [flying, setFlying] = React.useState<Flight | null>(null);
 
@@ -106,49 +86,32 @@ export function ArrivingFactList({
   React.useEffect(() => {
     const next = new Map(facts.map((fact) => [fact.id, fact.label]));
     const previous = seen.current;
+    const reset = seenKey.current !== animationKey;
     seen.current = next;
+    seenKey.current = animationKey;
     if (previous === null) return;
+    if (!reset && next.size === previous.size && facts.every(fact => previous.get(fact.id) === fact.label)) return;
 
-    const added = facts.filter((fact) => !previous.has(fact.id));
-    const changed = facts.filter(
-      (fact) => previous.has(fact.id) && previous.get(fact.id) !== fact.label,
-    );
-    if (!added.length && !changed.length) return;
+    // An incoming correction invalidates scheduled capsules as well as visible ones.
+    // A stale Tuesday must never fly into a Wednesday row a second later.
+    for (const timer of timers.current) window.clearTimeout(timer);
+    timers.current = [];
+    setFlying(null);
+    setFlags({});
+    if (reset) return;
 
-    const mark = (id: string, value: Flags) =>
-      setFlags((current) => ({ ...current, [id]: { ...current[id], ...value } }));
-    const clear = (id: string, key: keyof Flags) =>
-      setFlags((current) => {
-        const row = { ...current[id] };
-        delete row[key];
-        return { ...current, [id]: row };
-      });
+    const updated = facts.filter(fact => previous.get(fact.id) !== fact.label);
+    setFlags(Object.fromEntries(updated.map(fact => [fact.id, { changed: true }])));
+    schedule(HIGHLIGHT_MS, () => setFlags({}));
+    if (prefersReducedMotion()) return;
 
-    for (const fact of changed) {
-      mark(fact.id, { changed: true });
-      schedule(HIGHLIGHT_MS, () => clear(fact.id, "changed"));
-    }
-
-    const reduced = prefersReducedMotion();
-    if (reduced) {
-      for (const fact of added) {
-        mark(fact.id, { changed: true });
-        schedule(HIGHLIGHT_MS, () => clear(fact.id, "changed"));
-      }
-      return;
-    }
-    added.forEach((fact, index) => {
+    // Keep a large extraction visually quiet; all other saved rows still highlight.
+    facts.filter(fact => !previous.has(fact.id)).slice(0, 3).forEach((fact, index) => {
       const start = index * STAGGER_MS;
-      mark(fact.id, { arriving: true });
       schedule(start, () => setFlying({ ...fact, origin: measureOrigin() }));
-      schedule(start + COMMIT_MS, () => {
-        clear(fact.id, "arriving");
-        mark(fact.id, { changed: true });
-      });
-      schedule(start + FLIGHT_MS, () => setFlying((current) => (current?.id === fact.id ? null : current)));
-      schedule(start + COMMIT_MS + HIGHLIGHT_MS, () => clear(fact.id, "changed"));
+      schedule(start + FLIGHT_MS, () => setFlying(current => current?.id === fact.id ? null : current));
     });
-  }, [facts, measureOrigin, schedule]);
+  }, [facts, animationKey, measureOrigin, schedule]);
 
   // The flight itself — §4.3's keyframes, run on the live chip rather than on a
   // clone, because this capsule exists only for the flight.
@@ -163,7 +126,7 @@ export function ArrivingFactList({
     if (!to) return;
     const dx = to.left + 8 - from.left;
     const dy = (to.height ? to.top + (to.height - from.height) / 2 : to.top + 8) - from.top;
-    node.animate(
+    const animation = node.animate(
       [
         { transform: "translate(0,0) scale(1)", opacity: 1 },
         { transform: `translate(${dx * 0.55}px, ${dy * 0.5 - 46}px) scale(.96)`, offset: 0.5 },
@@ -171,6 +134,7 @@ export function ArrivingFactList({
       ],
       { duration: FLIGHT_MS, easing: "cubic-bezier(.3,.7,.2,1)", fill: "forwards" },
     );
+    return () => animation.cancel?.();
   }, [flying]);
 
   const rows = facts.map((fact) => ({ ...fact, ...flags[fact.id] }));

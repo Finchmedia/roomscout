@@ -42,7 +42,11 @@ type Env = {
   readonly FIRECRAWL_MONITOR_WEBHOOK_BEARER: string | undefined;
   readonly FIRECRAWL_WEBHOOK_SECRET: string | undefined;
   readonly OPENAI_API_KEY: string;
+  readonly OPENAI_LIVE_MODEL: string | undefined;
+  readonly OPENAI_LIVE_VOICE: string | undefined;
   readonly PORTAL_BROWSER_ENGINE: "firecrawl" | "browserbase" | undefined;
+  readonly VOICE_ALLOWED_ORIGINS: string | undefined;
+  readonly VOICE_PROVIDER: "realtime" | "live" | undefined;
 };
 
 /**

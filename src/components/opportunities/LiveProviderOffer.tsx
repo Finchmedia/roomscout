@@ -70,7 +70,7 @@ export function LiveProviderOffer({ conversation, title, hideMessagesLink = fals
     <Overline tone="accent">{t(interim ? "liveScout.interimLabel" : "liveScout.offerLabel")}</Overline>
     <h2 className="mt-[var(--space-8)] text-[length:var(--text-card-title-size)]">{title || t("liveScout.offerFallback")}</h2>
     <div className="mt-[var(--space-2)] text-[length:var(--text-price-size)] leading-[1.1]">
-      {price === null ? t("liveScout.priceUnknown") : <>{new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format(price)} <span className="text-[.6em] text-rs-ink-2">{t("liveScout.perMonth")}</span></>}
+      {price === null ? t("liveScout.priceUnknown") : <>{new Intl.NumberFormat(locale === "en" ? "en-GB" : "de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format(price)} <span className="text-[.6em] text-rs-ink-2">{t("liveScout.perMonth")}</span></>}
     </div>
     <p className="mt-[var(--space-2)] text-rs-ink-4">{t(assessment.monthlyPrice.allRecurringCostsKnown ? "liveScout.allIn" : "liveScout.extrasUnknown")}</p>
   </>;

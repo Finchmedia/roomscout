@@ -34,7 +34,7 @@ describe("arriving fact list", () => {
     expect(row("ort")).not.toHaveAttribute("data-changed");
   });
 
-  it("flies a capsule at the new row and commits it 400 ms in", () => {
+  it("shows a saved fact immediately while its decorative capsule flies", () => {
     vi.useFakeTimers();
     const animate = allowMotion();
     const { rerender } = view([{ id: "ort", label: "Stuttgart" }]);
@@ -45,9 +45,8 @@ describe("arriving fact list", () => {
         title="Euer Suchauftrag"
       />,
     );
-    // The placeholder row exists before the capsule arrives — §4.3's flight
-    // needs a target box, and the row must not pop in ahead of it.
-    expect(row("budget")).toHaveAttribute("data-arriving", "true");
+    expect(row("budget")).not.toHaveAttribute("data-arriving");
+    expect(row("budget")).toHaveAttribute("data-changed", "true");
 
     act(() => { vi.advanceTimersByTime(1); });
     expect(screen.getByText("Bis 350 € / Monat", { selector: "[data-slot='capsule']" })).toBeInTheDocument();
@@ -93,4 +92,27 @@ describe("arriving fact list", () => {
     act(() => { vi.advanceTimersByTime(1000); });
     expect(row("budget")).not.toHaveAttribute("data-changed");
   });
+  it("cancels stale capsules when a saved correction arrives", () => {
+    vi.useFakeTimers();
+    allowMotion();
+    const { rerender } = view([]);
+    rerender(<ArrivingFactList facts={[{ id: "ort", label: "Berlin" }, { id: "zeit", label: "Tuesday" }]} title="Brief" />);
+    act(() => { vi.advanceTimersByTime(1); });
+    rerender(<ArrivingFactList facts={[{ id: "ort", label: "Berlin" }, { id: "zeit", label: "Wednesday" }]} title="Brief" />);
+    act(() => { vi.advanceTimersByTime(1500); });
+    expect(screen.queryByText("Tuesday")).not.toBeInTheDocument();
+    expect(row("zeit")).toHaveTextContent("Wednesday");
+    expect(document.querySelector("[data-slot='capsule']")).toBeNull();
+  });
+
+  it("does not animate translated or reloaded facts", () => {
+    vi.useFakeTimers();
+    const animate = allowMotion();
+    const { rerender } = render(<ArrivingFactList animationKey="one:en" facts={[{ id: "zeit", label: "Wednesday" }]} title="Brief" />);
+    rerender(<ArrivingFactList animationKey="one:de" facts={[{ id: "zeit", label: "Mittwoch" }]} title="Brief" />);
+    act(() => { vi.runAllTimers(); });
+    expect(row("zeit")).not.toHaveAttribute("data-changed");
+    expect(animate).not.toHaveBeenCalled();
+  });
+
 });

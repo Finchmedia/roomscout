@@ -84,6 +84,8 @@ export interface LiveScoutSurfaceProps {
   chatSlot?: React.ReactNode;
   profileMenuSlot?: React.ReactNode;
   voiceSlot?: React.ReactNode;
+  /** A selected candidate stays beside the active conversation. */
+  detailSlot?: React.ReactNode;
   briefFacts?: React.ReactNode;
   briefExpanded?: boolean;
   briefReviewSlot?:

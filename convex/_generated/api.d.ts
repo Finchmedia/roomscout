@@ -111,6 +111,7 @@ import type * as portalBrowserMaintenance from "../portalBrowserMaintenance.js";
 import type * as portalConnections from "../portalConnections.js";
 import type * as portalInboxSync from "../portalInboxSync.js";
 import type * as portalNotifications from "../portalNotifications.js";
+import type * as prompts_roomScoutLive from "../prompts/roomScoutLive.js";
 import type * as providerActions from "../providerActions.js";
 import type * as providerConversations from "../providerConversations.js";
 import type * as resetMarketIndex from "../resetMarketIndex.js";
@@ -134,6 +135,7 @@ import type * as stagehandFormSmoke from "../stagehandFormSmoke.js";
 import type * as stagehandSmoke from "../stagehandSmoke.js";
 import type * as users from "../users.js";
 import type * as voice from "../voice.js";
+import type * as voiceLive from "../voiceLive.js";
 import type * as workpools from "../workpools.js";
 
 import type {
@@ -246,6 +248,7 @@ declare const fullApi: ApiFromModules<{
   portalConnections: typeof portalConnections;
   portalInboxSync: typeof portalInboxSync;
   portalNotifications: typeof portalNotifications;
+  "prompts/roomScoutLive": typeof prompts_roomScoutLive;
   providerActions: typeof providerActions;
   providerConversations: typeof providerConversations;
   resetMarketIndex: typeof resetMarketIndex;
@@ -269,6 +272,7 @@ declare const fullApi: ApiFromModules<{
   stagehandSmoke: typeof stagehandSmoke;
   users: typeof users;
   voice: typeof voice;
+  voiceLive: typeof voiceLive;
   workpools: typeof workpools;
 }>;
 

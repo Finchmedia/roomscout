@@ -7,6 +7,7 @@ import { ScoutBlob, type ScoutBlobState } from "@/components/ui/scout-blob"
 import { VoiceControl } from "@/components/ui/voice-control"
 import type { VoiceScoutStatus } from "@/hooks/useRealtimeVoiceScout"
 import { cn } from "@/lib/utils"
+import { useCopy } from "@/ui/copy"
 
 interface LiveVoiceChatLabels {
   cancel: string
@@ -38,26 +39,6 @@ interface LiveVoiceChatProps {
   className?: string
 }
 
-const DEFAULT_LABELS: LiveVoiceChatLabels = {
-  cancel: "Verbindungsaufbau abbrechen",
-  connect: "Gespräch starten",
-  connecting: "Gespräch wird verbunden …",
-  controls: "Gesprächssteuerung",
-  end: "Gespräch beenden",
-  error: "Verbindung unterbrochen",
-  interrupt: "Scout unterbrechen",
-  listening: "Ich höre zu",
-  microphoneOff: "Mikrofon ausschalten",
-  microphoneOn: "Mikrofon einschalten",
-  reconnect: "Gespräch erneut starten",
-  scout: "Dein Scout",
-  speaking: "Dein Scout spricht",
-  status: "Bereit, wenn du es bist",
-  switchToText: "Zum Schreiben wechseln",
-  thinking: "Ich denke kurz nach",
-  user: "Du",
-}
-
 const BUSY_STATUSES: ReadonlySet<VoiceScoutStatus> = new Set([
   "requesting_microphone",
   "connecting",
@@ -79,27 +60,32 @@ function blobState(status: VoiceScoutStatus): ScoutBlobState {
 function LiveVoiceChat({
   onEnd,
   onText,
-  title = "Erzähl mir, was ihr sucht.",
+  title,
   hideBlob = false,
   labels: labelOverrides,
   className,
 }: LiveVoiceChatProps) {
   const voice = useVoiceSession()
-  const labels = { ...DEFAULT_LABELS, ...labelOverrides }
+  const { t } = useCopy()
+  const labels: LiveVoiceChatLabels = {
+    cancel: t("liveScout.voice.cancel"), connect: t("liveScout.voice.connect"),
+    connecting: t("liveScout.voice.connecting"), controls: t("liveScout.voice.controls"),
+    end: t("liveScout.voice.end"), error: t("liveScout.voice.error"),
+    interrupt: t("liveScout.voice.interrupt"), listening: t("liveScout.voice.listening"),
+    microphoneOff: t("liveScout.voice.microphoneOff"), microphoneOn: t("liveScout.voice.microphoneOn"),
+    reconnect: t("liveScout.voice.reconnect"), scout: t("liveScout.voice.scout"),
+    speaking: t("liveScout.voice.speaking"), status: t("liveScout.voice.status"),
+    switchToText: t("liveScout.voice.switchToText"), thinking: t("liveScout.voice.thinking"),
+    user: t("liveScout.voice.user"), ...labelOverrides,
+  }
   const busy = BUSY_STATUSES.has(voice.status)
   const active = voice.connected || ACTIVE_STATUSES.has(voice.status)
   const transcript = voice.transcript
 
-  const latestTurns = React.useMemo(() => {
-    const latestByRole = new Map<"user" | "assistant", (typeof transcript)[number]>()
-    for (let index = transcript.length - 1; index >= 0; index -= 1) {
-      const turn = transcript[index]
-      if (!turn) continue
-      if (turn.text.trim() && !latestByRole.has(turn.role)) latestByRole.set(turn.role, turn)
-      if (latestByRole.size === 2) break
-    }
-    return transcript.filter((turn) => latestByRole.get(turn.role)?.id === turn.id)
-  }, [transcript])
+  // Input and output can overlap. Keep their actual caption rows in sequence.
+  const latestTurns = React.useMemo(() => transcript.filter(turn => turn.text.trim()).slice(-8), [transcript])
+  const captionEnd = React.useRef<HTMLDivElement>(null)
+  React.useEffect(() => { captionEnd.current?.scrollIntoView?.({ block: "nearest" }) }, [latestTurns])
 
   const statusCopy = voice.error ?? (
     busy
@@ -122,7 +108,8 @@ function LiveVoiceChat({
 
   return (
     <section
-      aria-label="Gespräch mit deinem Room Scout"
+      aria-label={t("liveScout.voice.region")}
+      data-scout-conversation="voice"
       className={cn(
         "flex min-h-0 w-full flex-col items-center justify-center gap-[var(--space-11)] rounded-card border border-rs-border-card bg-rs-surface-card px-[var(--space-7)] py-[var(--space-13)] text-center",
         className
@@ -130,8 +117,8 @@ function LiveVoiceChat({
     >
       {!hideBlob && <ScoutBlob state={blobState(voice.status)} size={160} />}
 
-      <div className="max-w-[38rem]" aria-live="polite" aria-atomic="true">
-        <h2 className="text-[length:var(--text-card-title-size)] font-light text-rs-ink">{title}</h2>
+      <div className="max-w-[38rem]">
+        <h2 className="text-[length:var(--text-card-title-size)] font-light text-rs-ink">{title ?? t("liveScout.voice.title")}</h2>
         <p
           role={voice.error ? "alert" : "status"}
           className={cn(
@@ -139,12 +126,18 @@ function LiveVoiceChat({
             voice.error && "text-rs-red-text"
           )}
         >
-          {statusCopy}{voice.muted ? ` · ${labels.microphoneOn}` : ""}
+          {statusCopy}{voice.muted ? ` · ${t("liveScout.voice.muted")}` : ""}
         </p>
       </div>
 
+      {voice.provider === "live" && (voice.backendState === "processing" || voice.pendingInputCount > 0 || voice.backendState === "outcome_unknown") ? (
+        <p role="status" className="text-sm text-rs-ink-4">
+          {voice.backendState === "outcome_unknown" ? t("liveScout.voice.outcomeUnknown") : voice.pendingInputCount > 0 ? t("liveScout.voice.queued") : t("liveScout.voice.updating")}
+        </p>
+      ) : null}
+
       {latestTurns.length > 0 && (
-        <div aria-label="Letzte Gesprächsbeiträge" className="flex w-full max-w-[42rem] flex-col gap-[var(--space-5)] text-left">
+        <div aria-label={t("liveScout.voice.transcript")} className="flex max-h-[32vh] w-full max-w-[42rem] flex-col gap-[var(--space-5)] overflow-y-auto text-left">
           {latestTurns.map((turn) => {
             const user = turn.role === "user"
             return (
@@ -153,6 +146,7 @@ function LiveVoiceChat({
               </ChatTurn>
             )
           })}
+          <div ref={captionEnd} />
         </div>
       )}
 
@@ -183,7 +177,7 @@ function LiveVoiceChat({
             >
               <Icon name={voice.muted ? "mic-off" : "mic"} size={22} />
             </VoiceControl>
-            {voice.status === "speaking" && (
+            {(voice.scoutSpeaking || voice.status === "speaking") && (
               <VoiceControl label={labels.interrupt} onClick={voice.interrupt}>
                 <Icon name="pause" size={22} />
               </VoiceControl>

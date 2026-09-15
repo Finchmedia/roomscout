@@ -54,7 +54,7 @@ describe("LiveVoiceChat", () => {
     expect(calls).toEqual(["disconnect", "onEnd"])
   })
 
-  it("renders latest turns and active mute, interrupt, and text controls", () => {
+  it("preserves overlapping caption history and active mute, interrupt, and text controls", () => {
     fixture.session = session({
       connected: true,
       status: "speaking",
@@ -67,7 +67,7 @@ describe("LiveVoiceChat", () => {
     const onText = vi.fn()
     render(<LiveVoiceChat onText={onText} />)
 
-    expect(screen.queryByText("Alter Wunsch")).not.toBeInTheDocument()
+    expect(screen.getByText("Alter Wunsch")).toBeInTheDocument()
     expect(screen.getByText("Mittwoch passt")).toBeInTheDocument()
     expect(screen.getByText("Ich prüfe das.")).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "Mikrofon ausschalten" }))

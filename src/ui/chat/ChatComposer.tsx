@@ -68,6 +68,8 @@ interface ChatComposerProps
   maxLength?: number
   /** Reports the composer's own in-flight state to the host. */
   onBusyChange?: (busy: boolean) => void
+  restoredDraft?: string
+  onDraftRestored?: () => void
 }
 
 function ChatComposer({
@@ -81,6 +83,8 @@ function ChatComposer({
   autoFocus = false,
   maxLength = 4000,
   onBusyChange,
+  restoredDraft,
+  onDraftRestored,
   className,
   ...props
 }: ChatComposerProps) {
@@ -91,6 +95,12 @@ function ChatComposer({
   const submittingRef = React.useRef(false)
   const statusId = React.useId()
   const isBusy = busy || submitting
+
+  React.useEffect(() => {
+    if (!restoredDraft) return
+    setDraft(current => current && current !== restoredDraft ? `${current}\n${restoredDraft}` : restoredDraft)
+    onDraftRestored?.()
+  }, [restoredDraft, onDraftRestored])
 
   const submit = async () => {
     const body = draft.trim()

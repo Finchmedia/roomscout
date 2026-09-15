@@ -1,3 +1,4 @@
+import { useCopy } from "@/ui/copy"
 import * as React from "react"
 import { cva } from "class-variance-authority"
 import { cn } from "@/lib/utils"
@@ -188,7 +189,7 @@ const FACT_ICONS: Record<string, IconName | null | undefined> = {
  * a screen-reader user cannot tell which criterion a value belongs to. An id
  * the DS does not know has no category and falls back to the value.
  */
-const FACT_CATEGORIES: Record<string, string | undefined> = {
+const FACT_CATEGORIES = {
   ort: "Ort",
   budget: "Budget",
   band: "Band",
@@ -278,12 +279,12 @@ const factListRowsVariants = cva("flex min-w-0 flex-col", {
 
 const factRowVariants = cva(
   [
-    "flex items-center overflow-hidden text-ellipsis whitespace-nowrap",
+    "flex items-center overflow-hidden whitespace-normal",
     "rounded-chip px-[var(--space-2)]",
     // The row height is a private custom property, so `editing` can swap the
     // fixed box for a floor and `arriving` can collapse it to 0 without a
     // compound variant per density. tailwind-merge keeps the last `h-*`.
-    "h-[var(--rs-fact-row-h)]",
+    "min-h-[var(--rs-fact-row-h)] py-[var(--space-2)]",
     // FactList.jsx:16 transitions `background` only — .5s on the CSS default
     // easing (`transition-colors` would drag the card's divider and the ink
     // along; `ease-out-soft` is the .9s morph curve, not the flash's).
@@ -379,7 +380,9 @@ function FactRow({
   ...props
 }: FactRowProps) {
   const glyph = FACT_ICONS[fact.id]
-  const category = FACT_CATEGORIES[fact.id]
+  const { t } = useCopy()
+  const categoryKey = fact.id as keyof typeof FACT_CATEGORIES
+  const category = categoryKey in FACT_CATEGORIES ? t(`liveScout.factCategories.${categoryKey}`) : undefined
   const arriving = fact.arriving === true
 
   return (
@@ -426,7 +429,7 @@ function FactRow({
           data-slot="fact-row-input"
           // Five rows mean five inputs; the DS labels every one of them
           // „Kriterium bearbeiten“, which is five identical fields for AT.
-          aria-label={`Kriterium bearbeiten: ${category ?? fact.label}`}
+          aria-label={t("liveScout.editCriterion", { category: category ?? fact.label })}
           value={draft ?? fact.label}
           onChange={(event) => onDraftChange?.(fact.id, event.target.value)}
           className={cn(
@@ -443,7 +446,7 @@ function FactRow({
         <span
           data-slot="fact-row-label"
           data-fact-label={fact.id}
-          className="overflow-hidden text-ellipsis"
+          className="min-w-0 break-words leading-relaxed"
         >
           {fact.label}
         </span>
@@ -456,7 +459,7 @@ function FactRow({
        * `logChange` string (SCOUT_SCREENS.md §4).
        */}
       <span data-slot="fact-row-status" role="status" className="sr-only">
-        {fact.changed ? `Angabe korrigiert: ${fact.label}` : null}
+        {fact.changed ? t("liveScout.factUpdated", { value: fact.label }) : null}
       </span>
     </div>
   )
@@ -494,7 +497,7 @@ function FactList({
   className,
   facts = [],
   variant = "floating",
-  title = "Euer Suchauftrag",
+  title,
   onEdit,
   editing = false,
   drafts,
@@ -502,6 +505,8 @@ function FactList({
   children,
   ...props
 }: FactListProps) {
+  const { t } = useCopy()
+  const heading = title ?? t("liveScout.asideTitle")
   const titleId = React.useId()
 
   return (
@@ -513,7 +518,7 @@ function FactList({
       // The brief is a named group of items, not a run of loose sentences.
       // Both are declared before the spread, so a screen can override them.
       role="group"
-      aria-labelledby={title ? titleId : undefined}
+      aria-labelledby={heading ? titleId : undefined}
       className={cn(factListVariants({ variant }), className)}
       {...props}
     >
@@ -526,13 +531,13 @@ function FactList({
           data-slot="fact-list-title"
           className={factListTitleVariants({ variant })}
         >
-          {title}
+          {heading}
         </div>
         {onEdit && !editing ? (
           <IconButton
             variant="bare"
             size={36}
-            label="Suchauftrag bearbeiten"
+            label={t("liveScout.asideEdit")}
             onClick={onEdit}
             className="animate-rs-fade-up"
           >

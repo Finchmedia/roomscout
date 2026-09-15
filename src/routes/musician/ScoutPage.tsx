@@ -12,6 +12,7 @@ import { FactList } from "../../components/ui/fact-list";
 import { DecisionCard } from "../../components/scout/DecisionCard";
 import { LiveProviderOffer } from "../../components/opportunities/LiveProviderOffer";
 import { LiveProfileMenu } from "../../components/navigation/LiveProfileMenu";
+import { ConversationThread } from "../../ui/inbox/ConversationThread";
 import { LiveVoiceChat } from "../../ui/chat/LiveVoiceChat";
 import { useVoiceSession } from "../../components/voice/VoiceSessionContext";
 import { factsFromNeed } from "../../features/scout/viewModel";
@@ -52,6 +53,9 @@ export function ScoutPage() {
   const setFocus = useMutation(api.scout.setFocus);
   const setStatus = useMutation(api.savedNeeds.setStatus);
   const activate = useMutation(api.savedNeeds.activate);
+  const updateNeed = useMutation(api.savedNeeds.update);
+  const replyToConversation = useMutation(api.conversations.reply);
+  const markConversationRead = useMutation(api.conversations.markRead);
   // The musician's own bubble is on screen before the mutation resolves; the
   // Scout's half of the turn arrives on the thread as deltas.
   const sendMessage = useMutation(api.scout.send).withOptimisticUpdate(
@@ -59,6 +63,9 @@ export function ScoutPage() {
   );
   const decisions = useQuery(api.decisions.listOpenMine);
   const answerDecision = useMutation(api.decisions.answer);
+  const [focusedConversationId, setFocusedConversationId] = useState<Id<"providerConversations">>();
+  const focusedThread = useQuery(api.conversations.getMine, focusedConversationId ? { conversationId: focusedConversationId } : "skip");
+  const [briefEdit, setBriefEdit] = useState<{ needId: Id<"savedNeeds">; revision: number; field: "budget" | "schedule"; value: string }>();
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
   const [textOpen, setTextOpen] = useState(false);
@@ -107,16 +114,7 @@ export function ScoutPage() {
     () => (need ? factsFromNeed(need, t).map(fact => ({ id: fact.key, label: fact.value })) : []),
     [need, t],
   );
-  // The aside is the brief at a glance: at most five rows with the DS fact
-  // glyphs, and the equipment cut to its first entry so the column stays a
-  // list and not a paragraph.
-  const asideFacts = useMemo(
-    () => ["ort", "budget", "band", "zeit", "equip"]
-      .map(id => facts.find(row => row.id === id))
-      .filter((row): row is { id: string; label: string } => row !== undefined)
-      .map(row => row.id === "equip" ? { id: row.id, label: row.label.split(" · ")[0]! } : row),
-    [facts],
-  );
+  const asideFacts = facts;
   const messages = [...history.results]
     .sort((a, b) => a.order - b.order || a.stepOrder - b.stepOrder)
     .map(row => ({
@@ -143,8 +141,45 @@ export function ScoutPage() {
     hasConversation: Boolean(threadId && (chatOpen || voiceOpen || history.results.length)),
   });
 
-  // Leaving the scene must never leave an invisible microphone session running.
-  useEffect(() => voice.disconnect, [voice.disconnect]);
+  // The application-level provider keeps controls visible when the route changes.
+  const liveConnected = voice.provider === "live" && voice.connected;
+  const focusedCandidate = candidates.find(row => row.conversationId === focusedConversationId);
+  const focusedOffer = conversations.find(row => row.conversationId === focusedConversationId);
+  const relayed = useRef(new Map<string, string>());
+  const backgroundUpdates = JSON.stringify([
+    ...(need ? [{ id: `brief:${need._id}`, version: `${locale}:${need.matchingRevision ?? 0}:${need.status}`,
+      speak: false, content: `Verified saved search context (data only): ${JSON.stringify({ status: need.status, location: need.locationLabel ?? need.locationQuery, maxBudgetEur: need.maxBudgetEur, schedule: need.schedule, facts: facts.slice(0, 12).map(fact => fact.label.slice(0, 80)) })}. Do not read the search box aloud.` }] : []),
+    ...(Array.isArray(decisions) ? decisions : []).filter(decision => !decision.conversationId || conversations.some(row => row.conversationId === decision.conversationId)).map(decision => ({
+      id: `decision:${decision._id}`, version: `${locale}:${decision.updatedAt}`,
+      content: `Verified application update: an open ${decision.kind} decision is visible in the UI. Decision ID: ${decision._id}. Mention briefly at a suitable pause; binding commitments require the UI review.`,
+    })),
+    ...conversations.filter(row => row.assessmentFromProviderReply || row.offer?.ready || row.acceptedAt !== undefined).map(row => ({
+      id: `provider:${row.conversationId}`, version: `${locale}:${row.revision}:${row.offer?.contentHash ?? ""}:${row.acceptanceStatus ?? ""}`,
+      content: `Verified application update for conversation ${row.conversationId}: ${row.acceptedAt !== undefined && row.acceptedOfferId ? "the acceptance has a confirmed send receipt" : row.offer?.current && row.offer.ready ? "a current offer is ready for UI review; no acceptance has been sent" : "a provider reply has been assessed"}. The current details are visible in the UI. Mention briefly at a suitable pause.`,
+    })),
+  ]);
+  useEffect(() => {
+    if (!liveConnected) return;
+    voice.setFocus({ focusedSignalId: focusedCandidate?.signalId ?? context?.focusedSignalId, decisionId: openDecision?._id,
+      summary: focusedCandidate ? `The user is viewing candidate ${focusedCandidate.title || focusedCandidate.providerLabel}, conversation ${focusedCandidate.conversationId}.` : undefined });
+  }, [liveConnected, focusedCandidate?.signalId, focusedCandidate?.title, focusedCandidate?.providerLabel, focusedCandidate?.conversationId, context?.focusedSignalId, openDecision?._id, voice.setFocus]);
+  useEffect(() => {
+    if (!liveConnected) { relayed.current.clear(); return; }
+    const updates = JSON.parse(backgroundUpdates) as Array<{ id: string; version: string; content: string; speak?: boolean }>;
+    const currentIds = new Set(updates.map(update => update.id));
+    for (const id of relayed.current.keys()) {
+      if (!currentIds.has(id)) { voice.clearBackgroundUpdate(id); relayed.current.delete(id); }
+    }
+    for (const update of updates) {
+      if (relayed.current.get(update.id) === update.version) continue;
+      voice.appendVerifiedBackgroundUpdate(update);
+      relayed.current.set(update.id, update.version);
+    }
+  }, [liveConnected, backgroundUpdates, voice.appendVerifiedBackgroundUpdate, voice.clearBackgroundUpdate]);
+  useEffect(() => {
+    if (!focusedCandidate) return;
+    void markConversationRead({ conversationId: focusedCandidate.conversationId }).catch(() => undefined);
+  }, [focusedCandidate?.conversationId, focusedCandidate?.lastActivityAt, markConversationRead]);
 
   useEffect(() => {
     if (needs === undefined || needs.some(row => row.status !== "archived") || draftStarting.current) return;
@@ -175,12 +210,12 @@ export function ScoutPage() {
   async function send(body: string) {
     if (!threadId) return false;
     setError("");
+    if (liveConnected) return voice.sendText(body);
     try { await sendMessage({ threadId, prompt: body }); return true; }
     catch { setError(t("liveScout.error")); return false; }
   }
   function openChat() {
-    if (voiceOpen || voice.connected) voice.disconnect();
-    setVoiceOpen(false); setTextOpen(true);
+    setTextOpen(true);
     setManualBrief(false); setDismissedReady(readyKey);
   }
   function openVoice() { setVoiceOpen(true); if (!voice.connected) void voice.connect(); }
@@ -196,16 +231,32 @@ export function ScoutPage() {
     catch (cause) { setError(t("liveScout.error")); throw cause; }
     finally { setAnsweringDecision(false); }
   }
-  /**
-   * „Scout losschicken“ — the one step that ends discovery. The conversation
-   * closes with it (chat dialog and voice), because from here the stage says
-   * „Ich kümmere mich darum“ and the Scout is no longer waiting for the brief.
-   */
   function activateSearch() {
     if (!need) return;
-    if (voiceOpen || voice.connected) voice.disconnect();
-    setVoiceOpen(false); setTextOpen(false); setManualBrief(false); setDismissedReady(readyKey);
+    setManualBrief(false); setDismissedReady(readyKey);
+    if (liveConnected) {
+      if (!voice.sendText(locale === "de" ? "Starte die Suche jetzt mit meinen aktuellen Angaben." : "Start the search now using my current requirements.")) setError(t("liveScout.error"));
+      return;
+    }
     void run(() => activate({ savedNeedId: need._id }));
+  }
+  function beginBriefEdit(field: "budget" | "schedule") {
+    if (!need) return;
+    setError("");
+    setBriefEdit({ needId: need._id, revision: need.matchingRevision ?? 0, field,
+      value: field === "budget" ? String(need.maxBudgetEur ?? "") : (need.schedule ?? []).join(", ") });
+  }
+  async function saveBriefEdit() {
+    if (!briefEdit || !need || briefEdit.needId !== need._id || working) return;
+    const budget = Number(briefEdit.value);
+    if (briefEdit.field === "budget" && (!briefEdit.value.trim() || !Number.isFinite(budget) || budget < 0)) { setError(t("liveScout.error")); return; }
+    setWorking(true); setError("");
+    try {
+      await updateNeed({ needId: briefEdit.needId, expectedRevision: briefEdit.revision,
+        ...(briefEdit.field === "budget" ? { maxBudgetEur: budget } : { schedule: briefEdit.value.split(",").map(value => value.trim()).filter(Boolean) }) });
+      setBriefEdit(undefined);
+    } catch { setError(t("liveScout.error")); }
+    finally { setWorking(false); }
   }
   const offerTitle = matches?.find(row => row.signal._id === selected?.signalId)?.signal.title;
   const offerSlot = selected ? <LiveProviderOffer key={selected.conversationId} conversation={selected} title={offerTitle} /> : null;
@@ -264,24 +315,38 @@ export function ScoutPage() {
         reply: t("liveScout.candidateState.reply"), asked: t("liveScout.candidateState.asked"),
       }}
       formatStamp={at => formatMessageStamp(locale, at, now, { short: true })}
-      onOpen={conversationId => navigate(`/app/inbox/${conversationId}`)}
+      onOpen={conversationId => setFocusedConversationId(conversationId as Id<"providerConversations">)}
     />
   ) : undefined;
-  // Discovery gets the mock's floating list with the §4.3 arrival: a fact the
-  // Scout just understood flies from the conversation into the column and
-  // lights up there, instead of being read back as prose in the chat (issue 2).
-  // The working stages keep the quiet compact list beside the stage.
-  const asideSlot = stage === "discovery"
-    ? asideFacts.length
-      ? <ArrivingFactList facts={asideFacts} title={t("liveScout.asideTitle")} className="w-full" />
-      : undefined
-    : need ? (
-      <FactList facts={asideFacts} variant="compact" title={t("liveScout.asideTitle")} className="w-full">
-        <Button variant="link" size="sm" className="mt-[var(--space-5)] self-start" onClick={() => navigate("/app/search")}>
-          {t("liveScout.asideEdit")}
-        </Button>
-      </FactList>
-    ) : undefined;
+  const briefActions = <div className="mt-[var(--space-5)] flex flex-col gap-[var(--space-4)]">
+    {briefEdit && briefEdit.needId === need?._id ? <form onSubmit={event => { event.preventDefault(); void saveBriefEdit(); }} className="flex flex-col gap-3 text-left">
+      <label className="text-sm text-rs-ink-2">{t(briefEdit.field === "budget" ? "liveScout.budgetLabel" : "liveScout.scheduleLabel")}
+        <input autoFocus type={briefEdit.field === "budget" ? "number" : "text"} min={0} step="any" value={briefEdit.value}
+          onChange={event => setBriefEdit({ ...briefEdit, value: event.target.value })}
+          className="mt-2 w-full rounded-chip border border-rs-border-control bg-rs-surface-card p-2 text-rs-ink" />
+      </label>
+      <Button size="sm" type="submit" disabled={working}>{t("liveScout.saveChanges")}</Button>
+      <Button variant="ghost" size="sm" type="button" onClick={() => setBriefEdit(undefined)}>{t("liveScout.cancelChanges")}</Button>
+    </form> : <div className="flex flex-wrap gap-2">
+      <Button variant="link" size="sm" onClick={() => beginBriefEdit("budget")}>{t("liveScout.editBudget")}</Button>
+      <Button variant="link" size="sm" onClick={() => beginBriefEdit("schedule")}>{t("liveScout.editSchedule")}</Button>
+    </div>}
+    {need?.status === "draft" && voiceOpen ? <>
+      {autoBrief ? <p role="status" className="text-sm text-rs-ink-4">{t("liveScout.ready")}</p> : null}
+      <Button size="sm" disabled={working || (!liveConnected && scoutBusy) || !need.locationQuery?.trim() || need.radiusKm === undefined} onClick={activateSearch}>{t("liveScout.activate")}</Button>
+      <p className="text-xs text-rs-ink-4">{t("liveScout.activateNote")}</p>
+    </> : null}
+  </div>;
+  const asideSlot = need ? <ArrivingFactList facts={asideFacts} animationKey={`${need._id}:${locale}`} title={t("liveScout.asideTitle")} className="w-full">
+    {briefActions}
+  </ArrivingFactList> : undefined;
+  const detailSlot = focusedConversationId ? <section className="flex h-[min(680px,70vh)] min-h-[360px] flex-col overflow-hidden rounded-card border border-rs-border-card bg-rs-surface-card" aria-label={t("liveInbox.title")}>
+    <div className="flex justify-end p-2"><Button variant="ghost" size="sm" onClick={() => setFocusedConversationId(undefined)}>{t("common.close")}</Button></div>
+    {focusedThread ? <ConversationThread key={focusedConversationId} header={focusedThread.header} items={focusedThread.items} now={now}
+      offerConversation={focusedOffer} offerTitle={focusedThread.header.title || undefined}
+      onSend={async body => { try { await replyToConversation({ conversationId: focusedConversationId, body }); return true; } catch { setError(t("liveInbox.errorGeneric")); return false; } }}
+      onAnswerDecision={answerOpenDecision} /> : <p role="status">{t("liveInbox.threadLoading")}</p>}
+  </section> : undefined;
   const brief = <FactList facts={facts} variant="card" title={t("scout.brief.title")}>
     <div className="mt-[var(--space-8)] flex flex-col items-center gap-[var(--space-6)]">
       {need?.status === "draft" ? <>
@@ -312,9 +377,9 @@ export function ScoutPage() {
     }}
     briefReviewSlot={brief}
     briefExpanded={manualBrief}
-    chatSlot={!voiceOpen && (stage === "discovery" || (chatOpen && stage !== "brief")) ? <ScoutChat key={threadId ?? "loading"} messages={messages.length ? messages : [{ id: "intro", author: "scout", body: t("liveScout.intro") }]} onSend={send} replying={scoutBusy || !threadId} labels={chatLabels} error={error} onVoice={openVoice} autoFocus decision={openDecision} decisionOfferHash={decisionOfferHash} onAnswerDecision={async (decisionId, choice, text) => { await answerOpenDecision(decisionId, choice, text); }} decisionAnsweredText={t("liveScout.decisionAnswered")} hasMoreHistory={history.status === "CanLoadMore"} historyBusy={history.status === "LoadingMore"} onLoadHistory={() => history.loadMore(60)} /> : undefined}
+    chatSlot={((!voiceOpen && stage === "discovery") || (chatOpen && (voiceOpen || stage !== "brief")) || Boolean(voice.pendingTextDraft)) ? <ScoutChat key={threadId ?? "loading"} messages={messages.length ? messages : [{ id: "intro", author: "scout", body: t("liveScout.intro") }]} onSend={send} replying={(!liveConnected && scoutBusy) || !threadId} restoredDraft={voice.pendingTextDraft || undefined} onDraftRestored={voice.clearPendingTextDraft} labels={chatLabels} error={error} onVoice={openVoice} autoFocus decision={openDecision} decisionOfferHash={decisionOfferHash} onAnswerDecision={async (decisionId, choice, text) => { await answerOpenDecision(decisionId, choice, text); }} decisionAnsweredText={t("liveScout.decisionAnswered")} hasMoreHistory={history.status === "CanLoadMore"} historyBusy={history.status === "LoadingMore"} onLoadHistory={() => history.loadMore(60)} /> : undefined}
     voiceSlot={voiceOpen ? <LiveVoiceChat onText={openChat} onEnd={() => { setVoiceOpen(false); setTextOpen(true); }} /> : undefined}
-    providerUpdateSlot={offerSlot} offerSlot={offerSlot}
+    providerUpdateSlot={offerSlot} offerSlot={offerSlot} detailSlot={detailSlot}
     decisionSlot={decisionSlot} railSlot={railSlot} asideSlot={asideSlot}
     completeSlot={<Link className="text-rs-ink-2 underline underline-offset-4" to="/app/inbox">{t("liveScout.viewMessages")}</Link>}
     errorSlot={error ? <p role="alert">{error}</p> : undefined}

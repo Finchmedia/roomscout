@@ -205,14 +205,14 @@ describe("live Scout route", () => {
     expect(mutation("savedNeeds:activate")).not.toHaveBeenCalled();
   });
 
-  it("cancels a starting voice session when switching to text and on route exit", () => {
+  it("keeps voice connected when opening text and leaves route lifecycle to the provider", () => {
     const view = renderPage();
     fireEvent.click(screen.getByRole("button", { name: "Mit Scout sprechen" }));
     expect(fixtures.voice.connect).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole("button", { name: "Lieber schreiben" }));
-    expect(fixtures.voice.disconnect).toHaveBeenCalledOnce();
+    expect(fixtures.voice.disconnect).not.toHaveBeenCalled();
     view.unmount();
-    expect(fixtures.voice.disconnect).toHaveBeenCalledTimes(2);
+    expect(fixtures.voice.disconnect).not.toHaveBeenCalled();
   });
 
   it("shows the current ready provider offer ahead of stale progress", () => {
@@ -248,7 +248,7 @@ describe("live Scout route", () => {
     expect(aside).toHaveTextContent("Stuttgart · 20 km Umkreis");
     expect(aside).toHaveTextContent("Bis 350 € / Monat");
     expect(aside).toHaveTextContent("Geteilter Raum");
-    expect(screen.getByRole("button", { name: "Bearbeiten" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Budget bearbeiten" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Lieber schreiben" }));
     expect(screen.getByRole("region", { name: "Scout-Chat" })).toBeInTheDocument();
@@ -281,7 +281,7 @@ describe("live Scout route", () => {
     expect(screen.queryByRole("navigation", { name: "Kandidaten" })).not.toBeInTheDocument();
   });
 
-  it("closes the conversation when the search is sent off", async () => {
+  it("keeps the conversation mounted when the search starts", async () => {
     fixtures.voice.connected = true;
     fixtures.context.briefReadiness = { status: "ready", needRevision: 3, readyAt: 100 };
     const view = renderPage();
@@ -289,13 +289,13 @@ describe("live Scout route", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Scout losschicken" }));
     await waitFor(() => expect(mutation("savedNeeds:activate")).toHaveBeenCalledWith({ savedNeedId: "need-current" }));
-    expect(fixtures.voice.disconnect).toHaveBeenCalled();
+    expect(fixtures.voice.disconnect).not.toHaveBeenCalled();
 
     fixtures.needs = [need("active")];
     view.rerender(<MemoryRouter><ScoutPage /></MemoryRouter>);
-    expect(screen.getByRole("heading", { name: "Ich kümmere mich darum." })).toBeInTheDocument();
+    expect(screen.getByText("Ich kümmere mich darum.")).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Scout-Chat" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Voice Scout session")).not.toBeInTheDocument();
+    expect(screen.getByText("Voice Scout session")).toBeInTheDocument();
   });
 
   it("lists the running candidates of this Suchauftrag, newest first", () => {
@@ -412,7 +412,7 @@ describe("live Scout route", () => {
     fixtures.needs = [need("active")]; fixtures.voice.connected = true;
     fixtures.decisions = [{ _id: "decision-2", kind: "scout_question", status: "open", question: "Ist Stuttgart-West okay?", options: [], refs: {}, createdAt: 1, updatedAt: 1 }];
     renderPage();
-    expect(screen.getByRole("heading", { name: "Hier brauche ich kurz deine Hilfe." })).toBeInTheDocument();
+    expect(screen.getByText("Hier brauche ich kurz deine Hilfe.")).toBeInTheDocument();
     expect(screen.getByText("Voice Scout session")).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Scout-Chat" })).not.toBeInTheDocument();
   });

@@ -1,3 +1,4 @@
+import { useCopy } from "@/ui/copy"
 import { useSmoothText } from "@convex-dev/agent/react"
 import * as React from "react"
 import { ArrowDownIcon } from "lucide-react"
@@ -87,6 +88,8 @@ interface ScoutChatLabels {
 interface ScoutChatProps extends Omit<React.ComponentProps<"section">, "onError"> {
   messages: ScoutChatMessage[]
   onSend: (body: string) => Promise<boolean>
+  restoredDraft?: string
+  onDraftRestored?: () => void
   /** The thread has an unfinished turn on it — derived from the messages, never from a local flag. */
   replying?: boolean
   error?: React.ReactNode
@@ -246,6 +249,8 @@ function ThinkingMarker({ label, verbs }: { label: string; verbs: readonly strin
 function ScoutChat({
   messages,
   onSend,
+  restoredDraft,
+  onDraftRestored,
   replying = false,
   error,
   onVoice,
@@ -262,7 +267,19 @@ function ScoutChat({
   className,
   ...props
 }: ScoutChatProps) {
-  const labels = { ...DEFAULT_LABELS, ...labelOverrides }
+  const { t } = useCopy()
+  const labels = { ...DEFAULT_LABELS,
+    composer: t("liveScout.chat.composer"), empty: t("liveScout.chat.empty"),
+    history: t("liveScout.chat.history"), historyBusy: t("liveScout.chat.historyBusy"),
+    loadError: t("liveScout.chat.loadError"), restoreDraft: t("liveScout.chat.restoreDraft"),
+    scout: t("liveScout.chat.scout"), send: t("liveScout.chat.send"),
+    sendError: t("liveScout.chat.sendError"), sending: t("liveScout.chat.sending"),
+    status: t("liveScout.chat.status"), system: t("liveScout.chat.system"),
+    user: t("liveScout.chat.user"), voice: t("liveScout.chat.voice"),
+    thinking: t("liveScout.thinking"), replying: t("liveScout.replying"),
+    scrollToEnd: t("liveScout.scrollToEnd"), failed: t("liveScout.failed"), retry: t("liveScout.retry"),
+    ...labelOverrides }
+
   const [echoes, setEchoes] = React.useState<DecisionEcho[]>([])
   const [localError, setLocalError] = React.useState<string | null>(null)
 
@@ -310,13 +327,14 @@ function ScoutChat({
   return (
     <section
       aria-busy={replying || historyBusy}
-      aria-label="Scout-Chat"
+      aria-label={t("liveScout.chat.region")}
+      data-scout-conversation="text"
       className={cn("flex h-[min(44rem,80dvh)] min-h-0 flex-col overflow-hidden rounded-card border border-rs-border-card bg-rs-surface-card", className)}
       {...props}
     >
       <MessageScrollerProvider autoScroll defaultScrollPosition="end">
         <MessageScroller className="flex-1">
-          <MessageScrollerViewport aria-label="Nachrichtenverlauf" preserveScrollOnPrepend>
+          <MessageScrollerViewport aria-label={t("liveScout.chat.transcript")} preserveScrollOnPrepend>
             <MessageScrollerContent className="p-[var(--space-7)]">
               {hasMoreHistory && onLoadHistory && (
                 <div className="flex justify-center">
@@ -449,6 +467,8 @@ function ScoutChat({
       <ChatComposer
         labels={labels}
         onSubmit={submit}
+        restoredDraft={restoredDraft}
+        onDraftRestored={onDraftRestored}
         busy={replying}
         error={error || localError}
         onVoice={onVoice}

@@ -116,7 +116,7 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
   const working = stage === "working" || stage === "blocked" || stage === "provider-update" || stage === "paused";
   // The side columns exist only where there is something to put in them; a
   // screen that passes neither slot keeps the plain centred stage.
-  const columns = COLUMN_STAGES.has(stage) && Boolean(props.railSlot || props.asideSlot);
+  const columns = (COLUMN_STAGES.has(stage) || Boolean(props.voiceSlot)) && Boolean(props.railSlot || props.asideSlot);
   const briefReview = typeof props.briefReviewSlot === "function"
     ? props.briefReviewSlot({ onReviewBrief: props.onReviewBrief, onActivate: props.onActivate })
     : props.briefReviewSlot;
@@ -197,6 +197,23 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
       break;
   }
 
+  // Keep the voice subtree at the same location as the search stage changes.
+  // Status and domain cards can update without remounting the conversation.
+  if (props.voiceSlot) {
+    content = (
+      <div className="flex min-w-0 flex-1 flex-col gap-[var(--space-8)] px-[var(--space-7)] py-[var(--space-7)]" data-live-scout-stage={stage}>
+        <div className="w-full">{props.voiceSlot}</div>
+        {props.chatSlot ? <div className="w-full" data-voice-text-companion>{props.chatSlot}</div> : null}
+        {working ? <p role="status" className="text-center text-sm text-rs-ink-4">{stage === "paused" ? copy.pausedHeadline : props.decisionSlot ? copy.blockedHeadline : copy.workingHeadline}</p> : null}
+        {props.decisionSlot ? <div>{props.decisionSlot}</div> : null}
+        {props.detailSlot ?? (stage === "offer" ? props.offerSlot : stage === "provider-update" ? props.providerUpdateSlot : null)}
+        {stage === "complete" ? <div className="text-center">{copy.completeHeadline}{props.completeSlot}</div> : null}
+      </div>
+    );
+  } else if (props.detailSlot) {
+    content = <div className="flex min-w-0 flex-1 flex-col gap-[var(--space-8)] p-[var(--space-7)]">{props.detailSlot}</div>;
+  }
+
   return (
     <StageBackground position="fixed" contentClassName="overflow-hidden">
       <AppHeader
@@ -245,7 +262,7 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
         {stage !== "welcome" && stage !== "loading" ? (
           <div className="mx-auto flex w-[min(760px,calc(100%_-_var(--space-11)_*_2))] shrink-0 flex-col items-center gap-[var(--space-7)] pb-[var(--space-8)]">
             <div className="flex flex-wrap justify-center gap-[var(--space-4)]">
-              <Button variant="ghost" size="sm" icon={<Icon name="mic" size={16} />} onClick={props.onVoice}>{copy.welcomeVoiceAction}</Button>
+              {!props.voiceSlot ? <Button variant="ghost" size="sm" icon={<Icon name="mic" size={16} />} onClick={props.onVoice}>{copy.welcomeVoiceAction}</Button> : null}
               <Button variant="ghost" size="sm" icon={<Icon name="keyboard" size={16} />} onClick={props.onChat}>{copy.welcomeChatAction}</Button>
               {/* The side columns are folded away below 1100px; these two reach them. */}
               {columns && props.railSlot ? <Button variant="ghost" size="sm" className="min-[1100px]:hidden" onClick={() => setSheet("candidates")}>{copy.openCandidates}</Button> : null}
@@ -253,7 +270,6 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
               {stage !== "brief" && !columns ? <Button variant="ghost" size="sm" onClick={props.onReviewBrief} aria-expanded={props.briefExpanded}>{copy.briefReviewAction}</Button> : null}
             </div>
             {stage !== "brief" && !columns && props.briefExpanded ? <div className="w-full">{briefReview}</div> : null}
-            {stage !== "discovery" && props.voiceSlot ? <div className="w-full">{props.voiceSlot}</div> : null}
           </div>
         ) : null}
       </main>
@@ -273,7 +289,7 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
           </SheetContent>
         </Sheet>
       ) : null}
-      {stage !== "discovery" ? <Dialog open={Boolean(props.chatSlot)} onOpenChange={open => { if (!open) props.onCloseChat(); }}>
+      {stage !== "discovery" && !props.voiceSlot ? <Dialog open={Boolean(props.chatSlot)} onOpenChange={open => { if (!open) props.onCloseChat(); }}>
         <DialogContent tone="dialog" size="md" className="max-w-[800px]" aria-describedby={undefined}>
           <DialogHeader><DialogTitle>{copy.chatTitle}</DialogTitle></DialogHeader>
           {props.chatSlot}
