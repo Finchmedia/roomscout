@@ -41,7 +41,9 @@ export const searchDraftInputSchema = z.object({
   maxBudgetEur: z.number().nonnegative().optional(),
   arrangement: z.array(z.enum(["permanent", "shared", "hourly"])).optional(),
   schedule: z.array(z.string()).optional(),
-  requirements: z.array(z.string()).optional(),
+  requirements: z.array(z.string()).describe(
+    "Room requirements stated by the musician. Preserve whether equipment is user-owned, provider-supplied, merely allowed, or allowed to remain stored.",
+  ).optional(),
   openToSharing: z.boolean().optional(),
   radiusKm: z.number().min(1).max(200).optional(),
   genres: z.array(z.string()).optional(),
@@ -52,8 +54,17 @@ export const searchDraftInputSchema = z.object({
     key: z.string(),
     value: z.string(),
     confidence: z.number().min(0).max(1),
-  })).optional(),
+  })).describe(
+    "Structured requirements established by explicit musician statements. A question about a possible requirement or room capability is not a fact and must not create a facet.",
+  ).optional(),
 });
+
+export const SEARCH_FACET_GUIDANCE =
+  "Facets are namespace/key pairs; the brief only shows these keys: equipment.storage, equipment.drums, equipment.pa, equipment.backline, access.parking, access.transport, access.around_the_clock, noise.night_allowed, room.size_sqm, contract.min_term_months, cost.deposit_eur, band.size. " +
+  "Use values 'true'/'false' for yes/no facets and plain numbers for counts. Questions never establish facts, so do not update any field or facet merely because the musician asks whether something is true. " +
+  "Equipment meanings are distinct: equipment.storage=true means the musician requires permission to leave their own gear onsite between visits; equipment.drums=true, equipment.pa=true, and equipment.backline=true mean that the room or provider must supply that equipment. " +
+  "Never use a supplied-equipment facet for gear the musician owns, brings, is allowed to use, or wants permission to store. Example: 'we want to leave our own heavy amps there' means equipment.storage=true and a requirement preserving 'own heavy amplifiers may remain stored'; it never means equipment.backline=true. " +
+  "'Can our drum kit stay there?' is a question and causes no update. Put any meaning that these facets cannot preserve in requirements.";
 
 export function createSearchDraftTool(
   ctx: Parameters<typeof runScoutTurn>[0],
@@ -67,7 +78,7 @@ export function createSearchDraftTool(
   return createTool({
     description:
       "Update explicit facts on the user's attached draft search. Preserve the user's complete place or address in locationQuery, use locationLabel for its concise display label, and radiusKm as the geographic boundary. " +
-      "Facets are namespace/key pairs; the brief only shows these keys: equipment.storage, equipment.drums, equipment.pa, equipment.backline, access.parking, access.transport, access.around_the_clock, noise.night_allowed, room.size_sqm, contract.min_term_months, cost.deposit_eur, band.size. Use the closest one, values 'true'/'false' for yes/no facets and plain numbers for counts; anything else belongs in requirements.",
+      SEARCH_FACET_GUIDANCE,
     inputSchema: searchDraftInputSchema,
     execute: async (_toolCtx, input) => {
       const result = await ctx.runMutation(internal.savedNeeds.updateFromScout, {

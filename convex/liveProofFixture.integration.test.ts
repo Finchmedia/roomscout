@@ -29,7 +29,7 @@ it("creates inert synthetic decision and provider-offer UI state without changin
   const seeded = await t.run(async (ctx) => {
     const now = 1_000;
     const ownerId = await ctx.db.insert("users", {
-      username: "gpt-live-proof-musician",
+      username: "live-scout-check-0915",
       role: "musician",
       conversationLocale: "en",
       createdAt: now,
@@ -66,7 +66,7 @@ it("creates inert synthetic decision and provider-offer UI state without changin
     context: await ctx.db.get(seeded.contextId),
   }));
   const result = await t.mutation(createFixture, {
-    username: "gpt-live-proof-musician",
+    username: "live-scout-check-0915",
     fixtureKey: "gpt-live-proof-p1-p2",
     confirmation: "CREATE_ISOLATED_GPT_LIVE_FIXTURE",
   });

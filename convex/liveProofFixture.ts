@@ -17,6 +17,7 @@ import {
 
 const FIXTURE_PREFIX = "gpt-live-proof-";
 const FIXTURE_CONFIRMATION = "CREATE_ISOLATED_GPT_LIVE_FIXTURE";
+const EXPLICIT_ISOLATED_TEST_USER = "live-scout-check-0915";
 
 const resultValidator = v.object({
   ownerId: v.id("users"),
@@ -51,7 +52,8 @@ export const create = internalMutation({
 
     const owner = await ctx.db.query("users").withIndex("by_username", (q) => q.eq("username", username)).unique();
     if (!owner || owner.role !== "musician" ||
-      (owner.controlledProofActorKey === undefined && !owner.username.startsWith(FIXTURE_PREFIX))) {
+      (owner.controlledProofActorKey === undefined && owner.username !== EXPLICIT_ISOLATED_TEST_USER &&
+        !owner.username.startsWith(FIXTURE_PREFIX))) {
       throw new ConvexError({ code: "SYNTHETIC_LIVE_PROOF_USER_REQUIRED" });
     }
 
