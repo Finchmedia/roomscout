@@ -1,10 +1,10 @@
 import type { Doc } from "../_generated/dataModel";
 
 export type CurrentSearchTruthInput = Pick<Doc<"savedNeeds">,
-  "title" | "locationQuery" | "locationLabel" | "city" | "maxBudgetEur" |
+  "title" | "locationQuery" | "locationLabel" | "maxBudgetEur" |
   "arrangement" | "schedule" | "requirements" | "openToSharing" | "radiusKm" |
   "genres" | "instruments" | "collaborationOpen" | "facets" | "status" |
-  "matchingRevision">;
+  "matchingRevision"> & { city?: string };
 
 /** Compact, read-only canonical state without document metadata. */
 export function currentSearchTruth(need: CurrentSearchTruthInput) {
@@ -13,8 +13,8 @@ export function currentSearchTruth(need: CurrentSearchTruthInput) {
     revision: need.matchingRevision ?? 0,
     status: need.status,
     title: need.title,
-    locationQuery: need.locationQuery ?? need.city,
-    locationLabel: need.locationLabel ?? need.city,
+    locationQuery: need.locationQuery ?? need.city ?? null,
+    locationLabel: need.locationLabel ?? need.locationQuery ?? need.city ?? null,
     maxBudgetEur: need.maxBudgetEur ?? null,
     arrangement: need.arrangement,
     schedule: need.schedule,
