@@ -1006,9 +1006,10 @@ export default defineSchema({
       fingerprint: v.string(),
       generation: v.number(),
       source: v.union(v.literal("voice"), v.literal("text")),
+      intent: v.optional(v.literal("capture_facts")),
       delegationId: v.optional(v.string()),
       eventIds: v.array(v.string()),
-      promptMessageId: v.string(),
+      promptMessageId: v.optional(v.string()),
       focusedSignalId: v.optional(v.id("signals")),
       decisionId: v.optional(v.id("decisions")),
       decisionUpdatedAt: v.optional(v.number()),
@@ -1019,7 +1020,7 @@ export default defineSchema({
     requestTombstones: v.optional(v.array(v.object({
       requestId: v.string(),
       fingerprint: v.string(),
-      promptMessageId: v.string(),
+      promptMessageId: v.optional(v.string()),
       acceptedAt: v.number(),
     }))),
     recentResults: v.optional(v.array(v.object({

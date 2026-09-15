@@ -76,8 +76,8 @@ export function createSearchDraftTool(
         ...input,
         ...(args.voiceClaim ? { voiceClaim: args.voiceClaim } : {}),
       });
-      args.onUpdated?.(result);
-      return { updated: true, ...result };
+      if (result.changedFields.length > 0) args.onUpdated?.(result);
+      return { updated: result.changedFields.length > 0, ...result };
     },
   });
 }

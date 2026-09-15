@@ -1,12 +1,14 @@
 /// <reference types="vite/client" />
 import agentTest from "@convex-dev/agent/test";
+import { listMessages } from "@convex-dev/agent";
 import { convexTest } from "convex-test";
 import { makeFunctionReference } from "convex/server";
 import { expect, it } from "vitest";
-import { api } from "./_generated/api";
+import { api, components } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { scoutAgent } from "./scoutRuntime";
+import { composeVoiceInput } from "./voiceLive";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -16,6 +18,7 @@ type ClaimArgs = {
   requestId: string;
   fingerprint: string;
   source: "voice" | "text";
+  intent?: "capture_facts";
   delegationId?: string;
   eventIds: string[];
   prompt: string;
@@ -32,7 +35,7 @@ type Result = {
   changedFields?: string[];
 };
 type ClaimResult =
-  | { kind: "accepted"; generation: number; promptMessageId: string; locale: "en" | "de"; activeNeedId?: Id<"savedNeeds">; needRevision?: number }
+  | { kind: "accepted"; generation: number; promptMessageId?: string; locale: "en" | "de"; activeNeedId?: Id<"savedNeeds">; needRevision?: number }
   | { kind: "result"; result: Result };
 
 const claimRequest = makeFunctionReference<"mutation", ClaimArgs, ClaimResult>("voiceLive:claimRequest");
@@ -211,6 +214,40 @@ it("claims once, reports active duplicates and caches terminal results", async (
   expect(stored?.activeClaim).toBeUndefined();
 });
 
+it("preserves provider delta spacing and keeps assistant context separate", () => {
+  expect(composeVoiceInput({
+    source: "voice",
+    locale: "en",
+    fragments: [
+      { role: "user", text: "Berlin, Kreuz" },
+      { role: "user", text: "berg or Neuk" },
+      { role: "user", text: "ölln" },
+      { role: "assistant", text: "Would Wednesday " },
+      { role: "assistant", text: "work?" },
+      { role: "user", text: "Yes, after 7." },
+    ],
+  })).toEqual({
+    userPrompt: "Berlin, Kreuzberg or Neukölln\nYes, after 7.",
+    assistantContext: "Would Wednesday work?",
+  });
+});
+
+it("claims fact capture without adding a technical message to the Scout thread", async () => {
+  const f = await fixture();
+  const capture = await f.t.mutation(claimRequest, {
+    ...claimArgs(f, "capture"),
+    intent: "capture_facts",
+    prompt: "Berlin, Kreuzberg or Neukölln",
+  });
+  expect(capture).toMatchObject({ kind: "accepted" });
+  expect("promptMessageId" in capture).toBe(false);
+  const messages = await f.t.run((ctx) => listMessages(ctx, components.agent, {
+    threadId: f.threadId,
+    paginationOpts: { cursor: null, numItems: 20 },
+  }));
+  expect(messages.page).toHaveLength(0);
+});
+
 it("retains request tombstones after the bounded result cache evicts them", async () => {
   const f = await fixture();
   for (let index = 0; index < 9; index += 1) {
@@ -264,6 +301,12 @@ it("allows independent UI and voice fields but rejects a stale overlapping voice
     maxBudgetEur: 320,
     voiceClaim,
   })).resolves.toMatchObject({ revision: 3, changedFields: ["maxBudgetEur"] });
+  await expect(f.t.mutation(updateFromScout, {
+    ownerId: f.ownerId,
+    needId: f.needId,
+    maxBudgetEur: 320,
+    voiceClaim,
+  })).resolves.toEqual({ revision: 3, changedFields: [] });
   await expect(f.t.mutation(updateFromScout, {
     ownerId: f.ownerId,
     needId: f.needId,

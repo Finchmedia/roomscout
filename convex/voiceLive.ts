@@ -19,7 +19,7 @@ import { activateNeed } from "./savedNeeds";
 import { assertVoiceClaim, voiceNeedSnapshot } from "./lib/voiceClaim";
 import { buildDecisionCaseCard, buildScoutCaseCard } from "./scoutCaseCards";
 import { openDecisionCards } from "./decisions";
-import { buildScoutTools } from "./scout";
+import { buildScoutTools, createSearchDraftTool } from "./scout";
 import { runScoutTurn } from "./scoutRuntime";
 import { liveInstructions, scoutVoiceInstructions, type ConversationLocale } from "./prompts/roomScoutLive";
 
@@ -398,6 +398,7 @@ export const claimRequest = internalMutation({
     requestId: v.string(),
     fingerprint: v.string(),
     source: sourceValidator,
+    intent: v.optional(v.literal("capture_facts")),
     delegationId: v.optional(v.string()),
     eventIds: v.array(v.string()),
     prompt: v.string(),
@@ -405,7 +406,7 @@ export const claimRequest = internalMutation({
     decisionId: v.optional(v.id("decisions")),
   },
   returns: v.union(
-    v.object({ kind: v.literal("accepted"), generation: v.number(), promptMessageId: v.string(), locale: localeValidator, activeNeedId: v.optional(v.id("savedNeeds")), needRevision: v.optional(v.number()) }),
+    v.object({ kind: v.literal("accepted"), generation: v.number(), promptMessageId: v.optional(v.string()), locale: localeValidator, activeNeedId: v.optional(v.id("savedNeeds")), needRevision: v.optional(v.number()) }),
     v.object({ kind: v.literal("result"), result: delegateResultValidator }),
   ),
   handler: async (ctx, args) => {
@@ -428,14 +429,14 @@ export const claimRequest = internalMutation({
           requestId: args.requestId,
           resolvedEventIds: [],
           locale,
-          ...(sameRequest ? { promptMessageId: session.activeClaim.promptMessageId } : {}),
+          ...(sameRequest && session.activeClaim.promptMessageId ? { promptMessageId: session.activeClaim.promptMessageId } : {}),
         },
       };
     }
     const known = tombstones.find((entry) => entry.requestId === args.requestId);
     if (known) {
       if (known.fingerprint !== args.fingerprint) {
-        return { kind: "result" as const, result: { status: "outcome_unknown" as const, requestId: args.requestId, resolvedEventIds: [], locale, promptMessageId: known.promptMessageId } };
+        return { kind: "result" as const, result: { status: "outcome_unknown" as const, requestId: args.requestId, resolvedEventIds: [], locale, ...(known.promptMessageId ? { promptMessageId: known.promptMessageId } : {}) } };
       }
       const cached = (session.recentResults ?? []).find((entry) => entry.requestId === args.requestId);
       if (cached) {
@@ -455,7 +456,7 @@ export const claimRequest = internalMutation({
           },
         };
       }
-      return { kind: "result" as const, result: { status: "outcome_unknown" as const, requestId: args.requestId, resolvedEventIds: [], locale, promptMessageId: known.promptMessageId } };
+      return { kind: "result" as const, result: { status: "outcome_unknown" as const, requestId: args.requestId, resolvedEventIds: [], locale, ...(known.promptMessageId ? { promptMessageId: known.promptMessageId } : {}) } };
     }
     if (session.status !== "active") {
       return { kind: "result" as const, result: { status: "failed" as const, requestId: args.requestId, resolvedEventIds: [], locale } };
@@ -479,11 +480,13 @@ export const claimRequest = internalMutation({
       decisionUpdatedAt = decision.updatedAt;
     }
     const need = context.activeNeedId ? await ctx.db.get(context.activeNeedId) : null;
-    const { messageId } = await saveMessage(ctx, components.agent, {
-      threadId: session.threadId,
-      userId: args.ownerId,
-      prompt: args.prompt,
-    });
+    const messageId = args.intent === "capture_facts"
+      ? undefined
+      : (await saveMessage(ctx, components.agent, {
+          threadId: session.threadId,
+          userId: args.ownerId,
+          prompt: args.prompt,
+        })).messageId;
     const generation = (session.claimGeneration ?? 0) + 1;
     const now = Date.now();
     await ctx.db.patch(session._id, {
@@ -493,6 +496,7 @@ export const claimRequest = internalMutation({
         fingerprint: args.fingerprint,
         generation,
         source: args.source,
+        intent: args.intent,
         delegationId: args.delegationId,
         eventIds: args.eventIds,
         promptMessageId: messageId,
@@ -503,7 +507,12 @@ export const claimRequest = internalMutation({
         needSnapshotJson: need ? voiceNeedSnapshot(need) : undefined,
         startedAt: now,
       },
-      requestTombstones: [...tombstones, { requestId: args.requestId, fingerprint: args.fingerprint, promptMessageId: messageId, acceptedAt: now }],
+      requestTombstones: [...tombstones, {
+        requestId: args.requestId,
+        fingerprint: args.fingerprint,
+        ...(messageId ? { promptMessageId: messageId } : {}),
+        acceptedAt: now,
+      }],
       updatedAt: now,
     });
     return { kind: "accepted" as const, generation, promptMessageId: messageId, locale, activeNeedId: context.activeNeedId, needRevision: need?.matchingRevision ?? 0 };
@@ -645,21 +654,25 @@ function normalizeText(value: string): string {
   return value.replace(/[^\S\n]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-function promptFor(args: {
+export function composeVoiceInput(args: {
   source: "voice" | "text";
   fragments: Array<{ role: "user" | "assistant"; text: string }>;
   text?: string;
   locale: ConversationLocale;
-}): string {
-  const user = args.fragments.filter((item) => item.role === "user").map((item) => normalizeText(item.text)).filter(Boolean);
-  const assistant = args.fragments.filter((item) => item.role === "assistant").map((item) => normalizeText(item.text)).filter(Boolean);
+}): { userPrompt: string; assistantContext: string } {
+  const segments: Array<{ role: "user" | "assistant"; text: string }> = [];
+  for (const fragment of args.fragments) {
+    const previous = segments.at(-1);
+    if (previous?.role === fragment.role) previous.text += fragment.text;
+    else segments.push({ role: fragment.role, text: fragment.text });
+  }
+  const user = segments.filter((item) => item.role === "user").map((item) => item.text.trim()).filter(Boolean);
+  const assistant = segments.filter((item) => item.role === "assistant").map((item) => item.text.trim()).filter(Boolean);
   const explicit = args.text ? normalizeText(args.text) : "";
-  return [
-    args.locale === "de" ? "Verarbeite diesen Musikerauftrag:" : "Process this musician request:",
-    [...user, explicit].filter(Boolean).join("\n"),
-    assistant.length ? (args.locale === "de" ? "Nur Gesprächskontext vom Voice-Assistenten, keine Musikerangaben:" : "Voice assistant context only; these are not musician statements:") : "",
-    assistant.join("\n"),
-  ].filter(Boolean).join("\n\n");
+  return {
+    userPrompt: [...user, explicit].filter(Boolean).join("\n"),
+    assistantContext: assistant.join("\n"),
+  };
 }
 
 async function fingerprint(value: unknown): Promise<string> {
@@ -687,6 +700,7 @@ export const delegate = action({
     requestId: v.string(),
     delegationId: v.optional(v.string()),
     source: sourceValidator,
+    intent: v.optional(v.literal("capture_facts")),
     fragments: v.array(fragmentValidator),
     text: v.optional(v.string()),
     focusedSignalId: v.optional(v.id("signals")),
@@ -717,17 +731,18 @@ export const delegate = action({
     }
     const state = await ctx.runQuery(internal.voiceLive.getOwnedSessionForDelegate, { ownerId, voiceSessionId: args.voiceSessionId });
     if (!state) throw new ConvexError({ code: "VOICE_SESSION_NOT_FOUND" });
-    const prompt = promptFor({ source: args.source, fragments: args.fragments, text: args.text, locale: state.locale });
-    const inputFingerprint = await fingerprint({ source: args.source, delegationId: args.delegationId ?? null, fragments: args.fragments, text: args.text ?? null, focusedSignalId: args.focusedSignalId ?? null, decisionId: args.decisionId ?? null });
+    const { userPrompt, assistantContext } = composeVoiceInput({ source: args.source, fragments: args.fragments, text: args.text, locale: state.locale });
+    const inputFingerprint = await fingerprint({ intent: args.intent ?? null, source: args.source, delegationId: args.delegationId ?? null, fragments: args.fragments, text: args.text ?? null, focusedSignalId: args.focusedSignalId ?? null, decisionId: args.decisionId ?? null });
     const claimed = await ctx.runMutation(internal.voiceLive.claimRequest, {
       ownerId,
       voiceSessionId: args.voiceSessionId,
       requestId,
       fingerprint: inputFingerprint,
       source: args.source,
+      intent: args.intent,
       delegationId: args.delegationId,
       eventIds: args.fragments.map((fragment) => fragment.eventId),
-      prompt,
+      prompt: userPrompt,
       focusedSignalId: args.focusedSignalId,
       decisionId: args.decisionId,
     });
@@ -745,20 +760,33 @@ export const delegate = action({
     let revision = claimed.needRevision;
     let sideEffect = false;
     const claimRef = { voiceSessionId: args.voiceSessionId, requestId, generation: claimed.generation };
-    const tools: ToolSet = buildScoutTools(ctx, {
-      ownerId,
-      threadId: state.threadId,
-      context,
-      voiceClaim: claimRef,
-      decisionId: args.decisionId,
-      onEffect: (kind, fields) => {
-        sideEffect = true;
-        fields.forEach((field) => changedFields.add(field));
-        if (kind === "memory") verifiedFacts.add("memory.updated=true");
-        if (kind === "decision") verifiedFacts.add("decision.status=answered");
-      },
-    });
-    if (context.mode === "search_discovery" && context.activeNeedId) {
+    const captureFacts = args.intent === "capture_facts";
+    const onEffect = (kind: string, fields: string[]) => {
+      sideEffect = true;
+      fields.forEach((field) => changedFields.add(field));
+      if (kind === "memory") verifiedFacts.add("memory.updated=true");
+      if (kind === "decision") verifiedFacts.add("decision.status=answered");
+    };
+    const tools: ToolSet = captureFacts
+      ? context.mode === "search_discovery" && context.activeNeedId
+        ? {
+            updateSearchDraft: createSearchDraftTool(ctx, {
+              ownerId,
+              needId: context.activeNeedId,
+              voiceClaim: claimRef,
+              onUpdated: (result) => onEffect("search", result.changedFields),
+            }),
+          }
+        : {}
+      : buildScoutTools(ctx, {
+          ownerId,
+          threadId: state.threadId,
+          context,
+          voiceClaim: claimRef,
+          decisionId: args.decisionId,
+          onEffect,
+        });
+    if (!captureFacts && context.mode === "search_discovery" && context.activeNeedId) {
       tools.setSearchStatus = createTool({
         description: "Start or pause the current search only after the musician explicitly asks. Never infer this from a completed brief. Use pause only for the domain search, not for stopping audio.",
         inputSchema: z.object({ action: z.enum(["start", "pause"]) }),
@@ -773,14 +801,24 @@ export const delegate = action({
       });
     }
     try {
+      const captureInstruction = claimed.locale === "de"
+        ? "FRÜHE FAKTENERFASSUNG: Prüfe nur abgeschlossene, ausdrückliche Aussagen des Musikers. Speichere ausschließlich klare Suchfakten mit updateSearchDraft. Ignoriere Fragen, unvollständige Werte, Handlungswünsche und mehrdeutige Aussagen. Keine anderen Wirkungen. Dein Text wird nicht angezeigt oder gesprochen."
+        : "EARLY FACT CAPTURE: Inspect only complete, explicit musician statements. Save only clear search facts with updateSearchDraft. Ignore questions, incomplete values, action requests and ambiguous statements. Cause no other effects. Your prose is neither shown nor spoken.";
+      const assistantInstruction = assistantContext
+        ? claimed.locale === "de"
+          ? `VOICE-ASSISTENT-KONTEXT (keine Musikerangabe und keine Grundlage für Suchänderungen):\n${assistantContext}`
+          : `VOICE ASSISTANT CONTEXT (not a musician statement and never a basis for search changes):\n${assistantContext}`
+        : "";
       const turn = await runScoutTurn(ctx, {
         ownerId,
         threadId: state.threadId,
         origin: "musician",
         savedNeedId: context.activeNeedId,
-        caseCard: `${context.caseCard}\n\n${scoutVoiceInstructions(claimed.locale)}`,
-        memoryQuery: prompt,
-        promptMessageId: claimed.promptMessageId,
+        caseCard: [context.caseCard, captureFacts ? captureInstruction : scoutVoiceInstructions(claimed.locale), assistantInstruction].filter(Boolean).join("\n\n"),
+        memoryQuery: userPrompt,
+        ...(captureFacts
+          ? { prompt: userPrompt, saveMessages: "none" as const }
+          : { promptMessageId: claimed.promptMessageId! }),
         tools,
         stream: false,
       });
@@ -791,8 +829,12 @@ export const delegate = action({
         });
         revision = currentNeed?.matchingRevision ?? revision;
       }
-      const spokenSummary = shortSummary(turn.text);
-      const status: TerminalStatus = !sideEffect && spokenSummary?.trim().endsWith("?") ? "needs_clarification" : "completed";
+      const spokenSummary = captureFacts ? undefined : shortSummary(turn.text);
+      const status: TerminalStatus = captureFacts
+        ? "completed"
+        : !sideEffect && spokenSummary?.trim().endsWith("?")
+          ? "needs_clarification"
+          : "completed";
       return await ctx.runMutation(internal.voiceLive.finishRequest, {
         ownerId,
         voiceSessionId: args.voiceSessionId,
@@ -802,14 +844,14 @@ export const delegate = action({
         result: {
           status,
           requestId,
-          resolvedEventIds: args.fragments.map((fragment) => fragment.eventId),
+          resolvedEventIds: captureFacts ? [] : args.fragments.map((fragment) => fragment.eventId),
           locale: claimed.locale,
           revision,
-          promptMessageId: claimed.promptMessageId,
-          assistantMessageId: turn.assistantMessageId,
+          ...(!captureFacts && claimed.promptMessageId ? { promptMessageId: claimed.promptMessageId } : {}),
+          ...(!captureFacts && turn.assistantMessageId ? { assistantMessageId: turn.assistantMessageId } : {}),
           changedFields: [...changedFields],
           verifiedFacts: [...verifiedFacts],
-          spokenSummary,
+          ...(spokenSummary ? { spokenSummary } : {}),
         },
       });
     } catch (error) {

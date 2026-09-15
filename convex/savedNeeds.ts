@@ -439,19 +439,43 @@ export const updateFromScout = internalMutation({
         throw new ConvexError({ code: "VOICE_FIELD_CONFLICT", fields: conflicts });
       }
     }
-    const changedFields = [
-      "title", "locationQuery", "locationLabel", "maxBudgetEur", "arrangement",
-      "schedule", "requirements", "openToSharing", "radiusKm", "genres",
-      "instruments", "collaborationOpen", "facets",
-    ].filter((field) => (args as Record<string, unknown>)[field] !== undefined);
-    if (args.locationQuery !== undefined && args.locationLabel === undefined) {
-      changedFields.push("locationLabel");
-    }
     const locationQuery = args.locationQuery === undefined
       ? undefined
       : requiredText(args.locationQuery, "locationQuery");
     const locationChanged = locationQuery !== undefined &&
       locationQuery !== savedNeedLocationQuery(need);
+    const desired: Record<string, unknown> = {
+      ...(args.title !== undefined ? { title: requiredText(args.title, "title") } : {}),
+      ...(locationQuery !== undefined ? {
+        locationQuery,
+        locationLabel: args.locationLabel === undefined
+          ? locationQuery
+          : requiredText(args.locationLabel, "locationLabel"),
+      } : args.locationLabel !== undefined
+        ? { locationLabel: requiredText(args.locationLabel, "locationLabel") }
+        : {}),
+      ...(args.maxBudgetEur !== undefined ? { maxBudgetEur: validBudget(args.maxBudgetEur) } : {}),
+      ...(args.arrangement !== undefined ? { arrangement: [...new Set(args.arrangement)] } : {}),
+      ...(args.schedule !== undefined ? { schedule: normalizedList(args.schedule) } : {}),
+      ...(args.requirements !== undefined ? { requirements: normalizedList(args.requirements) } : {}),
+      ...(args.openToSharing !== undefined ? { openToSharing: args.openToSharing } : {}),
+      ...(args.radiusKm !== undefined ? { radiusKm: validRadius(args.radiusKm) } : {}),
+      ...(args.genres !== undefined ? { genres: normalizedList(args.genres) } : {}),
+      ...(args.instruments !== undefined ? { instruments: normalizedList(args.instruments) } : {}),
+      ...(args.collaborationOpen !== undefined ? { collaborationOpen: args.collaborationOpen } : {}),
+      ...(args.facets !== undefined ? { facets: args.facets } : {}),
+    };
+    const current: Record<string, unknown> = {
+      ...need,
+      locationQuery: savedNeedLocationQuery(need),
+      locationLabel: savedNeedLocationLabel(need),
+    };
+    const changedFields = Object.keys(desired).filter(
+      (field) => JSON.stringify(current[field]) !== JSON.stringify(desired[field]),
+    );
+    if (changedFields.length === 0) {
+      return { revision: need.matchingRevision ?? 0, changedFields: [] };
+    }
     await ctx.db.patch(need._id, {
       ...(args.title !== undefined
         ? { title: requiredText(args.title, "title") }
