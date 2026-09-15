@@ -8,8 +8,8 @@
  * Locale provider — COMPONENT_MAP.md §6.4, DECISIONS.md items 18 and 19.
  *
  * Two decisions are load-bearing here:
- *   · The default locale is German, **unconditionally**. There is no `navigator.language`
- *     probe (§6.4: do not ship a ternary whose branches are both `"de"`).
+ *   · English is the product default for the GPT-Live demo. There is no browser-language
+ *     probe; only a persisted explicit choice overrides it.
  *   · There is **no runtime fallback between dictionaries** (§6.2 rule 1). A locale can only
  *     become active once its dictionary is registered, so German can never leak into an
  *     English UI unnoticed. `en.ts` registers itself with `registerDictionary("en", en)`.
@@ -17,6 +17,7 @@
 
 import * as React from "react";
 import { de } from "./de";
+import { en } from "./en";
 import { LOCALES, type Dict, type Locale } from "./types";
 
 export type { Locale };
@@ -24,14 +25,14 @@ export type { Locale };
 /** Persisted preference. Wrapped in try/catch everywhere: Safari private mode throws. */
 const STORAGE_KEY = "roomscout.locale";
 
-/** DECISIONS.md item 18 — German, unconditionally. */
-export const DEFAULT_LOCALE: Locale = "de";
+/** GPT-Live migration P3 — English unless the user explicitly selected German. */
+export const DEFAULT_LOCALE: Locale = "en";
 
 /* ---------------------------------------------------------------------------
  * Registry
  * ------------------------------------------------------------------------- */
 
-const registry: Partial<Record<Locale, Dict>> = { de };
+const registry: Partial<Record<Locale, Dict>> = { de, en };
 
 /** Recomputed on every registration so `useSyncExternalStore` gets a stable reference. */
 let availableSnapshot: readonly Locale[] = computeAvailable();
@@ -53,8 +54,7 @@ function getAvailableSnapshot(): readonly Locale[] {
 }
 
 /**
- * Register a dictionary for a locale. `en.ts` calls this at module scope; until it does,
- * `availableLocales` is `["de"]` and `<LanguageToggle>` renders nothing.
+ * Register or replace a dictionary for a locale. Product locales are registered at startup.
  */
 export function registerDictionary(locale: Locale, dict: Dict): void {
   registry[locale] = dict;
@@ -125,7 +125,7 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
   const [chosen, setChosen] = React.useState<Locale | undefined>(undefined);
 
   // Derived, not stored: a preference for a locale whose dictionary is missing stays
-  // dormant (German renders) and takes effect by itself the moment it is registered.
+  // dormant (the product default renders) and takes effect when it is registered.
   // `availableLocales` is part of this render, so registration re-runs this line.
   const locale: Locale =
     chosen ??
@@ -146,8 +146,8 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
   }, [locale]);
 
   // Unreachable in practice — `locale` is only ever a registered locale — but it keeps the
-  // context value total without an assertion. `de` is the source language (§6.2 rule 1).
-  const dict = registry[locale] ?? de;
+  // context value total without an assertion.
+  const dict = registry[locale] ?? en;
 
   const value = React.useMemo<LocaleContextValue>(
     () => ({ locale, setLocale, availableLocales, dict }),

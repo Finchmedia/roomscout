@@ -20,6 +20,11 @@ export const commonDe = {
   apply: "Übernehmen", // SCOUT_SCREENS.md §18.9 brief.save
   discard: "Verwerfen", // SETTINGS_SCREENS.md §17.5 discard.discard
   next: "Weiter", // SETTINGS_SCREENS.md §17.7 import.step1.next
+  language: {
+    toggleAria: "Sprache",
+    shortDe: "DE",
+    shortEn: "EN",
+  },
 } as const;
 
 // NOT widened: „Zurück zum Scout“. COMPONENT_MAP.md §D14 assigns the sidebar back label two

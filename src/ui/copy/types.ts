@@ -8,10 +8,19 @@
 
 import type { de } from "./de";
 
-/** The dictionary shape. DE is the source language and therefore the shape (§6.2 rule 1). */
-export type Dict = typeof de;
+/** Keep the source dictionary's keys while allowing each locale to supply its own text. */
+export type DeepWiden<T> = T extends string
+  ? string
+  : T extends readonly unknown[]
+    ? { readonly [K in keyof T]: DeepWiden<T[K]> }
+    : T extends object
+      ? { readonly [K in keyof T]: DeepWiden<T[K]> }
+      : T;
 
-/** Locales the app knows about. DECISIONS.md item 18: DE is the unconditional default. */
+/** The dictionary shape. DE is the source language and therefore the shape (§6.2 rule 1). */
+export type Dict = DeepWiden<typeof de>;
+
+/** Locales the app knows about. GPT-Live migration P3 makes EN the default. */
 export const LOCALES = ["de", "en"] as const;
 export type Locale = (typeof LOCALES)[number];
 
@@ -94,6 +103,7 @@ export type PluralCopyKey = PluralLeafPaths<Dict>;
  */
 export const COPY_VAR_NAMES = [
   "budget",
+  "category",
   "city",
   "count",
   "date",
@@ -115,6 +125,7 @@ export const COPY_VAR_NAMES = [
   "usage",
   "username",
   "version",
+  "value",
 ] as const;
 
 /** One interpolation-variable name. */

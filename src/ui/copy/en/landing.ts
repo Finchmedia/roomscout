@@ -1,0 +1,165 @@
+import type { DeepWiden } from "../types";
+import type { landingDe } from "../de/landing";
+
+export const landingEn = {
+  route: {
+    signIn: "Sign in",
+    start: "Start searching",
+    explore: "Explore the public market →",
+    demoDisclosure: "Interactive sample demo · synthetic data · nothing will be sent.",
+  },
+  header: {
+    wordmark: "roomscout",
+    nav: { how: "How it works", features: "Your Scout" },
+    cta: { demo: "Start demo" },
+  },
+  hero: {
+    eyebrow: "Your personal rehearsal-room Scout",
+    headline: { line1: "You make the music.", line2: "Your Scout finds the room." },
+    subline: "Tell RoomScout what you need. Your Scout searches and checks with providers whether a room is right for you.",
+    cta: { primary: "Try the demo", secondary: { label: "How it works", arrow: "↓" } },
+    disclaimer: "Early prototype · Controlled demo",
+    preview: {
+      alt: "Sample RoomScout app view: the Scout is working and waiting for a reply.",
+      badge: "Sample view",
+    },
+  },
+  how: {
+    eyebrow: "How RoomScout works",
+    headline: { line1: "One conversation.", line2: "Then your Scout takes over." },
+    lead: "From what you need to a concrete offer.",
+    link: { features: "See the features ↓" },
+  },
+  convo: {
+    status: { listening: "Listening" },
+    speaker: { user: "You" },
+    line1: "We’re a four-piece band looking for a shared rehearsal room in Stuttgart.",
+    line2: "Up to €400 a month. We need to leave our drum kit there.",
+    line3: "Thursday evenings from 19:00 would be ideal.",
+    line4: "Actually, we’d rather keep it under €350.",
+  },
+  fact: {
+    ort: "Stuttgart and nearby",
+    band: "Shared room · 4 people",
+    budget: { initial: "Up to €400 / month", corrected: "Up to €350 / month" },
+    zeit: "Thursdays from 19:00",
+    equip: "Drum kit can stay in the room",
+  },
+  brief: {
+    panel: {
+      title: "Your room search",
+      caption: "As you talk, I save what matters. Corrections replace the previous value.",
+    },
+    card: {
+      title: "Here’s how I’ll search for you.",
+      heading: "Your room search",
+      row1: "Stuttgart and nearby",
+      row2: "Up to €350 / month",
+      row3: "Shared room · 4 people",
+      row4: "Thursdays from 19:00",
+      row5: "Drum kit can stay in the room",
+      cta: "Start the Scout",
+      note: {
+        line1: "I search and make non-binding inquiries independently.",
+        line2: "Only you can make a binding commitment.",
+      },
+    },
+  },
+  work: {
+    headline: "I’m on it.",
+    status1: "I’m looking for suitable rooms.",
+    status2: "I’m checking the open questions with the provider.",
+    status3: "The inquiry is out. I’m waiting for a reply.",
+    context: { pill: "Stuttgart · up to €350" },
+    reassurance: "You can close the app. I’ll let you know when I need you.",
+  },
+  clarify: {
+    headline: "Only real decisions come back to you.",
+    card: {
+      kicker: "Your Scout",
+      question: "One room looks right. Thursday is taken—would Wednesday from 19:00 work too?",
+    },
+    choice: { wednesday: "Wednesday works", thursday: "Thursday is essential" },
+    answer: { wednesday: "Wednesday works too.", thursday: "Thursday is essential." },
+    reply: {
+      wednesday: "Great, Wednesday works too. I’ll check the rest.",
+      thursday: "Got it. I’ll keep looking for Thursday.",
+    },
+    resume: "Continue example (Wednesday path)",
+  },
+  offer: {
+    headline: "A room that fits your search.",
+    image: { alt: "Rehearsal room with a drum kit and acoustic panels" },
+    eyebrow: "Sample offer",
+    title: "Stuttgart-West · Shared rehearsal room",
+    price: { amount: "€280", period: "/ month", note: "including utilities" },
+    feature1: "Wednesdays, 19:00–22:00",
+    feature2: "Drum kit can stay in the room",
+    cta: "Review offer",
+    note: "Only you can make a binding commitment.",
+    footnote: "Sample search · flow shortened for the demo",
+  },
+  features: {
+    eyebrow: "More than a list of results",
+    headline: { line1: "A Scout who understands you.", line2: "And follows through." },
+    lead: "Your needs, conversations, and search stay together.",
+    memory: {
+      title: "Remembers what matters to you.",
+      subtitle: "Even when your needs change.",
+      panel: { label: "Your needs" },
+      stamp: { idle: "Updated", updated: "Updated · just now" },
+      row: {
+        band: "Shared room · 4 people",
+        equip: "Drum kit can stay",
+        budget: { old: "€400", new: "€350 / month" },
+      },
+    },
+    followup: {
+      title: "Keeps up with replies.",
+      subtitle: "You don’t need to check every portal yourself.",
+      msg1: { sender: "Provider", time: "Today, 2:27 PM", body: "Wednesday is still available." },
+      msg2: { sender: "RoomScout", time: "Today, 2:28 PM", body: "Would Wednesday work for you?" },
+    },
+    sources: {
+      title: "Keeps an eye on your sources.",
+      subtitle: "Relevant listings in one place.",
+      card: {
+        listing: "Offer · Stuttgart-West",
+        wanted: "Wanted · Band looking for a room",
+        shared: "Shared room",
+      },
+      pill: { city: "Stuttgart" },
+    },
+    autopilot: {
+      title: "Handles the work. Leaves the decision to you.",
+      subtitle: "Inquiries run on Autopilot. Binding commitments stay with you.",
+      row1: { title: "Contact providers", sub: "RoomScout can handle this for you." },
+      row2: { title: "Make a binding commitment", sub: "Always stays with you." },
+      link: "See how you stay in control ↓",
+    },
+  },
+  control: {
+    eyebrow: "Clear boundaries",
+    headline: { line1: "Your Scout takes over.", line2: "You have the final say." },
+    lead: "You decide where to search, what your Scout may handle, and what it remembers.",
+  },
+  faq: {
+    q1: "What can the Scout do independently?",
+    a1: "It researches and makes non-binding inquiries within your search. You decide on binding commitments, bookings, and payments. You can review and change sources, autonomy, and memories in Settings.",
+    q2: "Do I have to talk to the Scout?",
+    a2: "No. You can speak or type. Both belong to the same search.",
+    q3: "Does this work on every portal yet?",
+    a3: "Not yet. The current demo shows the flow on a test portal we control. Public sources and their contact methods are reviewed and connected gradually. This demo does not contact third-party providers.",
+  },
+  closing: {
+    disclaimer: "Currently a controlled demo. No inquiries to third-party providers.",
+    headline: "Ready to find your next rehearsal room?",
+    cta: { primary: "Try the demo", secondary: "View project ↗" },
+  },
+  footer: {
+    wordmark: "roomscout",
+    tagline: "A personal Scout for your rehearsal-room search.",
+    link: { github: "GitHub" },
+    credit: "Built at the Convex All Gas Hackathon.",
+  },
+} as const satisfies DeepWiden<typeof landingDe>;

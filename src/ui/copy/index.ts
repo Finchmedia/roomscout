@@ -9,6 +9,7 @@
  */
 
 export { de } from "./de";
+export { en } from "./en";
 export {
   DEFAULT_LOCALE,
   LocaleCtx,
@@ -37,6 +38,7 @@ export {
   type CopyVarName,
   type CopyVars,
   type DeepLeafPaths,
+  type DeepWiden,
   type Dict,
   type Locale,
   type PluralCopyKey,

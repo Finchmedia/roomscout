@@ -9,10 +9,11 @@
  * Written without JSX (the file is `.ts`, per the build plan) — `React.createElement`.
  */
 
-import { renderHook } from "@testing-library/react";
+import { fireEvent, render, renderHook, screen } from "@testing-library/react";
 import * as React from "react";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { de } from "./de";
+import { en } from "./en";
 import {
   formatCurrencyEUR,
   formatTime,
@@ -20,8 +21,9 @@ import {
   isPluralNode,
   plural,
 } from "./format";
-import { LocaleProvider, registerDictionary } from "./LocaleProvider";
-import { COPY_VAR_NAMES, type Dict } from "./types";
+import { LocaleProvider } from "./LocaleProvider";
+import { LanguageToggle } from "./LanguageToggle";
+import { COPY_VAR_NAMES } from "./types";
 import { useCopy } from "./useCopy";
 
 /* ---------------------------------------------------------------------------
@@ -52,10 +54,21 @@ function collectLeaves(node: unknown, path = "", out: Leaf[] = []): Leaf[] {
   throw new Error(`Dictionary leaf at "${path}" is neither a string nor a plural object`);
 }
 
-const leaves = collectLeaves(de);
+const deLeaves = collectLeaves(de);
+const enLeaves = collectLeaves(en);
 
 const wrapper = ({ children }: { children: React.ReactNode }) =>
   React.createElement(LocaleProvider, null, children);
+
+beforeEach(() => {
+  const values = new Map<string, string>();
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+    removeItem: (key: string) => values.delete(key),
+    clear: () => values.clear(),
+  });
+});
 
 /* ------------------------------------------------------------------------- */
 
@@ -129,22 +142,22 @@ describe("formatTime / formatCurrencyEUR", () => {
 
 describe("the German dictionary", () => {
   it("ships the full extracted copy (>= 860 leaves)", () => {
-    expect(leaves.length).toBeGreaterThanOrEqual(860);
+    expect(deLeaves.length).toBeGreaterThanOrEqual(860);
   });
 
   it("has no empty string anywhere", () => {
-    const empty = leaves.filter((leaf) => leaf.strings.some((s) => s.trim() === ""));
+    const empty = deLeaves.filter((leaf) => leaf.strings.some((s) => s.trim() === ""));
     expect(empty.map((leaf) => leaf.path)).toEqual([]);
   });
 
   it("has no duplicate leaf path", () => {
-    expect(new Set(leaves.map((leaf) => leaf.path)).size).toBe(leaves.length);
+    expect(new Set(deLeaves.map((leaf) => leaf.path)).size).toBe(deLeaves.length);
   });
 
   it("uses only placeholders declared in CopyVars", () => {
     const declared = new Set<string>(COPY_VAR_NAMES);
     const undeclared: string[] = [];
-    for (const leaf of leaves) {
+    for (const leaf of deLeaves) {
       for (const value of leaf.strings) {
         for (const match of value.matchAll(/\{(\w+)\}/g)) {
           const name = match[1];
@@ -159,7 +172,7 @@ describe("the German dictionary", () => {
 
   it("declares no placeholder the dictionary never uses", () => {
     const used = new Set<string>();
-    for (const leaf of leaves) {
+    for (const leaf of deLeaves) {
       for (const value of leaf.strings) {
         for (const match of value.matchAll(/\{(\w+)\}/g)) {
           if (match[1] !== undefined) used.add(match[1]);
@@ -170,7 +183,7 @@ describe("the German dictionary", () => {
   });
 
   it("carries every plural leaf as one leaf each (COMPONENT_MAP.md §6.3)", () => {
-    expect(leaves.filter((leaf) => leaf.plural).map((leaf) => leaf.path).sort()).toEqual([
+    expect(deLeaves.filter((leaf) => leaf.plural).map((leaf) => leaf.path).sort()).toEqual([
       // The port's own fifth plural leaf: „{count} Unterhaltungen“ in the
       // Nachrichten nav header. §6.3 predates the surface; the rule it states
       // (a plural is one leaf, read only through `tp`) is what is under test.
@@ -187,7 +200,7 @@ describe("the German dictionary", () => {
     // SCOUT §18.18 `scout.demo.*` and LANDING §17.12 `landing.v1.*` — NOT every path that
     // contains the substring "demo": `settings.sources.demo.*`, `settings.knowledge.demo.*`
     // and `landing.header.cta.demo` are shipped product copy (the demo data of §6.2 rule 6).
-    const excluded = leaves.filter(
+    const excluded = deLeaves.filter(
       (leaf) => leaf.path.startsWith("scout.demo.") || leaf.path.startsWith("landing.v1."),
     );
     expect(excluded.map((leaf) => leaf.path)).toEqual([]);
@@ -214,12 +227,45 @@ describe("the German dictionary", () => {
   });
 });
 
+describe("the English dictionary", () => {
+  it("has exactly the same leaves and plural shapes as German", () => {
+    expect(enLeaves.map((leaf) => `${leaf.path}:${leaf.plural}`).sort()).toEqual(
+      deLeaves.map((leaf) => `${leaf.path}:${leaf.plural}`).sort(),
+    );
+  });
+
+  it("keeps the interpolation variables of every translated leaf", () => {
+    const tokens = (leaf: Leaf) =>
+      [...new Set(leaf.strings.flatMap((value) => [...value.matchAll(/\{(\w+)\}/g)].map((match) => match[1])))]
+        .sort();
+    const englishByPath = new Map(enLeaves.map((leaf) => [leaf.path, leaf]));
+    const mismatches = deLeaves.flatMap((leaf) => {
+      const english = englishByPath.get(leaf.path);
+      return english && JSON.stringify(tokens(leaf)) === JSON.stringify(tokens(english))
+        ? []
+        : [`${leaf.path}: ${tokens(leaf).join(",")} -> ${english ? tokens(english).join(",") : "missing"}`];
+    });
+    expect(mismatches).toEqual([]);
+  });
+
+  it("contains no empty or visibly German product copy", () => {
+    const empty = enLeaves.filter((leaf) => leaf.strings.some((value) => value.trim() === ""));
+    expect(empty.map((leaf) => leaf.path)).toEqual([]);
+
+    const germanWords = /\b(?:anmeldung|anbieter|auftrag|auswählen|dein|deine|details klären|euer|eure|für|gespeichert|handlungs|keine|nicht|noch|quelle|quellen|suchauftrag|übernehmen|verwerfen|wird|zur|zum)\b/i;
+    const leaked = enLeaves.flatMap((leaf) =>
+      leaf.strings.filter((value) => germanWords.test(value)).map((value) => `${leaf.path}: ${value}`),
+    );
+    expect(leaked).toEqual([]);
+  });
+});
+
 describe("useCopy", () => {
   it("resolves a known key through the provider", () => {
     const { result } = renderHook(() => useCopy(), { wrapper });
-    expect(result.current.locale).toBe("de");
-    expect(result.current.t("scout.welcome.headline")).toBe("Finden wir euren Proberaum.");
-    expect(result.current.t("common.saved")).toBe("Gespeichert");
+    expect(result.current.locale).toBe("en");
+    expect(result.current.t("scout.welcome.headline")).toBe("Let’s find your rehearsal room.");
+    expect(result.current.t("common.saved")).toBe("Saved");
   });
 
   it("interpolates variables", () => {
@@ -229,35 +275,47 @@ describe("useCopy", () => {
 
   it("resolves plural leaves with tp and supplies {count} implicitly", () => {
     const { result } = renderHook(() => useCopy(), { wrapper });
-    expect(result.current.tp("scout.brief.sheet.count", 1)).toBe("1 Wunsch gemerkt");
-    expect(result.current.tp("scout.brief.sheet.count", 3)).toBe("3 Wünsche gemerkt");
+    expect(result.current.tp("scout.brief.sheet.count", 1)).toBe("1 search fact");
+    expect(result.current.tp("scout.brief.sheet.count", 3)).toBe("3 search facts");
     expect(result.current.tp("settings.knowledge.import.done", 4, { n: 4 })).toBe(
-      "4 Angaben übernommen.",
+      "Imported 4 details.",
     );
   });
 
-  it("defaults to German unconditionally (DECISIONS.md item 18)", () => {
+  it("defaults to English", () => {
+    const { result } = renderHook(() => useCopy(), { wrapper });
+    expect(result.current.locale).toBe("en");
+    expect(document.documentElement.lang).toBe("en");
+  });
+
+  it("restores an explicit German preference", () => {
+    localStorage.setItem("roomscout.locale", "de");
     const { result } = renderHook(() => useCopy(), { wrapper });
     expect(result.current.locale).toBe("de");
+    expect(result.current.t("common.saved")).toBe("Gespeichert");
     expect(document.documentElement.lang).toBe("de");
+  });
+
+  it("registers both languages and persists an explicit switch", () => {
+    const { result } = renderHook(() => useCopy(), { wrapper });
+    expect([...result.current.availableLocales]).toEqual(["de", "en"]);
+    React.act(() => result.current.setLocale("de"));
+    expect(result.current.locale).toBe("de");
+    expect(localStorage.getItem("roomscout.locale")).toBe("de");
   });
 });
 
-// Placed last on purpose: `registerDictionary` mutates the module-level registry, and the
-// point of the assertions above is that only German is registered until `en.ts` exists.
-describe("the dictionary registry", () => {
-  it("exposes only the registered locales, and grows when one is registered", () => {
-    const before = renderHook(() => useCopy(), { wrapper });
-    expect([...before.result.current.availableLocales]).toEqual(["de"]);
+describe("LanguageToggle", () => {
+  it("offers both registered languages and switches to German explicitly", () => {
+    render(React.createElement(LocaleProvider, null, React.createElement(LanguageToggle)));
+    const group = screen.getByRole("group", { name: "Language" });
+    expect(group).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "EN" })).toHaveAttribute("aria-pressed", "true");
 
-    // Switching to a locale with no dictionary is a no-op — never a silent German render
-    // under an English flag (COMPONENT_MAP.md §6.2 rule 1).
-    before.result.current.setLocale("en");
-    expect(before.result.current.locale).toBe("de");
+    fireEvent.click(screen.getByRole("button", { name: "DE" }));
 
-    // A stand-in for `en.ts`; only the registry mechanics are under test here.
-    registerDictionary("en", de as Dict);
-    const after = renderHook(() => useCopy(), { wrapper });
-    expect([...after.result.current.availableLocales]).toEqual(["de", "en"]);
+    expect(screen.getByRole("group", { name: "Sprache" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "DE" })).toHaveAttribute("aria-pressed", "true");
+    expect(localStorage.getItem("roomscout.locale")).toBe("de");
   });
 });
