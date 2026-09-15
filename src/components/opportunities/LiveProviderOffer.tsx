@@ -6,21 +6,40 @@ import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Overline } from "../ui/overline";
 import { useCopy } from "../../ui/copy";
+import { formatMessageStamp } from "../../ui/copy/format";
 import { PhotoPlaceholder } from "../../ui/scout/stages/PhotoPlaceholder";
 import { OfferAcceptanceFlow } from "./OfferAcceptanceDialog";
 
 type Conversation = FunctionReturnType<typeof api.providerConversations.listMine>[number];
 
 /**
+ * How long „unknown“ is still the delivery confirming itself. The acceptance
+ * runs through a browser session whose receipt can lag; inside this window the
+ * card says the Versand is being confirmed, after it it says plainly that it is
+ * not confirmed. RoomScout never resends on its own either way.
+ */
+const ACCEPTANCE_CONFIRM_WINDOW_MS = 3 * 60_000;
+
+/**
  * Actual provider facts, presented with the design port's offer-card anatomy.
  *
  * `hideMessagesLink` drops the „Nachrichten ansehen“ link: inside Nachrichten
  * the card already sits on top of the conversation it would link to.
+ *
+ * `now` is the reference moment for every stamp and for the „unknown“ window.
+ * It falls back to the mount moment so hosts that have no clock of their own
+ * keep working; a host that already threads a `now` (the Nachrichten thread
+ * does) passes it, and the render stays reproducible.
  */
-export function LiveProviderOffer({ conversation, title, hideMessagesLink = false }: {
-  conversation: Conversation; title?: string; hideMessagesLink?: boolean;
+export function LiveProviderOffer({ conversation, title, hideMessagesLink = false, now }: {
+  conversation: Conversation; title?: string; hideMessagesLink?: boolean; now?: number;
 }) {
-  const { t } = useCopy();
+  const { t, locale } = useCopy();
+  // Read once, at mount: a `Date.now()` in the render body is impure, and a
+  // host that needs the states to move with the clock threads its own `now`
+  // (the Nachrichten thread does).
+  const [mountedAt] = useState(() => Date.now());
+  const reference = now ?? mountedAt;
   const [reviewing, setReviewing] = useState(false);
   const offer = conversation.offer;
   if (!offer) return <p role="status">{t("liveScout.replyDetail")}</p>;
@@ -31,10 +50,19 @@ export function LiveProviderOffer({ conversation, title, hideMessagesLink = fals
   const canReview = offer.current && offer.ready && Boolean(conversation.platformThreadId) && !pending && !unknown && !sent;
   const price = assessment.monthlyPrice.totalEur;
   const interim = !offer.ready && !sent;
+  // `conversation.updatedAt` moves with the acceptance request, so it is the
+  // moment the „unknown“ outcome was recorded — the only timestamp the query
+  // hands out for it.
+  const confirming = unknown && reference - conversation.updatedAt < ACCEPTANCE_CONFIRM_WINDOW_MS;
   const acceptanceState = <>
     {pending ? <p role="status" className="mt-[var(--space-6)]">{t("liveScout.pendingAcceptance")}</p> : null}
-    {unknown ? <p role="alert" className="mt-[var(--space-6)]">{t("liveScout.unknownAcceptance")}</p> : null}
+    {unknown ? (confirming
+      ? <p role="status" className="mt-[var(--space-6)]">{t("liveScout.unknownAcceptance")}</p>
+      : <p role="alert" className="mt-[var(--space-6)]">{t("liveScout.unconfirmedAcceptance")}</p>) : null}
     {conversation.acceptanceStatus === "failed" ? <p role="alert">{t("liveScout.failedAcceptance")}</p> : null}
+    {sent && conversation.acceptedAt !== undefined
+      ? <p role="status" className="mt-[var(--space-6)]">{t("liveScout.sentAcceptance", { time: formatMessageStamp(locale, conversation.acceptedAt, reference) })}</p>
+      : null}
   </>;
   const messagesLink = hideMessagesLink ? null
     : <Link className="mt-[var(--space-5)] text-sm text-rs-ink-4 underline underline-offset-4" to="/app/inbox">{t("liveScout.viewMessages")}</Link>;

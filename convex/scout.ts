@@ -526,7 +526,9 @@ export const reply = internalAction({
     if (context.mode === "search_discovery" && context.activeNeedId) {
       const needId = context.activeNeedId;
       const updateSearchDraft = createTool({
-        description: "Update explicit facts on the user's attached draft search. Preserve the user's complete place or address in locationQuery, use locationLabel for its concise display label, and radiusKm as the geographic boundary.",
+        description:
+          "Update explicit facts on the user's attached draft search. Preserve the user's complete place or address in locationQuery, use locationLabel for its concise display label, and radiusKm as the geographic boundary. " +
+          "Facets are namespace/key pairs; the brief only shows these keys: equipment.storage, equipment.drums, equipment.pa, equipment.backline, access.parking, access.transport, access.around_the_clock, noise.night_allowed, room.size_sqm, contract.min_term_months, cost.deposit_eur, band.size. Use the closest one, values 'true'/'false' for yes/no facets and plain numbers for counts; anything else belongs in requirements.",
         inputSchema: z.object({
           title: z.string().optional(),
           locationQuery: z.string().min(1).max(240).optional(),
@@ -558,7 +560,7 @@ export const reply = internalAction({
       });
       const markSearchBriefReady = createTool({
         description:
-          "Mark the current draft search ready for the musician to review when it is already useful enough to run. Do not require every optional field. Use this after summarizing the captured search and resolving material ambiguity. This only reveals the brief and never activates the search or starts matching or outreach.",
+          "Mark the current draft search ready for the musician to review when it is already useful enough to run. Do not require every optional field. Use this once material ambiguity is resolved; the Suchauftrag panel shows the captured facts, so do not recap them in chat. This only reveals the brief and never activates the search or starts matching or outreach.",
         inputSchema: z.object({}),
         execute: async () => {
           const result = await ctx.runMutation(internal.scout.markBriefReady, {

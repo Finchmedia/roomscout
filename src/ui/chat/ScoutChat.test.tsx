@@ -139,7 +139,8 @@ describe("ScoutChat", () => {
     expect(screen.getByRole("group", { name: "Dein Scout" })).toHaveTextContent("Ich schaue mal nach.")
   })
 
-  it("shows the thinking marker while the reply is pending and has no prose yet", () => {
+  it("shows a shimmering thinking verb while the reply is pending and has no prose yet", () => {
+    const verbs = ["Sortiert Gedanken …", "Wägt Optionen ab …"]
     render(
       <ScoutChat
         messages={[
@@ -147,12 +148,56 @@ describe("ScoutChat", () => {
           { id: "2", author: "scout", body: "", status: "pending" },
         ]}
         onSend={vi.fn()}
+        labels={{ thinkingVerbs: verbs }}
         replying
       />
     )
-    expect(screen.getByRole("status", { name: "Dein Scout denkt nach …" })).toBeInTheDocument()
+    // The accessible name stays the one stable status; the visible line is one
+    // of the rotating verbs and it sweeps.
+    const marker = screen.getByRole("status", { name: "Dein Scout denkt nach …" })
+    const line = marker.querySelector('[data-slot="marker-content"]')
+    expect(line).toHaveClass("shimmer")
+    expect(verbs).toContain(line?.textContent)
     // An empty pending reply is a state, not an empty bubble.
     expect(screen.queryByRole("group", { name: "Dein Scout" })).not.toBeInTheDocument()
+  })
+
+  it("rotates the thinking verb while the Scout keeps working", () => {
+    vi.useFakeTimers()
+    try {
+      const verbs = ["Sortiert Gedanken …", "Wägt Optionen ab …"]
+      render(
+        <ScoutChat
+          messages={[{ id: "1", author: "scout", body: "", status: "pending" }]}
+          onSend={vi.fn()}
+          labels={{ thinkingVerbs: verbs }}
+          replying
+        />
+      )
+      const line = () =>
+        screen.getByRole("status", { name: "Dein Scout denkt nach …" })
+          .querySelector('[data-slot="marker-content"]')?.textContent
+      const first = line()
+      act(() => { vi.advanceTimersByTime(2_200) })
+      expect(line()).not.toBe(first)
+      expect(verbs).toContain(line())
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("leaves the composer usable and unexplained while the Scout replies", () => {
+    render(
+      <ScoutChat
+        messages={[{ id: "1", author: "scout", body: "", status: "pending" }]}
+        onSend={vi.fn()}
+        replying
+      />
+    )
+    // The marker already says the Scout is working; the composer repeating it
+    // was the duplicate line that had to go.
+    expect(screen.queryByText("Dein Scout antwortet gerade …")).not.toBeInTheDocument()
+    expect(screen.getByRole("textbox", { name: "Nachricht an deinen Scout …" })).not.toBeDisabled()
   })
 
   it("names a running tool call and drops the line once the reply succeeded", () => {
@@ -212,8 +257,9 @@ describe("ScoutChat", () => {
     const card = screen.getByRole("group", { name: "Entscheidung" })
     expect(transcript && card.compareDocumentPosition(transcript) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy()
 
-    fireEvent.click(screen.getByRole("button", { name: "Ja, so senden" }))
-    expect(onAnswerDecision).toHaveBeenCalledWith("decision-1", "yes")
+    fireEvent.click(screen.getByRole("radio", { name: "Ja, so senden" }))
+    fireEvent.click(screen.getByRole("button", { name: "Antworten" }))
+    expect(onAnswerDecision).toHaveBeenCalledWith("decision-1", "yes", undefined)
     expect((await screen.findAllByRole("group", { name: "Du" })).at(-1)).toHaveTextContent("Ja, so senden")
     expect(screen.getAllByRole("group", { name: "Dein Scout" }).at(-1)).toHaveTextContent("Danke, ich mache weiter.")
   })

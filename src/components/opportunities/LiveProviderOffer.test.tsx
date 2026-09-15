@@ -5,7 +5,10 @@ import { liveScoutDe } from "../../ui/copy/de/liveScout";
 import { LiveProviderOffer } from "./LiveProviderOffer";
 
 vi.mock("../../ui/copy", () => ({
-  useCopy: () => ({ t: (key: string) => key }),
+  useCopy: () => ({
+    t: (key: string, vars?: Record<string, string>) => (vars ? `${key}:${Object.values(vars).join(",")}` : key),
+    locale: "de",
+  }),
 }));
 
 vi.mock("./OfferAcceptanceDialog", () => ({
@@ -50,8 +53,11 @@ function conversation(overrides: Record<string, unknown> = {}) {
   }) as never;
 }
 
-function renderOffer(value: ReturnType<typeof conversation>) {
-  return render(<MemoryRouter><LiveProviderOffer conversation={value} /></MemoryRouter>);
+/** Every stamp and the „unknown“ window read this moment, never the wall clock. */
+const NOW = new Date(2026, 8, 14, 11, 0).getTime();
+
+function renderOffer(value: ReturnType<typeof conversation>, now: number = NOW) {
+  return render(<MemoryRouter><LiveProviderOffer conversation={value} now={now} /></MemoryRouter>);
 }
 
 describe("LiveProviderOffer acceptance gating", () => {
@@ -110,11 +116,28 @@ describe("LiveProviderOffer acceptance gating", () => {
     expect(screen.queryByRole("button", { name: "liveScout.review" })).not.toBeInTheDocument();
   });
 
-  it("distinguishes an unknown provider outcome from an in-flight delivery", () => {
-    renderOffer(conversation({ acceptanceStatus: "unknown" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("liveScout.unknownAcceptance");
+  it("calls an unknown outcome a delivery still confirming itself for the first three minutes", () => {
+    renderOffer(conversation({ acceptanceStatus: "unknown", updatedAt: NOW - 60_000 }));
+    expect(screen.getByRole("status")).toHaveTextContent("liveScout.unknownAcceptance");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByText("liveScout.pendingAcceptance")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "liveScout.review" })).not.toBeInTheDocument();
+  });
+
+  it("says plainly that the Versand is unconfirmed once the window has passed", () => {
+    renderOffer(conversation({ acceptanceStatus: "unknown", updatedAt: NOW - 4 * 60_000 }));
+    expect(screen.getByRole("alert")).toHaveTextContent("liveScout.unconfirmedAcceptance");
+    expect(screen.queryByText("liveScout.unknownAcceptance")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "liveScout.review" })).not.toBeInTheDocument();
+  });
+
+  it("stamps a Zusage that is confirmed sent", () => {
+    renderOffer(conversation({
+      acceptanceStatus: "executed",
+      acceptedOfferId: "offer-current",
+      acceptedAt: new Date(2026, 8, 14, 9, 41).getTime(),
+    }));
+    expect(screen.getByRole("status")).toHaveTextContent("liveScout.sentAcceptance:Heute, 09:41");
   });
 
   it("blocks review only when the displayed offer is the executed accepted revision", () => {
@@ -125,7 +148,7 @@ describe("LiveProviderOffer acceptance gating", () => {
     }));
     expect(screen.queryByRole("button", { name: "liveScout.review" })).not.toBeInTheDocument();
 
-    rerender(<MemoryRouter><LiveProviderOffer conversation={conversation({
+    rerender(<MemoryRouter><LiveProviderOffer now={NOW} conversation={conversation({
       acceptanceStatus: "executed",
       acceptedOfferId: "offer-historical",
       acceptedAt: 20,

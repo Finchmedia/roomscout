@@ -30,11 +30,17 @@ export function buildScoutCaseCard(input: CaseCardInput): string {
   ].join("\n");
 
   if (input.mode === "search_discovery") {
+    const status = input.need?.status;
+    const lifecycle = status !== undefined && status !== "draft"
+      ? `SEARCH ALREADY LIVE: the attached search is ${status}, not a draft. The musician has already started it — say that you are on it and report where you stand; never ask them to click “Scout losschicken”, never call markSearchBriefReady, and never restart onboarding.`
+      : `READY HANDOFF: Once the draft is useful enough to run and material ambiguity is resolved, first apply any final updates, then call markSearchBriefReady and say in ONE sentence that the brief is ready for review and that only their own “Scout losschicken” starts the search. Do not merely say it is complete without the successful tool result, and do not require every optional field.`;
     return `MODE: SEARCH DISCOVERY
 GOAL: Turn the conversation into a useful, user-controlled rehearsal-room search.
-ALLOWED: Ask one focused question at a time; extract explicit preferences; understand the band, musical identity, equipment, mobility, schedule, collaboration fit, and people involved when they affect the search; suggest values clearly as suggestions; update the attached draft search; remember useful durable facts; summarize for confirmation.
+ALLOWED: Ask one focused question at a time; extract explicit preferences; understand the band, musical identity, equipment, mobility, schedule, collaboration fit, and people involved when they affect the search; suggest values clearly as suggestions; update the attached draft search; remember useful durable facts.
 FORBIDDEN: Invent preferences; interrogate the user for every optional field; drift into unrelated general-purpose chat; contact anyone; create or approve outreach.
-READY HANDOFF: Once the draft is useful enough to run and material ambiguity is resolved, first apply any final updates, then call markSearchBriefReady. Tell the musician the brief is ready for review and that only their explicit “Scout losschicken” action starts the search. Do not merely say it is complete without the successful tool result, and do not require every optional field.
+NEVER RECAP THE FACTS: the Suchauftrag panel next to the chat already shows everything you captured. Do not list, bullet, enumerate, repeat or summarize the captured facts in your reply, not even once and not as confirmation. Writing them down twice is the single worst thing you can do here.
+REPLY SHAPE: after updateSearchDraft answer with at most one short acknowledging sentence plus EXACTLY ONE focused follow-up question — nothing else. No lists, no headings, no bullet points, no closing summary. If nothing is left to ask, leave out the question instead of inventing one.
+${lifecycle}
 ${context}`;
   }
 

@@ -15,15 +15,20 @@ const STAGE_SHELL =
   "flex flex-1 flex-col items-center justify-center px-[var(--space-11)] pt-[var(--space-7)] pb-[var(--space-15)] text-center";
 
 /**
- * The stages that carry the two side columns: everything the Scout does after
- * the brief is signed off. Discovery keeps the single centred column, because
- * the conversation is the whole screen there.
+ * The stages that carry a side column.
+ *
+ * Discovery is one of them: „Euer Suchauftrag“ grows beside the conversation
+ * while the band talks (the mock's floating list, `DiscoveryStage.tsx`), so the
+ * facts land in the aside instead of being recited back as a bullet list in the
+ * chat. It passes no rail — there are no candidates yet — so the centre column
+ * simply sits further left than it does on the working stages.
  *
  * 1100px is this layout's own threshold, not the app's narrow breakpoint
  * (959px): three columns need 260 + 300 of side rail before the centre still
- * has room for a headline.
+ * has room for a headline. Below it the columns fold into the two sheets.
  */
 const COLUMN_STAGES: ReadonlySet<LiveScoutStage> = new Set<LiveScoutStage>([
+  "discovery",
   "working",
   "blocked",
   "provider-update",
@@ -77,9 +82,14 @@ function WorkChrome({ props, stage }: { props: LiveScoutSurfaceProps; stage: Liv
         className="mb-[var(--space-17)]"
       />
       <StageTitle>{headline}</StageTitle>
-      <p aria-live="polite" className="mt-[var(--space-8)] max-w-[620px] text-[length:var(--text-body-lg-size)] leading-[1.5] text-rs-ink-2">
-        {status}
-      </p>
+      {/* An empty status is a real state, not a missing string: when the
+          Entscheidung card below carries the question, repeating it here would
+          put the same sentence on screen twice. */}
+      {status ? (
+        <p aria-live="polite" className="mt-[var(--space-8)] max-w-[620px] text-[length:var(--text-body-lg-size)] leading-[1.5] text-rs-ink-2">
+          {status}
+        </p>
+      ) : null}
       {blocked && props.decisionSlot ? (
         <div className="mt-[var(--space-11)] w-[min(620px,100%)]">
           {props.decisionSlot}
@@ -216,12 +226,18 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
           </div>
         ) : null}
         {columns ? (
-          <div className="flex min-h-0 w-full flex-1 items-start">
-            <div className="hidden w-[260px] shrink-0 pt-[var(--space-7)] pr-[var(--space-7)] pl-[var(--space-11)] min-[1100px]:block">
+          // The side columns start at the top of the stage and stay there; the
+          // centre is vertically centred in what is left, so the blob and the
+          // headline sit in the middle of the screen instead of hanging from
+          // its top edge with a field of empty below them.
+          <div className="flex min-h-0 w-full flex-1 items-stretch">
+            <div className="hidden w-[260px] shrink-0 self-start pt-[var(--space-7)] pr-[var(--space-7)] pl-[var(--space-11)] min-[1100px]:block">
               {props.railSlot}
             </div>
-            <div className="flex min-w-0 flex-1 flex-col">{content}</div>
-            <div className="hidden w-[300px] shrink-0 pt-[var(--space-7)] pr-[var(--space-11)] pl-[var(--space-7)] min-[1100px]:block">
+            <div data-live-scout-column="center" className="flex min-h-0 min-w-0 flex-1 flex-col justify-center">
+              {content}
+            </div>
+            <div className="hidden w-[300px] shrink-0 self-start pt-[var(--space-7)] pr-[var(--space-11)] pl-[var(--space-7)] min-[1100px]:block">
               {props.asideSlot}
             </div>
           </div>

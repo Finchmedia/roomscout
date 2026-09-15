@@ -524,7 +524,7 @@ export const reply = mutation({
     const messageDecision = open.find((row) => row.ownerId === ownerId && MESSAGE_DECISION_KINDS.has(row.kind));
 
     const staged = messageDecision
-      ? await answerDecision(ctx, { ownerId, decisionId: messageDecision._id, choice: "custom", text: body })
+      ? await answerDecision(ctx, { ownerId, decisionId: messageDecision._id, choice: "custom", text: body, dictated: true })
       : await stageCustomReplyForOwner(ctx, { ownerId, conversationId: args.conversationId, body });
     const requestId = staged.requestId;
     if (!requestId) throw new ConvexError({ code: "REPLY_CHANNEL_NOT_READY" });

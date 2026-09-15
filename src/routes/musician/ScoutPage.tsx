@@ -3,12 +3,13 @@ import type { UIMessage } from "@convex-dev/agent/react";
 import type { StreamArgs, SyncStreamsReturnValue } from "@convex-dev/agent";
 import { useMutation, useQuery } from "convex/react";
 import type { FunctionReference, PaginationOptions, PaginationResult } from "convex/server";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { Button } from "../../components/ui/button";
 import { FactList } from "../../components/ui/fact-list";
+import { DecisionCard } from "../../components/scout/DecisionCard";
 import { LiveProviderOffer } from "../../components/opportunities/LiveProviderOffer";
 import { LiveProfileMenu } from "../../components/navigation/LiveProfileMenu";
 import { LiveVoiceChat } from "../../ui/chat/LiveVoiceChat";
@@ -17,7 +18,8 @@ import { factsFromNeed } from "../../features/scout/viewModel";
 import { useCopy } from "../../ui/copy";
 import { formatMessageStamp } from "../../ui/copy/format";
 import { ScoutChat } from "../../ui/chat/ScoutChat";
-import { CandidateList, LiveScoutSurface, deriveLiveScoutStage } from "../../ui/scout/live";
+import { THINKING_VERB_KEYS } from "../../ui/chat/thinkingVerbs";
+import { ArrivingFactList, CandidateList, LiveScoutSurface, deriveLiveScoutStage } from "../../ui/scout/live";
 
 /**
  * `api.scout.listMessages` returns UIMessages whose parts are deliberately
@@ -98,35 +100,23 @@ export function ScoutPage() {
   const chatOpen = textOpen;
   // One clock reading per mount: the rail's stamps must not re-render on their own.
   const [now] = useState(() => Date.now());
-  const rawFacts = need ? factsFromNeed(need) : [];
-  const facts = rawFacts.map(fact => {
-    let value = fact.value;
-    if (need && fact.key === "location") {
-      const place = need.locationLabel?.trim() || need.locationQuery?.trim();
-      value = [place, need.radiusKm === undefined ? undefined : t("liveScout.radius", { count: need.radiusKm })]
-        .filter(Boolean).join(" · ");
-    }
-    if (need && fact.key === "arrangement") value = need.arrangement.map(item => t(`liveScout.${item}`)).join(" · ");
-    if (need && fact.key === "budget") value = `Bis ${need.maxBudgetEur} € / Monat`;
-    if (need && fact.key === "sharing") value = t(need.openToSharing ? "liveScout.sharingYes" : "liveScout.sharingNo");
-    if (need && fact.key === "connections") value = t(need.collaborationOpen ? "liveScout.connectionsYes" : "liveScout.connectionsNo");
-    return { id: ({ location: "ort", budget: "budget", schedule: "zeit", requirements: "equip" } as Record<string, string>)[fact.key] ?? fact.key, label: value };
-  });
+  // „Euer Suchauftrag“ in one place: the view model owns the German labels, the
+  // facet allowlist and the deduplication, so nothing here can put a raw facet
+  // key or a repeated genre on screen (issue 3 of the 2026-09-15 test run).
+  const facts = useMemo(
+    () => (need ? factsFromNeed(need, t).map(fact => ({ id: fact.key, label: fact.value })) : []),
+    [need, t],
+  );
   // The aside is the brief at a glance: at most five rows with the DS fact
-  // glyphs (arrangement borrows „band“'s people icon), and the equipment cut
-  // to its first entry so the column stays a list and not a paragraph.
-  const asideFacts = need
-    ? [
-      facts.find(row => row.id === "ort"),
-      facts.find(row => row.id === "budget"),
-      facts.find(row => row.id === "arrangement"),
-      facts.find(row => row.id === "zeit"),
-      need.requirements.length ? { id: "equip", label: need.requirements[0]! } : undefined,
-    ]
+  // glyphs, and the equipment cut to its first entry so the column stays a
+  // list and not a paragraph.
+  const asideFacts = useMemo(
+    () => ["ort", "budget", "band", "zeit", "equip"]
+      .map(id => facts.find(row => row.id === id))
       .filter((row): row is { id: string; label: string } => row !== undefined)
-      .map(row => ({ id: row.id === "arrangement" ? "band" : row.id, label: row.label }))
-      .slice(0, 5)
-    : [];
+      .map(row => row.id === "equip" ? { id: row.id, label: row.label.split(" · ")[0]! } : row),
+    [facts],
+  );
   const messages = [...history.results]
     .sort((a, b) => a.order - b.order || a.stepOrder - b.stepOrder)
     .map(row => ({
@@ -197,12 +187,25 @@ export function ScoutPage() {
   function editBrief() { setManualBrief(false); setDismissedReady(readyKey); openChat(); }
   // Answering closes the Entscheidung server-side; `listOpenMine` drops it and
   // the stage leaves „blocked“ on its own — nothing is hidden optimistically.
-  async function answerOpenDecision(decisionId: Id<"decisions">, choice: string) {
+  async function answerOpenDecision(decisionId: Id<"decisions">, choice: string, text?: string) {
     if (answeringDecision) return;
     setAnsweringDecision(true); setError("");
-    try { await answerDecision({ decisionId, choice }); }
-    catch { setError(t("liveScout.error")); }
+    try { await answerDecision(text === undefined ? { decisionId, choice } : { decisionId, choice, text }); }
+    // The card only marks itself answered when the mutation resolved, so the
+    // failure has to reach it — the message beside the stage is this page's.
+    catch (cause) { setError(t("liveScout.error")); throw cause; }
     finally { setAnsweringDecision(false); }
+  }
+  /**
+   * „Scout losschicken“ — the one step that ends discovery. The conversation
+   * closes with it (chat dialog and voice), because from here the stage says
+   * „Ich kümmere mich darum“ and the Scout is no longer waiting for the brief.
+   */
+  function activateSearch() {
+    if (!need) return;
+    if (voiceOpen || voice.connected) voice.disconnect();
+    setVoiceOpen(false); setTextOpen(false); setManualBrief(false); setDismissedReady(readyKey);
+    void run(() => activate({ savedNeedId: need._id }));
   }
   const offerTitle = matches?.find(row => row.signal._id === selected?.signalId)?.signal.title;
   const offerSlot = selected ? <LiveProviderOffer key={selected.conversationId} conversation={selected} title={offerTitle} /> : null;
@@ -214,6 +217,9 @@ export function ScoutPage() {
   // what it passed or got back.
   const chatLabels = {
     thinking: t("liveScout.thinking"), replying: t("liveScout.replying"),
+    // The rotating status verbs come from the dictionary, not from the chat's
+    // own German fallback — `THINKING_VERB_KEYS` is the rotation order.
+    thinkingVerbs: THINKING_VERB_KEYS.map(key => t(key)),
     failed: t("liveScout.failed"), retry: t("liveScout.retry"),
     toolDefault: t("liveScout.tools.default"),
     tools: {
@@ -227,25 +233,24 @@ export function ScoutPage() {
       continueAutopilot: t("liveScout.tools.continueAutopilot"),
     },
   };
-  // The Entscheidung on the stage: the prepared answers first, the chat as the
-  // way out. A kind without options has nothing to press here, so its one
-  // button hands over to the chat, where the card carries the detail.
+  // The Entscheidung on the stage is the same card the chat shows — prepared
+  // answers, the Entscheidung's own text field, and for `offer_ready` the one
+  // „Angebot prüfen“ that opens the acceptance review right here instead of
+  // routing the musician through the chat for a second click (issue 7).
   const decisionSlot = openDecision ? (
     <div className="flex flex-col items-center gap-[var(--space-7)]">
-      <div className="flex flex-wrap justify-center gap-[var(--space-4)]">
-        {openDecision.options.length ? openDecision.options.map((option, index) => (
-          <Button key={option.id} variant={index === 0 ? "tint" : "secondary"} size="sm" disabled={answeringDecision}
-            onClick={() => void answerOpenDecision(openDecision._id, option.id)}>{option.label}</Button>
-        )) : (
-          <Button variant="tint" size="sm" onClick={openChat}>
-            {t(openDecision.kind === "offer_ready" ? "liveScout.decisionReviewOffer" : "liveScout.decisionOpenChat")}
-          </Button>
-        )}
-      </div>
-      {openDecision.options.length ? <Button variant="ghost" size="sm" onClick={openChat}>{t("liveScout.decisionWrite")}</Button> : null}
+      <DecisionCard
+        decision={openDecision}
+        offerHash={decisionOfferHash}
+        busy={answeringDecision}
+        onAnswer={(choice, _label, text) => answerOpenDecision(openDecision._id, choice, text)}
+      />
+      <Button variant="ghost" size="sm" onClick={openChat}>{t("liveScout.decisionWrite")}</Button>
     </div>
   ) : undefined;
-  const railSlot = need ? (
+  // The rail belongs to the working stages; a draft has nobody to talk to yet,
+  // so discovery gets the aside alone and the conversation keeps the room.
+  const railSlot = need && need.status !== "draft" ? (
     <CandidateList
       candidates={candidates.map(row => ({
         conversationId: row.conversationId, title: row.title || row.providerLabel, subtitle: row.subtitle,
@@ -261,18 +266,26 @@ export function ScoutPage() {
       onOpen={conversationId => navigate(`/app/inbox/${conversationId}`)}
     />
   ) : undefined;
-  const asideSlot = need ? (
-    <FactList facts={asideFacts} variant="compact" title={t("liveScout.asideTitle")} className="w-full">
-      <Button variant="link" size="sm" className="mt-[var(--space-5)] self-start" onClick={() => navigate("/app/search")}>
-        {t("liveScout.asideEdit")}
-      </Button>
-    </FactList>
-  ) : undefined;
+  // Discovery gets the mock's floating list with the §4.3 arrival: a fact the
+  // Scout just understood flies from the conversation into the column and
+  // lights up there, instead of being read back as prose in the chat (issue 2).
+  // The working stages keep the quiet compact list beside the stage.
+  const asideSlot = stage === "discovery"
+    ? asideFacts.length
+      ? <ArrivingFactList facts={asideFacts} title={t("liveScout.asideTitle")} className="w-full" />
+      : undefined
+    : need ? (
+      <FactList facts={asideFacts} variant="compact" title={t("liveScout.asideTitle")} className="w-full">
+        <Button variant="link" size="sm" className="mt-[var(--space-5)] self-start" onClick={() => navigate("/app/search")}>
+          {t("liveScout.asideEdit")}
+        </Button>
+      </FactList>
+    ) : undefined;
   const brief = <FactList facts={facts} variant="card" title={t("scout.brief.title")}>
     <div className="mt-[var(--space-8)] flex flex-col items-center gap-[var(--space-6)]">
       {need?.status === "draft" ? <>
         {autoBrief ? <p role="status" className="text-sm text-rs-ink-4">{t("liveScout.ready")}</p> : null}
-        <Button size="md" block disabled={working || scoutBusy || !need.locationQuery?.trim() || need.radiusKm === undefined} onClick={() => void run(() => activate({ savedNeedId: need._id }))}>{t(working ? "liveScout.activating" : "liveScout.activate")}</Button>
+        <Button size="md" block disabled={working || scoutBusy || !need.locationQuery?.trim() || need.radiusKm === undefined} onClick={activateSearch}>{t(working ? "liveScout.activating" : "liveScout.activate")}</Button>
         <p className="text-center text-sm leading-relaxed text-rs-ink-4">{t("liveScout.activateNote")}</p>
         <Button variant="link" size="sm" onClick={editBrief}>{t("liveScout.editBrief")}</Button>
       </> : null}
@@ -286,7 +299,8 @@ export function ScoutPage() {
       discoveryLabel: t("scout.discovery.speaker.scout"), loadingHeadline: t("liveScout.preparing"), loadingStatus: "",
       briefHeadline: t("scout.brief.headline"),
       workingHeadline: workHeading, workingStatus: t(blocked ? "liveScout.blockedDetail" : "liveScout.workingDetail"),
-      blockedHeadline: t("liveScout.blocked"), blockedStatus: openDecision?.question || t("liveScout.blockedDetail"),
+      // The card states the question; the stage only frames it.
+      blockedHeadline: t("liveScout.blocked"), blockedStatus: openDecision ? "" : t("liveScout.blockedDetail"),
       providerUpdateHeadline: t("liveScout.reply"), providerUpdateStatus: t("liveScout.replyDetail"),
       pausedHeadline: t("liveScout.paused"), pausedStatus: t("liveScout.pausedDetail"),
       pauseAction: t("scout.chrome.pause.pause"), resumeAction: t("scout.chrome.pause.resume"), settingsAction: t("scout.chrome.menu.settings"),
@@ -297,14 +311,14 @@ export function ScoutPage() {
     }}
     briefReviewSlot={brief}
     briefExpanded={manualBrief}
-    chatSlot={!voiceOpen && (stage === "discovery" || (chatOpen && stage !== "brief")) ? <ScoutChat key={threadId ?? "loading"} messages={messages.length ? messages : [{ id: "intro", author: "scout", body: t("liveScout.intro") }]} onSend={send} replying={scoutBusy || !threadId} labels={chatLabels} error={error} onVoice={openVoice} autoFocus decision={openDecision} decisionOfferHash={decisionOfferHash} onAnswerDecision={async (decisionId, choice) => { await answerDecision({ decisionId, choice }); }} decisionAnsweredText={t("liveScout.decisionAnswered")} hasMoreHistory={history.status === "CanLoadMore"} historyBusy={history.status === "LoadingMore"} onLoadHistory={() => history.loadMore(60)} /> : undefined}
+    chatSlot={!voiceOpen && (stage === "discovery" || (chatOpen && stage !== "brief")) ? <ScoutChat key={threadId ?? "loading"} messages={messages.length ? messages : [{ id: "intro", author: "scout", body: t("liveScout.intro") }]} onSend={send} replying={scoutBusy || !threadId} labels={chatLabels} error={error} onVoice={openVoice} autoFocus decision={openDecision} decisionOfferHash={decisionOfferHash} onAnswerDecision={async (decisionId, choice, text) => { await answerOpenDecision(decisionId, choice, text); }} decisionAnsweredText={t("liveScout.decisionAnswered")} hasMoreHistory={history.status === "CanLoadMore"} historyBusy={history.status === "LoadingMore"} onLoadHistory={() => history.loadMore(60)} /> : undefined}
     voiceSlot={voiceOpen ? <LiveVoiceChat onText={openChat} onEnd={() => { setVoiceOpen(false); setTextOpen(true); }} /> : undefined}
     providerUpdateSlot={offerSlot} offerSlot={offerSlot}
     decisionSlot={decisionSlot} railSlot={railSlot} asideSlot={asideSlot}
     completeSlot={<Link className="text-rs-ink-2 underline underline-offset-4" to="/app/inbox">{t("liveScout.viewMessages")}</Link>}
     errorSlot={error ? <p role="alert">{error}</p> : undefined}
     onChat={openChat} onCloseChat={() => setTextOpen(false)} onVoice={openVoice} onReviewBrief={() => setManualBrief(value => !value)}
-    onActivate={() => { if (need) void run(() => activate({ savedNeedId: need._id })); }}
+    onActivate={activateSearch}
     onPause={() => { if (need) void run(() => setStatus({ needId: need._id, status: "paused" })); }}
     onResume={() => { if (need) void run(() => setStatus({ needId: need._id, status: "active" })); }}
     onSettings={() => { if (voiceOpen || voice.connected) voice.disconnect(); navigate("/app/settings"); }}

@@ -32,32 +32,74 @@ function renderCard(props: Partial<Parameters<typeof DecisionCard>[0]> = {}) {
   return { ...view, onAnswer };
 }
 
+/** The Entscheidung's own submit — not the chat composer's send. */
+function submitAnswer() {
+  fireEvent.click(screen.getByRole("button", { name: "Antworten" }));
+}
+
 afterEach(cleanup);
 
 describe("DecisionCard", () => {
-  it("renders the eyebrow, question, message detail and options", () => {
+  it("renders the eyebrow, question, message detail and the prepared options", () => {
     renderCard();
     expect(screen.getByRole("group", { name: "Entscheidung" })).toBeInTheDocument();
     expect(screen.getByText("Soll ich diese Nachricht so senden?")).toBeInTheDocument();
     expect(screen.getByText("Hallo, ist der Raum in Stuttgart-West noch frei?")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Ja, so senden" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Nein, anders" })).toBeInTheDocument();
-    expect(screen.getByText("Oder schreib mir unten deine Antwort.")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Ja, so senden" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Nein, anders" })).toBeInTheDocument();
+    // The answer is typed into the Entscheidung, never into the chat composer.
+    expect(screen.queryByText("Oder schreib mir unten deine Antwort.")).not.toBeInTheDocument();
   });
 
-  it("answers yes with the option id and then shows the acknowledgement", async () => {
+  it("answers with the picked option and then shows the acknowledgement", async () => {
     const { onAnswer } = renderCard();
-    fireEvent.click(screen.getByRole("button", { name: "Ja, so senden" }));
-    expect(onAnswer).toHaveBeenCalledWith("yes", "Ja, so senden");
+    fireEvent.click(screen.getByRole("radio", { name: "Ja, so senden" }));
+    submitAnswer();
+    expect(onAnswer).toHaveBeenCalledWith("yes", "Ja, so senden", undefined);
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Danke, ich mache weiter."));
-    expect(screen.queryByRole("button", { name: "Ja, so senden" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: "Ja, so senden" })).not.toBeInTheDocument();
   });
 
-  it("keeps the options usable when the answer fails", async () => {
+  it("sends a typed answer as the custom choice, with the text", async () => {
+    const { onAnswer } = renderCard();
+    fireEvent.change(screen.getByRole("textbox", { name: "Was soll anders sein?" }), {
+      target: { value: "  bitte höflicher  " },
+    });
+    submitAnswer();
+    expect(onAnswer).toHaveBeenCalledWith("custom", "bitte höflicher", "bitte höflicher");
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Danke, ich mache weiter."));
+  });
+
+  it("says that a typed answer on a message kind goes to the Scout, not to the Anbieter", () => {
+    renderCard();
+    expect(screen.getByText("Was soll anders sein?", { selector: "label" })).toBeInTheDocument();
+    expect(screen.getByText("Das liest dein Scout, der Anbieter bekommt es nicht zu sehen.")).toBeInTheDocument();
+  });
+
+  it("picking an option drops the text that was typed before it", () => {
+    const { onAnswer } = renderCard();
+    const field = screen.getByRole("textbox", { name: "Was soll anders sein?" });
+    fireEvent.change(field, { target: { value: "doch lieber anders" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Ja, so senden" }));
+    expect(field).toHaveValue("");
+    submitAnswer();
+    expect(onAnswer).toHaveBeenCalledWith("yes", "Ja, so senden", undefined);
+  });
+
+  it("answers nothing while no answer is given", () => {
+    const { onAnswer } = renderCard();
+    submitAnswer();
+    expect(onAnswer).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("Wähl eine Antwort oder schreib deine eigene.");
+  });
+
+  it("keeps the answers usable when the answer fails", async () => {
     const onAnswer = vi.fn().mockRejectedValue(new Error("offline"));
     renderCard({ onAnswer });
-    fireEvent.click(screen.getByRole("button", { name: "Nein, anders" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Nein, anders" })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole("radio", { name: "Nein, anders" }));
+    submitAnswer();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Antworten" })).not.toBeDisabled());
+    expect(screen.getByRole("radio", { name: "Nein, anders" })).toBeInTheDocument();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
@@ -79,6 +121,8 @@ describe("DecisionCard", () => {
       offerHash: "hash-1",
     });
     expect(screen.getByRole("button", { name: "Nicht dieses" })).toBeInTheDocument();
+    // No questionnaire here: the review dialog is the answer.
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Angebot prüfen" }));
     expect(screen.getByRole("dialog", { name: "Angebot verbindlich annehmen" })).toHaveTextContent("offer-1:hash-1");
   });
@@ -92,6 +136,7 @@ describe("DecisionCard", () => {
     });
     expect(screen.getByRole("link", { name: "Im Browser weitermachen" })).toHaveAttribute("href", "/app/runs/run-1");
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 
   it("human_step without a run links to the sources settings", () => {
@@ -99,7 +144,7 @@ describe("DecisionCard", () => {
     expect(screen.getByRole("link", { name: "Verbindung neu registrieren" })).toHaveAttribute("href", "/app/settings/sources");
   });
 
-  it("uses the Scout's own labels for scout_question options", () => {
+  it("uses the Scout's own labels for scout_question options and its own free-text label", () => {
     renderCard({
       decision: decision({
         kind: "scout_question", question: "Ist Stuttgart-West für euch okay?", detail: undefined,
@@ -107,8 +152,10 @@ describe("DecisionCard", () => {
         refs: {},
       }),
     });
-    expect(screen.getByRole("button", { name: "Ja, Stuttgart-West passt" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Nein, zu weit" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Ja, Stuttgart-West passt" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Nein, zu weit" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Eigene Antwort" })).toBeInTheDocument();
+    expect(screen.queryByText("Das liest dein Scout, der Anbieter bekommt es nicht zu sehen.")).not.toBeInTheDocument();
   });
 });
 

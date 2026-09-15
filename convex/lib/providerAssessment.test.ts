@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { offerConstraints, offerReadiness, validateProviderAssessment, type ProviderAssessment } from "./providerAssessment";
+import { offerConstraints, offerReadiness, providerCaseInstructions, validateProviderAssessment, type ProviderAssessment } from "./providerAssessment";
 
 const quote = "Der Raum ist frei. 220 Euro monatlich inklusive aller Nebenkosten. Schlagzeug erlaubt, Lagerung möglich. Montags ab 18 Uhr.";
 const citation = { sourceId: "portal:one", quote };
@@ -64,5 +64,12 @@ describe("evidence-backed provider offers", () => {
   it("does not create an outgoing proposal when handing an offer to the musician", () => {
     const input = assessment(); input.suggestedReply = { subject: "Reply", body: "We accept." };
     expect(() => validateProviderAssessment(input, evidence, need)).toThrow("UNEXPECTED_REPLY_PROPOSAL");
+  });
+});
+
+describe("provider case instructions", () => {
+  it("treats a musician instruction about the wording as an instruction, not as offer evidence", () => {
+    expect(providerCaseInstructions).toContain("Anweisung der Band");
+    expect(providerCaseInstructions).toContain("instruction for the wording of your next message");
   });
 });

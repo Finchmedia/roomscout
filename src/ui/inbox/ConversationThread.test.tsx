@@ -12,6 +12,12 @@ import { MemoryRouter } from "react-router-dom";
 
 import { ConversationThread, type ThreadHeader, type ThreadItem } from "./ConversationThread";
 
+vi.mock("../../components/opportunities/OfferAcceptanceDialog", () => ({
+  OfferAcceptanceFlow: ({ expectedOfferHash, offerId }: { expectedOfferHash: string; offerId: string }) => (
+    <div data-testid="acceptance-flow">{offerId}:{expectedOfferHash}</div>
+  ),
+}));
+
 class ResizeObserverStub {
   observe() {}
   unobserve() {}
@@ -150,8 +156,64 @@ describe("ConversationThread", () => {
     );
 
     expect(screen.queryByRole("link", { name: "Entscheidung öffnen" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Ja, so senden" }));
-    expect(onAnswerDecision).toHaveBeenCalledWith("d1", "yes");
+    fireEvent.click(screen.getByRole("radio", { name: "Ja, so senden" }));
+    fireEvent.click(screen.getByRole("button", { name: "Antworten" }));
+    expect(onAnswerDecision).toHaveBeenCalledWith("d1", "yes", undefined);
+  });
+
+  it("passes a typed answer through as the custom choice with its text", () => {
+    const onAnswerDecision = vi.fn().mockResolvedValue(undefined);
+    render(
+      <MemoryRouter>
+        <ConversationThread
+          header={header()}
+          items={items({
+            kind: "decision", id: "d1", at: AT,
+            decision: {
+              _id: "d1", kind: "review_message", status: "open",
+              question: "Soll ich diese Nachricht so senden?",
+              options: [{ id: "yes", label: "Ja, so senden" }, { id: "no", label: "Nein, anders" }],
+              refs: {}, createdAt: AT, updatedAt: AT,
+            },
+          })}
+          now={NOW}
+          onSend={async () => true}
+          onAnswerDecision={onAnswerDecision}
+        />
+      </MemoryRouter>
+    );
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Was soll anders sein?" }), {
+      target: { value: "frag auch nach der Kaution" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Antworten" }));
+    expect(onAnswerDecision).toHaveBeenCalledWith("d1", "custom", "frag auch nach der Kaution");
+  });
+
+  it("opens the acceptance review from a staged Zusage instead of sending to the chat", () => {
+    render(
+      <MemoryRouter>
+        <ConversationThread
+          header={header()}
+          items={items({
+            kind: "pending_message", id: "r1", at: AT, author: "acceptance",
+            text: "Wir nehmen den Raum ab dem 1. Oktober.", status: "awaiting_approval",
+          })}
+          now={NOW}
+          onSend={async () => true}
+          onAnswerDecision={async () => undefined}
+          offerConversation={{
+            conversationId: "c1",
+            offer: { offerId: "offer-1", contentHash: "hash-1", ready: true, current: true },
+          } as never}
+        />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText("Zusage wartet auf deine Freigabe")).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Entscheidung öffnen" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Zusage prüfen" }));
+    expect(screen.getByTestId("acceptance-flow")).toHaveTextContent("offer-1:hash-1");
   });
 
   it("collapses a Scout note to one line and records an answered Entscheidung as a marker", () => {

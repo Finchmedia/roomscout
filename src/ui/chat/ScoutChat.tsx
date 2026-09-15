@@ -52,6 +52,11 @@ interface ScoutChatLabels {
   history: string
   historyBusy: string
   loadError: string
+  /**
+   * @deprecated Unused. The composer no longer explains the wait — it stays
+   * usable while the Scout replies and the thinking Marker is the one place
+   * that says so. Kept so hosts that still pass it keep compiling.
+   */
   replying: string
   restoreDraft: string
   retry: string
@@ -61,7 +66,13 @@ interface ScoutChatLabels {
   sending: string
   status: string
   system: string
+  /** Accessible name of the thinking Marker; the visible line is a rotating verb. */
   thinking: string
+  /**
+   * What the thinking Marker shows, rotated every ~2.2 s from a random start.
+   * `src/ui/chat/thinkingVerbs.ts` holds the copy keys a host resolves.
+   */
+  thinkingVerbs: readonly string[]
   /** One label per tool name; `toolDefault` covers a tool with no entry. */
   tools: Record<string, string>
   toolDefault: string
@@ -86,8 +97,12 @@ interface ScoutChatProps extends Omit<React.ComponentProps<"section">, "onError"
   decision?: OpenDecision | null
   /** `offer_ready`: the current content hash of the referenced offer. */
   decisionOfferHash?: string
-  /** Records a button answer; resolves once the server accepted it. */
-  onAnswerDecision?: (decisionId: OpenDecision["_id"], choice: string) => Promise<void>
+  /**
+   * Records the answer; resolves once the server accepted it. `text` is the
+   * musician's own wording and arrives with `choice === "custom"` — pass both
+   * to `api.decisions.answer`.
+   */
+  onAnswerDecision?: (decisionId: OpenDecision["_id"], choice: string, text?: string) => Promise<void>
   /** Shown as the Scout's bubble after an answer no chat message follows. */
   decisionAnsweredText?: string
 }
@@ -116,6 +131,14 @@ const DEFAULT_LABELS: ScoutChatLabels = {
   status: "Gesprächsstatus",
   system: "System",
   thinking: "Dein Scout denkt nach …",
+  thinkingVerbs: [
+    "Sortiert Gedanken …",
+    "Blättert im Suchauftrag …",
+    "Wägt Optionen ab …",
+    "Formuliert …",
+    "Hört noch mal genau hin …",
+    "Prüft die Details …",
+  ],
   tools: {},
   toolDefault: "Arbeitet …",
   user: "Du",
@@ -172,6 +195,45 @@ function runningToolParts(message: ScoutChatMessage) {
   )
 }
 
+/** How long one thinking verb stays up before the next one takes over. */
+const THINKING_VERB_INTERVAL = 2_200
+
+/**
+ * The line the chat shows while the Scout works and has written nothing yet.
+ *
+ * Two things make it read as somebody thinking rather than as a frozen label:
+ * the text sweeps (shadcn's `shimmer` utility from `shadcn/tailwind.css`), and the
+ * verb rotates. The rotation starts at a random index, so two waits in a row do
+ * not open with the same canned line, and the element is mounted only while the
+ * Scout is pending — a new turn is therefore a new start, for free.
+ *
+ * The accessible name stays `label` („Dein Scout denkt nach …“): a screen
+ * reader gets one stable status, not a verb changing under it every two
+ * seconds.
+ */
+function ThinkingMarker({ label, verbs }: { label: string; verbs: readonly string[] }) {
+  const [index, setIndex] = React.useState(() =>
+    verbs.length > 0 ? Math.floor(Math.random() * verbs.length) : 0
+  )
+
+  React.useEffect(() => {
+    if (verbs.length < 2) return
+    const timer = setInterval(
+      () => setIndex((current) => (current + 1) % verbs.length),
+      THINKING_VERB_INTERVAL
+    )
+    return () => clearInterval(timer)
+  }, [verbs.length])
+
+  return (
+    <Marker role="status" aria-label={label}>
+      <MarkerContent className="shimmer">
+        {(verbs.length > 0 ? verbs[index % verbs.length] : undefined) ?? label}
+      </MarkerContent>
+    </Marker>
+  )
+}
+
 function ScoutChat({
   messages,
   onSend,
@@ -203,11 +265,11 @@ function ScoutChat({
     return await onSend(body)
   }
 
-  const answerDecision = async (choice: string, label: string) => {
+  const answerDecision = async (choice: string, label: string, text?: string) => {
     if (!decision || !onAnswerDecision) return
     setLocalError(null)
     try {
-      await onAnswerDecision(decision._id, choice)
+      await onAnswerDecision(decision._id, choice, text)
     } catch {
       setLocalError(labels.sendError)
       throw new Error("decision answer failed")
@@ -360,9 +422,7 @@ function ScoutChat({
 
               {thinking && (
                 <MessageScrollerItem messageId="scout-thinking">
-                  <Marker role="status" aria-label={labels.thinking}>
-                    <MarkerContent className="rs-shimmer">{labels.thinking}</MarkerContent>
-                  </Marker>
+                  <ThinkingMarker label={labels.thinking} verbs={labels.thinkingVerbs} />
                 </MessageScrollerItem>
               )}
             </MessageScrollerContent>
@@ -375,7 +435,6 @@ function ScoutChat({
         labels={labels}
         onSubmit={submit}
         busy={replying}
-        disabledHint={replying ? labels.replying : undefined}
         error={error || localError}
         onVoice={onVoice}
         autoFocus={autoFocus}

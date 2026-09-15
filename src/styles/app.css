@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "shadcn/tailwind.css";
 @import "./tokens.css";
 
 @custom-variant dark (&:is(.dark *));
@@ -745,14 +746,3 @@ hr { border: 0; border-top: 1px solid var(--gray-800); }
     to { height: 0; }
   }
 }
-
-/* --------------------------------------------------------------------------
-   .rs-shimmer — the one "something is happening" text animation. The DS has no
-   grey, so the line breathes between two ink tokens instead of fading out into
-   a neutral. Reduced motion is already handled globally above.
-   -------------------------------------------------------------------------- */
-@keyframes rs-shimmer {
-  0%, 100% { color: var(--rs-ink-6); }
-  50% { color: var(--rs-ink-2); }
-}
-.rs-shimmer { animation: rs-shimmer 1.8s ease-in-out infinite; }

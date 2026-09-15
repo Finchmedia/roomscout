@@ -13,7 +13,8 @@ import { internalAction, internalMutation, internalQuery, mutation, query, type 
 import { requireUserId } from "./integrations/authz";
 import { approveRequestAsHuman, dispatchApproved, rejectRequestAsHuman } from "./externalActions";
 import {
-  decisionPublic, decisionPublicValidator, markAnswered, MESSAGE_DECISION_KINDS, SCOUT_DECLINED_MESSAGE,
+  decisionPublic, decisionPublicValidator, markAnswered, MESSAGE_DECISION_KINDS, MUSICIAN_INSTRUCTION_PREFIX,
+  SCOUT_DECLINED_MESSAGE,
 } from "./lib/decisions";
 import { delimitUntrustedData } from "./lib/privacy";
 import { enqueueMusicianInputTurn } from "./providerConversations";
@@ -121,10 +122,13 @@ async function ownedOpenDecision(ctx: MutationCtx, ownerId: Id<"users">, decisio
 /**
  * The one answer path for every kind. `fromChat` marks answers the Scout took
  * from the musician's words in chat: the words are already in the thread, so
- * no extra chat round is scheduled for them.
+ * no extra chat round is scheduled for them. `dictated` marks the inbox
+ * composer, the one place where the musician's text IS the message to the
+ * provider; everywhere else "custom" on a message Entscheidung is an
+ * instruction for the Scout's next draft, never a message sent verbatim.
  */
 export async function answerDecision(ctx: MutationCtx, args: {
-  ownerId: Id<"users">; decisionId: Id<"decisions">; choice: string; text?: string; fromChat?: boolean;
+  ownerId: Id<"users">; decisionId: Id<"decisions">; choice: string; text?: string; fromChat?: boolean; dictated?: boolean;
 }): Promise<AnswerResult> {
   const decision = await ownedOpenDecision(ctx, args.ownerId, args.decisionId);
   const choice = args.choice.trim().slice(0, 40);
@@ -151,9 +155,24 @@ export async function answerDecision(ctx: MutationCtx, args: {
       if (!args.fromChat) await postScoutMessage(ctx, args.ownerId, SCOUT_DECLINED_MESSAGE);
       return { decisionId: decision._id, status: "answered", action: "rejected", requestId: request._id, next: "ask_what_should_change" };
     }
-    if (!request.providerConversationId) throw new ConvexError({ code: "CONVERSATION_REQUIRED" });
-    const staged = await stageCustomReplyForOwner(ctx, { ownerId: args.ownerId, conversationId: request.providerConversationId, body: text! });
-    return { decisionId: decision._id, status: "answered", action: `custom_${staged.status}`, requestId: staged.requestId, dispatched: staged.dispatched, sent: false };
+    const conversationId = decision.conversationId ?? request.providerConversationId;
+    if (!conversationId) throw new ConvexError({ code: "CONVERSATION_REQUIRED" });
+    if (args.dictated) {
+      // Nachrichten composer: the musician writes the provider message themselves.
+      const staged = await stageCustomReplyForOwner(ctx, { ownerId: args.ownerId, conversationId, body: text! });
+      return { decisionId: decision._id, status: "answered", action: `custom_${staged.status}`, requestId: staged.requestId, dispatched: staged.dispatched, sent: false };
+    }
+    // The band's words steer the wording; the Scout re-assesses and drafts the
+    // next message, which passes the Freigabeprüfung like any Scout draft.
+    const turnId = await enqueueMusicianInputTurn(ctx, {
+      conversationId, decisionId: decision._id, input: `${MUSICIAN_INSTRUCTION_PREFIX}${text!}`,
+    });
+    if (turnId === null) {
+      // The conversation is closed: no next draft can carry the instruction.
+      if (!args.fromChat) await postScoutMessage(ctx, args.ownerId, SCOUT_DECLINED_MESSAGE);
+      return { decisionId: decision._id, status: "answered", action: "rejected", requestId: request._id, next: "ask_what_should_change" };
+    }
+    return { decisionId: decision._id, status: "answered", action: "reassessing", requestId: request._id, sent: false };
   }
 
   if (decision.kind === "scout_question") {

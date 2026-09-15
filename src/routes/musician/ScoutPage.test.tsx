@@ -256,6 +256,48 @@ describe("live Scout route", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it("keeps the Suchauftrag beside the conversation while the band is still talking", () => {
+    fixtures.needs = [{
+      ...need(), genres: ["Rock"], instruments: ["Schlagzeug"],
+      facets: [
+        { namespace: "band", key: "size", value: 4, confidence: 1 },
+        { namespace: "equipment", key: "on_site_or_storage_allowed", value: true, confidence: 1 },
+      ],
+    }];
+    fixtures.messages = [
+      message({ role: "user", text: "Wir sind zu viert.", order: 0 }),
+      message({ role: "assistant", text: "Verstanden.", order: 1 }),
+    ];
+    renderPage();
+
+    expect(document.querySelector("[data-live-scout-stage]")).toHaveAttribute("data-live-scout-stage", "discovery");
+    // The facts land in the aside, not in the reply — and they land formatted.
+    const aside = screen.getByRole("group", { name: "Euer Suchauftrag" });
+    expect(aside).toHaveTextContent("Stuttgart · 20 km Umkreis");
+    expect(aside).toHaveTextContent("Geteilter Raum · 4er-Rockband · Schlagzeug");
+    expect(aside).not.toHaveTextContent("on_site_or_storage_allowed");
+    expect(screen.getByRole("region", { name: "Scout-Chat" })).toBeInTheDocument();
+    // Nobody has been contacted yet, so discovery carries no candidate rail.
+    expect(screen.queryByRole("navigation", { name: "Kandidaten" })).not.toBeInTheDocument();
+  });
+
+  it("closes the conversation when the search is sent off", async () => {
+    fixtures.voice.connected = true;
+    fixtures.context.briefReadiness = { status: "ready", needRevision: 3, readyAt: 100 };
+    const view = renderPage();
+    expect(screen.getByText("Voice Scout session")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Scout losschicken" }));
+    await waitFor(() => expect(mutation("savedNeeds:activate")).toHaveBeenCalledWith({ savedNeedId: "need-current" }));
+    expect(fixtures.voice.disconnect).toHaveBeenCalled();
+
+    fixtures.needs = [need("active")];
+    view.rerender(<MemoryRouter><ScoutPage /></MemoryRouter>);
+    expect(screen.getByRole("heading", { name: "Ich kümmere mich darum." })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Scout-Chat" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Voice Scout session")).not.toBeInTheDocument();
+  });
+
   it("lists the running candidates of this Suchauftrag, newest first", () => {
     fixtures.needs = [need("active")];
     fixtures.inbox = [
@@ -297,12 +339,49 @@ describe("live Scout route", () => {
     expect(screen.getByText("Hier brauche ich kurz deine Hilfe.").tagName).toBe("H1");
     expect(screen.getByText("Soll ich diese Nachricht so senden?")).toBeInTheDocument();
     expect(screen.queryByText("Ein Schritt konnte noch nicht abgeschlossen werden.", { exact: false })).not.toBeInTheDocument();
-    // The answer is on the stage now, so nothing opens by itself.
+    // The whole Entscheidung is on the stage now — the prepared answers and the
+    // card's own field — so nothing opens by itself.
     expect(screen.queryByRole("region", { name: "Scout-Chat" })).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Entscheidung" })).toHaveTextContent("Hallo, ist der Raum noch frei?");
     const answer = mutation("decisions:answer");
-    fireEvent.click(screen.getByRole("button", { name: "Ja, so senden" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Ja, so senden" }));
+    fireEvent.click(screen.getByRole("button", { name: "Antworten" }));
     await waitFor(() => expect(answer).toHaveBeenCalledWith({ decisionId: "decision-1", choice: "yes" }));
     expect(fixtures.voice.connect).not.toHaveBeenCalled();
+  });
+
+  it("sends the Entscheidung's own text as an instruction, not as a chat message", async () => {
+    fixtures.needs = [need("active")];
+    fixtures.decisions = [reviewDecision()];
+    renderPage();
+    const answer = mutation("decisions:answer");
+    fireEvent.change(screen.getByRole("textbox", { name: "Was soll anders sein?" }), {
+      target: { value: "Frag auch nach der Kaution." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Antworten" }));
+    await waitFor(() => expect(answer).toHaveBeenCalledWith({
+      decisionId: "decision-1", choice: "custom", text: "Frag auch nach der Kaution.",
+    }));
+    expect(mutation("scout:send")).not.toHaveBeenCalled();
+  });
+
+  it("opens the acceptance review straight from the stage Entscheidung", () => {
+    fixtures.needs = [need("active")];
+    // A current offer that is not ready yet keeps the stage on „blocked“, so
+    // the Entscheidung — not the offer stage — is what the musician answers.
+    fixtures.conversations = [providerConversation({ ready: false })];
+    fixtures.decisions = [{
+      _id: "decision-offer", kind: "offer_ready", status: "open",
+      question: "Ein Angebot liegt vor. Soll ich es dir zeigen?",
+      options: [{ id: "review", label: "Angebot prüfen" }, { id: "no", label: "Nicht dieses" }],
+      refs: { offerId: "offer-provider" }, conversationId: "conversation-2", createdAt: 1, updatedAt: 1,
+    }];
+    renderPage();
+    expect(screen.queryByRole("region", { name: "Scout-Chat" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Angebot prüfen" }));
+    // One click, and the review itself is open — no detour through the chat.
+    expect(screen.getByRole("dialog", { name: "Angebot verbindlich annehmen" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Scout-Chat" })).not.toBeInTheDocument();
   });
 
   it("hands an Entscheidung to the chat card when the musician would rather write", () => {
@@ -314,7 +393,7 @@ describe("live Scout route", () => {
     expect(screen.getByRole("group", { name: "Entscheidung" })).toHaveTextContent("Hallo, ist der Raum noch frei?");
   });
 
-  it("sends an Entscheidung without prepared answers to the chat", () => {
+  it("hands a human step over on the stage and keeps the chat as the way out", () => {
     fixtures.needs = [need("active")];
     fixtures.decisions = [{
       _id: "decision-3", kind: "human_step", status: "open",
@@ -323,7 +402,9 @@ describe("live Scout route", () => {
     }];
     renderPage();
     expect(screen.queryByRole("region", { name: "Scout-Chat" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Im Chat ansehen" }));
+    expect(screen.getByRole("link", { name: "Verbindung neu registrieren" }))
+      .toHaveAttribute("href", "/app/settings/sources");
+    fireEvent.click(screen.getByRole("button", { name: "Oder lieber schreiben" }));
     expect(screen.getByRole("region", { name: "Scout-Chat" })).toBeInTheDocument();
   });
 
@@ -347,7 +428,7 @@ describe("live Scout route", () => {
     }));
   });
 
-  it("blocks sending while the reply streams, and names the reason", () => {
+  it("blocks sending while the reply streams, without repeating the reason", () => {
     fixtures.messages = [
       message({ role: "user", text: "Wir suchen ab Mai.", order: 0 }),
       message({ role: "assistant", text: "Ich schaue", status: "streaming", order: 1 }),
@@ -357,7 +438,10 @@ describe("live Scout route", () => {
     const composer = screen.getByRole("textbox", { name: "Nachricht an deinen Scout …" });
     fireEvent.change(composer, { target: { value: "Noch etwas" } });
     expect(screen.getByRole("button", { name: "Senden" })).toBeDisabled();
-    expect(screen.getByText("Dein Scout antwortet gerade …")).toBeInTheDocument();
+    // The thinking Marker is the one place that says the Scout is working; the
+    // composer no longer duplicates it, and typing stays possible.
+    expect(screen.queryByText("Dein Scout antwortet gerade …")).not.toBeInTheDocument();
+    expect(composer).not.toBeDisabled();
   });
 
   it("releases the composer once the reply is on the thread", () => {

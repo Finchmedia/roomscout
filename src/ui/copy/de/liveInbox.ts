@@ -48,6 +48,9 @@ export const liveInboxDe = {
   pendingSending: "Wird gesendet …",
   pendingApproval: "Wartet auf deine Freigabe",
   pendingApprovalAction: "Entscheidung öffnen",
+  /** A Zusage waits for the binding approval, which is its own dialog, not a chat detour. */
+  pendingAcceptance: "Zusage wartet auf deine Freigabe",
+  pendingAcceptanceAction: "Zusage prüfen",
   pendingFailed: "Konnte nicht gesendet werden.",
   pendingBlocked: "Dein Scout darf das gerade nicht senden.",
   pendingDrafted: "Dein Scout bereitet den Versand vor.",

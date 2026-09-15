@@ -80,6 +80,12 @@ export const OFFER_READY_QUESTION = "Ein Angebot liegt vor. Willst du es prüfen
 export const HUMAN_STEP_QUESTION = "Bei der Anmeldung im Portal brauche ich dich.";
 export const HUMAN_STEP_DETAIL_FIRECRAWL = "Verbindung in den Einstellungen neu registrieren.";
 export const SCOUT_DECLINED_MESSAGE = "Okay, ich sende das nicht. Was soll anders sein?";
+/**
+ * Prefix for the band's own wording instruction on a message Entscheidung. The
+ * words are never sent verbatim: they steer the Scout's next draft, which goes
+ * through the Freigabeprüfung like any other Scout message.
+ */
+export const MUSICIAN_INSTRUCTION_PREFIX = "Anweisung der Band zur nächsten Nachricht: ";
 
 const GATE_QUESTION: Partial<Record<GateReason, string>> = {
   review_mode: "Soll ich diese Nachricht so senden?",

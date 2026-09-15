@@ -101,8 +101,11 @@ export interface LiveScoutSurfaceProps {
    */
   railSlot?: React.ReactNode;
   /**
-   * „Euer Suchauftrag“ — the right column of the working stages, a sheet below
-   * 1100px. It replaces the `briefReviewAction` toggle on those stages.
+   * „Euer Suchauftrag“ — the right column, a sheet below 1100px. It replaces
+   * the `briefReviewAction` toggle on the stages that carry it, and it is the
+   * one place the captured facts appear: in discovery it floats beside the
+   * conversation and takes the arriving facts (`ArrivingFactList`), on the
+   * working stages it is the quiet compact list.
    */
   asideSlot?: React.ReactNode;
   offerSlot?: React.ReactNode;

@@ -130,26 +130,55 @@ describe("Entscheidung from the Freigabeprüfung (ask_user)", () => {
     expect(await s.scheduledNames()).not.toContain("browserbasePortal:executeApprovedWriteWorker");
   });
 
-  it("answer custom stages the musician's text as a humanDraft that passes the gate as userApproved, approved and dispatched", async () => {
+  it("answer custom is an instruction for the next draft: the Scout's message is rejected and re-assessed, nothing is staged", async () => {
     const s = await portalScenario({ mode: "review" });
     const [decision] = await s.openDecisions();
-    const result = await s.musician.mutation(api.decisions.answer, { decisionId: decision!._id, choice: "custom", text: "Hallo! Ist der Raum noch frei, und gibt es einen Lastenaufzug?" });
-    expect(result).toMatchObject({ status: "answered", action: "custom_approved", dispatched: true, sent: false });
+    const before = await s.t.run((ctx) => ctx.db.query("actionRequests").collect());
+    const result = await s.musician.mutation(api.decisions.answer, { decisionId: decision!._id, choice: "custom", text: "Bitte höflicher, und frag auch nach der Kaution." });
+    expect(result).toMatchObject({ status: "answered", action: "reassessing", requestId: s.requestId, sent: false });
+    expect(result.dispatched).toBeUndefined();
+    // The Scout's draft is withdrawn and the musician's words are recorded on the Entscheidung.
+    expect(await s.request()).toMatchObject({ status: "rejected" });
+    expect((await s.approvals())[0]).toMatchObject({ decision: "rejected" });
+    expect(await s.t.run((ctx) => ctx.db.get(decision!._id))).toMatchObject({
+      status: "answered", answer: { choice: "custom", text: "Bitte höflicher, und frag auch nach der Kaution." },
+    });
+    // Nothing goes out: no second request, no dispatch.
+    expect(await s.t.run((ctx) => ctx.db.query("actionRequests").collect())).toHaveLength(before.length);
+    expect(await s.scheduledNames()).not.toContain("browserbasePortal:executeApprovedWriteWorker");
+    // Instead the instruction enters the conversation as a trusted musician turn.
+    const turns = await s.t.run((ctx) => ctx.db.query("providerTurns").collect());
+    const musicianTurn = turns.find((turn) => turn.kind === "musician_input")!;
+    expect(musicianTurn).toMatchObject({
+      conversationId: s.conversationId, decisionId: decision!._id, status: "processing", revision: 2,
+      sourceKey: `decision:${decision!._id}`,
+      input: "Anweisung der Band zur nächsten Nachricht: Bitte höflicher, und frag auch nach der Kaution.",
+    });
+    expect(await s.t.run((ctx) => ctx.db.get(s.conversationId))).toMatchObject({ revision: 2, activeEventId: musicianTurn._id, state: "thinking" });
+  });
+
+  it("the Nachrichten composer keeps dictation: the same custom answer stages the musician's own text", async () => {
+    const s = await portalScenario({ mode: "review" });
+    const [decision] = await s.openDecisions();
+    const result = await s.musician.mutation(api.conversations.reply, { conversationId: s.conversationId, body: "Hallo! Ist der Raum noch frei, und gibt es einen Lastenaufzug?" });
+    expect(result).toMatchObject({ decisionId: decision!._id, status: "approved", dispatched: true, sent: false });
     expect(result.requestId).not.toBe(s.requestId);
     expect(await s.request()).toMatchObject({ status: "rejected" });
-    const custom = (await s.request(result.requestId!))!;
+    const custom = (await s.request(result.requestId))!;
     expect(custom).toMatchObject({
       humanDraft: true, status: "approved", requestedActionType: "send_platform_dm", providerConversationId: s.conversationId, providerOfferId: s.offerId,
       payload: { kind: "platform_message", threadId: s.threadId, body: "Hallo! Ist der Raum noch frei, und gibt es einen Lastenaufzug?" },
       gate: { outcome: "proceed" },
     });
     // Rücksprache asks about every outgoing message — except the one the musician wrote.
-    const [approval] = await s.approvals(result.requestId!);
+    const [approval] = await s.approvals(result.requestId);
     expect(approval).toMatchObject({ decision: "approved", contentHash: custom.contentHash });
     expect(await s.scheduledNames()).toContain("browserbasePortal:executeApprovedWriteWorker");
-    expect(await s.t.mutation(internal.externalActions.prepareClaim, { ownerId: s.ownerId, requestId: result.requestId!, executor: "browserbase" })).toEqual({ outcome: "proceed" });
+    expect(await s.t.mutation(internal.externalActions.prepareClaim, { ownerId: s.ownerId, requestId: result.requestId, executor: "browserbase" })).toEqual({ outcome: "proceed" });
     // The Scout's own reply for this offer is not staged again while the dictated one lives.
     expect(await s.t.mutation(internal.providerActions.stageReply, { offerId: s.offerId })).toBe(result.requestId);
+    // No re-assessment turn: the dictated text is the message, not an instruction.
+    expect(await s.t.run((ctx) => ctx.db.query("providerTurns").collect())).not.toContainEqual(expect.objectContaining({ kind: "musician_input" }));
   });
 
   it("the legacy decide mutation answers the Entscheidung too, and the chat tool path answers without an extra Scout message", async () => {

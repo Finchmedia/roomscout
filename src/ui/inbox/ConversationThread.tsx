@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import type { api } from "../../../convex/_generated/api";
 import { DecisionCard, type OpenDecision } from "../../components/scout/DecisionCard";
 import { LiveProviderOffer } from "../../components/opportunities/LiveProviderOffer";
+import { OfferAcceptanceFlow } from "../../components/opportunities/OfferAcceptanceDialog";
 import { Bubble, BubbleContent } from "../../components/ui/bubble";
 import { Button } from "../../components/ui/button";
 import { Marker, MarkerContent } from "../../components/ui/marker";
@@ -35,8 +36,12 @@ interface ConversationThreadProps {
   now: number;
   /** Stages the musician's own reply; resolves `true` when the server took it. */
   onSend: (body: string) => Promise<boolean>;
-  /** Answers an Entscheidung rendered inside this thread. */
-  onAnswerDecision: (decisionId: OpenDecision["_id"], choice: string) => Promise<void>;
+  /**
+   * Answers an Entscheidung rendered inside this thread. `text` is the
+   * musician's own wording and arrives with `choice === "custom"`; on a message
+   * kind the Scout reads it as an instruction, not as a message to forward.
+   */
+  onAnswerDecision: (decisionId: OpenDecision["_id"], choice: string, text?: string) => Promise<void>;
   /**
    * The same conversation as `api.providerConversations.listMine` sees it —
    * the only shape `LiveProviderOffer` reads. Omitted while it is loading.
@@ -78,6 +83,10 @@ export function ConversationThread({
 }: ConversationThreadProps) {
   const { t, locale } = useCopy();
   const [busy, setBusy] = React.useState(false);
+  // The binding Zusage is reviewed in its own dialog — terms, the exact
+  // message, one confirmation — never as a detour through the Scout chat.
+  const [reviewingAcceptance, setReviewingAcceptance] = React.useState(false);
+  const offer = offerConversation?.offer;
 
   const stamp = (at: number) => formatMessageStamp(locale, at, now);
   const channelLabel = t(
@@ -137,13 +146,21 @@ export function ConversationThread({
       }
       case "pending_message": {
         const speaker = item.author === "musician" ? t("liveInbox.you") : t("liveInbox.scout");
+        // A staged Zusage is not an Entscheidung with a yes/no: it is the one
+        // binding step, and „Zusage prüfen“ opens the review that carries it.
+        const acceptance = item.author === "acceptance" && item.status === "awaiting_approval";
         return <Message align="end" role="group" aria-label={speaker}>
           <MessageContent>
             <MessageHeader>{speaker}</MessageHeader>
             <Bubble align="end"><BubbleContent>{item.text}</BubbleContent></Bubble>
             <MessageFooter className="flex flex-wrap items-center justify-end gap-[var(--space-3)]">
-              <span>{pendingFooter(item)}</span>
-              {item.status === "awaiting_approval" && !hasOpenDecision ? (
+              <span>{acceptance ? t("liveInbox.pendingAcceptance") : pendingFooter(item)}</span>
+              {acceptance && offer ? (
+                <Button type="button" variant="link" size="2xs" onClick={() => setReviewingAcceptance(true)}>
+                  {t("liveInbox.pendingAcceptanceAction")}
+                </Button>
+              ) : null}
+              {!acceptance && item.status === "awaiting_approval" && !hasOpenDecision ? (
                 <Button asChild variant="link" size="2xs">
                   <Link to="/app/scout">{t("liveInbox.pendingApprovalAction")}</Link>
                 </Button>
@@ -180,9 +197,9 @@ export function ConversationThread({
         if (item.decision.status === "open") {
           return <DecisionCard
             decision={item.decision}
-            offerHash={offerConversation?.offer?.contentHash}
+            offerHash={offer?.contentHash}
             busy={busy}
-            onAnswer={async (choice) => { await onAnswerDecision(item.decision._id, choice); }}
+            onAnswer={async (choice, _label, text) => { await onAnswerDecision(item.decision._id, choice, text); }}
           />;
         }
         return <Marker>
@@ -218,7 +235,7 @@ export function ConversationThread({
 
             {header.offer?.ready && offerConversation ? (
               <MessageScrollerItem messageId="thread-offer">
-                <LiveProviderOffer conversation={offerConversation} title={offerTitle} hideMessagesLink />
+                <LiveProviderOffer conversation={offerConversation} title={offerTitle} now={now} hideMessagesLink />
               </MessageScrollerItem>
             ) : null}
 
@@ -259,6 +276,10 @@ export function ConversationThread({
       error={error}
       onBusyChange={setBusy}
     />
+
+    {reviewingAcceptance && offer
+      ? <OfferAcceptanceFlow expectedOfferHash={offer.contentHash} offerId={offer.offerId} onOpenChange={setReviewingAcceptance} />
+      : null}
   </section>;
 }
 

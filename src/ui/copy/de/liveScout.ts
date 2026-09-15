@@ -8,6 +8,21 @@ export const liveScoutDe = {
   // Chat states, all read off the thread: the reply is on its way, is being
   // written, or the turn failed and can be sent again.
   thinking: "Dein Scout denkt nach …",
+  /**
+   * What the Marker says while the Scout works and has not written a word yet.
+   * One is picked at random per turn and they rotate every ~2.2 s, so a long
+   * wait reads as somebody thinking rather than as a frozen line. The order is
+   * the rotation order — `src/ui/chat/thinkingVerbs.ts` holds the key list.
+   */
+  thinkingVerbs: {
+    sorting: "Sortiert Gedanken …",
+    brief: "Blättert im Suchauftrag …",
+    weighing: "Wägt Optionen ab …",
+    writing: "Formuliert …",
+    listening: "Hört noch mal genau hin …",
+    checking: "Prüft die Details …",
+  },
+  /** @deprecated The composer no longer says why it waits — the Marker does. */
   replying: "Dein Scout antwortet gerade …",
   failed: "Antwort fehlgeschlagen.",
   retry: "Erneut senden",
@@ -37,6 +52,31 @@ export const liveScoutDe = {
   asideTitle: "Euer Suchauftrag",
   asideEdit: "Bearbeiten",
   radius: "{count} km Umkreis",
+  budgetValue: "Bis {count} € / Monat",
+  /** The band in one line: „4er-Rockband“ instead of „4“ neben „Rock“. */
+  bandProfile: "{count}er-{text}band",
+  /** A fact the Scout noted but has not confirmed yet. */
+  factUnsure: "{text} · noch zu klären",
+  /**
+   * Facets — the Scout stores `namespace`/`key` freely, and only the ones
+   * listed here are shown. `src/features/scout/viewModel.ts` holds the map from
+   * namespace/key to these strings; a facet without an entry stays out of the
+   * brief instead of appearing as a raw key.
+   */
+  facets: {
+    bandSize: "{count} Personen",
+    equipmentStorage: "Schlagzeug vor Ort oder eigenes darf stehen bleiben",
+    equipmentDrums: "Schlagzeug vorhanden",
+    equipmentPa: "PA vorhanden",
+    equipmentBackline: "Backline vorhanden",
+    accessParking: "Parkplatz vorhanden",
+    accessTransport: "Erreichbar mit {text}",
+    accessAnytime: "Rund um die Uhr zugänglich",
+    noiseNight: "Abends und nachts spielen erlaubt",
+    roomSize: "{count} m²",
+    contractMinTerm: "Mindestlaufzeit {count} Monate",
+    costDeposit: "Kaution {count} €",
+  },
   /** The Entscheidung answered on the stage, next to its options. */
   decisionWrite: "Oder lieber schreiben",
   decisionReviewOffer: "Angebot prüfen",
@@ -70,7 +110,12 @@ export const liveScoutDe = {
   decisionOpenRun: "Im Browser weitermachen",
   decisionReconnect: "Verbindung neu registrieren",
   decisionAnswered: "Danke, ich mache weiter.",
-  decisionTypeHint: "Oder schreib mir unten deine Antwort.",
+  /** The Entscheidung's own free-text field — never the chat composer. */
+  decisionOwnLabel: "Eigene Antwort",
+  decisionChangeLabel: "Was soll anders sein?",
+  decisionInstructionHint: "Das liest dein Scout, der Anbieter bekommt es nicht zu sehen.",
+  decisionSubmit: "Antworten",
+  decisionRequired: "Wähl eine Antwort oder schreib deine eigene.",
   decisionScopes: "Betroffene Angaben",
   decisionMessage: "So würde ich schreiben:",
   changed: "Der Suchauftrag hat sich geändert. Ich prüfe das Angebot erneut.",
@@ -86,9 +131,17 @@ export const liveScoutDe = {
   noPhoto: "Kein Foto vom Anbieter vorhanden",
   review: "Angebot prüfen",
   offerNote: "Vor einer Zusage prüfst du die Konditionen und die Nachricht an den Anbieter.",
-  pendingAcceptance: "Eine Zusage in diesem Gespräch wird noch zugestellt. Den genauen Stand findest du im Nachrichtenverlauf.",
-  unknownAcceptance: "Die Zusage wurde möglicherweise gesendet, aber der Versandbeleg fehlt noch. Prüfe den Nachrichtenverlauf; RoomScout sendet nicht automatisch erneut.",
-  failedAcceptance: "Die Zusage ist nicht als gesendet bestätigt. Bitte prüfe den Verlauf.",
+  /**
+   * The four states of a Zusage, in the musician's words. They are precise on
+   * purpose: „möglicherweise gesendet“ is not a state anybody can act on.
+   * `unknownAcceptance` covers the first three minutes after the request moved,
+   * `unconfirmedAcceptance` everything after that.
+   */
+  pendingAcceptance: "Zusage wird gesendet …",
+  unknownAcceptance: "Versand wird bestätigt …",
+  unconfirmedAcceptance: "Der Versand ist nicht bestätigt. Prüfe den Verlauf.",
+  failedAcceptance: "Die Zusage konnte nicht gesendet werden. Prüfe den Verlauf.",
+  sentAcceptance: "Zusage gesendet · {time}",
   viewMessages: "Nachrichten ansehen",
   openQuestions: "Noch offen",
   editBrief: "Noch etwas ändern",
@@ -96,6 +149,8 @@ export const liveScoutDe = {
   activating: "Scout startet …",
   activateNote: "Ich suche und frage selbstständig an. Eine verbindliche Zusage gebt nur ihr.",
   location: "Ort",
+  /** The one fact that carries Raumform, Bandgröße, Genre und Instrumente. */
+  band: "Band",
   arrangement: "Raum",
   budget: "Budget",
   schedule: "Zeit",
