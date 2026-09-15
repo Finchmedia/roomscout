@@ -1,6 +1,7 @@
 import { ConvexError, v } from "convex/values";
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
+import { savedNeedLocationLabel, savedNeedLocationQuery } from "./savedNeedLocation";
 
 export const voiceClaimValidator = v.object({
   voiceSessionId: v.id("voiceSessions"),
@@ -13,6 +14,24 @@ export type VoiceClaimRef = {
   requestId: string;
   generation: number;
 };
+
+export function voiceNeedSnapshot(need: Doc<"savedNeeds">): string {
+  return JSON.stringify({
+    title: need.title,
+    locationQuery: savedNeedLocationQuery(need),
+    locationLabel: savedNeedLocationLabel(need),
+    maxBudgetEur: need.maxBudgetEur,
+    arrangement: need.arrangement,
+    schedule: need.schedule,
+    requirements: need.requirements,
+    openToSharing: need.openToSharing,
+    radiusKm: need.radiusKm,
+    genres: need.genres,
+    instruments: need.instruments,
+    collaborationOpen: need.collaborationOpen,
+    facets: need.facets,
+  });
+}
 
 /** Transaction-time fence for every mutation a Live Scout tool can execute. */
 export async function assertVoiceClaim(

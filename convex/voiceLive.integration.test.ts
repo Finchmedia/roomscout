@@ -261,6 +261,12 @@ it("allows independent UI and voice fields but rejects a stale overlapping voice
   await expect(f.t.mutation(updateFromScout, {
     ownerId: f.ownerId,
     needId: f.needId,
+    maxBudgetEur: 320,
+    voiceClaim,
+  })).resolves.toMatchObject({ revision: 3, changedFields: ["maxBudgetEur"] });
+  await expect(f.t.mutation(updateFromScout, {
+    ownerId: f.ownerId,
+    needId: f.needId,
     schedule: ["Thursday"],
     voiceClaim,
   })).rejects.toThrow(/VOICE_FIELD_CONFLICT/);

@@ -3,7 +3,7 @@ import { ConvexError, v } from "convex/values";
 import { z } from "zod";
 import type { ToolSet } from "ai";
 import { components, internal } from "./_generated/api";
-import type { Doc, Id } from "./_generated/dataModel";
+import type { Id } from "./_generated/dataModel";
 import {
   action,
   env,
@@ -16,7 +16,7 @@ import {
 import { requireActionUserId, requireUserId } from "./integrations/authz";
 import { setNeedStatus } from "./lib/needLifecycle";
 import { activateNeed } from "./savedNeeds";
-import { assertVoiceClaim } from "./lib/voiceClaim";
+import { assertVoiceClaim, voiceNeedSnapshot } from "./lib/voiceClaim";
 import { buildDecisionCaseCard, buildScoutCaseCard } from "./scoutCaseCards";
 import { openDecisionCards } from "./decisions";
 import { buildScoutTools } from "./scout";
@@ -391,25 +391,6 @@ export const sessionHttp = httpAction(async (ctx, request) => {
   });
 });
 
-function needSnapshot(need: Doc<"savedNeeds"> | null): string | undefined {
-  if (!need) return undefined;
-  return JSON.stringify({
-    title: need.title,
-    locationQuery: need.locationQuery ?? need.city,
-    locationLabel: need.locationLabel ?? need.city,
-    maxBudgetEur: need.maxBudgetEur,
-    arrangement: need.arrangement,
-    schedule: need.schedule,
-    requirements: need.requirements,
-    openToSharing: need.openToSharing,
-    radiusKm: need.radiusKm,
-    genres: need.genres,
-    instruments: need.instruments,
-    collaborationOpen: need.collaborationOpen,
-    facets: need.facets,
-  });
-}
-
 export const claimRequest = internalMutation({
   args: {
     ownerId: v.id("users"),
@@ -519,7 +500,7 @@ export const claimRequest = internalMutation({
         decisionId: args.decisionId,
         decisionUpdatedAt,
         needRevision: need?.matchingRevision ?? 0,
-        needSnapshotJson: needSnapshot(need),
+        needSnapshotJson: need ? voiceNeedSnapshot(need) : undefined,
         startedAt: now,
       },
       requestTombstones: [...tombstones, { requestId: args.requestId, fingerprint: args.fingerprint, promptMessageId: messageId, acceptedAt: now }],

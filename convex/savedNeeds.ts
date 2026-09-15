@@ -11,7 +11,7 @@ import {
   savedNeedLocationLabel,
   savedNeedLocationQuery,
 } from "./lib/savedNeedLocation";
-import { assertVoiceClaim, voiceClaimValidator } from "./lib/voiceClaim";
+import { assertVoiceClaim, voiceClaimValidator, voiceNeedSnapshot } from "./lib/voiceClaim";
 
 const arrangementValidator = v.union(
   v.literal("permanent"),
@@ -414,31 +414,29 @@ export const updateFromScout = internalMutation({
     }
     if (args.voiceClaim) {
       const { claim } = await assertVoiceClaim(ctx, args.ownerId, args.voiceClaim, { savedNeedId: need._id });
-      if ((need.matchingRevision ?? 0) !== (claim.needRevision ?? 0)) {
-        let snapshot: Record<string, unknown> = {};
-        try {
-          snapshot = claim.needSnapshotJson ? JSON.parse(claim.needSnapshotJson) : {};
-        } catch {
-          throw new ConvexError({ code: "VOICE_TARGET_SUPERSEDED" });
-        }
-        const input = args as Record<string, unknown>;
-        const current = {
-          ...need,
-          locationQuery: savedNeedLocationQuery(need),
-          locationLabel: savedNeedLocationLabel(need),
-        } as Record<string, unknown>;
-        const guardedFields = [
-          "title", "locationQuery", "locationLabel", "maxBudgetEur", "arrangement",
-          "schedule", "requirements", "openToSharing", "radiusKm", "genres",
-          "instruments", "collaborationOpen", "facets",
-        ];
-        const conflicts = guardedFields.filter(
-          (field) => input[field] !== undefined &&
-            JSON.stringify(current[field]) !== JSON.stringify(snapshot[field]),
-        );
-        if (conflicts.length > 0) {
-          throw new ConvexError({ code: "VOICE_FIELD_CONFLICT", fields: conflicts });
-        }
+      let snapshot: Record<string, unknown> = {};
+      try {
+        snapshot = claim.needSnapshotJson ? JSON.parse(claim.needSnapshotJson) : {};
+      } catch {
+        throw new ConvexError({ code: "VOICE_TARGET_SUPERSEDED" });
+      }
+      const input = args as Record<string, unknown>;
+      const current = {
+        ...need,
+        locationQuery: savedNeedLocationQuery(need),
+        locationLabel: savedNeedLocationLabel(need),
+      } as Record<string, unknown>;
+      const guardedFields = [
+        "title", "locationQuery", "locationLabel", "maxBudgetEur", "arrangement",
+        "schedule", "requirements", "openToSharing", "radiusKm", "genres",
+        "instruments", "collaborationOpen", "facets",
+      ];
+      const conflicts = guardedFields.filter(
+        (field) => input[field] !== undefined &&
+          JSON.stringify(current[field]) !== JSON.stringify(snapshot[field]),
+      );
+      if (conflicts.length > 0) {
+        throw new ConvexError({ code: "VOICE_FIELD_CONFLICT", fields: conflicts });
       }
     }
     const changedFields = [
@@ -446,6 +444,9 @@ export const updateFromScout = internalMutation({
       "schedule", "requirements", "openToSharing", "radiusKm", "genres",
       "instruments", "collaborationOpen", "facets",
     ].filter((field) => (args as Record<string, unknown>)[field] !== undefined);
+    if (args.locationQuery !== undefined && args.locationLabel === undefined) {
+      changedFields.push("locationLabel");
+    }
     const locationQuery = args.locationQuery === undefined
       ? undefined
       : requiredText(args.locationQuery, "locationQuery");
@@ -494,6 +495,28 @@ export const updateFromScout = internalMutation({
       updatedAt: Date.now(),
     });
     const revision = await refreshNeedMatching(ctx, need);
+    if (args.voiceClaim) {
+      const [session, updatedNeed] = await Promise.all([
+        ctx.db.get(args.voiceClaim.voiceSessionId),
+        ctx.db.get(need._id),
+      ]);
+      if (
+        session?.activeClaim && updatedNeed &&
+        session.activeClaim.requestId === args.voiceClaim.requestId &&
+        session.activeClaim.generation === args.voiceClaim.generation
+      ) {
+        const previousSnapshot = JSON.parse(session.activeClaim.needSnapshotJson ?? "{}") as Record<string, unknown>;
+        const updatedSnapshot = JSON.parse(voiceNeedSnapshot(updatedNeed)) as Record<string, unknown>;
+        for (const field of changedFields) previousSnapshot[field] = updatedSnapshot[field];
+        await ctx.db.patch(session._id, {
+          activeClaim: {
+            ...session.activeClaim,
+            needRevision: revision,
+            needSnapshotJson: JSON.stringify(previousSnapshot),
+          },
+        });
+      }
+    }
     if (locationChanged) await ctx.scheduler.runAfter(0, internal.map.geocodeNeed, { savedNeedId: need._id });
     return { revision, changedFields };
   },
