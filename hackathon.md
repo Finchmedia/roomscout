@@ -1,10 +1,12 @@
 # Hackathon log
 
-## Latest: GPT-Live transport works; integrated voice proof is in progress
+## Latest: GPT-Live is implemented in isolation; real conversation and UI proofs recorded
 
-RoomScout's GPT-Live migration is running in an isolated worktree and cloud development deployment, leaving the original checkout untouched; this checkpoint is not a production rollout. Browser WebRTC carries the conversation; client delegations and bounded early reversible-fact intents enter the existing Convex Scout, which continues to use `openai/gpt-5.6-terra` through the Convex AI Gateway. The saved search query remains the source for visible facts, and the existing Realtime path remains available as an explicit fallback.
+RoomScout now connects GPT-Live browser WebRTC to its existing Convex Scout Brain through client delegation. Astra coordinated GPT-5.6-Sol implementation workstreams. The migration is isolated in `codex/gpt-live-migration` and its own cloud development deployment; the original checkout and production are unchanged. English is the default; an explicit spoken German switch persists. Realtime remains a deliberate fallback.
 
-Real evidence so far: the Live handshake, captions and event acknowledgements succeeded; a 36.84-second uninterrupted synthetic English brief produced 95 transcript deltas, with the first native delegation about 1.0 second after speech ended. An ordinary text Scout turn separately reached the real cloud Gateway and returned ready. This proves transport and the existing Brain/Gateway connection, but not the desired mid-speech saved-fact behavior. Early capture, correction during speech, language switching and the uncut end-to-end Live journey are still being tested. The last complete suite before the newest runtime changes passed 1,151 tests with one skip. These checks sent no provider message and performed no offer acceptance.
+Real API evidence includes canonical saved facts appearing 9–11 seconds into a 36.84-second English description, a 300→280 euro / Tuesday→Wednesday correction, EN→DE→EN, voice search start and pause, inline editing, candidate viewing, and a nonbinding decision answer while the call stays connected. The early-fact effect is application-owned work through the same Scout; native delegation was observed after speech ended. A synthetic incoming offer appeared during a 27-second utterance and was mentioned after the conversational pause. Voice acceptance stayed behind the UI-review boundary, with zero action requests, approvals or executions in the isolated proof.
+
+The latest measured results, final test totals and remaining human/external checks are in [GPT_LIVE_IMPLEMENTATION_STATUS.md](docs/GPT_LIVE_IMPLEMENTATION_STATUS.md). [GPT_LIVE_REVIEW_GUIDE.md](docs/GPT_LIVE_REVIEW_GUIDE.md) contains setup and the English demo script. These proofs use synthetic audio and inert provider fixtures with the real Live API and Scout/Gateway; they do not claim a human acoustic review or an external-provider end-to-end pass.
 
 ## Latest: Autopilot policy, first production autopilot run, proven webhook chain
 

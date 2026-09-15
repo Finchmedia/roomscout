@@ -77,6 +77,7 @@ import type * as lib_actionPayload from "../lib/actionPayload.js";
 import type * as lib_autonomy from "../lib/autonomy.js";
 import type * as lib_autonomyGate from "../lib/autonomyGate.js";
 import type * as lib_corroboration from "../lib/corroboration.js";
+import type * as lib_currentSearchTruth from "../lib/currentSearchTruth.js";
 import type * as lib_decisions from "../lib/decisions.js";
 import type * as lib_demoProvenance from "../lib/demoProvenance.js";
 import type * as lib_matchAssessment from "../lib/matchAssessment.js";
@@ -216,6 +217,7 @@ declare const fullApi: ApiFromModules<{
   "lib/autonomy": typeof lib_autonomy;
   "lib/autonomyGate": typeof lib_autonomyGate;
   "lib/corroboration": typeof lib_corroboration;
+  "lib/currentSearchTruth": typeof lib_currentSearchTruth;
   "lib/decisions": typeof lib_decisions;
   "lib/demoProvenance": typeof lib_demoProvenance;
   "lib/matchAssessment": typeof lib_matchAssessment;

@@ -1,8 +1,10 @@
 # RoomScout: Migration zu GPT-Live und natürlichem Scout-Gespräch
 
-Stand: 2026-09-15 · Revision 3: schlanke Migration mit gemessenem Live-Spike · Status: Umsetzung und Abnahme laufen.
+Stand: 2026-09-15 · Revision 3: schlanke Migration mit gemessenem Live-Spike · Status: isoliert implementiert; technische Nachweise und menschliche Abnahme werden getrennt geführt.
 
 Dieses Dokument beschreibt die Migration vom bestehenden Realtime-Voice-Pfad zu GPT-Live mit Client Delegation. Es ersetzt für die hier behandelten Produkt-, Prompt- und UI-Entscheidungen den älteren Entwurf `GPT_LIVE_VOICE_PLAN.md`; dieser bleibt als historische technische Vorarbeit erhalten. Bei abweichenden Details gilt dieser Plan. Die sechs Produktentscheidungen wurden bestätigt; technische Vorschläge bleiben bis zur Umsetzung und Prüfung Vorschläge. Existierende Funktionsnamen unten sind Bestandsbefunde; neue Namen sind vorgeschlagene Schnittstellen, keine bereits verfügbaren APIs.
+
+Der umgesetzte Stand, reale Messungen und verbleibende Prüfungen stehen in [GPT_LIVE_IMPLEMENTATION_STATUS.md](GPT_LIVE_IMPLEMENTATION_STATUS.md). Der [Review Guide](GPT_LIVE_REVIEW_GUIDE.md) beschreibt die isolierte Umgebung und den englischen Demo-Ablauf.
 
 ## 1. Ziel und Entscheidungslage
 
@@ -33,7 +35,7 @@ Die Antworten wurden am 2026-09-15 über das Ask-User-Tool eingeholt. Alle sechs
 | P5 | Faktenanzeige | Nur erfolgreich gespeicherte Fakten animiert anzeigen; Unklares als Rückfrage | Bestätigt |
 | P6 | Persönlichkeit | Musikverständig, aufmerksam, locker, warm; sparsam trockener Humor | Bestätigt |
 
-P2 ist eine **bewusst bestätigte Produktänderung** gegenüber dem bisherigen UI-only-Suchstart. Start/Pause sind im Ziel per Sprache erlaubt, verbindliche Zusagen bleiben im UI-Review. Diese Produktentscheidung ist keine Aufforderung, im Rahmen der Planerstellung bereits zu implementieren.
+P2 ist eine **bewusst bestätigte Produktänderung** gegenüber dem bisherigen UI-only-Suchstart. Start/Pause sind im Ziel per Sprache erlaubt, verbindliche Zusagen bleiben im UI-Review. Die Implementierung wurde nach der Planerstellung separat freigegeben und im isolierten Worktree ausgeführt.
 
 ### 1.3 Umfang der ersten Migration
 
@@ -689,7 +691,7 @@ Vor dem ersten Implementierungsschritt den aktuellen Arbeitsstand konkret sicher
 4. `VOICE_PROVIDER` beim Session-Aufbau festlegen (§11.1). Realtime und Live separat auswählbar halten. Die Auswahl ist kein Rollback für gemeinsam geänderte Daten oder UI; Schemaänderungen deshalb additiv und mit der Baseline kompatibel halten.
 5. Realtime-Allowlist separat reparieren und Bereitschaft/Entscheidungsantwort tatsächlich testen. Den Zustand dieses Rückfallwegs ausdrücklich dokumentieren.
 
-Der vorliegende Auftrag aktualisiert den Plan. Baseline-Commit, Branches, Backend-Deployments und Migration sind geplante Umsetzungsschritte.
+Die Isolation ist inzwischen umgesetzt: Ausgangs-Codecommit `3184f73`, separater Integrationsworktree/Branch und eigene Cloud-Entwicklungsinstanz. Konkrete Umgebung und Rückkehrpfad stehen im Review Guide; der ursprüngliche Checkout wurde nicht umgestellt.
 
 ### 14.2 Zuständigkeiten und Dateibesitz
 

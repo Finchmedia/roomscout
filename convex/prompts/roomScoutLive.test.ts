@@ -6,6 +6,7 @@ describe("RoomScout Live prompts", () => {
     const prompt = liveInstructions(
       "en",
       "Active search: rehearsal room; arrangements=shared; requirements=secure storage. No market signal is attached.",
+      { hasSavedNeed: true },
     );
 
     expect(prompt).toContain("never recap it");
@@ -25,6 +26,7 @@ describe("RoomScout Live prompts", () => {
     const prompt = liveInstructions(
       "de",
       "Aktiver Suchauftrag: Raumteilung; Anforderungen=Lagerung. Kein Raum ausgewählt.",
+      { hasSavedNeed: true },
     );
 
     expect(prompt).toContain("Fasse ihn nie zusammen");
