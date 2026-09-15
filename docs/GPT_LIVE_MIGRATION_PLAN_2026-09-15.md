@@ -1,6 +1,6 @@
 # RoomScout: Migration zu GPT-Live und natürlichem Scout-Gespräch
 
-Stand: 2026-09-15 · Revision 2: schlanke erste Migration, parallele Umsetzung mit GPT-5.6-Sol · Status: Plan, keine Implementierung oder Live-Abnahme.
+Stand: 2026-09-15 · Revision 3: schlanke Migration mit gemessenem Live-Spike · Status: Umsetzung und Abnahme laufen.
 
 Dieses Dokument beschreibt die Migration vom bestehenden Realtime-Voice-Pfad zu GPT-Live mit Client Delegation. Es ersetzt für die hier behandelten Produkt-, Prompt- und UI-Entscheidungen den älteren Entwurf `GPT_LIVE_VOICE_PLAN.md`; dieser bleibt als historische technische Vorarbeit erhalten. Bei abweichenden Details gilt dieser Plan. Die sechs Produktentscheidungen wurden bestätigt; technische Vorschläge bleiben bis zur Umsetzung und Prüfung Vorschläge. Existierende Funktionsnamen unten sind Bestandsbefunde; neue Namen sind vorgeschlagene Schnittstellen, keine bereits verfügbaren APIs.
 
@@ -77,6 +77,7 @@ Die folgenden offiziellen Quellen wurden am 2026-09-15 geprüft. Die beigefügte
 - Eine Delegation liefert Identität und Timing, aber keinen fertigen Nutzerauftrag. Der Adapter muss ausreichenden Gesprächskontext bereitstellen. Eine spätere Korrektur erfordert auch vor Seiteneffekten eine aktuelle Zustandsprüfung. [Migration](https://developers.openai.com/api/docs/guides/live-migration)
 - `session.thinking.append` übergibt Hintergrundkontext, `session.commentary.append` sprechenswerte Ergebnisse und `session.instructions.append` Verhaltensanweisungen. Die Grenze beträgt 500 Tokens pro Append. Für allgemeine Updates wird `delegation_id:null` verwendet. [Delegation](https://developers.openai.com/api/docs/guides/live-delegation)
 - Live-Transkriptfragmente sind keine abgeschlossenen semantischen Turns. Empfangene Texte, hörbares Audio und Backend-Fortschritt dürfen nicht als derselbe Zustand behandelt werden. [Sessions](https://developers.openai.com/api/docs/guides/live-conversations)
+- `session.delegation.created` wird vom Live-Modell erzeugt. Die dokumentierte Client-API bietet keinen Befehl, der eine Delegation zu einem bestimmten Zeitpunkt erzwingt. Anwendungen dürfen Transkriptfragmente dennoch vor einer Delegation auswerten und damit eigene, anwendungsgesteuerte Arbeit beginnen. [Live API reference](https://developers.openai.com/api/reference/typescript/resources/live) · [Delegation](https://developers.openai.com/api/docs/guides/live-delegation)
 - Die Doku empfiehlt einen Prompt in der gewünschten gesprochenen Sprache. Ein Stimmenname garantiert keinen bestimmten Akzent. [Prompting](https://developers.openai.com/api/docs/guides/live-prompting)
 
 Alle nachfolgenden Zeitfenster, Warteschlangen, UI-Animationen, Tabellen und Abnahmeschwellen sind **RoomScout-Designvorschläge**, keine vom Provider garantierten Eigenschaften.
@@ -182,11 +183,11 @@ Gemäß bestätigtem P5 gibt es keinen zweiten vorläufigen Suchauftrag aus Clie
 
 ### 5.3 Wann Fakten schon während längerer Erzählungen ankommen
 
-Der Live-Prompt soll vollständige neue Suchinformationen und Korrekturen zeitnah delegieren, auch wenn das Gespräch weitergeht. Der Scout darf unabhängige, klare Fakten bereits speichern, während eine andere Angabe noch geklärt wird. Beispiel: Stuttgart und Mittwoch sind klar; „300 each“ benötigt eine Budgetklärung.
+Der Live-Prompt fordert das Modell auf, jeden eigenständig speicherbaren Suchfakt zeitnah zu delegieren und nicht auf den Rest einer mehrteiligen Beschreibung zu warten. Unvollständige oder mehrdeutige Fragmente bleiben offen. Beispiel: Stuttgart und Mittwoch sind klar; „300 each“ benötigt eine Budgetklärung. Konkrete Promptbedingungen können das Verhalten lenken, garantieren aber keine Delegation während laufender Sprache. [Prompting](https://developers.openai.com/api/docs/guides/live-prompting)
 
-Die erste Umsetzung nutzt diesen regulären Delegationsweg. Kein Modellaufruf pro Fragment. Beim Spike wird eine 30–45 Sekunden lange Erzählung geprüft: Treffen verwertbare Fakten bereits zwischendurch ein?
+Der reale Phase-0-Spike verwendete eine synthetische, ununterbrochene englische Suchbeschreibung von 36,84 Sekunden. Er empfing 95 `session.input_transcript.delta`-Ereignisse; die erste `session.delegation.created`-Meldung kam ungefähr 1,0 Sekunde nach dem Audioende. Handshake, Captions und Delegation funktionierten damit grundsätzlich, der reguläre Delegationsweg belegte jedoch nicht den gewünschten Moment „gespeicherte Fakten erscheinen schon während ich spreche“. Die API dokumentiert hierfür weder einen Client-Trigger noch eine Zeitgarantie. [Live API reference](https://developers.openai.com/api/reference/typescript/resources/live)
 
-Falls Delegationen dafür zu spät kommen, ist das ein sichtbarer Produktbefund. Als gesonderte Option kann akkumuliertes Transkript für frühe Entwurfsextraktion verarbeitet werden; die offizielle Doku beschreibt diese Möglichkeit. [Delegation](https://developers.openai.com/api/docs/guides/live-delegation) Ein solcher Auslöser müsste durch denselben Adapter und dieselbe Eingangsqueue laufen. Er benötigt einen eigenen technischen Nachweis und wird nicht still als zweite Schreiblogik hinzugefügt. Der Spike dokumentiert ausdrücklich, ob der reguläre Weg den gewünschten Demo-Moment bereits trägt.
+Phase 0 enthält deshalb nun eine eng begrenzte **anwendungsgesteuerte frühe Faktenerfassung**. Sie verarbeitet akkumulierte Transkriptfragmente als eigenen Intent, nur für reversible Suchauftrag-Fakten, und leitet ausreichend stabile Kandidaten durch denselben Scout, dieselbe serielle Eingangsqueue und dieselben Domain-Prüfungen wie eine reguläre Eingabe. Sie darf keine Suche starten oder pausieren, keine Entscheidung beantworten, keinen Anbieter kontaktieren und keine verbindliche Aktion auslösen. Weil kein natives Delegationsereignis vorliegt, verwendet sie `delegation_id:null` und erfindet keine OpenAI-Delegation. Die kanonische gespeicherte Suchquery bleibt die einzige Quelle für Faktenanzeige und Animation. Diese Strecke ist in Arbeit und noch nicht als Ende-zu-Ende-Verhalten validiert. Die offizielle Doku erlaubt anwendungsgesteuerte Arbeit aus Transkriptfragmenten vor einer Delegation und verlangt, unvollständige oder später überholte Ergebnisse zu verwerfen sowie doppelte Aktionen zu vermeiden. [Delegation](https://developers.openai.com/api/docs/guides/live-delegation)
 
 ### 5.4 Animation und Vollständigkeit
 
@@ -297,9 +298,10 @@ Backend capabilities:
 - Apply answers to nonbinding questions through the existing action rules.
 - Open the current offer for review; binding acceptance remains in the app.
 
-Delegate when the musician gives complete new search information, corrects a fact,
-requests an action, answers a decision, asks what is saved, or needs fresh information.
-You may delegate a clear part while the conversation continues; leave ambiguous parts open.
+Delegate each new search fact as soon as it is complete enough to save on its own;
+do not wait for the rest of a multi-part description. Also delegate corrections,
+requests for actions, decision answers, questions about saved facts and fresh-information needs.
+Leave incomplete or ambiguous parts open while the conversation continues.
 Do not delegate greetings, thanks or simple conversation that requires no stored facts.
 Ask a brief clarification when there is not yet enough information to act.
 
@@ -343,10 +345,10 @@ Das Backend kann:
 - Antworten auf nichtbindende Rückfragen durch die bestehenden Regeln verarbeiten.
 - Das aktuelle Angebot zur Prüfung öffnen; verbindliche Zusagen bleiben in der App.
 
-Delegiere, wenn der Musiker vollständige neue Suchinformationen gibt, etwas korrigiert,
-eine Aktion verlangt, eine Entscheidung beantwortet, nach gespeicherten Fakten fragt
-oder aktuelle Informationen benötigt. Du darfst einen klaren Teil schon delegieren,
-während das Gespräch weitergeht. Lasse mehrdeutige Teile offen.
+Delegiere jeden neuen Suchfakt, sobald er für sich vollständig genug zum Speichern ist;
+warte nicht auf den Rest einer mehrteiligen Beschreibung. Delegiere außerdem Korrekturen,
+Aktionswünsche, Entscheidungsantworten, Fragen nach gespeicherten Fakten und den Bedarf
+an aktuellen Informationen. Lasse unvollständige oder mehrdeutige Teile offen.
 Delegiere keine Begrüßungen, Dankesworte oder einfachen Gesprächsbeiträge ohne Bedarf
 an gespeicherten Fakten. Frage kurz nach, wenn noch keine klare Handlungsgrundlage vorliegt.
 
@@ -708,7 +710,7 @@ Der Dateibesitz ist ein Arbeitsvertrag. Braucht Paket C eine Änderung an `Scout
 
 **Welle 0 — Schnittstelle und echter Gesprächsnachweis.** Astra und ein Sol-Worker verbinden eine minimale Live-Session mit dem echten Scout und der vorhandenen Faktenquery. Vertrag aus §12 anhand realer Events festhalten. Parallel kann Paket D das EN-Inventar und die Übersetzung bearbeiten; ein weiterer Sol-Worker kann die synthetischen Szenarien und erwarteten Zustände für E vorbereiten.
 
-Der Spike muss eine 30–45 Sekunden lange Erzählung, eine Korrektur bei laufender Arbeit und ein eingespeistes Domain-Ereignis abdecken. Er dokumentiert: Wann kommt die Delegation? Welcher Kontext liegt dann vor? Wann ist der Fakt gespeichert und sichtbar? Wie reagiert die Stimme bei einer Unterbrechung? Die nächste Welle baut auf diesen Ergebnissen auf. Fehlender API-Zugang oder ein nicht tragfähiger Delegationsweg wird als technischer Blocker behandelt; davon unabhängige UI-/Spracharbeit kann weitergehen.
+Der erste reale Spike belegte Handshake, Captions und Client Delegation, aber keine Delegation während einer 36,84 Sekunden langen ununterbrochenen Beschreibung: Nach 95 Transkript-Deltas kam die erste Delegation ungefähr 1,0 Sekunde nach Audioende. Welle 0 prüft deshalb zusätzlich die begrenzte anwendungsgesteuerte frühe Faktenerfassung aus §5.3 mit echtem Scout, kanonischem Speicherstand und anschließender Korrektur. Sie dokumentiert getrennt: native Delegationszeit, app-eigenen Intent, Scout-Ausführung, Speicherung, UI-Sichtbarkeit und Umgang mit überholten Fragmenten. Erst dieser Nachweis kann die gewünschte frühe Faktenanzeige bestätigen. [Delegation](https://developers.openai.com/api/docs/guides/live-delegation)
 
 **Welle 1 — Adapter und Runtime parallel.** Nach Festlegung des Vertrags arbeiten A und B getrennt gegen dieselben DTOs und Ereignisfixtures. D setzt Lokalisierung und Prompts fort. Vorläufige Mocks werden als solche markiert; sie beweisen keine Gesprächsqualität.
 
@@ -748,7 +750,7 @@ Es laufen nur so viele Worker gleichzeitig, wie unabhängige Arbeit und Slots ve
 
 Die Arbeit wird an überprüfbaren Ergebnissen geführt; es gibt keine pauschale Einzelpersonen-Tagesrechnung für die parallele Umsetzung.
 
-1. **Vertrag steht:** reales Session-Setup und Client-Delegation zum Scout funktionieren; ausreichend Kontext und frühe Faktenübernahme sind beobachtet oder als konkrete offene Abweichung dokumentiert.
+1. **Vertrag steht:** reales Session-Setup und Client-Delegation zum Scout funktionieren; native Delegation und app-eigene frühe Faktenerfassung bleiben unterscheidbar. Frühe Faktenübernahme ist mit kanonischem Speicherstand beobachtet oder als konkrete offene Abweichung dokumentiert.
 2. **Zustand stimmt:** Korrekturen gehen nicht verloren; Suchstart wartet auf relevante Eingaben; doppelte Delegationen und unklare Ergebnisse erzeugen keine zweite externe Aktion.
 3. **UI und Stimme bleiben verbunden:** Bearbeiten, Text, Start/Pause und Angebotsprüfung laufen neben Voice; rechts erscheinen ausschließlich gespeicherte Werte.
 4. **Hintergrundarbeit passt ins Gespräch:** UI sofort, Ansprache passend; vor Übergabe werden veraltete Fragen verworfen.
@@ -764,7 +766,8 @@ Alle Beispiele sind synthetisch. Zustandsprüfung und hörbare Qualität werden 
 | Fall | Erwartung |
 |---|---|
 | EN-Neustart | EN-Greeting, EN-Controls, richtige Suche |
-| Freie 30–45-s-Erzählung | Verständliches Zuhören; klare Fakten werden während sinnvoller Delegationen sichtbar |
+| Freie 30–45-s-Erzählung | Verständliches Zuhören; native Delegationszeit separat messen; klare reversible Fakten werden über den geprüften frühen Pfad schon während der Erzählung gespeichert und sichtbar oder als noch offene Abweichung ausgewiesen |
+| Frühe Faktenerfassung ohne native Delegation | Eigener App-Intent mit `delegation_id:null`; derselbe Scout und dieselbe serielle Queue; nur reversible Suchfakten; UI erst aus kanonischem Speicherstand |
 | €300 → €280 während Verarbeitung | Endzustand €280; keine spätere Rücksetzung |
 | Tuesday → Wednesday plus zusätzlicher Lagerwunsch | Beide neuen Informationen bleiben erhalten |
 | Spätes Fragment mit früherem Provider-Zeitintervall | Wird nach Empfang noch verarbeitet; kein Verlust durch Delegations-Offset |
@@ -845,7 +848,7 @@ Die eigene Demo-Portal-Umgebung wird klar bezeichnet. Neue API, reaktive UI und 
 - Zugang des verwendeten OpenAI-Projekts zu `gpt-live-1` und gewählter Stimme.
 - Tatsächliche Qualität und Latenz mit dem Convex-Gateway-Scout.
 - Zuverlässiges EN/DE-Verhalten und Sprachwechsel.
-- Delegation während längerer Erzählungen früh genug für die gewünschte Fakten-UI.
+- Anwendungsgesteuerte frühe Faktenerfassung während längerer Erzählungen mit echtem Scout, gespeichertem Endzustand, Deduplizierung und Korrektur; native Delegation allein hat dieses Timing im ersten Spike nicht belegt.
 - Hintergrundupdates ohne störendes Dazwischenreden.
 - Korrekte browserseitige Relay- und Allowlist-Konfiguration.
 - Durchgehende EN-Demo ohne deutsche Default-Texte.
@@ -869,4 +872,4 @@ Die Migration ist erst abgeschlossen, wenn:
 9. Session-Ende, Ressourcenfreigabe, manueller Neustart und unbekannte Ergebnisse geprüft sind.
 10. P1–P6 beantwortet, Tests protokolliert und Dokumentation auf den tatsächlichen Stand gebracht sind.
 
-Revision 2 aktualisiert ausschließlich den Plan. Implementierung, Testläufe und Lieferstatus werden bei der Umsetzung anhand der beschriebenen Arbeitspakete und Nachweise dokumentiert.
+Revision 3 hält den gemessenen Phase-0-Befund und den daraus abgeleiteten begrenzten frühen Faktenpfad fest. Der aktuelle Implementierungs- und Prüfstand steht in `GPT_LIVE_IMPLEMENTATION_STATUS.md`; offene Live-Nachweise bleiben ausdrücklich offen.
