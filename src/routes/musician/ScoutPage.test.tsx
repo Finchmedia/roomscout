@@ -9,6 +9,7 @@ const fixtures = vi.hoisted(() => ({
   context: {} as Record<string, unknown>,
   matches: [] as Array<Record<string, unknown>>,
   conversations: [] as Array<Record<string, unknown>>,
+  focusedThread: null as Record<string, unknown> | null,
   /** `api.conversations.listMine` — the rows behind the „Kandidaten“ rail. */
   inbox: [] as Array<Record<string, unknown>>,
   actions: [] as Array<Record<string, unknown>>,
@@ -128,6 +129,7 @@ vi.mock("convex/react", () => ({
     if (name === "matches:listMine") return fixtures.matches;
     if (name === "providerConversations:listMine") return fixtures.conversations;
     if (name === "conversations:listMine") return fixtures.inbox;
+    if (name === "conversations:getMine") return args === "skip" ? null : fixtures.focusedThread;
     if (name === "externalActions:listMine") return fixtures.actions;
     if (name === "decisions:listOpenMine") return fixtures.decisions;
     return null;
@@ -161,7 +163,7 @@ afterEach(cleanup);
 beforeEach(() => {
   fixtures.needs = [need()];
   fixtures.context = { threadId: "thread", activeNeedId: "need-current", mode: "search_discovery" };
-  fixtures.matches = []; fixtures.conversations = []; fixtures.inbox = []; fixtures.actions = []; fixtures.messages = []; fixtures.decisions = [];
+  fixtures.matches = []; fixtures.conversations = []; fixtures.focusedThread = null; fixtures.inbox = []; fixtures.actions = []; fixtures.messages = []; fixtures.decisions = [];
   fixtures.queries.mockClear(); fixtures.mutations.clear(); fixtures.actionFns.clear();
   fixtures.voice.connected = false; fixtures.voice.provider = "realtime";
   fixtures.voice.connect.mockClear(); fixtures.voice.disconnect.mockClear(); fixtures.voice.sendText.mockClear();
@@ -439,6 +441,38 @@ describe("live Scout route", () => {
     expect(screen.getByText("Hier brauche ich kurz deine Hilfe.")).toBeInTheDocument();
     expect(screen.getByText("Voice Scout session")).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Scout-Chat" })).not.toBeInTheDocument();
+  });
+
+  it("does not repeat the global voice Entscheidung when chat and the selected provider thread already show it", async () => {
+    const decision = reviewDecision();
+    fixtures.needs = [need("active")];
+    fixtures.voice.connected = true;
+    fixtures.voice.provider = "live";
+    fixtures.decisions = [decision];
+    fixtures.inbox = [candidate({ id: "conversation-2", title: "Raum West", openDecision: true })];
+    fixtures.focusedThread = {
+      header: {
+        conversationId: "conversation-2", savedNeedId: "need-current", signalId: "signal-conversation-2",
+        title: "Raum West", subtitle: "Stuttgart", channel: "platform", state: "needs_attention",
+        providerLabel: "Anbieter", offer: null, composer: { enabled: true },
+      },
+      items: [{ kind: "decision", id: decision._id, at: 1, decision }],
+    };
+    renderPage();
+
+    // Before another panel owns it, the global voice companion keeps the one
+    // actionable card available.
+    expect(screen.getAllByRole("group", { name: "Entscheidung" })).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /Raum West/ }));
+    await waitFor(() => expect(screen.getByRole("region", { name: "Nachrichten" })).toBeInTheDocument());
+    expect(screen.getAllByRole("group", { name: "Entscheidung" })).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Zum Schreiben wechseln" }));
+    expect(screen.getByRole("region", { name: "Scout-Chat" })).toBeInTheDocument();
+    // The two visible conversation panels each retain their own canonical
+    // context; the third floating/global copy is gone.
+    expect(screen.getAllByRole("group", { name: "Entscheidung" })).toHaveLength(2);
   });
 
   it("sends a chat message as a mutation carrying the prompt", async () => {

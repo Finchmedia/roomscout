@@ -391,6 +391,12 @@ export function ScoutPage() {
     </div>
   </FactList>;
   const showScoutChat = (!voiceOpen && stage === "discovery") || (chatOpen && (voiceOpen || stage !== "brief")) || Boolean(voice.pendingTextDraft);
+  const focusedThreadShowsDecision = Boolean(openDecision && focusedThread?.items.some(item =>
+    item.kind === "decision" && item.decision.status === "open" && item.decision._id === openDecision._id));
+  // With voice active, the centre companion already contains the actionable
+  // card when text chat or the selected provider thread shows this decision.
+  // Keep the global card only as the fallback when neither panel owns it.
+  const voiceDecisionSlot = voiceOpen && (showScoutChat || focusedThreadShowsDecision) ? undefined : decisionSlot;
   const voiceCompact = voiceOpen && (
     voice.connected ||
     showScoutChat ||
@@ -420,7 +426,7 @@ export function ScoutPage() {
     chatSlot={showScoutChat ? <ScoutChat key={threadId ?? "loading"} className={voiceOpen ? "h-full max-h-full min-h-[18rem]" : undefined} messages={messages.length ? messages : [{ id: "intro", author: "scout", body: t("liveScout.intro") }]} onSend={send} replying={(!liveConnected && scoutBusy) || !threadId} restoredDraft={voice.pendingTextDraft || undefined} onDraftRestored={voice.clearPendingTextDraft} labels={chatLabels} error={error} onVoice={openVoice} autoFocus decision={openDecision} decisionOfferHash={decisionOfferHash} onAnswerDecision={async (decisionId, choice, text) => { await answerOpenDecision(decisionId, choice, text); }} decisionAnsweredText={t("liveScout.decisionAnswered")} hasMoreHistory={history.status === "CanLoadMore"} historyBusy={history.status === "LoadingMore"} onLoadHistory={() => history.loadMore(60)} /> : undefined}
     voiceSlot={voiceOpen ? <LiveVoiceChat compact={voiceCompact} onText={openChat} onEnd={() => { setVoiceOpen(false); setTextOpen(true); }} /> : undefined}
     providerUpdateSlot={offerSlot} offerSlot={offerSlot} detailSlot={detailSlot}
-    decisionSlot={decisionSlot} railSlot={railSlot} asideSlot={asideSlot}
+    decisionSlot={voiceDecisionSlot} railSlot={railSlot} asideSlot={asideSlot}
     completeSlot={<Link className="text-rs-ink-2 underline underline-offset-4" to="/app/inbox">{t("liveScout.viewMessages")}</Link>}
     errorSlot={error ? <p role="alert">{error}</p> : undefined}
     onChat={openChat} onCloseChat={() => setTextOpen(false)} onVoice={openVoice} onReviewBrief={() => setManualBrief(value => !value)}
