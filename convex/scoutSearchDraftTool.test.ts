@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { asSchema } from "ai";
 import type { Id } from "./_generated/dataModel";
+import { currentSearchAuthority } from "./lib/currentSearchTruth";
 import {
   buildScoutTools,
   createSearchDraftTool,
+  currentSearchTruth,
   materializeSearchDraftChanges,
   SEARCH_FACET_GUIDANCE,
   searchDraftInputSchema,
@@ -137,9 +139,47 @@ describe("Scout search equipment extraction contract", () => {
     });
     expect(Object.keys(tools)).toEqual(expect.arrayContaining([
       "updateSearchDraft",
+      "getCurrentSearch",
       "continueAutopilot",
       "answerDecision",
     ]));
     expect(tools).not.toHaveProperty("markSearchBriefReady");
+    expect(tools.getCurrentSearch?.description).toContain("overrides earlier chat messages");
+  });
+
+  it("projects the latest canonical budget instead of a stale prior conversation value", () => {
+    const truth = currentSearchTruth({
+      title: "Saved rehearsal search",
+      city: "Berlin",
+      locationQuery: "Berlin",
+      locationLabel: "Berlin",
+      maxBudgetEur: 275,
+      arrangement: ["shared"],
+      schedule: ["Wednesday"],
+      requirements: [],
+      status: "active",
+      matchingRevision: 9,
+    });
+
+    expect(truth).toMatchObject({
+      authority: "latest_saved_search",
+      revision: 9,
+      maxBudgetEur: 275,
+      schedule: ["Wednesday"],
+    });
+    expect(JSON.stringify(truth)).not.toContain("280");
+    const authority = currentSearchAuthority({
+      title: "Saved rehearsal search",
+      city: "Berlin",
+      maxBudgetEur: 275,
+      arrangement: ["shared"],
+      schedule: ["Wednesday"],
+      requirements: [],
+      status: "active",
+      matchingRevision: 9,
+    });
+    expect(authority).toContain('"maxBudgetEur":275');
+    expect(authority).toContain("override earlier thread messages");
+    expect(authority).not.toContain("280");
   });
 });

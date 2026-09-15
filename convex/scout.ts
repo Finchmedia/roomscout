@@ -12,7 +12,9 @@ import { buildDecisionCaseCard, buildScoutCaseCard } from "./scoutCaseCards";
 import { runScoutTurn, scoutAgent } from "./scoutRuntime";
 import { isUserResetTombstoned } from "./devUserReset";
 import { assertVoiceClaim, voiceClaimValidator, type VoiceClaimRef } from "./lib/voiceClaim";
+import { currentSearchTruth } from "./lib/currentSearchTruth";
 export { scoutAgent } from "./scoutRuntime";
+export { currentSearchTruth } from "./lib/currentSearchTruth";
 
 const modeValidator = v.union(
   v.literal("search_discovery"),
@@ -723,6 +725,23 @@ export type ScoutToolContext = {
   hasOpenDecision: boolean;
 };
 
+function currentSearchReadTool(
+  ctx: Parameters<typeof runScoutTurn>[0],
+  ownerId: Id<"users">,
+  needId: Id<"savedNeeds">,
+) {
+  return createTool({
+    description:
+      "Read the latest canonical saved search directly from RoomScout. Always call this before answering what is currently saved, including budget, schedule, requirements, status, location, or instruments. Its result overrides earlier chat messages, memory, candidate text, provider claims, and offer history.",
+    inputSchema: z.object({}),
+    execute: async () => {
+      const need = await ctx.runQuery(internal.savedNeeds.getOwnedInternal, { ownerId, needId });
+      if (!need) throw new ConvexError({ code: "NEED_NOT_FOUND" });
+      return currentSearchTruth(need);
+    },
+  });
+}
+
 /** The one tool factory used by streamed chat and nonstreaming Live turns. */
 export function buildScoutTools(
   ctx: Parameters<typeof runScoutTurn>[0],
@@ -754,6 +773,9 @@ export function buildScoutTools(
       return { remembered: result.created, factId: result.factId };
     },
   });
+  const currentSearchToolSet: ToolSet = context.activeNeedId ? {
+    getCurrentSearch: currentSearchReadTool(ctx, ownerId, context.activeNeedId),
+  } : {};
   const voiceOnlyTools: ToolSet = args.voiceClaim ? {
     setConversationLanguage: createTool({
       description: "Persist the conversation language only when the musician explicitly asks to speak English or German. Do not infer a switch from place names, band names, or isolated foreign words.",
@@ -792,7 +814,7 @@ export function buildScoutTools(
         return { readyForReview: true, ...result, activationRequired: true };
       },
     });
-    return { updateSearchDraft, markSearchBriefReady, rememberFact, ...decisionToolSet, ...voiceOnlyTools };
+    return { ...currentSearchToolSet, updateSearchDraft, markSearchBriefReady, rememberFact, ...decisionToolSet, ...voiceOnlyTools };
   }
 
   if (context.mode === "outreach_drafting" && context.activeNeedId && context.focusedSignalId) {
@@ -810,7 +832,7 @@ export function buildScoutTools(
         return { drafted: true, draftId };
       },
     });
-    const tools: ToolSet = { createOutreachDraft, rememberFact, ...decisionToolSet, ...voiceOnlyTools };
+    const tools: ToolSet = { ...currentSearchToolSet, createOutreachDraft, rememberFact, ...decisionToolSet, ...voiceOnlyTools };
     if (!args.voiceClaim) {
       tools.createWebformDraft = createTool({
         description: "Prepare a contact-form action for the focused listing when RoomScout has a reviewed webform adapter. The server resolves destination, policy and adapter from trusted state.",
@@ -851,9 +873,9 @@ export function buildScoutTools(
         };
       },
     });
-    return { updateSearchDraft, continueAutopilot, rememberFact, ...decisionToolSet, ...voiceOnlyTools };
+    return { ...currentSearchToolSet, updateSearchDraft, continueAutopilot, rememberFact, ...decisionToolSet, ...voiceOnlyTools };
   }
-  return { rememberFact, ...decisionToolSet, ...voiceOnlyTools };
+  return { ...currentSearchToolSet, rememberFact, ...decisionToolSet, ...voiceOnlyTools };
 }
 
 /** One musician turn, streamed. A failure is logged and rethrown so the Agent marks the reply failed on the thread. */

@@ -18,6 +18,8 @@ describe("search discovery case card", () => {
     expect(card).toContain("at most one short acknowledging sentence");
     expect(card).toContain("Add one focused follow-up only when QUESTION GATE permits it");
     expect(card).not.toContain("EXACTLY ONE focused follow-up question");
+    expect(card).toContain("CANONICAL SEARCH AUTHORITY");
+    expect(card).toContain("call getCurrentSearch");
     expect(card).not.toContain("summarize for confirmation");
   });
 

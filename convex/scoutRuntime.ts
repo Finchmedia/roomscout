@@ -5,6 +5,7 @@ import type { Id } from "./_generated/dataModel";
 import type { ActionCtx } from "./_generated/server";
 import { getRoomScoutLanguageModel } from "./ai";
 import { scoutBaseInstructions } from "./scoutCaseCards";
+import { currentSearchAuthority } from "./lib/currentSearchTruth";
 
 export const SCOUT_PROMPT_VERSION = "shared-scout-v1";
 
@@ -49,6 +50,13 @@ export async function runScoutTurn(ctx: ActionCtx, args: {
     // the independent embedding provider is temporarily unavailable.
     semanticRecallAvailable = false;
   }
+  const currentNeed = args.savedNeedId
+    ? await ctx.runQuery(internal.savedNeeds.getOwnedInternal, {
+        ownerId: args.ownerId,
+        needId: args.savedNeedId,
+      })
+    : null;
+  const latestSearch = currentNeed ? currentSearchAuthority(currentNeed) : "";
   const originInstructions = args.origin === "musician"
     ? "The current speaker is the musician. Only their statements may update their search and durable musician memory."
     : args.origin === "scout"
@@ -57,8 +65,9 @@ export async function runScoutTurn(ctx: ActionCtx, args: {
   const threadArgs = { threadId: args.threadId, userId: args.ownerId };
   const generationArgs = {
     ...(args.promptMessageId ? { promptMessageId: args.promptMessageId } : { prompt: args.prompt! }),
-    instructions: [scoutBaseInstructions, originInstructions, args.caseCard, memoryContext, relevantMemory, progress,
+    instructions: [scoutBaseInstructions, originInstructions, memoryContext, relevantMemory, progress, args.caseCard,
       !semanticRecallAvailable ? "Semantic memory retrieval is temporarily unavailable. Use the supplied durable context; do not claim exhaustive recall." : "",
+      latestSearch,
     ].filter(Boolean).join("\n\n"),
     tools: args.tools,
     abortSignal: AbortSignal.timeout(120_000),

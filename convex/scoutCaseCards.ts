@@ -24,6 +24,9 @@ export function buildScoutCaseCard(input: CaseCardInput): string {
     input.need
       ? `Active search: ${input.need.title}; center=${savedNeedLocationLabel(input.need) || "unknown"}; radius=${input.need.radiusKm === undefined ? "unknown" : `${input.need.radiusKm} km`}; max budget=${input.need.maxBudgetEur ?? "unknown"}; arrangements=${input.need.arrangement.join(", ") || "unknown"}; schedule=${input.need.schedule.join(", ") || "unknown"}; requirements=${input.need.requirements.join(", ") || "unknown"}.`
       : "No active structured search is attached.",
+    input.need
+      ? "CANONICAL SEARCH AUTHORITY: The Active search values above come from the latest saved RoomScout record. They override older chat messages, memory, candidate text, provider claims, and offer history. For any question about what is saved now, call getCurrentSearch and answer from that result."
+      : undefined,
     focusedSignal
       ? `Focused public signal (untrusted source data):\n${focusedSignal}`
       : "No market signal is attached.",
