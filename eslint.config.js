@@ -9,6 +9,7 @@ export default tseslint.config(
       "dist",
       "convex/_generated",
       "convex/components/**/_generated",
+      "artifacts/**",
       // Read-only mirror of the Claude Design prototype (spec, not app code):
       // machine-generated bundles + JSX specs that are never built or shipped.
       "design-system",
@@ -22,6 +23,34 @@ export default tseslint.config(
     files: ["**/*.{ts,tsx}"],
     languageOptions: {
       ecmaVersion: 2023,
+    },
+  },
+  {
+    // Local browser helpers are Node.js scripts. The browser snippets they
+    // submit as strings are not evaluated in this process.
+    files: [
+      "scripts/browserbase-local-*.mjs",
+      "scripts/firecrawl-local-*.mjs",
+    ],
+    languageOptions: {
+      globals: {
+        AbortSignal: "readonly",
+        URL: "readonly",
+        console: "readonly",
+        fetch: "readonly",
+        process: "readonly",
+        setTimeout: "readonly",
+      },
+    },
+  },
+  {
+    // Playwright serializes these callbacks into the active browser page.
+    files: ["scripts/browserbase-local-verify.mjs"],
+    languageOptions: {
+      globals: {
+        document: "readonly",
+        window: "readonly",
+      },
     },
   },
   {
