@@ -392,6 +392,7 @@ export function ScoutPage() {
   </FactList>;
   const showScoutChat = (!voiceOpen && stage === "discovery") || (chatOpen && (voiceOpen || stage !== "brief")) || Boolean(voice.pendingTextDraft);
   const voiceCompact = voiceOpen && (
+    voice.connected ||
     showScoutChat ||
     focusedConversationId !== undefined ||
     ((stage === "offer" || stage === "provider-update") && Boolean(offerSlot))

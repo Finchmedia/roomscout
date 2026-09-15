@@ -145,7 +145,13 @@ vi.mock("@convex-dev/agent/react", () => ({
   useSmoothText: (text: string) => [text, { cursor: text.length, isStreaming: false }],
 }));
 
-vi.mock("../../ui/chat/LiveVoiceChat", () => ({ LiveVoiceChat: ({ onText }: { onText?: () => void }) => <div>Voice Scout session<button onClick={onText}>Zum Schreiben wechseln</button></div> }));
+vi.mock("../../ui/chat/LiveVoiceChat", () => ({
+  LiveVoiceChat: ({ compact, onText }: { compact?: boolean; onText?: () => void }) => (
+    <div data-compact={compact || undefined} data-testid="voice-session">
+      Voice Scout session<button onClick={onText}>Zum Schreiben wechseln</button>
+    </div>
+  ),
+}));
 vi.mock("@convex-dev/auth/react", () => ({ useAuthActions: () => ({ signOut: vi.fn() }) }));
 vi.mock("../../components/voice/VoiceSessionContext", () => ({ useVoiceSession: () => fixtures.voice }));
 
@@ -217,6 +223,20 @@ describe("live Scout route", () => {
     expect(fixtures.voice.disconnect).not.toHaveBeenCalled();
     view.unmount();
     expect(fixtures.voice.disconnect).not.toHaveBeenCalled();
+  });
+
+  it("keeps the discovery voice presentation spacious until connection, then compacts beside saved facts", () => {
+    const view = renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Mit Scout sprechen" }));
+
+    expect(screen.getByTestId("voice-session")).not.toHaveAttribute("data-compact");
+    expect(screen.getByRole("group", { name: "Euer Suchauftrag" })).toBeInTheDocument();
+
+    fixtures.voice.connected = true;
+    view.rerender(<MemoryRouter><ScoutPage /></MemoryRouter>);
+
+    expect(screen.getByTestId("voice-session")).toHaveAttribute("data-compact", "true");
+    expect(screen.getByRole("group", { name: "Euer Suchauftrag" })).toBeInTheDocument();
   });
 
   it("shows the current ready provider offer ahead of stale progress", () => {
