@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Id } from "../../convex/_generated/dataModel";
 import {
   GptLiveFragmentBuffer,
+  GptLiveContextOverflowError,
   isClientDelegationEvent,
   isLiveTranscriptEvent,
   isRetryablePreclaimFailure,
@@ -81,6 +82,7 @@ type LiveDelegateArgs = {
   requestId: string;
   delegationId?: string;
   source: "voice" | "text";
+  intent?: "capture_facts";
   fragments: Array<{
     eventId: string;
     role: "user" | "assistant";
@@ -136,6 +138,10 @@ export type UseGptLiveVoiceScoutOptions = {
     locale: LiveLocale,
   ) => Promise<LiveSessionAnswer>;
   delegate?: (args: LiveDelegateArgs) => Promise<LiveDelegateResult>;
+  /** Application-owned early fact capture. Disable only for comparison spikes. */
+  enableEarlyFactCapture?: boolean;
+  /** Defaults to 5 seconds; exposed so deterministic tests do not wait on a wall clock. */
+  earlyFactCaptureCadenceMs?: number;
   onEvent?: (event: LiveServerEvent) => void;
 };
 
@@ -144,6 +150,13 @@ type QueuedInput = {
   source: "voice" | "text";
   delegationId?: string;
   text?: string;
+  intent?: "capture_facts";
+};
+
+type FailedInput = {
+  input: QueuedInput;
+  /** Terminal server failures are cached by request ID, so an explicit retry is a new attempt. */
+  refreshRequestId: boolean;
 };
 
 const LIVE_CLIENT_EVENT_TYPES = new Set([
@@ -154,6 +167,34 @@ const LIVE_CLIENT_EVENT_TYPES = new Set([
   "session.instructions.append",
   "session.close",
 ]);
+const MAX_APPEND_CHARACTERS = 1_000;
+
+/**
+ * Live append commands are capped in tokens. EN/DE app context stays well below
+ * that ceiling at this conservative character size; chunking preserves all text
+ * and prefers complete sentence boundaries without pretending to tokenize it.
+ */
+export function splitLiveAppendContent(content: string): string[] {
+  const chunks: string[] = [];
+  let remaining = content.trim();
+  while (remaining) {
+    if (remaining.length <= MAX_APPEND_CHARACTERS) {
+      chunks.push(remaining);
+      break;
+    }
+    const window = remaining.slice(0, MAX_APPEND_CHARACTERS + 1);
+    let boundary = -1;
+    const sentenceBoundary = /[.!?](?:["')\]]*)?(?=\s|$)|\n/gu;
+    for (const match of window.matchAll(sentenceBoundary)) {
+      boundary = (match.index ?? 0) + match[0].length;
+    }
+    if (boundary < 1) boundary = window.lastIndexOf(" ");
+    if (boundary < 1) boundary = MAX_APPEND_CHARACTERS;
+    chunks.push(remaining.slice(0, boundary).trim());
+    remaining = remaining.slice(boundary).trimStart();
+  }
+  return chunks;
+}
 
 function defaultLiveSessionEndpoint(): string {
   const cloudUrl = import.meta.env.VITE_CONVEX_URL as string | undefined;
@@ -240,6 +281,8 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   const [modality, setModalityState] = useState<VoiceScoutModality>("voice");
   const [pendingTextInputs, setPendingTextInputs] = useState<Array<{ id: string; text: string }>>([]);
   const [pendingInputCount, setPendingInputCount] = useState(0);
+  const earlyCaptureEnabled = options.enableEarlyFactCapture ?? true;
+  const earlyCaptureCadenceMs = options.earlyFactCaptureCadenceMs ?? 5_000;
 
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<RTCDataChannel | null>(null);
@@ -250,10 +293,14 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   const connectingRef = useRef(false);
   const closingTimerRef = useRef<number | undefined>(undefined);
   const speechTimersRef = useRef<{ user?: number; assistant?: number }>({});
+  const userSpeakingRef = useRef(false);
+  const captureTimerRef = useRef<number | undefined>(undefined);
+  const captureWatermarkRef = useRef(0);
+  const lastCaptureQueuedAtRef = useRef(0);
   const fragmentBufferRef = useRef(new GptLiveFragmentBuffer());
   const queueRef = useRef<QueuedInput[]>([]);
   const activeInputRef = useRef<QueuedInput | undefined>(undefined);
-  const failedInputRef = useRef<QueuedInput | undefined>(undefined);
+  const failedInputRef = useRef<FailedInput | undefined>(undefined);
   const uncertainInputRef = useRef<
     {
       input: QueuedInput;
@@ -274,6 +321,8 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   const onEventRef = useRef(options.onEvent);
   const localeRef = useRef(sessionLocale);
   const pumpRef = useRef<() => void>(() => undefined);
+  const scheduleCaptureRef = useRef<() => void>(() => undefined);
+  const flushSpokenUpdatesRef = useRef<() => void>(() => undefined);
   const createSession = options.createSession;
   const { volume: inputVolume, attach: attachInputMeter, detach: detachInputMeter } = useAudioVolume();
   const { volume: outputVolume, attach: attachOutputMeter, detach: detachOutputMeter } = useAudioVolume();
@@ -308,15 +357,19 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     (content: string, speak: boolean, delegationId: string | null = null) => {
       const trimmed = content.trim();
       if (!trimmed) return false;
-      const eventId = newRequestId(speak ? "commentary" : "thinking");
-      const sent = sendEvent({
-        type: speak ? "session.commentary.append" : "session.thinking.append",
-        event_id: eventId,
-        delegation_id: delegationId,
-        content: trimmed,
-      });
-      if (sent) pendingAppendIdsRef.current.add(eventId);
-      return sent;
+      let sentAll = true;
+      for (const chunk of splitLiveAppendContent(trimmed)) {
+        const eventId = newRequestId(speak ? "commentary" : "thinking");
+        const sent = sendEvent({
+          type: speak ? "session.commentary.append" : "session.thinking.append",
+          event_id: eventId,
+          delegation_id: delegationId,
+          content: chunk,
+        });
+        if (sent) pendingAppendIdsRef.current.add(eventId);
+        else sentAll = false;
+      }
+      return sentAll;
     },
     [sendEvent],
   );
@@ -325,15 +378,19 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     (content: string) => {
       const trimmed = content.trim();
       if (!trimmed) return false;
-      const eventId = newRequestId("instructions");
-      const sent = sendEvent({
-        type: "session.instructions.append",
-        event_id: eventId,
-        delegation_id: null,
-        content: trimmed,
-      });
-      if (sent) pendingAppendIdsRef.current.add(eventId);
-      return sent;
+      let sentAll = true;
+      for (const chunk of splitLiveAppendContent(trimmed)) {
+        const eventId = newRequestId("instructions");
+        const sent = sendEvent({
+          type: "session.instructions.append",
+          event_id: eventId,
+          delegation_id: null,
+          content: chunk,
+        });
+        if (sent) pendingAppendIdsRef.current.add(eventId);
+        else sentAll = false;
+      }
+      return sentAll;
     },
     [sendEvent],
   );
@@ -342,6 +399,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     (preservePendingText = true) => {
       generationRef.current += 1;
       if (closingTimerRef.current !== undefined) window.clearTimeout(closingTimerRef.current);
+      if (captureTimerRef.current !== undefined) window.clearTimeout(captureTimerRef.current);
       for (const timer of Object.values(speechTimersRef.current)) {
         if (timer !== undefined) window.clearTimeout(timer);
       }
@@ -367,8 +425,8 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       const unadmittedTextIds = new Set(
         queueRef.current.filter((input) => input.source === "text").map((input) => input.requestId),
       );
-      if (failedInputRef.current?.source === "text") {
-        unadmittedTextIds.add(failedInputRef.current.requestId);
+      if (failedInputRef.current?.input.source === "text") {
+        unadmittedTextIds.add(failedInputRef.current.input.requestId);
       }
       if (preservePendingText) {
         setPendingTextInputs((current) => current.filter((entry) => unadmittedTextIds.has(entry.id)));
@@ -392,10 +450,14 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       bufferedUpdatesRef.current.clear();
       deliveredUpdateVersionsRef.current.clear();
       fragmentBufferRef.current.clear();
+      captureTimerRef.current = undefined;
+      captureWatermarkRef.current = 0;
+      lastCaptureQueuedAtRef.current = 0;
       settleFlushWaiters(false);
       setPendingInputCount(0);
       setMicrophoneState("off");
       setProviderMuted(false);
+      userSpeakingRef.current = false;
       setUserSpeaking(false);
       setScoutSpeaking(false);
       setConnectedAt(undefined);
@@ -421,8 +483,48 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       settleFlushWaiters(true);
       return;
     }
-    const snapshot = fragmentBufferRef.current.snapshot(next.delegationId ?? next.requestId);
-    if (next.source === "voice" && snapshot.unresolvedUserEventIds.length === 0) return;
+    const captureCandidate = next.intent === "capture_facts"
+      ? fragmentBufferRef.current.captureCandidate(captureWatermarkRef.current)
+      : undefined;
+    if (next.intent === "capture_facts" && !captureCandidate) {
+      queueRef.current.shift();
+      setPendingInputCount(queueRef.current.length);
+      pumpRef.current();
+      return;
+    }
+    let snapshot: LiveDelegationSnapshot;
+    try {
+      snapshot = captureCandidate
+        ? {
+          delegationId: next.requestId,
+          maxSequence: captureCandidate.maxSequence,
+          fragments: captureCandidate.fragments,
+          unresolvedUserEventIds: captureCandidate.fragments.map((fragment) => fragment.eventId),
+        }
+        : fragmentBufferRef.current.snapshot(next.delegationId ?? next.requestId);
+    } catch (cause) {
+      queueRef.current.shift();
+      failedInputRef.current = { input: next, refreshRequestId: false };
+      if (next.source === "text" && next.text) {
+        setPendingTextInputs((current) =>
+          current.some((entry) => entry.id === next.requestId)
+            ? current
+            : [...current, { id: next.requestId, text: next.text! }],
+        );
+      }
+      setPendingInputCount(queueRef.current.length + 1);
+      setBackendState("failed");
+      setError(
+        cause instanceof GptLiveContextOverflowError
+          ? cause.message
+          : "The voice request could not be prepared safely.",
+      );
+      settleFlushWaiters(false);
+      return;
+    }
+    if (next.source === "voice" && snapshot.unresolvedUserEventIds.length === 0) {
+      return;
+    }
 
     queueRef.current.shift();
     activeInputRef.current = next;
@@ -441,6 +543,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         requestId: next.requestId,
         ...(next.delegationId ? { delegationId: next.delegationId } : {}),
         source: next.source,
+        ...(next.intent ? { intent: next.intent } : {}),
         fragments: toDelegateFragments(snapshot.fragments),
         ...(next.text ? { text: next.text } : {}),
         ...(focusRef.current.focusedSignalId
@@ -449,7 +552,17 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         ...(focusRef.current.decisionId ? { decisionId: focusRef.current.decisionId } : {}),
       });
       if (generationRef.current !== generation || voiceSessionIdRef.current !== sessionId) return;
-      fragmentBufferRef.current.resolve(result.resolvedEventIds);
+      if (next.intent === "capture_facts") {
+        if (!["busy", "in_progress", "outcome_unknown"].includes(result.status)) {
+          captureWatermarkRef.current = Math.max(captureWatermarkRef.current, snapshot.maxSequence);
+        }
+      } else {
+        fragmentBufferRef.current.resolve(result.resolvedEventIds);
+        captureWatermarkRef.current = Math.max(
+          captureWatermarkRef.current,
+          fragmentBufferRef.current.processedCursor(),
+        );
+      }
       setTranscript(toTranscript(fragmentBufferRef.current.captions()));
       if (contextEpochRef.current === contextEpoch && localeRef.current === requestLocale) {
         setSessionLocale(result.locale);
@@ -467,9 +580,18 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         setBackendState("processing");
         return;
       }
-      if (result.status === "needs_clarification") setBackendState("waiting_for_clarification");
-      else if (result.status === "failed") {
-        failedInputRef.current = next;
+      if (result.status === "needs_clarification") {
+        setBackendState(next.intent === "capture_facts" ? "idle" : "waiting_for_clarification");
+      }
+      else if (result.status === "failed" && next.intent !== "capture_facts") {
+        failedInputRef.current = { input: next, refreshRequestId: true };
+        if (next.source === "text" && next.text) {
+          setPendingTextInputs((current) =>
+            current.some((entry) => entry.id === next.requestId)
+              ? current
+              : [...current, { id: next.requestId, text: next.text! }],
+          );
+        }
         setBackendState("failed");
         settleFlushWaiters(false);
       }
@@ -482,22 +604,26 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       const hasNewerInput = fragmentBufferRef.current.hasNewerUnresolvedUserInput(snapshot.maxSequence);
       const contextIsCurrent =
         contextEpochRef.current === contextEpoch && localeRef.current === requestLocale;
-      if (result.spokenSummary && !hasNewerInput && contextIsCurrent) {
+      if (next.intent !== "capture_facts" && result.spokenSummary && !hasNewerInput && contextIsCurrent) {
         appendContext(result.spokenSummary, true, next.delegationId ?? null);
       }
     } catch (cause) {
       if (generationRef.current !== generation || voiceSessionIdRef.current !== sessionId) return;
       if (isRetryablePreclaimFailure(cause)) {
-        failedInputRef.current = next;
-        if (next.source === "text" && next.text) {
+        if (next.intent !== "capture_facts") {
+          failedInputRef.current = { input: next, refreshRequestId: false };
+        } else {
+          captureWatermarkRef.current = Math.max(captureWatermarkRef.current, snapshot.maxSequence);
+        }
+        if (next.intent !== "capture_facts" && next.source === "text" && next.text) {
           setPendingTextInputs((current) =>
             current.some((entry) => entry.id === next.requestId)
               ? current
               : [...current, { id: next.requestId, text: next.text! }],
           );
         }
-        setBackendState("failed");
-        settleFlushWaiters(false);
+        setBackendState(next.intent === "capture_facts" ? "idle" : "failed");
+        if (next.intent !== "capture_facts") settleFlushWaiters(false);
       } else {
         uncertainInputRef.current = { input: next, snapshot, contextEpoch, locale: requestLocale };
         waitingForServerIdleRef.current = true;
@@ -510,12 +636,47 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         activeInputRef.current = undefined;
         setPendingInputCount(queueRef.current.length);
         if (!blockedByUnknownRef.current && !waitingForServerIdleRef.current) pumpRef.current();
+        scheduleCaptureRef.current();
       }
     }
   }, [appendContext, connectionState, delegate, settleFlushWaiters]);
   useEffect(() => {
     pumpRef.current = () => void pumpQueue();
   }, [pumpQueue]);
+
+  const scheduleEarlyCapture = useCallback(() => {
+    if (
+      !earlyCaptureEnabled ||
+      connectionState !== "active" ||
+      activeInputRef.current?.intent === "capture_facts" ||
+      queueRef.current.some((input) => input.intent === "capture_facts") ||
+      !fragmentBufferRef.current.captureCandidate(captureWatermarkRef.current)
+    )
+      return;
+    const elapsed = Date.now() - lastCaptureQueuedAtRef.current;
+    const remaining = Math.max(0, earlyCaptureCadenceMs - elapsed);
+    if (remaining > 0) {
+      if (captureTimerRef.current === undefined) {
+        captureTimerRef.current = window.setTimeout(() => {
+          captureTimerRef.current = undefined;
+          scheduleCaptureRef.current();
+        }, remaining);
+      }
+      return;
+    }
+    lastCaptureQueuedAtRef.current = Date.now();
+    queueRef.current.push({
+      requestId: newRequestId("capture"),
+      source: "voice",
+      intent: "capture_facts",
+    });
+    setPendingInputCount(queueRef.current.length + (activeInputRef.current ? 1 : 0));
+    if (!activeInputRef.current) setBackendState("queued");
+    pumpRef.current();
+  }, [connectionState, earlyCaptureCadenceMs, earlyCaptureEnabled]);
+  useEffect(() => {
+    scheduleCaptureRef.current = scheduleEarlyCapture;
+  }, [scheduleEarlyCapture]);
 
   useEffect(() => {
     if (!sessionState) return;
@@ -527,7 +688,16 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         !["busy", "in_progress"].includes(sessionState.lastResult.status)
       ) {
         const result = sessionState.lastResult;
-        fragmentBufferRef.current.resolve(result.resolvedEventIds);
+        if (uncertain.input.intent === "capture_facts") {
+          if (!["busy", "in_progress", "outcome_unknown"].includes(result.status)) {
+            captureWatermarkRef.current = Math.max(
+              captureWatermarkRef.current,
+              uncertain.snapshot.maxSequence,
+            );
+          }
+        } else {
+          fragmentBufferRef.current.resolve(result.resolvedEventIds);
+        }
         uncertainInputRef.current = undefined;
         waitingForServerIdleRef.current = false;
         if (result.status === "outcome_unknown") {
@@ -537,14 +707,32 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
           return;
         }
         blockedByUnknownRef.current = false;
+        if (result.status === "failed" && uncertain.input.intent !== "capture_facts") {
+          failedInputRef.current = { input: uncertain.input, refreshRequestId: true };
+          if (uncertain.input.source === "text" && uncertain.input.text) {
+            setPendingTextInputs((current) =>
+              current.some((entry) => entry.id === uncertain.input.requestId)
+                ? current
+                : [
+                    ...current,
+                    { id: uncertain.input.requestId, text: uncertain.input.text! },
+                  ],
+            );
+          }
+        }
         setBackendState(
           result.status === "needs_clarification"
-            ? "waiting_for_clarification"
+            ? uncertain.input.intent === "capture_facts"
+              ? "idle"
+              : "waiting_for_clarification"
             : result.status === "failed"
-              ? "failed"
+              ? uncertain.input.intent === "capture_facts"
+                ? "idle"
+                : "failed"
               : "idle",
         );
         if (
+          uncertain.input.intent !== "capture_facts" &&
           result.spokenSummary &&
           !fragmentBufferRef.current.hasNewerUnresolvedUserInput(uncertain.snapshot.maxSequence) &&
           contextEpochRef.current === uncertain.contextEpoch &&
@@ -563,14 +751,21 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   const noteSpeaking = useCallback((role: "user" | "assistant") => {
     const priorTimer = speechTimersRef.current[role];
     if (priorTimer !== undefined) window.clearTimeout(priorTimer);
-    if (role === "user") setUserSpeaking(true);
+    if (role === "user") {
+      userSpeakingRef.current = true;
+      setUserSpeaking(true);
+    }
     else {
       setScoutSpeaking(true);
       const audio = remoteAudioRef.current;
       if (audio?.paused) void audio.play().catch(() => undefined);
     }
     speechTimersRef.current[role] = window.setTimeout(() => {
-      if (role === "user") setUserSpeaking(false);
+      if (role === "user") {
+        userSpeakingRef.current = false;
+        setUserSpeaking(false);
+        flushSpokenUpdatesRef.current();
+      }
       else setScoutSpeaking(false);
     }, 750);
   }, []);
@@ -584,6 +779,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         setTranscript(toTranscript(fragmentBufferRef.current.captions()));
         noteSpeaking(fragment.role);
         if (fragment.role === "user") pumpRef.current();
+        if (fragment.role === "user") scheduleCaptureRef.current();
         return;
       }
       if (isClientDelegationEvent(event)) {
@@ -592,11 +788,14 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
           queueRef.current.some((input) => input.requestId === event.delegation.id)
         )
           return;
-        queueRef.current.push({
+        const captureIndex = queueRef.current.findIndex((input) => input.intent === "capture_facts");
+        const delegationInput: QueuedInput = {
           requestId: event.delegation.id,
           delegationId: event.delegation.id,
           source: "voice",
-        });
+        };
+        if (captureIndex >= 0) queueRef.current.splice(captureIndex, 0, delegationInput);
+        else queueRef.current.push(delegationInput);
         setPendingInputCount(queueRef.current.length + (activeInputRef.current ? 1 : 0));
         setBackendState("queued");
         pumpRef.current();
@@ -803,8 +1002,18 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   const retryFailedInput = useCallback(() => {
     const failed = failedInputRef.current;
     if (!failed || connectionState !== "active") return false;
+    const input = failed.refreshRequestId
+      ? { ...failed.input, requestId: newRequestId(failed.input.source === "text" ? "typed" : "retry") }
+      : failed.input;
     failedInputRef.current = undefined;
-    queueRef.current.unshift(failed);
+    if (failed.refreshRequestId && input.source === "text") {
+      setPendingTextInputs((current) =>
+        current.map((entry) =>
+          entry.id === failed.input.requestId ? { ...entry, id: input.requestId } : entry,
+        ),
+      );
+    }
+    queueRef.current.unshift(input);
     setPendingInputCount(queueRef.current.length);
     setBackendState("queued");
     pumpRef.current();
@@ -853,6 +1062,17 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     [appendContext, connectionState],
   );
 
+  const flushSpokenUpdates = useCallback(() => {
+    if (connectionState !== "active" || userSpeakingRef.current) return;
+    for (const [id, update] of bufferedUpdatesRef.current) {
+      if (update.speak !== true) continue;
+      if (appendContext(update.content, true)) bufferedUpdatesRef.current.delete(id);
+    }
+  }, [appendContext, connectionState]);
+  useEffect(() => {
+    flushSpokenUpdatesRef.current = flushSpokenUpdates;
+  }, [flushSpokenUpdates]);
+
   const appendVerifiedBackgroundUpdate = useCallback(
     (update: VerifiedBackgroundUpdate) => {
       const version = String(update.version);
@@ -863,6 +1083,11 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         return true;
       }
       if (connectionState !== "active") return false;
+      if (update.speak === true && userSpeakingRef.current) {
+        deliveredUpdateVersionsRef.current.set(update.id, version);
+        bufferedUpdatesRef.current.set(update.id, update);
+        return true;
+      }
       const sent = appendContext(update.content, update.speak ?? false);
       if (sent) deliveredUpdateVersionsRef.current.set(update.id, version);
       return sent;

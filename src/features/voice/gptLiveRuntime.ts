@@ -52,6 +52,30 @@ export type LiveDelegationSnapshot = {
   unresolvedUserEventIds: string[];
 };
 
+export type LiveCaptureCandidate = {
+  fragments: LiveTranscriptFragment[];
+  maxSequence: number;
+  text: string;
+};
+
+const FACT_SIGNAL = /\b(?:rehearsal|practice|proberaum|probe|room|raum|studio|location|city|stadt|near|nähe|radius|kilomet|\bkm\b|budget|euro|month|monat|week|woche|monday|tuesday|wednesday|thursday|friday|saturday|sunday|montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag|morning|afternoon|evening|morgen|nachmittag|abend|band|member|mitglied|people|person|piece|musician|musiker|drum|schlagzeug|equipment|gear|verstärker|amp|storage|lager|leave|stehen lassen|noise|laut|accessible|barriere|parking|parkplatz)\b|€/iu;
+const COMPLETE_CLAUSE = /[.!?](?:["')\]]*)\s*$/u;
+const MAX_DELEGATE_FRAGMENTS = 1_024;
+const MAX_DELEGATE_CHARACTERS = 64_000;
+
+export class GptLiveContextOverflowError extends Error {
+  constructor() {
+    super("The conversation is too large to delegate safely. Restart voice from the saved brief.");
+    this.name = "GptLiveContextOverflowError";
+  }
+}
+
+export function isConservativeFactStatement(text: string): boolean {
+  const normalized = text.trim();
+  const words = normalized.match(/[\p{L}\p{N}€]+/gu) ?? [];
+  return normalized.length >= 18 && words.length >= 3 && COMPLETE_CLAUSE.test(normalized) && FACT_SIGNAL.test(normalized);
+}
+
 /**
  * Browser-only transcript state. Provider event IDs are opaque dedupe keys; the
  * monotonic sequence records arrival order so a late fragment is never dropped
@@ -81,11 +105,57 @@ export class GptLiveFragmentBuffer {
   }
 
   snapshot(delegationId: string): LiveDelegationSnapshot {
+    const unresolvedUserFragments = this.unresolvedUserFragments();
+    const unresolvedIds = new Set(unresolvedUserFragments.map((fragment) => fragment.eventId));
+    const requiredCharacters = unresolvedUserFragments.reduce(
+      (total, fragment) => total + fragment.text.length,
+      0,
+    );
+    if (
+      unresolvedUserFragments.length > MAX_DELEGATE_FRAGMENTS ||
+      requiredCharacters > MAX_DELEGATE_CHARACTERS
+    ) {
+      throw new GptLiveContextOverflowError();
+    }
+    let remainingFragments = MAX_DELEGATE_FRAGMENTS - unresolvedUserFragments.length;
+    let remainingCharacters = MAX_DELEGATE_CHARACTERS - requiredCharacters;
+    const optionalIds = new Set<string>();
+    for (let index = this.#fragments.length - 1; index >= 0 && remainingFragments > 0; index -= 1) {
+      const fragment = this.#fragments[index]!;
+      if (unresolvedIds.has(fragment.eventId) || fragment.text.length > remainingCharacters) continue;
+      optionalIds.add(fragment.eventId);
+      remainingFragments -= 1;
+      remainingCharacters -= fragment.text.length;
+    }
+    const fragments = this.#fragments.filter(
+      (fragment) => unresolvedIds.has(fragment.eventId) || optionalIds.has(fragment.eventId),
+    );
     return {
       delegationId,
       maxSequence: this.#sequence,
-      fragments: this.#fragments.slice(-80),
-      unresolvedUserEventIds: this.unresolvedUserFragments().map((fragment) => fragment.eventId),
+      fragments,
+      unresolvedUserEventIds: unresolvedUserFragments.map((fragment) => fragment.eventId),
+    };
+  }
+
+  captureCandidate(afterSequence: number): LiveCaptureCandidate | undefined {
+    const userFragments = this.#fragments.filter(
+      (fragment) => fragment.role === "user" && fragment.sequence > afterSequence,
+    );
+    let text = "";
+    let boundary = -1;
+    for (let index = 0; index < userFragments.length; index += 1) {
+      text += userFragments[index]!.text;
+      if (COMPLETE_CLAUSE.test(text)) boundary = index;
+    }
+    if (boundary < 0) return undefined;
+    const fragments = userFragments.slice(0, boundary + 1);
+    const completedText = fragments.map((fragment) => fragment.text).join("");
+    if (!isConservativeFactStatement(completedText)) return undefined;
+    return {
+      fragments,
+      maxSequence: fragments.at(-1)!.sequence,
+      text: completedText,
     };
   }
 

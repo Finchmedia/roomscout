@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   GptLiveFragmentBuffer,
+  GptLiveContextOverflowError,
   isClientDelegationEvent,
   isLiveTranscriptEvent,
   isRetryablePreclaimFailure,
@@ -130,6 +131,85 @@ describe("GptLiveFragmentBuffer", () => {
       expect.objectContaining({ role: "user", text: "We need Tuesday—Wednesday, sorry" }),
       expect.objectContaining({ role: "assistant", text: "Mm-hm" }),
     ]);
+  });
+
+  it("selects only complete, substantive fact statements for early capture", () => {
+    const buffer = new GptLiveFragmentBuffer();
+    buffer.append({
+      type: "session.input_transcript.delta",
+      event_id: "greeting",
+      delta: "Hi, nice to meet you.",
+      start_ms: 0,
+      end_ms: 300,
+    });
+    expect(buffer.captureCandidate(0)).toBeUndefined();
+
+    buffer.append({
+      type: "session.input_transcript.delta",
+      event_id: "incomplete-budget",
+      delta: " Our monthly rehearsal budget is 300",
+      start_ms: 310,
+      end_ms: 700,
+    });
+    expect(buffer.captureCandidate(0)).toBeUndefined();
+
+    buffer.append({
+      type: "session.input_transcript.delta",
+      event_id: "completed-budget",
+      delta: " euros.",
+      start_ms: 710,
+      end_ms: 800,
+    });
+    expect(buffer.captureCandidate(0)).toEqual(
+      expect.objectContaining({
+        maxSequence: 3,
+        text: "Hi, nice to meet you. Our monthly rehearsal budget is 300 euros.",
+      }),
+    );
+  });
+
+  it("never drops the beginning of a long unresolved monologue", () => {
+    const buffer = new GptLiveFragmentBuffer();
+    for (let index = 0; index < 180; index += 1) {
+      buffer.append({
+        type: "session.input_transcript.delta",
+        event_id: `monologue-${index}`,
+        delta:
+          index === 0
+            ? "We are a four-piece band in Berlin, "
+            : index === 179
+              ? "and our schedule is Wednesday evenings."
+              : `detail ${index}, `,
+        start_ms: index * 100,
+        end_ms: index * 100 + 90,
+      });
+    }
+
+    const snapshot = buffer.snapshot("long-delegation");
+    expect(snapshot.fragments).toHaveLength(180);
+    expect(snapshot.fragments[0]).toEqual(
+      expect.objectContaining({ eventId: "monologue-0", text: "We are a four-piece band in Berlin, " }),
+    );
+    expect(snapshot.fragments.at(-1)).toEqual(
+      expect.objectContaining({
+        eventId: "monologue-179",
+        text: "and our schedule is Wednesday evenings.",
+      }),
+    );
+  });
+
+  it("fails explicitly when all unresolved input cannot fit the backend contract", () => {
+    const buffer = new GptLiveFragmentBuffer();
+    for (let index = 0; index < 1_025; index += 1) {
+      buffer.append({
+        type: "session.input_transcript.delta",
+        event_id: `overflow-${index}`,
+        delta: "fact ",
+        start_ms: index,
+        end_ms: index + 1,
+      });
+    }
+    expect(() => buffer.snapshot("overflow")).toThrow(GptLiveContextOverflowError);
   });
 });
 

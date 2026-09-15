@@ -1,7 +1,11 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LiveDelegateResult } from "./useGptLiveVoiceScout";
-import { createGptLiveSession, useGptLiveVoiceScout } from "./useGptLiveVoiceScout";
+import {
+  createGptLiveSession,
+  splitLiveAppendContent,
+  useGptLiveVoiceScout,
+} from "./useGptLiveVoiceScout";
 
 vi.mock("@convex-dev/auth/react", () => ({ useAuthToken: () => "token" }));
 const convexMocks = vi.hoisted(() => ({
@@ -123,7 +127,10 @@ it("requires the explicit Live provider and app session headers", async () => {
 });
 
 describe("useGptLiveVoiceScout", () => {
-  async function connect(delegate: (args: never) => Promise<LiveDelegateResult>) {
+  async function connect(
+    delegate: (args: never) => Promise<LiveDelegateResult>,
+    captureOptions: { enableEarlyFactCapture?: boolean; earlyFactCaptureCadenceMs?: number } = {},
+  ) {
     const connection = installConnection();
     const createSession = vi.fn().mockResolvedValue({
       answerSdp: "answer-sdp",
@@ -131,7 +138,13 @@ describe("useGptLiveVoiceScout", () => {
       provider: "live",
     });
     const hook = renderHook(() =>
-      useGptLiveVoiceScout({ createSession, delegate: delegate as never, initialLocale: "en" }),
+      useGptLiveVoiceScout({
+        createSession,
+        delegate: delegate as never,
+        initialLocale: "en",
+        enableEarlyFactCapture: false,
+        ...captureOptions,
+      }),
     );
     await act(async () => hook.result.current.connect());
     act(() => connection.channel.onopen?.(new Event("open")));
@@ -333,6 +346,32 @@ describe("useGptLiveVoiceScout", () => {
     await waitFor(() => expect(delegate).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(result.current.backendState).toBe("idle"));
     expect(result.current.pendingTextDraft).toBe("");
+    expect(delegate.mock.calls[1]?.[0].requestId).toBe(delegate.mock.calls[0]?.[0].requestId);
+  });
+
+  it("uses a fresh request ID when retrying a terminal failure cached by the backend", async () => {
+    const delegate = vi.fn()
+      .mockImplementationOnce(async (args: { requestId: string }): Promise<LiveDelegateResult> => ({
+        status: "failed",
+        requestId: args.requestId,
+        resolvedEventIds: [],
+        locale: "en",
+      }))
+      .mockImplementation(async (args: { requestId: string }) => completed(args.requestId, []));
+    const { result } = await connect(delegate as never);
+    act(() => {
+      expect(result.current.sendText("Start the search now")).toBe(true);
+    });
+    await waitFor(() => expect(result.current.backendState).toBe("failed"));
+    expect(result.current.pendingTextDraft).toBe("Start the search now");
+    const failedRequestId = delegate.mock.calls[0]?.[0].requestId;
+
+    act(() => expect(result.current.retryFailedInput()).toBe(true));
+    await waitFor(() => expect(delegate).toHaveBeenCalledTimes(2));
+    expect(delegate.mock.calls[1]?.[0].requestId).not.toBe(failedRequestId);
+    expect(delegate.mock.calls[1]?.[0].text).toBe("Start the search now");
+    await waitFor(() => expect(result.current.backendState).toBe("idle"));
+    expect(result.current.pendingTextDraft).toBe("");
   });
 
   it("sends verified focus and background context with documented append events", async () => {
@@ -380,6 +419,91 @@ describe("useGptLiveVoiceScout", () => {
     );
   });
 
+  it("chunks large append context at sentence boundaries without dropping content", async () => {
+    const content = Array.from(
+      { length: 12 },
+      (_, index) => `Verified sentence ${index} ${"detail ".repeat(20).trim()}.`,
+    ).join(" ");
+    const chunks = splitLiveAppendContent(content);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.every((chunk) => chunk.length <= 1_000)).toBe(true);
+    expect(chunks.join(" ")).toBe(content);
+
+    const { result, sent } = await connect(
+      vi.fn().mockResolvedValue(completed("none", [])) as never,
+    );
+    act(() => {
+      expect(result.current.appendVerifiedBackgroundUpdate({
+        id: "large-brief",
+        version: 1,
+        content,
+        speak: false,
+      })).toBe(true);
+    });
+    const appended = sent.filter((event) => event.type === "session.thinking.append");
+    expect(appended.map((event) => event.content).join(" ")).toBe(content);
+  });
+
+  it("defers spoken updates while the user speaks and announces only the latest queued version", async () => {
+    const { channel, result, sent } = await connect(
+      vi.fn().mockResolvedValue(completed("none", [])) as never,
+    );
+    vi.useFakeTimers();
+    try {
+      act(() => {
+        serverEvent(channel, {
+          type: "session.input_transcript.delta",
+          event_id: "speaking-now",
+          delta: "Our rehearsal room budget is 300",
+          start_ms: 0,
+          end_ms: 500,
+        });
+        expect(result.current.appendVerifiedBackgroundUpdate({
+          id: "provider-result",
+          version: 1,
+          content: "Old provider update.",
+          speak: true,
+        })).toBe(true);
+        result.current.clearBackgroundUpdate("provider-result");
+        expect(result.current.appendVerifiedBackgroundUpdate({
+          id: "provider-result",
+          version: 2,
+          content: "Current provider update.",
+          speak: true,
+        })).toBe(true);
+        expect(result.current.appendVerifiedBackgroundUpdate({
+          id: "brief-quiet",
+          version: 1,
+          content: "Quiet saved brief update.",
+          speak: false,
+        })).toBe(true);
+      });
+      expect(sent.some((event) => event.content === "Old provider update.")).toBe(false);
+      expect(sent.some((event) => event.content === "Current provider update.")).toBe(false);
+      expect(sent).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "session.thinking.append",
+            content: "Quiet saved brief update.",
+          }),
+        ]),
+      );
+
+      act(() => vi.advanceTimersByTime(751));
+      expect(sent.some((event) => event.content === "Old provider update.")).toBe(false);
+      expect(sent).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "session.commentary.append",
+            content: "Current provider update.",
+          }),
+        ]),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("can invalidate and rebuild a queued background update while connecting", async () => {
     const connection = installConnection();
     let resolveSession!: (answer: { answerSdp: string; voiceSessionId: string; provider: "live" }) => void;
@@ -420,5 +544,195 @@ describe("useGptLiveVoiceScout", () => {
         }),
       ]),
     );
+  });
+
+  it("captures a completed fact clause early and keeps it for the later native delegation", async () => {
+    const delegate = vi.fn().mockImplementation(async (args: {
+      requestId: string;
+      intent?: string;
+      fragments: Array<{ eventId: string }>;
+    }) => ({
+      ...completed(args.requestId, args.intent ? [] : args.fragments.map((fragment) => fragment.eventId)),
+      ...(args.intent ? { spokenSummary: undefined, changedFields: ["location"] } : {}),
+    }));
+    const { channel, sent } = await connect(delegate as never, {
+      enableEarlyFactCapture: true,
+      earlyFactCaptureCadenceMs: 0,
+    });
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "berlin-band",
+        delta: "We are a four-piece band in Berlin.",
+        start_ms: 100,
+        end_ms: 900,
+      });
+    });
+    await waitFor(() => expect(delegate).toHaveBeenCalledOnce());
+    expect(delegate.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        source: "voice",
+        intent: "capture_facts",
+        fragments: [expect.objectContaining({ eventId: "berlin-band" })],
+      }),
+    );
+    expect(delegate.mock.calls[0]?.[0]).not.toHaveProperty("delegationId");
+    expect(sent.some((event) => event.type === "session.commentary.append")).toBe(false);
+
+    act(() => {
+      serverEvent(channel, {
+        type: "session.delegation.created",
+        delegation: { id: "native-delegation", type: "delegation", target: "client" },
+      });
+    });
+    await waitFor(() => expect(delegate).toHaveBeenCalledTimes(2));
+    expect(delegate.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({
+        requestId: "native-delegation",
+        delegationId: "native-delegation",
+        fragments: [expect.objectContaining({ eventId: "berlin-band" })],
+      }),
+    );
+    expect(delegate.mock.calls[1]?.[0]).not.toHaveProperty("intent");
+  });
+
+  it("does not capture incomplete numbers, greetings, or facts when early capture is disabled", async () => {
+    const enabledDelegate = vi.fn().mockImplementation(async (args: { requestId: string }) =>
+      completed(args.requestId, []),
+    );
+    const enabled = await connect(enabledDelegate as never, {
+      enableEarlyFactCapture: true,
+      earlyFactCaptureCadenceMs: 0,
+    });
+    act(() => {
+      serverEvent(enabled.channel, {
+        type: "session.input_transcript.delta",
+        event_id: "hello",
+        delta: "Hi, nice to meet you.",
+        start_ms: 0,
+        end_ms: 100,
+      });
+      serverEvent(enabled.channel, {
+        type: "session.input_transcript.delta",
+        event_id: "unfinished-number",
+        delta: " Our rehearsal budget is 300",
+        start_ms: 110,
+        end_ms: 300,
+      });
+    });
+    await Promise.resolve();
+    expect(enabledDelegate).not.toHaveBeenCalled();
+    act(() => enabled.result.current.disconnect());
+    act(() => serverEvent(enabled.channel, { type: "session.closed" }));
+
+    const disabledDelegate = vi.fn().mockImplementation(async (args: { requestId: string }) =>
+      completed(args.requestId, []),
+    );
+    const disabled = await connect(disabledDelegate as never, {
+      enableEarlyFactCapture: false,
+      earlyFactCaptureCadenceMs: 0,
+    });
+    act(() => {
+      serverEvent(disabled.channel, {
+        type: "session.input_transcript.delta",
+        event_id: "disabled-fact",
+        delta: "We need a rehearsal room in Berlin.",
+        start_ms: 0,
+        end_ms: 400,
+      });
+    });
+    await Promise.resolve();
+    expect(disabledDelegate).not.toHaveBeenCalled();
+  });
+
+  it("coalesces corrections behind one running capture and dispatches them serially", async () => {
+    let resolveFirst!: (result: LiveDelegateResult) => void;
+    const delegate = vi.fn()
+      .mockImplementationOnce(
+        (args: { requestId: string }) =>
+          new Promise<LiveDelegateResult>((resolve) => {
+            resolveFirst = (result) => resolve({ ...result, requestId: args.requestId });
+          }),
+      )
+      .mockImplementation(async (args: { requestId: string }) => ({
+        ...completed(args.requestId, []),
+        spokenSummary: undefined,
+      }));
+    const { channel } = await connect(delegate as never, {
+      enableEarlyFactCapture: true,
+      earlyFactCaptureCadenceMs: 0,
+    });
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "budget-first",
+        delta: "Our rehearsal budget is 300 euros.",
+        start_ms: 0,
+        end_ms: 400,
+      });
+    });
+    await waitFor(() => expect(delegate).toHaveBeenCalledOnce());
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "budget-correction",
+        delta: "Actually, our rehearsal budget is 280 euros.",
+        start_ms: 410,
+        end_ms: 800,
+      });
+    });
+    expect(delegate).toHaveBeenCalledOnce();
+    await act(async () =>
+      resolveFirst({
+        status: "completed",
+        requestId: "ignored",
+        resolvedEventIds: [],
+        locale: "en",
+      }),
+    );
+    await waitFor(() => expect(delegate).toHaveBeenCalledTimes(2));
+    expect(delegate.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({
+        intent: "capture_facts",
+        fragments: [expect.objectContaining({ eventId: "budget-correction" })],
+      }),
+    );
+  });
+
+  it("runs a native delegation before a fact capture that has not started", async () => {
+    let resolveTyped!: (result: LiveDelegateResult) => void;
+    const delegate = vi.fn()
+      .mockImplementationOnce(
+        () => new Promise<LiveDelegateResult>((resolve) => { resolveTyped = resolve; }),
+      )
+      .mockImplementation(async (args: {
+        requestId: string;
+        fragments: Array<{ eventId: string }>;
+      }) => completed(args.requestId, args.fragments.map((fragment) => fragment.eventId)));
+    const { channel, result } = await connect(delegate as never, {
+      enableEarlyFactCapture: true,
+      earlyFactCaptureCadenceMs: 0,
+    });
+    act(() => expect(result.current.sendText("Keep listening")).toBe(true));
+    await waitFor(() => expect(delegate).toHaveBeenCalledOnce());
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "priority-fact",
+        delta: "We need a rehearsal room in Berlin.",
+        start_ms: 0,
+        end_ms: 500,
+      });
+      serverEvent(channel, {
+        type: "session.delegation.created",
+        delegation: { id: "priority-native", type: "delegation", target: "client" },
+      });
+    });
+    await act(async () => resolveTyped(completed("typed", [])));
+    await waitFor(() => expect(delegate).toHaveBeenCalledTimes(2));
+    expect(delegate.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({ requestId: "priority-native", delegationId: "priority-native" }),
+    );
+    expect(delegate.mock.calls[1]?.[0]).not.toHaveProperty("intent");
   });
 });
