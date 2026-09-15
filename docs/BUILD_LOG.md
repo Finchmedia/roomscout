@@ -1789,3 +1789,33 @@ item is not in the `@shadcn` registry yet), so `src/components/ui/questionnaire.
 is a labelled temporary stand-in over the real `@shadcn/react/questionnaire`
 primitive; the maintainer runs the CLI himself once the item is published.
 Typecheck, 1116 tests and the build are green; deployed to production and dev.
+
+### 2026-09-15 — Chat parts from the shadcn registry, not hand-written
+
+Asked whether the chat UI used "the real thing", the check showed a split:
+`message-scroller.tsx` was the real headless primitive with a tokenised layer,
+but `message.tsx`, `bubble.tsx` and `marker.tsx` were 13 to 21 line reductions
+written during the UI port with shadcn's slot vocabulary and none of its
+anatomy (no `MessageGroup`, `MessageAvatar`, `BubbleGroup`, `BubbleReactions`,
+`MarkerIcon`, no variants, no `asChild`). The maintainer chose the CLI files
+verbatim with the look expressed through variants.
+
+Result: `npx shadcn@latest add message bubble marker message-scroller spinner`
+wrote the five files; the CLI also overwrote `button.tsx` as a registry
+dependency and it was restored from git. Musician bubbles are `tinted`, Scout
+and provider bubbles `secondary`, day and system lines `Marker
+variant="separator"`, the thinking line is `MarkerIcon` + `Spinner` next to
+`MarkerContent className="shimmer"` as the docs show, and running tool calls
+use the same icon marker. The scroller's jump button gets its German
+accessible name from the dictionary. `index.html` now sets `class="dark"` on
+the root, because the app is dark-only and the verbatim files otherwise render
+their light formulas. The fast-refresh export lint rule is off for the shadcn
+folder. Typecheck, 1116 tests and build green; frontend deployed to production
+and dev.
+
+Questionnaire: the item exists only under the v4 styles (`radix-nova`,
+`base-nova`, …), not under `new-york-v4`, which the project's
+`components.json` still targets. Adding it by registry URL stops at an
+interactive prompt (overwrite `button.tsx`?), which a non-interactive run
+cannot answer, so the labelled stand-in stays until the maintainer runs the
+command in a terminal.

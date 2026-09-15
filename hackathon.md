@@ -533,3 +533,16 @@ one click with precise acceptance states. The shadcn registry does not carry
 headless primitive. Convex features: actions and agent tools
 (`convex/scout.ts`, `convex/scoutCaseCards.ts`), mutations
 (`convex/decisions.ts`), reactive queries behind the stage and the inbox.
+
+### 2026-09-15 — Chat parts from the shadcn registry
+
+A check of the chat UI showed that only the message scroller was the real
+shadcn primitive; message, bubble and marker were short hand-written
+reductions from the UI port. The CLI now writes all four (plus the spinner)
+verbatim, and the look lives in the registry's own variants: tinted bubbles
+for the musician, secondary for the Scout and providers, separator markers for
+day and system lines, and the documented icon-plus-shimmer marker for the
+thinking state. The root element declares the dark theme, so the verbatim
+files render their dark branch. The questionnaire item is published only
+under shadcn's v4 styles; it stays a labelled stand-in until the maintainer
+runs the CLI interactively. Frontend deployed to production and dev.
