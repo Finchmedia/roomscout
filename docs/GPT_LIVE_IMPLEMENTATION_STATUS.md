@@ -17,9 +17,9 @@ Dieses Dokument hält nur beobachtete Ergebnisse und noch offene Nachweise fest.
 - [x] Ein echter GPT-Live-WebRTC-Handshake war erfolgreich.
 - [x] Captions und die zugehörigen Protokoll-ACKs wurden im realen Live-Pfad beobachtet.
 - [x] Der anfängliche Fehler an der Grenze von 64 gepufferten Fragmenten wurde behoben; die Grenzen liegen nun bei 1.024 Fragmenten und 64.000 Zeichen.
-- [ ] Zusätzlich im echten Test gefunden: Der Browser schnitt den Snapshot auf die letzten 80 Fragmente ab; das Backend fügte zwischen Fragmenten Leerzeichen ein. Beide Fehler werden behoben und mit langen Eingaben erneut geprüft.
+- [x] Die stille Begrenzung auf die letzten 80 Fragmente und eingefügte Leerzeichen zwischen Deltas sind behoben. Im zweiten echten Durchlauf kamen 93 Deltas an; Berlin, vierköpfige Band, Kreuzberg/Neukölln und die letzten Anforderungen wurden vollständig gespeichert.
 - [x] Das englische UI-Wörterbuch enthält 1.338 Leaf-Einträge.
-- [x] Im letzten protokollierten UI-Testlauf bestanden 38 Tests.
+- [x] Der vollständige Testlauf vor den letzten Runtime-Erweiterungen bestand mit 1.151 erfolgreichen Tests und einem übersprungenen Test; der Produktionsbuild war grün. Die neueren Runtime-/UI-Änderungen wurden zusätzlich gezielt getestet; ein abschließender Gesamtlauf steht aus.
 
 Diese Punkte belegen jeweils ihren begrenzten technischen Pfad. Sie belegen noch nicht den vollständigen Demo-Ablauf.
 
@@ -34,13 +34,24 @@ Die offizielle Live-API dokumentiert `session.delegation.created` als vom Modell
 
 ## In Arbeit, noch nicht validiert
 
-- [ ] Der echte bestehende Scout-Brain verarbeitet den vollständigen Live-Auftrag im integrierten Pfad.
+- [x] Der bestehende Scout-Brain verarbeitet den vollständigen Live-Auftrag über den Gateway in der isolierten Cloud. Zuvor wurde derselbe Brain separat mit einer reinen Textnachricht erfolgreich geprüft.
 - [ ] Reversible Suchfakten werden während längerer Sprache über den begrenzten app-eigenen Intent durch denselben Scout und dieselbe serielle Queue gespeichert.
 - [ ] Der app-eigene frühe Pfad verwendet `delegation_id:null`, bleibt von nativer Client Delegation unterscheidbar und erzeugt keine zweite fachliche Schreiblogik.
 - [ ] Die kanonische gespeicherte Suchquery treibt Faktenanzeige und Animation; ungespeicherte Transkriptkandidaten erscheinen nicht als Fakten.
 - [ ] Eine Mid-Speech-Korrektur ersetzt den älteren Wert ohne spätes Zurücksetzen oder doppelte Ausführung.
-- [ ] Englisch als Standard, expliziter Deutschwechsel und EN→DE→EN funktionieren im integrierten Live-Ablauf.
+- [x] EN→DE→EN wurde im selben echten Gespräch beobachtet: explizite gesprochene Wünsche ändern Stimme und UI. Die Rückfrage nach nur dem Probetag erhielt die kurze Antwort „Yep, Wednesday evenings.“ Freitext-Fakten werden durch den Sprachwechsel nicht automatisch übersetzt.
 - [ ] Der ungeschnittene englische Demo-Ablauf besteht Ende zu Ende mit echtem Brain, Fakten, Korrektur, UI und Voice.
+
+## Weitere reale Integrationsergebnisse
+
+- [x] Nach der langen Beschreibung wurden 300 Euro und Dienstag gespeichert. Die nächste gesprochene Korrektur ersetzte dies durch 280 Euro und Mittwoch; Ort und andere Anforderungen blieben erhalten.
+- [x] Während dieses Durchlaufs blieb die Suche im Entwurf. Die ausdrückliche Bitte, weder Suche noch Kontakt zu starten, wurde eingehalten.
+- [x] Mikrofon ausschalten deaktivierte die lokale Eingabe und wurde mit dem echten Ereignis `session.input_audio.muted` bestätigt.
+- [ ] Frühe Faktenanzeige ist noch nicht bestanden: Im zweiten Durchlauf kamen die ersten gespeicherten Fakten erst rund 13,7 Sekunden nach dem Audioende. Echte Deltas enthalten teils Satzende und Anfang des nächsten Satzes gemeinsam; die Erkennung wird mit diesen Fragmentgrenzen korrigiert.
+- [ ] Die reale Unterhaltung zeigte unnötige Fragen zu bereits bekanntem Teilen sowie eine Vermischung eigener gelagerter Instrumente mit vorhandener Ausstattung. Prompt-/Tool-Guidance wird gezielt korrigiert; danach erneut sprechen.
+- [ ] Der UI-Wechsel bleibt in Komponenten-Tests verbunden und ist kompakt umgesetzt; Anbieter-/Entscheidungsablauf und visuelle Endabnahme stehen noch aus.
+
+Die Eingabe stammt aus synthetischen englischen/deutschen Audio-Dateien im lokalen, nicht ausgelieferten Testharness. WebRTC, GPT-Live, Captions, der Gateway-Scout und gespeicherte Convex-Fakten sind echt. Eine menschliche Hörprobe zu Stimmklang, Raumgeräuschen und natürlichem Barge-in ist damit nicht ersetzt.
 
 ## Review-Checkliste für den nächsten Evidenzstand
 

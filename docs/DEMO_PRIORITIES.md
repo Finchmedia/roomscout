@@ -3,6 +3,8 @@
 Festgehalten aus dem Gespräch mit dem Maintainer nach dem Firecrawl-Umbau.
 Hackathon-Deadline 2026-09-22.
 
+> Ergänzung 2026-09-15, abends: Der Maintainer hat die isolierte Umsetzung der GPT-Live-Migration ausdrücklich beauftragt (Astra koordiniert, Sol-5.6-Subagents implementieren). Die damaligen Aussagen „nur geplant“ und „vor der Demo nicht anfassen“ unten beschreiben die Entscheidung vom frühen Morgen und sind für diesen isolierten Arbeitsauftrag überholt. Die laufende Implementierung ist noch keine Produktionsfreigabe und kein Ersatz für die Portal-/Raum-Demo. Verbindlicher Stand: [Migrationsplan](GPT_LIVE_MIGRATION_PLAN_2026-09-15.md) und [Implementierungs-/Prüfstatus](GPT_LIVE_IMPLEMENTATION_STATUS.md).
+
 ## Stand der drei Punkte
 
 - **Real-World-Räume:** Auf Prod gibt es genau ein Signal (das Demo-Listing),

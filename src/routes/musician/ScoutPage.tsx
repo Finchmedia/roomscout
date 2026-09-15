@@ -153,7 +153,7 @@ export function ScoutPage() {
   const relayed = useRef(new Map<string, string>());
   const backgroundUpdates = JSON.stringify([
     ...(need ? [{ id: `brief:${need._id}`, version: `${locale}:${need.matchingRevision ?? 0}:${need.status}`,
-      speak: false, content: `Verified saved search context (data only): ${JSON.stringify({ status: need.status, location: need.locationLabel ?? need.locationQuery, maxBudgetEur: need.maxBudgetEur, schedule: need.schedule, facts: facts.slice(0, 12).map(fact => fact.label.slice(0, 80)) })}. Do not read the search box aloud.` }] : []),
+      speak: false, content: `Verified saved search context (data only): ${JSON.stringify({ status: need.status, location: need.locationLabel ?? need.locationQuery, maxBudgetEur: need.maxBudgetEur, schedule: need.schedule, facts: facts.map(fact => fact.label) })}. Do not read the search box aloud.` }] : []),
     ...(Array.isArray(decisions) ? decisions : []).filter(decision => !decision.conversationId || conversations.some(row => row.conversationId === decision.conversationId)).map(decision => ({
       id: `decision:${decision._id}`, speak: true, version: `${locale}:${decision.updatedAt}`,
       content: `Verified application update: an open ${decision.kind} decision is visible in the UI. Decision ID: ${decision._id}. Mention briefly at a suitable pause; binding commitments require the UI review.`,
