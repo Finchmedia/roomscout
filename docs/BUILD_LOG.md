@@ -1404,44 +1404,44 @@ successfully); the 45-second registration session cannot survive a slow OTP.
 The production test account was promoted to operator so the manual check is
 reachable. Nothing is committed or deployed by this entry.
 
-### 2026-09-14 — Mandat entfernt, Handlungsspielraum pro Nutzer
+### 2026-09-14 — Mandate removed, per-user autonomy rules
 
-Das Mandat pro Suchauftrag ist weg (ADR 0001). Die Tabelle `searchMandates`,
-`convex/mandates.ts` und `convex/lib/mandateAuthorization.ts` sind gelöscht; die
-gemeinsam genutzten Typen `ExternalActionType` und `PersonalDataScope` leben jetzt
-in `convex/lib/autonomy.ts`. Opportunities, Handoffs, Anfragen und Freigaben tragen
-keine `mandateId` mehr; Freigaben halten nur noch `autonomyVersion` und
-`autonomyHash` fest. Die Literale heißen `autopilot` (statt `standing_mandate`),
-`authorized_by_autonomy` (statt `authorized_by_mandate`) und das Ergebnis von
-`submit` meldet `authorizedByAutonomy`. Keine Datenmigration: der Maintainer
-leert die Testzeilen vor dem Deploy.
+The per-search mandate is gone (ADR 0001). The `searchMandates` table,
+`convex/mandates.ts` and `convex/lib/mandateAuthorization.ts` are deleted; the
+shared types `ExternalActionType` and `PersonalDataScope` now live in
+`convex/lib/autonomy.ts`. Opportunities, handoffs, requests and approvals no
+longer carry a `mandateId`; approvals only record `autonomyVersion` and
+`autonomyHash`. The literals are now `autopilot` (instead of `standing_mandate`)
+and `authorized_by_autonomy` (instead of `authorized_by_mandate`), and the
+result of `submit` reports `authorizedByAutonomy`. No data migration: the
+maintainer clears the test rows before the deploy.
 
-„Suche aktiv“ ist jetzt allein `savedNeed.status === "active"`. Die neue Mutation
-`savedNeeds.activate` prüft Besitz und vollständigen Ort (`INCOMPLETE_NEED`),
-setzt den Status, schreibt `search.activated` und plant Matching, den
-Orchestrator und den automatischen roomscout.dev-Check. Pausieren und Weiter
-bleiben `savedNeeds.setStatus`. Der Plattform-Umfang einer Suche ist alle
-aktiven Plattformen minus die Quellen-Ausschlüsse des Nutzers; eine
-`platformIds`-Liste gibt es nirgends mehr.
+"Search active" is now `savedNeed.status === "active"` and nothing else. The new
+`savedNeeds.activate` mutation checks ownership and a complete location
+(`INCOMPLETE_NEED`), sets the status, writes `search.activated` and schedules
+matching, the orchestrator and the automatic roomscout.dev check. Pause and
+resume stay on `savedNeeds.setStatus`. The platform scope of a search is every
+active platform minus the user's source exclusions; there is no `platformIds`
+list anywhere any more.
 
-`convex/mandateOrchestrator.ts` heißt jetzt `convex/scoutOrchestrator.ts` und
-läuft über aktive Suchaufträge statt über Mandate. Kontrollierte Registrierung
-und das Einreihen einer Opportunity setzen voraus, dass „Kontakt“ im
-Handlungsspielraum eingeschaltet ist; beide Modi laufen durch den Orchestrator,
-Rücksprache wirkt erst in der Freigabeprüfung beim Versand. Die geplante
-Registrierung trägt `savedNeedId` statt `mandateId` und stoppt mit
-`REGISTRATION_SEARCH_NO_LONGER_ACTIVE`. Zwei Nachträge aus der Freigabeprüfung:
-selbst entworfene Nachrichten werden mit dem Grund `user_draft` zur Entscheidung,
-und eine Portal-Verbindung mit falschem Browser-Provider stoppt mit
-`provider_mismatch` statt per rohem Patch.
+`convex/mandateOrchestrator.ts` is now `convex/scoutOrchestrator.ts` and runs
+over active search briefs instead of mandates. Controlled registration and
+queueing an opportunity both require that "contact" is switched on in the
+per-user autonomy rules (Handlungsspielraum); both modes run through the
+orchestrator, and review mode only takes effect in the gate (release check) at
+send time. The scheduled registration carries `savedNeedId` instead of
+`mandateId` and stops with `REGISTRATION_SEARCH_NO_LONGER_ACTIVE`. Two additions
+from the gate: self-drafted messages become a decision with the reason
+`user_draft`, and a portal connection with the wrong browser provider stops with
+`provider_mismatch` instead of a raw patch.
 
-Im Shell-Frontend sind `MandatePanel`, `SearchControlSettings` und
-`mandatePolicy` gelöscht; „Meine Suche“ bekommt „Schick mich los“, Pause und
-Weiter, der Scout-Bildschirm aktiviert über `savedNeeds.activate`. Die Tests
-für Mandate sind ersetzt: der Orchestrator-Test arbeitet mit aktiven
-Suchaufträgen und gespeicherten Regeln, die übrigen Suiten säen keine
-Mandatszeile mehr und schalten stattdessen die Regeln um. Nichts ist
-committet oder deployt.
+In the shell frontend `MandatePanel`, `SearchControlSettings` and
+`mandatePolicy` are deleted; "Meine Suche" (my search) gets "Schick mich los"
+(send me off), pause and resume, and the Scout screen activates through
+`savedNeeds.activate`. The mandate tests are replaced: the orchestrator test
+works with active search briefs and stored rules, and the remaining suites no
+longer seed a mandate row but toggle the rules instead. Nothing is committed or
+deployed.
 
 Deployed 2026-09-14 evening from branch autopilot-policy: production tables
 searchMandates, opportunities and actionRequests (five, three and one row of
@@ -1465,7 +1465,7 @@ Scout and replies surfaced only through the hourly Firecrawl poll. The Scout's
 production webhook is now created by agentmailComponent.bootstrapAccountWebhook
 (pod-scoped, secret stored in the deployment), the controlled portal is polled
 every five minutes as a fallback, the inbox sync retries the first Interact call,
-and the Scout surface shows a Zwischenstand card until an offer is ready.
+and the Scout surface shows an interim-state card until an offer is ready.
 
 Webhook chain proven the same evening: provider reply in the portal at 20:04,
 AgentMail event on the Scout's production webhook at 20:04:25, mailbox message
@@ -1473,275 +1473,283 @@ stored. The hint that turns that mail into an immediate inbox sync rejected it
 because AgentMail appends a plain-text footer to the portal template; the hint
 now strips that footer. The replayed hint scheduled the sync, the reply was
 imported and assessed within about ninety seconds. The Scout then chose
-ask_musician (Stuttgart-West statt Mitte? Dienstag oder Mittwoch?), which today
-reaches nobody: no chat question, no decision. That is the gap candidate B
-(Entscheidung im Chat) closes; it is the next piece of work.
+ask_musician (Stuttgart-West instead of Mitte? Tuesday or Wednesday?), which
+today reaches nobody: no chat question, no decision. That is the gap candidate B
+(decisions in the chat) closes; it is the next piece of work.
 
-### 2026-09-14 — Entscheidung im Chat (Kandidat B): Vertrag und Bau
+### 2026-09-14 — Decisions in the chat (candidate B): contract and build
 
-Ausgangslage: die Freigabeprüfung liefert `ask_user`, die Anbieter-Einschätzung
-liefert `ask_musician`, die Registrierung meldet `humanRequired`, und ein fertiges
-Angebot wartet in einer Benachrichtigung. Keiner dieser Punkte erreicht den
-Musiker im Scout-Chat; die Konversation mit dem Demo-Vermieter steht seit
-Revision 4 bei einer Rückfrage (Stuttgart-West statt Mitte? Dienstag oder
-Mittwoch?), die niemand sieht.
+Starting point: the gate (release check) returns `ask_user`, the provider
+assessment returns `ask_musician`, registration reports `humanRequired`, and a
+finished offer waits in a notification. None of these reach the musician in the
+Scout chat; the conversation with the demo landlord has been stuck since
+revision 4 on a follow-up question (Stuttgart-West instead of Mitte? Tuesday or
+Wednesday?) that nobody sees.
 
-Vertrag nach zwei Grilling-Runden mit dem Maintainer: neue Tabelle `decisions`
-(Besitzer, Suchauftrag, Konversation, Art `scout_question` | `review_message` |
-`private_data` | `binding_content` | `unsupported_claims` | `safety_unavailable` |
-`offer_ready` | `human_step`, Status open/answered/superseded, Frage, Detail,
-Optionen, Verweise auf Anfrage/Angebot/Lauf, Antwort). Genau eine offene
-Entscheidung pro Konversation; eine neue ersetzt die alte. Gehoben wird sie in
-`recordOutcome` (ask_user), in `recordAssessment` (ask_musician und ready) und
-bei `humanRequired` der Registrierung. Bei `ask_musician` formuliert der Scout
-die Frage in einer eigenen Modellrunde im Chat-Thread des Musikers und
-speichert sie über ein Werkzeug; die Benachrichtigungszeile dafür entfällt.
+Contract after two grilling rounds with the maintainer: a new `decisions` table
+(owner, search brief, conversation, kind `scout_question` | `review_message` |
+`private_data` | `binding_content` | `unsupported_claims` |
+`safety_unavailable` | `offer_ready` | `human_step`, status
+open/answered/superseded, question, detail, options, references to
+request/offer/run, answer). Exactly one open
+decision per conversation; a new one supersedes the old one. It is raised in
+`recordOutcome` (ask_user), in `recordAssessment` (ask_musician and ready) and
+on `humanRequired` from registration. For `ask_musician` the Scout formulates
+the question in its own model round inside the musician's chat thread and
+stores it through a tool; the notification line for that is dropped.
 
-Antwortwege: Karte im Scout-Chat mit Buttons plus Freitext. „Ja“ genehmigt die
-exakte Nachricht und sendet sofort; „Nein“ lehnt ab und der Scout fragt, was
-anders sein soll; eigener Text wird als `humanDraft`-Anfrage durch die
-Freigabeprüfung geschickt, die ihn als vom Nutzer freigegeben behandelt.
-Antworten auf eine Scout-Frage werden als vertrauenswürdige Musiker-Aussage in
-einem neuen `providerTurns`-Eintrag `musician_input` festgehalten, die
-Einschätzung läuft erneut, die nächste Anbieter-Nachricht folgt. Text-Antworten
-laufen zusätzlich als Chat-Runde mit den bestehenden Merk- und Suchwerkzeugen,
-damit Fakten in Gedächtnis und Suchauftrag landen. Chat und Voice bekommen die
-Werkzeuge `answerDecision` und `replyToProvider`. Die Scout-Bühne zeigt „Hier
-brauche ich kurz deine Hilfe.“ mit der Frage als Untertitel und öffnet den
-Chat; das Aktivitäts-Panel wird zur reinen Historie ohne Freigabe-Buttons.
+Answer paths: a card in the Scout chat with buttons plus free text. "Yes"
+approves the exact message and sends it immediately; "No" rejects it and the
+Scout asks what should be different; own text is sent through the gate as a
+`humanDraft` request, which treats it as approved by the user. Answers to a
+Scout question are recorded as a trusted musician statement in a new
+`providerTurns` entry `musician_input`, the assessment runs again, and the next
+provider message follows. Text answers additionally run as a chat round with
+the existing memory and search tools, so facts land in memory and in the search
+brief. Chat and voice gain the tools `answerDecision` and `replyToProvider`. The
+Scout stage shows "Hier brauche ich kurz deine Hilfe." (I need your help for a
+moment) with the question as a subtitle and opens the chat; the activity panel
+becomes pure history without approval buttons.
 
-Bau: Workflow mit vier Schritten (Backend, Prüfung, Frontend, Prüfung) auf
-Branch autopilot-policy, gestartet 2026-09-14 gegen 18:20Z. Ergebnis und
-Live-Prüfung an der wartenden Produktionskonversation folgen unten.
+Build: a workflow with four steps (backend, check, frontend, check) on branch
+autopilot-policy, started 2026-09-14 around 18:20Z. Result and live check
+against the waiting production conversation follow below.
 
-Ergebnis (2026-09-14, Commit 2cfe436): der Workflow hat alle vier Schritte
-abgeschlossen. Backend: Tabelle `decisions` mit drei Indizes, `convex/decisions.ts`
-und `convex/lib/decisions.ts`, Hebepunkte in `recordOutcome`, `recordAssessment`,
-`markAgentOnboardingState`, `attachProviderRun` und `finishRun`; `providerTurns`
-kennt `musician_input`; Anfragen tragen `humanDraft`; die Freigabeprüfung wertet
-`userApproved` jetzt in beiden Phasen (submit und claim), sonst bliebe ein
-diktierter Text bei `prepareClaim` im Sicherheits-Wartezustand hängen. Frontend:
-`DecisionCard` als letztes Element im Scout-Chat, Bühne „Hier brauche ich kurz
-deine Hilfe.“ mit der Frage als Status, Chat öffnet sich automatisch ohne
-Voice-Session; `ActionApprovalSheet` gelöscht, das Aktivitäts-Panel ist reine
-Historie. Prüfung: Typecheck, ESLint auf allen geänderten Dateien und die volle
-Suite grün (139 Dateien, 979 Tests, 1 übersprungen). Bekannte Lücken: eine
-fehlgeschlagene Antwort zeigt im Chat den generischen Sendefehler; ohne
-zugängliche Angebotszeile degradiert „Angebot prüfen“ zu einem Link in die
-Nachrichten; bei einer Suche im Entwurf trägt die blockierte Bühne noch den
-„Scout unterwegs“-Punkt. Nicht deployt; der Maintainer prüft später selbst im
-Portal, danach gemeinsam mit der Inbox ausrollen.
+Result (2026-09-14, commit 2cfe436): the workflow completed all four steps.
+Backend: the `decisions` table with three indexes, `convex/decisions.ts` and
+`convex/lib/decisions.ts`, raise points in `recordOutcome`, `recordAssessment`,
+`markAgentOnboardingState`, `attachProviderRun` and `finishRun`; `providerTurns`
+knows `musician_input`; requests carry `humanDraft`; the gate now evaluates
+`userApproved` in both phases (submit and claim), otherwise a dictated text
+would hang in the safety wait state at `prepareClaim`. Frontend: `DecisionCard`
+as the last element in the Scout chat, the stage showing "Hier brauche ich kurz
+deine Hilfe." with the question as its status, the chat opening automatically
+without a voice session; `ActionApprovalSheet` deleted, the activity panel is
+pure history. Checks: typecheck, ESLint on all changed files and the full suite
+green (139 files, 979 tests, 1 skipped). Known gaps: a failed answer shows the
+generic send error in the chat; without an accessible offer row "Angebot
+prüfen" (review offer) degrades to a link into Messages; for a search still in
+draft the blocked stage still carries the "Scout unterwegs" (Scout on its way)
+item. Not deployed; the maintainer will check in the portal later, then roll it
+out together with the inbox.
 
-### 2026-09-14 — Nachrichten (Kandidat C): Vertrag und Bau
+### 2026-09-14 — Messages (Nachrichten, candidate C): contract and build
 
-Ausgangslage: `/app/inbox` ist die alte Dreispalten-Seite auf der Legacy-Shell
-(englische Texte, kein Composer, Handoff-Knopf ohne Nutzer, Verifizierungs-
-Mails des Scout-Postfachs, aus Anfragen synthetisierte Webform-Threads). Der
-Maintainer will die Nachrichten als eigenen Menüpunkt, nicht als Reiter der
-Einstellungen, aber im selben Panel-Stil: Unterhaltungen links, Verlauf rechts,
-eigene Nachrichten möglich.
+Starting point: `/app/inbox` is the old three-pane page on the legacy shell
+(English copy, no composer, a handoff button with no user, verification mails
+from the Scout mailbox, web-form threads synthesised from requests). The
+maintainer wants Messages as its own menu item, not as a tab of the settings,
+but in the same panel style: conversations on the left, the thread on the
+right, own messages possible.
 
-Vertrag: Route `/app/inbox/:conversationId?` mit `LiveInboxPage` im gleichen
-Chrome wie die Einstellungen (`PanelDialog`, Brotkrume „Nachrichten“, „Zurück
-zum Scout“). Die Nav-Zeile von `PanelDialog` bekommt ein optionales `meta`
-(Avatar, Vorschau, Zeit, Status, Punkt) und rendert damit zweizeilige
-Unterhaltungszeilen in beiden Platzierungen (Seitenleiste und Sheet unter 900
-px). Rechts der Verlauf mit dem Vokabular des Scout-Chats: Anbieter links,
-„Dein Scout“ und „Du“ rechts, Antworten an den Scout rechts als „Du an deinen
-Scout“, Einschätzungen als eingeklappte Marker-Zeilen, offene Entscheidungen
-als dieselbe `DecisionCard` wie im Scout-Chat, wartende Nachrichten als Blase
-mit Statuszeile (wird gesendet, wartet auf Freigabe, blockiert mit Grund). Bei
-fertigem Angebot steht die bestehende Angebotskarte samt Annahme oben. Der
-Composer aus dem Scout-Chat wird als `ChatComposer` herausgelöst und in beiden
-Flächen genutzt; er ist gesperrt, während der Scout auswertet, die Unterhaltung
-beendet ist oder der Kanal nicht bereit ist.
+Contract: route `/app/inbox/:conversationId?` with `LiveInboxPage` in the same
+chrome as the settings (`PanelDialog`, breadcrumb "Nachrichten", "Zurück zum
+Scout" = back to the Scout). The nav row of `PanelDialog` gains an optional
+`meta` (avatar, preview, time, status, dot) and uses it to render two-line
+conversation rows in both placements (sidebar and sheet below 900 px). On the
+right the thread with the vocabulary of the Scout chat: provider on the left,
+"Dein Scout" (your Scout) and "Du" (you) on the right, answers to the Scout on
+the right as "Du an deinen Scout" (you to your Scout), assessments as collapsed
+marker lines, open decisions as the same `DecisionCard` as in the Scout chat,
+pending messages as a bubble with a status line (sending, waiting for approval,
+blocked with a reason). When an offer is ready the existing offer card
+including its acceptance sits at the top. The composer from the Scout chat is
+extracted as `ChatComposer` and used on both surfaces; it is locked while the
+Scout is assessing, when the conversation has ended or when the channel is not
+ready.
 
-Backend: neues tiefes Modul `convex/conversations.ts`, das Mail- und
-Portal-Kanal hinter einer Schnittstelle versteckt: `listMine` (Titel aus der
-Anzeige, Vorschau der neuesten Nachricht, ungelesen, offene Entscheidung,
-wartende Anfrage), `getMine` (chronologische Einträge: Anbieter-Nachricht,
-gesendete Nachricht mit Urheber über `actionExecutions`, wartende Anfrage mit
-Gate-Text, Scout-Notiz, Musiker-Antwort, Entscheidung; Composer-Zustand),
-`reply` (läuft bei offener Nachricht-Entscheidung über `answerDecision` mit
-eigenem Text, sonst über `stageCustomReplyForOwner`; behauptet nie „gesendet“)
-und `markRead`. Schema: `providerConversations.lastReadAt` und ein Index auf
+Backend: a new deep module `convex/conversations.ts` that hides the mail and
+portal channel behind one interface: `listMine` (title from the listing,
+preview of the newest message, unread, open decision, pending request),
+`getMine` (chronological entries: provider message, sent message with its
+author through `actionExecutions`, pending request with gate text, Scout note,
+musician answer, decision; composer state), `reply` (with an open message
+decision it runs through `answerDecision` with own text, otherwise through
+`stageCustomReplyForOwner`; it never claims "sent") and `markRead`. Schema:
+`providerConversations.lastReadAt` and an index on
 `actionRequests.providerConversationId`.
 
-Bewusst weggelassen: Verifizierungs-Mails des Scout-Postfachs (die Registrierung
-liest sie serverseitig und hebt sonst eine `human_step`-Entscheidung), der
-Handoff-Fluss (halb defekt, kein anderer Nutzer; die Backend-Funktionen
-bleiben), Webform-Pseudo-Threads. Die alte Seite und ihre vier Nur-dort-
-Komponenten werden mit Tests gelöscht. Bau als Workflow in vier Schritten auf
-autopilot-policy, gestartet 2026-09-14 gegen 19:40Z; Ergebnis folgt unten.
+Deliberately left out: verification mails from the Scout mailbox (registration
+reads them server-side and otherwise raises a `human_step` decision), the
+handoff flow (half broken, no other user; the backend functions stay),
+web-form pseudo threads. The old page and its four only-there components are
+deleted together with their tests. Built as a workflow in four steps on
+autopilot-policy, started 2026-09-14 around 19:40Z; the result follows below.
 
-Ergebnis (2026-09-14): der Workflow hat alle vier Schritte abgeschlossen.
-Backend: `convex/conversations.ts` mit `listMine`, `getMine`, `reply`, `markRead`;
-`replyChannelReady` ist aus `draftReplyRequest` als reine Vorbedingung
-herausgelöst und wird von beiden genutzt; Validatoren werden aus dem Schema
-abgeleitet statt neu deklariert; zehn Integrationstests. Frontend:
-`LiveInboxPage` unter `/app/inbox/:conversationId?`, `PanelDialog`-Zeilen mit
-`meta` in beiden Platzierungen, `ConversationThread` mit dem Vokabular des
-Scout-Chats, `ChatComposer` aus dem Scout-Chat herausgelöst (dessen Tests
-unverändert grün), Copy-Namespace `liveInbox`, `formatMessageStamp` mit Test,
-Angebotskarte ohne eigenen Nachrichten-Link in der Inbox. Alte Seite, vier
-Nur-dort-Komponenten, deren Tests und die toten Inbox-Selektoren in `app.css`
-und `design-system.css` sind gelöscht. Nachprüfung durch den Maintainer-Agenten:
-`getMine` las die ältesten statt der neuesten hundert Nachrichten (kein
-`order("desc")`), die Liste war nicht nach letzter Aktivität sortiert, ein
-diktierter Text verlor über den Entscheidungspfad seine Absätze, und die
-Fehlerkarte des Composers kannte die Codes dieses Pfads nicht; alles behoben.
-Prüfung danach: Typecheck, ESLint, volle Suite (141 Dateien, 1000 Tests, 1
-übersprungen) und Vite-Build grün. Offen und notiert: die Angebotskarte holt die
-Annahme-Felder über eine zweite Listen-Query; `markRead` läuft pro eingehender
-Nachricht ohne Drosselung; `docs/UI_PORT/DATA_MAP.md` und
-`docs/SCAFFOLD_PORT_PLAN.md` beschreiben noch die alte Seite; verwaiste
-Nachbar-Selektoren in `app.css` (`.pane`, `.convo`, `.rs-handoff-sheet` u. a.)
-warten auf einen Sweep; `api.opportunities.createHandoff/updateStatus/listMine`
-haben keinen UI-Aufrufer mehr.
+Result (2026-09-14): the workflow completed all four steps. Backend:
+`convex/conversations.ts` with `listMine`, `getMine`, `reply`, `markRead`;
+`replyChannelReady` is extracted from `draftReplyRequest` as a pure
+precondition and used by both; validators are derived from the schema instead
+of declared again; ten integration tests. Frontend: `LiveInboxPage` under
+`/app/inbox/:conversationId?`, `PanelDialog` rows with `meta` in both
+placements, `ConversationThread` with the vocabulary of the Scout chat,
+`ChatComposer` extracted from the Scout chat (whose tests stay green
+unchanged), copy namespace `liveInbox`, `formatMessageStamp` with a test, and
+the offer card without its own Messages link inside the inbox. The old page,
+four only-there components, their tests and the dead inbox selectors in
+`app.css` and `design-system.css` are deleted. Re-check by the maintainer
+agent: `getMine` read the oldest instead of the newest hundred messages (no
+`order("desc")`), the list was not sorted by last activity, a dictated text
+lost its paragraphs on the decision path, and the composer's error card did not
+know the codes of that path; all fixed. Checks afterwards: typecheck, ESLint,
+the full suite (141 files, 1000 tests, 1 skipped) and the Vite build green.
+Open and noted: the offer card fetches the acceptance fields through a second
+list query; `markRead` runs per incoming message without throttling;
+`docs/UI_PORT/DATA_MAP.md` and `docs/SCAFFOLD_PORT_PLAN.md` still describe the
+old page; orphaned neighbouring selectors in `app.css` (`.pane`, `.convo`,
+`.rs-handoff-sheet` among others) are waiting for a sweep;
+`api.opportunities.createHandoff/updateStatus/listMine` have no UI caller any
+more.
 
-Erster Blick des Maintainers auf Prod (22:10): die Scout-Nachrichten fehlten
-scheinbar und die Anbieter-Blasen liefen rechts aus dem Panel. Ursache, mit den
-echten Prod-Daten in einer lokalen Playwright-Testseite reproduziert: der
-`SidebarProvider` ist das Grid-Item des Dialogs; ohne `min-w-0` wächst die
-implizite Spalte auf die Länge einer nicht umbrechbaren Zeile, und die
-eingeklappte Scout-Notiz war mit `truncate` genau so eine Zeile (600 Zeichen).
-Das ganze Panel wurde 3900 px breit, alles Rechtsbündige lag außerhalb des
-Sichtfelds. Behoben mit `min-w-0` am Grid-Item und `line-clamp-1` statt
-`truncate` an der Notiz (Commit c0011a0); Frontend aus einem sauberen Worktree
-neu gebaut und auf Prod und Dev hochgeladen, weil der Arbeitsbaum zu dem
-Zeitpunkt die halbfertigen Änderungen von Kandidat K enthielt.
+The maintainer's first look at production (22:10): the Scout messages appeared
+to be missing and the provider bubbles ran off the right edge of the panel.
+Cause, reproduced with the real production data in a local Playwright test
+page: the `SidebarProvider` is the grid item of the dialog; without `min-w-0`
+the implicit column grows to the length of a non-wrapping line, and the
+collapsed Scout note with `truncate` was exactly such a line (600 characters).
+The whole panel became 3900 px wide and everything right-aligned sat outside
+the viewport. Fixed with `min-w-0` on the grid item and `line-clamp-1` instead
+of `truncate` on the note (commit c0011a0); the frontend was rebuilt from a
+clean worktree and uploaded to production and dev, because the working tree at
+that point contained the half-finished changes of candidate K.
 
-### 2026-09-14 — Scout-Chat (Kandidat K): Streaming und ein Blasen-System
+### 2026-09-14 — Scout chat (candidate K): streaming and one bubble system
 
-Befund: der Live-Chat antwortet über `generateText`, die Antwort erscheint erst
-nach der ganzen Runde; der Client ruft eine Action und wartet, die eigene
-Nachricht steht erst nach dem Speichern im Verlauf, „Nachricht wird gesendet“
-ist ein lokales Flag; `scout.listMessages` nutzt `listUIMessages` ohne
-`syncStreams`, der Client `usePaginatedQuery` statt `useUIMessages`. Daneben
-zwei Blasen-Systeme (`ChatBubble` aus dem Design-Kit in Bühnen, Mitschrift,
-Voice, Landing; `Message`/`Bubble`/`Marker` von shadcn im Scout-Chat und der
-Entscheidungs-Karte) und zwei Composer.
+Finding: the live chat answers through `generateText`, so the reply only
+appears after the whole round; the client calls an action and waits, the user's
+own message only lands in the history after it is saved, and "Nachricht wird
+gesendet" (message is being sent) is a local flag; `scout.listMessages` uses
+`listUIMessages` without `syncStreams`, and the client uses `usePaginatedQuery`
+instead of `useUIMessages`. Alongside that, two bubble systems (`ChatBubble`
+from the design kit in stages, transcript, voice and landing; shadcn's
+`Message`/`Bubble`/`Marker` in the Scout chat and the decision card) and two
+composers.
 
-Vertrag: `scout.send` wird eine Mutation, die die Nachricht des Musikers per
-`saveMessage` speichert und `internal.scout.reply` plant; die Action baut die
-Werkzeuge wie heute und ruft `streamText` mit `saveStreamDeltas` (wortweise,
-gedrosselt). `scout.listMessages` nimmt `streamArgs` an und liefert
-`syncStreams` mit; der Client nutzt `useUIMessages` mit `stream: true`,
-`useSmoothText` für laufende Antworten und `optimisticallySendMessage`, damit
-die eigene Nachricht sofort steht. Zustände kommen aus der letzten
-Scout-Nachricht: `pending` ohne Text zeigt „Dein Scout denkt nach …“ als Marker
-mit Schimmer, Tool-Parts zeigen deutsche Marker-Zeilen (Merkt sich etwas,
-Aktualisiert deinen Suchauftrag, Übernimmt deine Entscheidung, Schreibt dem
-Anbieter), `failed` eine Fehlerzeile mit Wiederholen. Die Bühne liest „Ich
-denke kurz nach“ aus demselben Zustand, nicht mehr aus dem Action-Versprechen.
-`ChatBubble` wird gelöscht; Bühnen, Mitschrift, Voice-Chat, Landing und Galerie
-wechseln auf `Message`/`Bubble`. Chat-Flächen nutzen den aus der Inbox
-herausgelösten `ChatComposer`; der Pill-Composer bleibt nur auf der Bühne.
-Voice bleibt unverändert. Start nach Abschluss der Inbox, weil beide den
-Scout-Chat und den Composer anfassen.
+Contract: `scout.send` becomes a mutation that stores the musician's message
+through `saveMessage` and schedules `internal.scout.reply`; the action builds
+the tools as it does today and calls `streamText` with `saveStreamDeltas`
+(word by word, throttled). `scout.listMessages` accepts `streamArgs` and
+returns `syncStreams` with it; the client uses `useUIMessages` with
+`stream: true`, `useSmoothText` for answers in progress and
+`optimisticallySendMessage`, so the user's own message is there immediately.
+States come from the last Scout message: `pending` without text shows "Dein
+Scout denkt nach …" (your Scout is thinking) as a marker with a shimmer, tool
+parts show German marker lines (Merkt sich etwas = remembers something,
+Aktualisiert deinen Suchauftrag = updates your search brief, Übernimmt deine
+Entscheidung = applies your decision, Schreibt dem Anbieter = writes to the
+provider), and `failed` shows an error line with a retry. The stage reads "Ich
+denke kurz nach" (thinking for a moment) from the same state instead of from
+the action's promise. `ChatBubble` is deleted; stages, transcript, voice chat,
+landing and gallery switch to `Message`/`Bubble`. Chat surfaces use the
+`ChatComposer` extracted from the inbox; the pill composer stays on the stage
+only. Voice stays unchanged. Start after the inbox is finished, because both
+touch the Scout chat and the composer.
 
-Ergebnis (2026-09-14, Commit folgt im Log): der Workflow hat Backend, Prüfung,
-zwei parallele Frontend-Schritte und die Endprüfung abgeschlossen. Backend:
-`scout.send` ist eine Mutation (Besitzprüfung über `scoutContexts`, 1 bis 4000
-Zeichen, `saveMessage`, plant `internal.scout.reply`); die Action baut die
-Werkzeuge wie zuvor und streamt über `streamText` mit `saveStreamDeltas`
-(wortweise, 250 ms); `runScoutTurn` behält den `generateText`-Pfad für Anbieter-
-Runden und Entscheidungsfragen. `scout.listMessages` nimmt `streamArgs` an,
-liefert `syncStreams` mit und reduziert Tool-Teile auf Typ, Aufruf-Id und
-Zustand; Ein- und Ausgaben der Werkzeuge verlassen den Server nicht. Ein
-Fehler der Runde markiert die wartende Scout-Nachricht als `failed` (im Agent-
-Quelltext geprüft und getestet). Frontend: `useUIMessages` mit `stream: true`,
-`optimisticallySendMessage`, `useSmoothText` für laufende Antworten,
-Denk-Marker mit Schimmer, deutsche Marker-Zeilen pro Werkzeug während der
-Runde, Fehlerzeile mit „Erneut senden“; das lokale Sende-Flag und die
-Pseudo-Zeile „Nachricht wird gesendet“ sind weg, der Composer blockiert nur das
-Senden, nicht das Tippen. `ChatBubble` ist gelöscht, `ChatTurn` auf
-`Message`/`Bubble` ersetzt es in Bühnen, Mitschrift, Voice-Chat, Landing und
-Galerie; wo beide Systeme abwichen, gewinnt `Bubble` (Scout-Zeile jetzt immer
-mit Blase, 88 Prozent Breite, eine Schriftstufe). Prüfung: Typecheck, ESLint,
-volle Suite (143 Dateien, 1017 Tests, 1 übersprungen) und Build grün.
-Bekannte Punkte: eine Typ-Brücke am Hook, weil die reduzierten Tool-Teile nicht
-strukturell zu `UIMessage` passen; `createdAt` bleibt vorerst als Alias in der
-Seite; `internal.scout.reply` wirft nach dem Protokollieren erneut und erzeugt
-so einen sichtbaren Fehler-Eintrag in den Convex-Logs; die Bühnen zeigen den
-Scout jetzt mit Blase und die Nutzerblase eine Stufe kleiner, das ist eine
-sichtbare Änderung für den Maintainer-Blick.
+Result (2026-09-14, commit 9a0d507): the workflow completed the
+backend, the check, two parallel frontend steps and the final check. Backend:
+`scout.send` is a mutation (ownership check through `scoutContexts`, 1 to 4000
+characters, `saveMessage`, schedules `internal.scout.reply`); the action builds
+the tools as before and streams through `streamText` with `saveStreamDeltas`
+(word by word, 250 ms); `runScoutTurn` keeps the `generateText` path for
+provider rounds and decision questions. `scout.listMessages` accepts
+`streamArgs`, returns `syncStreams` with it and reduces tool parts to type,
+call id and state; tool inputs and outputs never leave the server. An error in
+the round marks the pending Scout message as `failed` (checked in the Agent
+source and tested). Frontend: `useUIMessages` with `stream: true`,
+`optimisticallySendMessage`, `useSmoothText` for answers in progress, a
+thinking marker with a shimmer, German marker lines per tool while the round
+runs, an error line with "Erneut senden" (send again); the local send flag and
+the pseudo row "Nachricht wird gesendet" are gone, and the composer blocks only
+sending, not typing. `ChatBubble` is deleted, `ChatTurn` on `Message`/`Bubble`
+replaces it in stages, transcript, voice chat, landing and gallery; where the
+two systems disagreed, `Bubble` wins (the Scout row now always with a bubble,
+88 percent width, one type step). Checks: typecheck, ESLint, the full suite
+(143 files, 1017 tests, 1 skipped) and the build green. Known points: a type
+bridge at the hook, because the reduced tool parts do not structurally match
+`UIMessage`; `createdAt` stays as an alias in the page for now;
+`internal.scout.reply` rethrows after logging and so produces a visible error
+entry in the Convex logs; the stages now show the Scout with a bubble and the
+user bubble one step smaller, which is a visible change for the maintainer's
+eye.
 
-### 2026-09-14 — Kleine UI-Änderungen nach dem ersten Blick des Maintainers
+### 2026-09-14 — Small UI changes after the maintainer's first look
 
-Nach A, B, C und K wechselt der Modus: kleine, direkte Änderungen ohne
-Review-Runden. Vier Entscheidungen per Rückfrage mit ASCII-Vorschau getroffen:
-Bühne in drei festen Spalten (Kandidaten links, Blob und Headline mittig,
-Suchauftrag rechts, unter 1100 px als Sheets), offene Entscheidung als Buttons
-direkt unter der Frage auf der Bühne (Karte im Chat bleibt), Quellen-Tabelle im
-Betreiber-Panel mit lebendem Schalter und „Erweiterte Ansicht“-Link zur alten
-Seite, Kandidaten-Zeile mit Titel, Ort, Zustand und Zeit mit Klick in die
-Nachrichten. Dazu die Integrationen in der Reihenfolge Convex, AgentMail,
-OpenAI, Firecrawl als vier Kacheln, Browserbase nur noch als ausgegraute
-Alternative in einem Engine-Menü der Firecrawl-Kachel. Umsetzung durch zwei
-parallele Agenten (Betreiber, Bühne); Ergebnis folgt.
+After A, B, C and K the mode changes: small, direct changes without review
+rounds. Four decisions taken by asking back with an ASCII preview: the stage in
+three fixed columns (candidates on the left, blob and headline in the middle,
+search brief on the right, as sheets below 1100 px), an open decision as
+buttons directly under the question on the stage (the card in the chat stays),
+the sources table in the operator panel with a live toggle and an "Erweiterte
+Ansicht" (advanced view) link to the old page, and a candidate row with title,
+location, state and time that clicks through into Messages. On top of that the
+integrations in the order Convex, AgentMail, OpenAI, Firecrawl as four tiles,
+with Browserbase only as a greyed-out alternative in an engine menu of the
+Firecrawl tile. Implemented by two parallel agents (operator, stage); the
+result follows.
 
-Ergebnis: Betreiber (Commit c8534f2): vier Kacheln in der Reihenfolge Convex AI
-Gateway, AgentMail, OpenAI direkt, Firecrawl; Browserbase nur noch als
-ausgegraute Alternative in einem Engine-Menü der Firecrawl-Kachel, ohne
-eigene Bereitschaftsanzeige; die Quellen-Seite ist die Tabelle des Mocks mit
-Anbindungs-Text aus Status und Gesundheit, Zeitstempel über
-`formatMessageStamp`, Schalter auf `sourceRegistry.setSourceActive`, Knopf
-„Jetzt Quellen prüfen“ auf `demoSourceChecks.requestNow` und Link „Erweiterte
-Ansicht“ zur alten Seite. Bühne (Commit folgt im Log): `decisionSlot`,
-`asideSlot`, `railSlot` an der Live-Bühne; Entscheidungs-Buttons ohne Rahmen
-unter der Frage, kein automatisches Aufklappen des Chats mehr; drei Spalten ab
-1100 px (Kandidaten 260 px, Mitte, Suchauftrag 300 px), darunter zwei Sheets;
-`CandidateList` aus `conversations.listMine` gefiltert auf den aktiven
-Suchauftrag, Klick öffnet die Unterhaltung. Volle Suite 1031 Tests grün, Build
-grün, Frontend auf Prod und Dev.
+Result: operator (commit c8534f2): four tiles in the order Convex AI Gateway,
+AgentMail, OpenAI direct, Firecrawl; Browserbase only as a greyed-out
+alternative in an engine menu of the Firecrawl tile, without its own readiness
+indicator; the sources page is the table from the mock with connection copy
+from status and health, timestamps through `formatMessageStamp`, the toggle on
+`sourceRegistry.setSourceActive`, the button "Jetzt Quellen prüfen" (check
+sources now) on `demoSourceChecks.requestNow` and the link "Erweiterte Ansicht"
+to the old page. Stage (commit 44fabad): `decisionSlot`, `asideSlot`
+and `railSlot` on the live stage; decision buttons without a frame under the
+question, no automatic opening of the chat any more; three columns from 1100 px
+(candidates 260 px, middle, search brief 300 px), two sheets below that;
+`CandidateList` from `conversations.listMine` filtered to the active search
+brief, a click opens the conversation. Full suite 1031 tests green, build
+green, frontend on production and dev.
 
-Dazwischen der Befund aus der laufenden Demo: `present_offer` mit nur einem
-internen offenen Punkt (Dienstag oder Mittwoch) blieb als Zwischenstand
-liegen, weil nur `ask_musician` und `ready` eine Entscheidung heben. Die
-Bereitschaftsprüfung trennt jetzt Anbieter-Blocker von eigenen offenen
-Punkten; `present_offer` ohne Anbieter-Blocker hebt eine Scout-Frage, der
-Prompt verlangt in dem Fall `ask_musician` (Commit 2db65d9, Backend auf Prod
-und Dev). Die Frage zur laufenden Konversation wurde von Hand nachgezogen.
+In between, the finding from the running demo: `present_offer` with only one
+internal open point (Tuesday or Wednesday) was parked as an interim state,
+because only `ask_musician` and `ready` raise a decision. The readiness check
+now separates provider-side blockers from the model's own open points;
+`present_offer` without a provider blocker raises a Scout question, and the
+prompt requires `ask_musician` in that case (commit 2db65d9, backend on
+production and dev). The question for the running conversation was pulled
+through by hand.
 
-### 2026-09-15 — Firecrawl-Härtung: Plan und Bau
+### 2026-09-15 — Firecrawl hardening: plan and build
 
-Nach der Zusage-Nachricht (nach zwei Fehlversuchen durchgegangen) wollte der
-Maintainer keinen weiteren Punkt-Fix, sondern einen Plan, der den Convex-Pfad
-auf die Form des lokalen Beweises bringt. Drei parallele Analysen (lokale
-Skripte, Convex-Pfad, Nahtstellen zu Browserbase) ergaben: 16 bis 46
-Roundtrips pro Nachricht statt 7 lokal, dreifach plattgedrückte Fehler, eine
-Dekodierung, die Firecrawls `result`-Feld vor unserer eigenen Markierung
-bevorzugt (der Fix 0abe076 vom Abend ist dadurch in Produktion wirkungslos),
-eine selbstgemachte 409-Klasse durch die zweite Beweis-Session, ein Budget für
-alles. Plan in `docs/FIRECRAWL_HARDENING_PLAN.md` (Commit fccd2da), Scheiben
-S0 bis S7, Browserbase-Schutzzaun mit Datei- und Testliste. Entscheidungen per
-Rückfrage: alles in einem Zug, `saveChanges:false` hinter Schalter, alter Pfad
-löschen, Poll ganz aus. Bau als sechsstufiger Workflow (drei Bau-, drei
-Prüfschritte, jeweils mit `git diff --stat` über die geschützten Dateien).
+After the acceptance message (which went through after two failed attempts),
+the maintainer did not want another point fix but a plan that brings the Convex
+path into the shape of the local proof. Three parallel analyses (local scripts,
+the Convex path, the seams to Browserbase) found: 16 to 46 round trips per
+message instead of 7 locally, errors flattened three times over, a decoding
+that prefers Firecrawl's `result` field over our own marker (which makes the
+evening's fix 0abe076 ineffective in production), a self-made 409 class caused
+by the second proof session, and one budget for everything. The plan is in
+`docs/FIRECRAWL_HARDENING_PLAN.md` (commit fccd2da), slices S0 to S7, with a
+Browserbase guard fence including a file and test list. Decisions taken by
+asking back: everything in one go, `saveChanges:false` behind a switch, delete
+the old path, turn the poll off entirely. Built as a six-stage workflow (three
+build steps, three check steps, each with `git diff --stat` over the protected
+files).
 
-Ergebnis (2026-09-15, 01:55): alle sieben Scheiben gebaut, sechs Workflow-
-Schritte durch, geschützte Browserbase- und Treiber-Dateien samt ihrer Tests
-Byte für Byte unverändert (`git diff --stat` leer), die sieben Delegations-
-stellen unangetastet. Eine Nachricht kostet jetzt scrape, vorbereiten, senden,
-stop (vier Roundtrips, vorher 16 bis 46), eine Registrierung scrape, signup,
-verify, stop (vier statt etwa 33, Keepalives separat), der Inbox-Sync bleibt bei
-drei. Die eigene Ergebnis-Markierung wird an der Komponentengrenze zuerst
-gelesen, Firecrawls `result`-Feld ist nur noch Rückfall, und die Form einer
-unerwarteten Antwort wird protokolliert. Sandbox-Fehler kommen in-band mit
-bereinigter Meldung und Seitendiagnose zurück; der Execution-Record trägt den
-inneren Code. Schreiben öffnet das Profil standardmäßig lesend
-(`FIRECRAWL_WRITE_SAVE_CHANGES`), der Beweis läuft im Sende-Programm mit, die
-zweite Beweis-Session und `retryWriteProfileProof` sind gelöscht. Der Poll des
-Demo-Portals ist aus (Intervall 0, `disableAutomaticPolling` für bestehende
-Verbindungen); ein fehlgeschlagener Webhook-Sync darf genau einen Backoff-
-Versuch nehmen. Der Firecrawl-Primitiv-Adapter ist gelöscht, `firecrawlPortal.ts`
-importiert den Treiber nicht mehr; ein Paritätstest zählt die Roundtrips pro
-Vorgang an der Transportgrenze und prüft die Quittungsfelder gegen das lokale
-Skript. Der Isolationstest musste an zwei Stellen mitziehen (Spione auf die
-Engine statt den Treiber, eine statt zwei Sessions); seine 21 Fälle sind grün.
-Nachgezogen von mir: Fehlergrund nach dem Klick wird protokolliert, zwei
-uhrzeit- und regelabhängige Tests korrigiert. Volle Suite 1083 Tests grün,
-Build grün. Offen bleibt der Live-Nachweis der ersten echten Nachricht ohne
-Schreib-Lock; die erste echte Registrierung ist ebenso zu beobachten, weil der
-Profil-Beweis jetzt die live beobachtete Anmeldung ist.
+Result (2026-09-15, 01:55): all eight slices (S0 to S7) built, six workflow steps through,
+the protected Browserbase and driver files and their tests byte for byte
+unchanged (`git diff --stat` empty), the seven delegation points untouched. A
+message now costs scrape, prepare, send, stop (four round trips, previously 16
+to 46), a registration costs scrape, signup, verify, stop (four instead of
+about 33, keepalives separate), and the inbox sync stays at three. Our own
+result marker is read first at the component boundary, Firecrawl's `result`
+field is only a fallback, and the shape of an unexpected response is logged.
+Sandbox errors come back in-band with a cleaned message and page diagnostics;
+the execution record carries the inner code. Writing opens the profile
+read-only by default (`FIRECRAWL_WRITE_SAVE_CHANGES`), the proof runs inside
+the send program, and the second proof session and `retryWriteProfileProof` are
+deleted. The poll of the demo portal is off (interval 0,
+`disableAutomaticPolling` for existing connections); a failed webhook sync may
+take exactly one backoff attempt. The Firecrawl primitives adapter is deleted
+and `firecrawlPortal.ts` no longer imports the driver; a parity test counts the
+round trips per operation at the transport boundary and checks the receipt
+fields against the local script. The isolation test had to follow in two places
+(spies on the engine instead of the driver, one session instead of two); its 21
+cases are green. Pulled through afterwards: the failure reason after the click
+is logged, and two tests that depend on the time of day and on the rules were
+corrected. Full suite 1083 tests green, build green. Still open is the live
+proof of the first real message without a write lock; the first real
+registration is to be watched as well, because the profile proof is now the
+live observed sign-in.

@@ -2,13 +2,13 @@
 
 ## Latest: Autopilot policy, first production autopilot run, proven webhook chain
 
-The per-search mandate is gone. Each musician has one Handlungsspielraum
-(Autopilot by default, no daily limits) and one Freigabeprüfung decides every
-outgoing action with a persisted outcome. The first production autopilot run
-reached the demo listing without a human step. The AgentMail account had no
-webhook for the Scout deployment; it exists now and a provider reply flows
-webhook, sync and assessment in about ninety seconds. The Scout's own question
-back to the musician (Entscheidung im Chat) is being built.
+The per-search mandate is gone. Each musician has one set of per-user autonomy
+rules (Autopilot by default, no daily limits) and one gate (release check)
+decides every outgoing action with a persisted outcome. The first production
+autopilot run reached the demo listing without a human step. The AgentMail
+account had no webhook for the Scout deployment; it exists now and a provider
+reply flows webhook, sync and assessment in about ninety seconds. The Scout's
+own question back to the musician (decisions in the chat) is being built.
 
 ## Latest: autonomy settings fidelity
 
@@ -28,7 +28,7 @@ read-only. No production rollout or external messages in this verification.
 
 - **Project:** RoomScout
 - **Event:** Convex All Gas Hackathon
-- **What it does:** Indexes public rehearsal-room supply and demand and gives musicians a context-aware text/voice Scout that runs on Autopilot within a per-user Handlungsspielraum, checked by one Freigabeprüfung, with binding commitments left to the musician.
+- **What it does:** Indexes public rehearsal-room supply and demand and gives musicians a context-aware text/voice Scout that runs on Autopilot within per-user autonomy rules, checked by one gate (release check), with binding commitments left to the musician.
 - **Live app:** https://fleet-jackal-83.eu-west-1.convex.site
 - **Repo:** https://github.com/Finchmedia/roomscout
 - **Frontend:** Convex static hosting
@@ -38,7 +38,7 @@ read-only. No production rollout or external messages in this verification.
 - **Auth:** Convex Auth
 - **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-realtime-2.1`
 - **Started:** 2026-08-26T13:55:26Z
-- **Last updated:** 2026-09-14T23:55:41Z
+- **Last updated:** 2026-09-15T00:42:53Z
 
 ## Log
 
@@ -352,13 +352,13 @@ scheduled functions, internal mutations, internal actions
 `convex/integrations/firecrawlPortalRuntime.ts`,
 `convex/components/firecrawlRoomScout/api.ts`).
 
-### 2026-09-14 — 14804cf Autopilot policy: Handlungsspielraum, Freigabeprüfung, production run
+### 2026-09-14 — 14804cf Autopilot policy: per-user autonomy rules, one gate, production run
 
 Groups 4fe7225 through 14804cf on branch autopilot-policy. Replaced the
-per-search mandate with a per-user Handlungsspielraum (`scoutAutonomy`: mode,
-contact, viewings, publishAd, shareProfile, sharePrivate; versioned and hashed)
-and one Freigabeprüfung that returns proceed, wait, ask_user or stop with a
-reason for every outgoing action. The outcome is persisted on the request and a
+per-search mandate with per-user autonomy rules (Handlungsspielraum,
+`scoutAutonomy`: mode, contact, viewings, publishAd, shareProfile,
+sharePrivate; versioned and hashed) and one gate (release check) that returns
+proceed, wait, ask_user or stop with a reason for every outgoing action. The outcome is persisted on the request and a
 single `recordOutcome` writes approvals, audit events and follow-up scheduling.
 Autopilot has no daily limits; only binding commitments stay with the musician
 (ADR 0001 and 0002, glossary in `CONTEXT.md`). The message-safety review
@@ -377,11 +377,11 @@ portal deployments only and none for the Scout's production site. An internal
 action now creates or reuses the pod-scoped account webhook, the notification
 hint tolerates AgentMail's plain-text footer, the inbox sync retries the first
 Interact call, the controlled portal is polled every five minutes as fallback
-and the Scout surface shows a Zwischenstand card until an offer is ready. Chain
+and the Scout surface shows an interim-state card until an offer is ready. Chain
 proven at 18:04Z: provider reply in the portal, webhook event on the Scout
 deployment within 25 seconds, import and assessment within about ninety
 seconds. The assessment then chose ask_musician, which today reaches nobody;
-candidate B (Entscheidung im Chat) closes that gap next. Convex features:
+candidate B (decisions in the chat) closes that gap next. Convex features:
 schema, indexes, mutations, internal actions, scheduled functions, HTTP actions
 (`convex/schema.ts`, `convex/lib/autonomy.ts`, `convex/lib/autonomyGate.ts`,
 `convex/autonomyGate.ts`, `convex/externalActions.ts`,
@@ -389,14 +389,14 @@ schema, indexes, mutations, internal actions, scheduled functions, HTTP actions
 `convex/portalNotifications.ts`, `convex/matches.ts`,
 `src/ui/settings/pages/AutonomyPage.tsx`).
 
-### 2026-09-14 — 2cfe436 Entscheidung im Chat
+### 2026-09-14 — 2cfe436 Decisions in the chat
 
 The Scout's questions to the musician now exist as data instead of dead ends.
-A `decisions` table holds one open Entscheidung per provider conversation
+A `decisions` table holds one open decision per provider conversation
 (message review, private data, binding content, unsupported claims, safety
 unavailable, the Scout's own question, offer ready, portal human step); the
-Freigabeprüfung, the provider assessment and portal registration raise them,
-and a newer one supersedes the older. For ask_musician the Scout formulates the
+gate (release check), the provider assessment and portal registration raise
+them, and a newer one supersedes the older. For ask_musician the Scout formulates the
 question in one model round inside the musician's chat thread and records it
 through a tool. The Scout chat renders the open decision as a card with buttons
 and free text: yes sends the exact message immediately, no rejects and asks what
@@ -412,7 +412,7 @@ functions (`convex/schema.ts`, `convex/decisions.ts`, `convex/lib/decisions.ts`,
 `convex/providerActions.ts`, `convex/scout.ts`, `convex/voice.ts`,
 `src/components/scout/DecisionCard.tsx`, `src/ui/chat/ScoutChat.tsx`).
 
-### 2026-09-14 — 8fc8e2c Nachrichten in the settings panel chrome
+### 2026-09-14 — 8fc8e2c Messages (Nachrichten) in the settings panel chrome
 
 The musician inbox is its own menu item again, rebuilt as a two-column panel
 in the same chrome as the settings: conversation rows on the left with a
@@ -423,8 +423,8 @@ derives its validators from the schema; the thread merges provider messages,
 the Scout's and the musician's sent messages (attributed through the execution
 ledger), pending requests with their gate status, assessment notes, the
 musician's answers and decisions in one chronological list. The musician's own
-reply goes through the same Freigabeprüfung as the Scout's and is never shown
-as sent before the message exists. The legacy three-pane page, its four
+reply goes through the same gate (release check) as the Scout's and is never
+shown as sent before the message exists. The legacy three-pane page, its four
 only-there components and their dead CSS are gone. Full suite green (1000
 tests), Vite build green. Convex features: schema, indexes, queries, mutations,
 realtime queries (`convex/conversations.ts`, `convex/schema.ts`,
@@ -456,17 +456,17 @@ internal actions, queries with stream sync, realtime queries, Agent component
 ### 2026-09-14 — 44fabad Stage in three columns, decisions answered on the stage, operator polish
 
 Groups c8534f2, 2db65d9 and 44fabad. The Scout stage now answers an open
-Entscheidung in place: option buttons under the question, free text through
+decision in place: option buttons under the question, free text through
 the chat, no more auto-opened dialog. From 1100px the working stages show
 three columns: candidate rooms on the left (one row per provider conversation
-with state and time, opening its Nachrichten thread), the Scout in the middle,
+with state and time, opening its Messages thread), the Scout in the middle,
 the compact search brief on the right, both sides as sheets on narrow screens.
 The operator panel lists four integration tiles (Convex AI Gateway, AgentMail,
 OpenAI, Firecrawl) with Browserbase as a greyed alternative in an engine menu,
-and its Quellen page is the design mock's table with a live source toggle and a
+and its sources page is the design mock's table with a live source toggle and a
 manual demo check. The assessment stops parking a complete offer as
-Zwischenstand when only the band's own choice is open: provider-side blockers
-are separated from the model's own open points, and present_offer without a
+an interim state when only the band's own choice is open: provider-side
+blockers are separated from the model's own open points, and present_offer without a
 provider blocker raises a Scout question. Full suite green (1031 tests). Convex
 features: realtime queries, mutations, scheduled functions
 (`convex/lib/providerAssessment.ts`, `convex/providerConversations.ts`,
@@ -495,3 +495,22 @@ mutations (`convex/firecrawlPortal.ts`, `convex/integrations/firecrawlPortalEngi
 `convex/integrations/firecrawlPortalRuntime.ts`, `convex/integrations/firecrawlProgram.ts`,
 `convex/components/firecrawlRoomScout/interact.ts`, `convex/portalConnections.ts`,
 `docs/FIRECRAWL_HARDENING_PLAN.md`).
+
+### 2026-09-15 — 03553ac Chat text stays with the Scout; the portal receipt proves delivery
+
+A live test exposed a real hole: while a decision was open, the Scout chat
+also offered a "dictate to the provider" tool, and the model sent a musician's
+follow-up question straight to the portal as if it were a message for the
+landlord. The chat and voice paths lost that tool entirely; everything typed in
+the Scout chat is addressed to the Scout, and dictating a provider message
+exists only in the Messages composer, where the recipient is explicit. The
+same run showed a delivered acceptance recorded as "unconfirmed" because the
+portal renders bodies without line breaks and the read-back compared exact
+text; the Firecrawl send program now treats the portal's own receipt with a
+fresh message id as the delivery proof, compares the read-back on collapsed
+whitespace and only warns, and an unconfirmed send schedules one inbox sync so
+the observed message reconciles the record. Also written down: the agreed demo
+priorities for the final week (`docs/DEMO_PRIORITIES.md`). Convex features:
+actions, internal mutations, scheduled functions (`convex/scout.ts`,
+`convex/voice.ts`, `convex/scoutCaseCards.ts`,
+`convex/integrations/firecrawlPortalEngine.ts`, `convex/firecrawlPortal.ts`).
