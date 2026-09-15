@@ -3,6 +3,7 @@ import * as React from "react"
 import { useVoiceSession } from "@/components/voice/VoiceSessionContext"
 import { ChatTurn } from "@/ui/chat/ChatTurn"
 import { Icon } from "@/components/ui/icon"
+import { IconButton } from "@/components/ui/icon-button"
 import { ScoutBlob, type ScoutBlobState } from "@/components/ui/scout-blob"
 import { VoiceControl } from "@/components/ui/voice-control"
 import type { VoiceScoutStatus } from "@/hooks/useRealtimeVoiceScout"
@@ -59,6 +60,27 @@ function blobState(status: VoiceScoutStatus): ScoutBlobState {
   return "idle"
 }
 
+interface CallControlProps {
+  active?: boolean
+  children: React.ReactNode
+  compact: boolean
+  label: string
+  onClick: React.MouseEventHandler<HTMLButtonElement>
+  tone?: "accent" | "danger" | "neutral"
+}
+
+function CallControl({ active, children, compact, label, onClick, tone = "neutral" }: CallControlProps) {
+  if (compact) {
+    const variant = tone === "danger" ? "danger" : tone === "accent" && active !== false ? "accent" : "outline"
+    return (
+      <IconButton label={label} onClick={onClick} size={36} variant={variant}>
+        {children}
+      </IconButton>
+    )
+  }
+  return <VoiceControl active={active} label={label} onClick={onClick} tone={tone}>{children}</VoiceControl>
+}
+
 function LiveVoiceChat({
   onEnd,
   onText,
@@ -103,6 +125,15 @@ function LiveVoiceChat({
               ? labels.error
               : labels.status
   )
+  const backendStatusCopy = voice.provider === "live"
+    ? voice.backendState === "outcome_unknown"
+      ? t("liveScout.voice.outcomeUnknown")
+      : voice.pendingInputCount > 0
+        ? t("liveScout.voice.queued")
+        : voice.backendState === "processing"
+          ? t("liveScout.voice.updating")
+          : undefined
+    : undefined
 
   const end = () => {
     voice.disconnect()
@@ -117,34 +148,28 @@ function LiveVoiceChat({
       className={cn(
         "flex min-h-0 w-full flex-col rounded-card border border-rs-border-card bg-rs-surface-card",
         compact
-          ? "items-stretch justify-start gap-[var(--space-5)] px-[var(--space-5)] py-[var(--space-5)] text-left"
+          ? "max-h-[220px] items-stretch justify-start gap-[var(--space-3)] overflow-hidden px-[var(--space-4)] py-[var(--space-4)] text-left"
           : "items-center justify-center gap-[var(--space-11)] px-[var(--space-7)] py-[var(--space-13)] text-center",
         className
       )}
     >
       {!hideBlob && !compact ? <ScoutBlob state={blobState(voice.status)} size={160} /> : null}
 
-      <div className={cn("max-w-[38rem]", compact && "w-full max-w-none")}>
-        <h2 className={cn("font-light text-rs-ink", compact ? "text-[length:var(--text-body-lg-size)]" : "text-[length:var(--text-card-title-size)]")}>{title ?? t("liveScout.voice.title")}</h2>
+      <div className={cn("max-w-[38rem]", compact && "flex w-full min-w-0 items-center justify-between gap-[var(--space-4)]")}>
+        <h2 className={cn("shrink-0 font-light text-rs-ink", compact ? "text-[length:var(--text-body-size)]" : "text-[length:var(--text-card-title-size)]")}>{title ?? t("liveScout.voice.title")}</h2>
         <p
           role={voice.error ? "alert" : "status"}
           className={cn(
-            compact ? "mt-[var(--space-2)] text-[length:var(--text-caption-size)] text-rs-ink-6" : "mt-[var(--space-4)] text-[length:var(--text-body-sm-size)] text-rs-ink-6",
+            compact ? "min-w-0 truncate text-right text-[length:var(--text-micro-size)] text-rs-ink-6" : "mt-[var(--space-4)] text-[length:var(--text-body-sm-size)] text-rs-ink-6",
             voice.error && "text-rs-red-text"
           )}
         >
-          {statusCopy}{voice.muted ? ` · ${t("liveScout.voice.muted")}` : ""}
+          {statusCopy}{voice.muted ? ` · ${t("liveScout.voice.muted")}` : ""}{backendStatusCopy ? ` · ${backendStatusCopy}` : ""}
         </p>
       </div>
 
-      {voice.provider === "live" && (voice.backendState === "processing" || voice.pendingInputCount > 0 || voice.backendState === "outcome_unknown") ? (
-        <p role="status" className="text-sm text-rs-ink-4">
-          {voice.backendState === "outcome_unknown" ? t("liveScout.voice.outcomeUnknown") : voice.pendingInputCount > 0 ? t("liveScout.voice.queued") : t("liveScout.voice.updating")}
-        </p>
-      ) : null}
-
       {voice.provider === "live" && voice.backendState === "failed" ? (
-        <div role="alert" className="flex items-center gap-3 text-sm text-rs-red-text">
+        <div role="alert" className={cn("flex items-center gap-3 text-sm text-rs-red-text", compact && "text-[length:var(--text-micro-size)]")}>
           <span>{t("liveScout.failed")}</span>
           <button type="button" className="underline underline-offset-4" onClick={() => voice.retryFailedInput()}>{t("liveScout.retry")}</button>
         </div>
@@ -157,7 +182,7 @@ function LiveVoiceChat({
           className={cn(
             "flex w-full flex-col overflow-y-auto text-left",
             compact
-              ? "max-h-[8.5rem] max-w-none gap-[var(--space-3)] rounded-control bg-rs-surface-inset px-[var(--space-4)] py-[var(--space-3)]"
+              ? "min-h-0 max-h-[5rem] flex-1 max-w-none gap-[var(--space-2)] rounded-control bg-rs-surface-inset px-[var(--space-3)] py-[var(--space-2)]"
               : "max-h-[32vh] max-w-[42rem] gap-[var(--space-5)]"
           )}
         >
@@ -173,48 +198,62 @@ function LiveVoiceChat({
         </div>
       )}
 
-      <div aria-label={labels.controls} role="group" className={cn("flex flex-wrap items-start justify-center", compact ? "gap-[var(--space-5)]" : "gap-[var(--space-9)]")}>
+      <div
+        aria-label={labels.controls}
+        role="group"
+        data-voice-controls-density={compact ? "compact" : "full"}
+        className={cn("flex items-start justify-center", compact ? "min-h-9 flex-nowrap items-center gap-[var(--space-3)]" : "flex-wrap gap-[var(--space-9)]")}
+      >
         {!active && !busy && (
-          <VoiceControl
+          <CallControl
             tone="accent"
-            density={compact ? "narrow" : "wide"}
+            compact={compact}
             label={voice.status === "error" || voice.status === "disconnected" ? labels.reconnect : labels.connect}
             onClick={() => void voice.connect()}
           >
-            <Icon name={voice.status === "idle" ? "mic" : "restart"} size={22} />
-          </VoiceControl>
+            <Icon name={voice.status === "idle" ? "mic" : "restart"} size={compact ? 18 : 22} />
+          </CallControl>
         )}
 
         {busy && (
-          <VoiceControl density={compact ? "narrow" : "wide"} tone="danger" label={labels.cancel} onClick={end}>
-            <Icon name="close" size={22} />
-          </VoiceControl>
+          <CallControl compact={compact} tone="danger" label={labels.cancel} onClick={end}>
+            <Icon name="close" size={compact ? 18 : 22} />
+          </CallControl>
         )}
 
         {active && (
           <>
-            <VoiceControl
+            <CallControl
               tone="accent"
-              density={compact ? "narrow" : "wide"}
+              compact={compact}
               active={!voice.muted}
               label={voice.muted ? labels.microphoneOn : labels.microphoneOff}
               onClick={() => voice.setMuted(!voice.muted)}
             >
-              <Icon name={voice.muted ? "mic-off" : "mic"} size={22} />
-            </VoiceControl>
+              <Icon name={voice.muted ? "mic-off" : "mic"} size={compact ? 18 : 22} />
+            </CallControl>
             {(voice.scoutSpeaking || voice.status === "speaking") && (
-              <VoiceControl density={compact ? "narrow" : "wide"} label={labels.interrupt} onClick={voice.interrupt}>
-                <Icon name="pause" size={22} />
-              </VoiceControl>
+              <CallControl compact={compact} label={labels.interrupt} onClick={voice.interrupt}>
+                <Icon name="pause" size={compact ? 18 : 22} />
+              </CallControl>
             )}
-            <VoiceControl density={compact ? "narrow" : "wide"} tone="danger" label={labels.end} onClick={end}>
-              <Icon name="close" size={22} />
-            </VoiceControl>
+            <CallControl compact={compact} tone="danger" label={labels.end} onClick={end}>
+              <Icon name="close" size={compact ? 18 : 22} />
+            </CallControl>
           </>
         )}
+        {compact && onText ? (
+          <button
+            type="button"
+            className="ml-auto min-w-0 truncate rounded-pill px-[var(--space-3)] py-[var(--space-2)] text-[length:var(--text-micro-size)] text-rs-ink-3 underline decoration-rs-border-control-strong underline-offset-4 hover:text-rs-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rs-orange"
+            onClick={onText}
+          >
+            {labels.switchToText}
+          </button>
+        ) : null}
       </div>
 
-      {onText && (
+      {!compact && onText && (
         <button
           type="button"
           className="rounded-pill px-[var(--space-5)] py-[var(--space-3)] text-[length:var(--text-caption-size)] text-rs-ink-3 underline decoration-rs-border-control-strong underline-offset-4 hover:text-rs-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rs-orange"
