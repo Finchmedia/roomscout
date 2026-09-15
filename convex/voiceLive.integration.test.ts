@@ -28,6 +28,8 @@ type Result = {
   resolvedEventIds: string[];
   locale: "en" | "de";
   promptMessageId?: string;
+  spokenSummary?: string;
+  changedFields?: string[];
 };
 type ClaimResult =
   | { kind: "accepted"; generation: number; promptMessageId: string; locale: "en" | "de"; activeNeedId?: Id<"savedNeeds">; needRevision?: number }
@@ -49,6 +51,30 @@ const updateFromScout = makeFunctionReference<"mutation", {
   schedule?: string[];
   voiceClaim?: { voiceSessionId: Id<"voiceSessions">; requestId: string; generation: number };
 }, { revision: number; changedFields: string[] }>("savedNeeds:updateFromScout");
+const setLanguage = makeFunctionReference<"mutation", {
+  locale: "en" | "de";
+  voiceSessionId?: Id<"voiceSessions">;
+}, { locale: "en" | "de"; languageRevision: number }>("voiceLive:setLanguage");
+const getConfig = makeFunctionReference<"query", Record<string, never>, {
+  provider: "live" | "realtime";
+  locale: "en" | "de";
+}>("voiceLive:getConfig");
+const answerNonbindingFromVoice = makeFunctionReference<"mutation", {
+  ownerId: Id<"users">;
+  voiceSessionId: Id<"voiceSessions">;
+  requestId: string;
+  generation: number;
+  decisionId: Id<"decisions">;
+  choice: string;
+  text?: string;
+}, unknown>("decisions:answerNonbindingFromVoice");
+const setLanguageFromClaim = makeFunctionReference<"mutation", {
+  ownerId: Id<"users">;
+  voiceSessionId: Id<"voiceSessions">;
+  requestId: string;
+  generation: number;
+  locale: "en" | "de";
+}, { locale: "en" | "de"; languageRevision: number }>("voiceLive:setLanguageFromClaim");
 
 async function fixture() {
   const t = convexTest(schema, modules);
@@ -76,11 +102,40 @@ async function fixture() {
       createdAt: now,
       updatedAt: now,
     });
+    const firstSignalId = await ctx.db.insert("signals", {
+      side: "supply",
+      title: "First room",
+      city: "Berlin",
+      summary: "First room",
+      arrangement: "shared",
+      requirements: [],
+      unknowns: [],
+      status: "published",
+      verification: "observed",
+      sourceCount: 1,
+      firstSeenAt: now,
+      lastSeenAt: now,
+    });
+    const secondSignalId = await ctx.db.insert("signals", {
+      side: "supply",
+      title: "Second room",
+      city: "Berlin",
+      summary: "Second room",
+      arrangement: "shared",
+      requirements: [],
+      unknowns: [],
+      status: "published",
+      verification: "observed",
+      sourceCount: 1,
+      firstSeenAt: now,
+      lastSeenAt: now,
+    });
     const { threadId } = await scoutAgent.createThread(ctx, { userId: ownerId, title: "Live test" });
     await ctx.db.insert("scoutContexts", {
       ownerId,
       threadId,
       activeNeedId: needId,
+      focusedSignalId: firstSignalId,
       mode: "search_discovery",
       updatedAt: now,
     });
@@ -98,10 +153,11 @@ async function fixture() {
       recentResults: [],
       status: "active",
       activeNeedId: needId,
+      focusedSignalId: firstSignalId,
       startedAt: now,
       updatedAt: now,
     });
-    return { ownerId, needId, threadId, voiceSessionId };
+    return { ownerId, needId, firstSignalId, secondSignalId, threadId, voiceSessionId };
   });
   return { t, owner: t.withIdentity({ subject: data.ownerId }), ...data };
 }
@@ -208,4 +264,142 @@ it("allows independent UI and voice fields but rejects a stale overlapping voice
     schedule: ["Thursday"],
     voiceClaim,
   })).rejects.toThrow(/VOICE_FIELD_CONFLICT/);
+});
+
+it("persists explicit EN/DE changes and suppresses a result in the old language", async () => {
+  const f = await fixture();
+  expect(await f.owner.query(getConfig, {})).toMatchObject({ locale: "en" });
+  const claim = await f.t.mutation(claimRequest, claimArgs(f, "language"));
+  if (claim.kind !== "accepted") throw new Error("claim not accepted");
+
+  expect(await f.owner.mutation(setLanguage, { voiceSessionId: f.voiceSessionId, locale: "de" }))
+    .toEqual({ locale: "de", languageRevision: 1 });
+  expect(await f.owner.query(getConfig, {})).toMatchObject({ locale: "de" });
+  const result = await f.t.mutation(finishRequest, {
+    ownerId: f.ownerId,
+    voiceSessionId: f.voiceSessionId,
+    requestId: "language",
+    generation: claim.generation,
+    expectedLocale: "en",
+    result: {
+      status: "completed",
+      requestId: "language",
+      resolvedEventIds: ["event:language"],
+      locale: "en",
+      spokenSummary: "Saved in English",
+    },
+  });
+  expect(result).toMatchObject({ status: "superseded", locale: "de" });
+  expect(result.spokenSummary).toBeUndefined();
+});
+
+it("returns the new locale when the claimed language tool made the change", async () => {
+  const f = await fixture();
+  const claim = await f.t.mutation(claimRequest, claimArgs(f, "spoken-language"));
+  if (claim.kind !== "accepted") throw new Error("claim not accepted");
+  expect(await f.t.mutation(setLanguageFromClaim, {
+    ownerId: f.ownerId,
+    voiceSessionId: f.voiceSessionId,
+    requestId: "spoken-language",
+    generation: claim.generation,
+    locale: "de",
+  })).toEqual({ locale: "de", languageRevision: 1 });
+  const result = await f.t.mutation(finishRequest, {
+    ownerId: f.ownerId,
+    voiceSessionId: f.voiceSessionId,
+    requestId: "spoken-language",
+    generation: claim.generation,
+    expectedLocale: "en",
+    result: {
+      status: "completed",
+      requestId: "spoken-language",
+      resolvedEventIds: ["event:spoken-language"],
+      locale: "en",
+      spokenSummary: "Now speaking German",
+      changedFields: ["conversationLocale"],
+    },
+  });
+  expect(result).toMatchObject({
+    status: "completed",
+    locale: "de",
+    resolvedEventIds: ["event:spoken-language"],
+    changedFields: ["conversationLocale"],
+  });
+  expect(result.spokenSummary).toBeUndefined();
+});
+
+it("denies a binding decision even when it was explicitly bound to the claim", async () => {
+  const f = await fixture();
+  const decisionId = await f.t.run((ctx) => ctx.db.insert("decisions", {
+    ownerId: f.ownerId,
+    savedNeedId: f.needId,
+    kind: "review_message",
+    status: "open",
+    question: "Send this message?",
+    options: [{ id: "yes", label: "Yes" }, { id: "no", label: "No" }],
+    refs: {},
+    createdAt: 2_000,
+    updatedAt: 2_000,
+  }));
+  const claim = await f.t.mutation(claimRequest, { ...claimArgs(f, "binding"), decisionId });
+  if (claim.kind !== "accepted") throw new Error("claim not accepted");
+
+  await expect(f.t.mutation(answerNonbindingFromVoice, {
+    ownerId: f.ownerId,
+    voiceSessionId: f.voiceSessionId,
+    requestId: "binding",
+    generation: claim.generation,
+    decisionId,
+    choice: "yes",
+  })).rejects.toThrow(/VOICE_DECISION_SUPERSEDED/);
+  const decision = await f.t.run((ctx) => ctx.db.get(decisionId));
+  expect(decision?.status).toBe("open");
+});
+
+it("fences a claimed write after focus changes", async () => {
+  const f = await fixture();
+  const claim = await f.t.mutation(claimRequest, {
+    ...claimArgs(f, "focus"),
+    focusedSignalId: f.firstSignalId,
+  });
+  if (claim.kind !== "accepted") throw new Error("claim not accepted");
+  await f.t.run(async (ctx) => {
+    const context = await ctx.db.query("scoutContexts").withIndex("by_owner", (q) => q.eq("ownerId", f.ownerId)).unique();
+    if (!context) throw new Error("missing context");
+    await ctx.db.patch(context._id, { focusedSignalId: f.secondSignalId });
+  });
+
+  await expect(f.t.mutation(updateFromScout, {
+    ownerId: f.ownerId,
+    needId: f.needId,
+    maxBudgetEur: 300,
+    voiceClaim: { voiceSessionId: f.voiceSessionId, requestId: "focus", generation: claim.generation },
+  })).rejects.toThrow(/VOICE_TARGET_SUPERSEDED/);
+});
+
+it("lets an accepted claim finish after audio ends and never reruns an uncertain partial result", async () => {
+  const f = await fixture();
+  const claim = await f.t.mutation(claimRequest, claimArgs(f, "partial"));
+  if (claim.kind !== "accepted") throw new Error("claim not accepted");
+  await f.t.run(async (ctx) => ctx.db.patch(f.voiceSessionId, { status: "ended", endedAt: 2_000 }));
+  const voiceClaim = { voiceSessionId: f.voiceSessionId, requestId: "partial", generation: claim.generation };
+  await f.t.mutation(updateFromScout, { ownerId: f.ownerId, needId: f.needId, maxBudgetEur: 300, voiceClaim });
+  const terminal: Result = {
+    status: "outcome_unknown",
+    requestId: "partial",
+    resolvedEventIds: [],
+    locale: "en",
+    promptMessageId: claim.promptMessageId,
+  };
+  await f.t.mutation(finishRequest, {
+    ownerId: f.ownerId,
+    voiceSessionId: f.voiceSessionId,
+    requestId: "partial",
+    generation: claim.generation,
+    expectedLocale: "en",
+    result: terminal,
+  });
+  expect(await f.t.mutation(claimRequest, claimArgs(f, "partial"))).toEqual({ kind: "result", result: terminal });
+  const need = await f.t.run((ctx) => ctx.db.get(f.needId));
+  expect(need).toMatchObject({ maxBudgetEur: 300, matchingRevision: 1 });
 });

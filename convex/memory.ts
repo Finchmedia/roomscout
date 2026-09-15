@@ -13,6 +13,7 @@ import {
 } from "./_generated/server";
 import { generateRoomScoutObject } from "./ai";
 import { requireActionUserId, requireUserId } from "./integrations/authz";
+import { assertVoiceClaim, voiceClaimValidator } from "./lib/voiceClaim";
 import {
   createOpenAIEmbedding,
   OPENAI_EMBEDDING_MODEL,
@@ -328,9 +329,11 @@ export const rememberFromScout = internalMutation({
     verification: factVerificationValidator,
     sensitivity: sensitivityValidator,
     replaceExisting: v.boolean(),
+    voiceClaim: v.optional(voiceClaimValidator),
   },
   returns: v.object({ factId: v.id("memoryFacts"), created: v.boolean() }),
   handler: async (ctx, args) => {
+    if (args.voiceClaim) await assertVoiceClaim(ctx, args.ownerId, args.voiceClaim);
     if (args.sensitivity === "sensitive" && args.verification === "inferred") {
       throw new ConvexError({ code: "SENSITIVE_INFERENCE_FORBIDDEN" });
     }

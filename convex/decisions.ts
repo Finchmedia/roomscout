@@ -17,6 +17,7 @@ import {
   SCOUT_DECLINED_MESSAGE,
 } from "./lib/decisions";
 import { delimitUntrustedData } from "./lib/privacy";
+import { assertVoiceClaim, voiceClaimValidator } from "./lib/voiceClaim";
 import { enqueueMusicianInputTurn } from "./providerConversations";
 import { stageCustomReplyForOwner } from "./providerActions";
 import { runScoutTurn, scoutAgent } from "./scoutRuntime";
@@ -230,26 +231,20 @@ export const answerFromScout = internalMutation({
 export const answerNonbindingFromVoice = internalMutation({
   args: {
     ownerId: v.id("users"),
-    voiceSessionId: v.id("voiceSessions"),
-    requestId: v.string(),
-    generation: v.number(),
+    voiceSessionId: voiceClaimValidator.fields.voiceSessionId,
+    requestId: voiceClaimValidator.fields.requestId,
+    generation: voiceClaimValidator.fields.generation,
     decisionId: v.id("decisions"),
     choice: v.string(),
     text: v.optional(v.string()),
   },
   returns: answerResultValidator,
   handler: async (ctx, args) => {
-    const session = await ctx.db.get(args.voiceSessionId);
-    const claim = session?.activeClaim;
-    if (
-      !session || session.ownerId !== args.ownerId || !claim ||
-      claim.requestId !== args.requestId || claim.generation !== args.generation
-    ) {
-      throw new ConvexError({ code: "VOICE_CLAIM_SUPERSEDED" });
-    }
-    if (claim.decisionId !== args.decisionId) {
-      throw new ConvexError({ code: "VOICE_DECISION_TARGET_MISMATCH" });
-    }
+    const { claim } = await assertVoiceClaim(ctx, args.ownerId, {
+      voiceSessionId: args.voiceSessionId,
+      requestId: args.requestId,
+      generation: args.generation,
+    }, { decisionId: args.decisionId });
     const decision = await ctx.db.get(args.decisionId);
     if (
       !decision || decision.ownerId !== args.ownerId || decision.status !== "open" ||

@@ -11,6 +11,7 @@ import {
   savedNeedLocationLabel,
   savedNeedLocationQuery,
 } from "./lib/savedNeedLocation";
+import { assertVoiceClaim, voiceClaimValidator } from "./lib/voiceClaim";
 
 const arrangementValidator = v.union(
   v.literal("permanent"),
@@ -403,11 +404,7 @@ export const updateFromScout = internalMutation({
     instruments: v.optional(v.array(v.string())),
     collaborationOpen: v.optional(v.boolean()),
     facets: v.optional(v.array(facetValidator)),
-    voiceClaim: v.optional(v.object({
-      voiceSessionId: v.id("voiceSessions"),
-      requestId: v.string(),
-      generation: v.number(),
-    })),
+    voiceClaim: v.optional(voiceClaimValidator),
   },
   returns: v.object({ revision: v.number(), changedFields: v.array(v.string()) }),
   handler: async (ctx, args) => {
@@ -416,22 +413,7 @@ export const updateFromScout = internalMutation({
       throw new ConvexError({ code: "NEED_NOT_FOUND" });
     }
     if (args.voiceClaim) {
-      const session = await ctx.db.get(args.voiceClaim.voiceSessionId);
-      const claim = session?.activeClaim;
-      if (
-        !session || session.ownerId !== args.ownerId || !claim ||
-        claim.requestId !== args.voiceClaim.requestId ||
-        claim.generation !== args.voiceClaim.generation
-      ) {
-        throw new ConvexError({ code: "VOICE_CLAIM_SUPERSEDED" });
-      }
-      const context = await ctx.db
-        .query("scoutContexts")
-        .withIndex("by_owner", (q) => q.eq("ownerId", args.ownerId))
-        .unique();
-      if (!context || context.activeNeedId !== need._id) {
-        throw new ConvexError({ code: "VOICE_TARGET_SUPERSEDED" });
-      }
+      const { claim } = await assertVoiceClaim(ctx, args.ownerId, args.voiceClaim, { savedNeedId: need._id });
       if ((need.matchingRevision ?? 0) !== (claim.needRevision ?? 0)) {
         let snapshot: Record<string, unknown> = {};
         try {

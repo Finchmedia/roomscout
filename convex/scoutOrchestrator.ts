@@ -15,6 +15,7 @@ import { requireUserId } from "./integrations/authz";
 import { allowedActions } from "./lib/autonomy";
 import { opportunityMatchIsCurrent } from "./lib/matchValidity";
 import { resolvePortalBrowserProvider } from "./integrations/portalBrowserEngine";
+import { assertVoiceClaim, voiceClaimValidator } from "./lib/voiceClaim";
 
 const resultValidator = v.object({ checked: v.number(), created: v.number(), scheduled: v.number(), skipped: v.number(), expired: v.number() });
 type Result = { checked: number; created: number; scheduled: number; skipped: number; expired: number };
@@ -244,8 +245,21 @@ export const runNowMine = mutation({
 });
 
 export const runForOwner = internalMutation({
-  args: { ownerId: v.id("users"), limit: v.optional(v.number()), cursor: v.optional(v.string()) }, returns: resultValidator,
-  handler: async (ctx, args): Promise<Result> => await orchestrateOwner(ctx, args.ownerId, boundedLimit(args.limit), args.cursor ?? null),
+  args: {
+    ownerId: v.id("users"),
+    limit: v.optional(v.number()),
+    cursor: v.optional(v.string()),
+    voiceClaim: v.optional(voiceClaimValidator),
+    signalId: v.optional(v.id("signals")),
+  },
+  returns: resultValidator,
+  handler: async (ctx, args): Promise<Result> => {
+    if (args.voiceClaim) {
+      if (!args.signalId) throw new ConvexError({ code: "VOICE_TARGET_REQUIRED" });
+      await assertVoiceClaim(ctx, args.ownerId, args.voiceClaim, { signalId: args.signalId });
+    }
+    return await orchestrateOwner(ctx, args.ownerId, boundedLimit(args.limit), args.cursor ?? null);
+  },
 });
 
 export const runBatch = internalMutation({

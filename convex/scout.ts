@@ -11,6 +11,7 @@ import { openDecisionCards } from "./decisions";
 import { buildDecisionCaseCard, buildScoutCaseCard } from "./scoutCaseCards";
 import { runScoutTurn, scoutAgent } from "./scoutRuntime";
 import { isUserResetTombstoned } from "./devUserReset";
+import { assertVoiceClaim, voiceClaimValidator, type VoiceClaimRef } from "./lib/voiceClaim";
 export { scoutAgent } from "./scoutRuntime";
 
 const modeValidator = v.union(
@@ -232,9 +233,13 @@ export const markBriefReady = internalMutation({
     ownerId: v.id("users"),
     threadId: v.string(),
     needId: v.id("savedNeeds"),
+    voiceClaim: v.optional(voiceClaimValidator),
   },
   returns: v.object({ needRevision: v.number(), readyAt: v.number() }),
   handler: async (ctx, args) => {
+    if (args.voiceClaim) {
+      await assertVoiceClaim(ctx, args.ownerId, args.voiceClaim, { savedNeedId: args.needId });
+    }
     const context = await ctx.db
       .query("scoutContexts")
       .withIndex("by_thread_id", (q) => q.eq("threadId", args.threadId))
@@ -456,8 +461,13 @@ export const getActionContext = internalQuery({
 });
 
 /** The tool every turn gets while an Entscheidung is open, regardless of mode. */
-function decisionTools(ctx: Parameters<typeof runScoutTurn>[0], ownerId: Id<"users">, hasOpenDecision: boolean): ToolSet {
-  if (!hasOpenDecision) return {};
+function decisionTools(
+  ctx: Parameters<typeof runScoutTurn>[0],
+  ownerId: Id<"users">,
+  hasOpenDecision: boolean,
+  options?: { voiceClaim?: VoiceClaimRef; decisionId?: Id<"decisions">; onEffect?: (kind: string, fields: string[]) => void },
+): ToolSet {
+  if (!hasOpenDecision || (options?.voiceClaim && !options.decisionId)) return {};
   const answerDecisionTool = createTool({
     description: "Answer an open Entscheidung from the case card with the musician's words: choice is the matching option id (for message kinds: yes | no), or \"custom\" with text. Returns what happened; sent is always false — never claim delivery.",
     inputSchema: z.object({
@@ -467,12 +477,160 @@ function decisionTools(ctx: Parameters<typeof runScoutTurn>[0], ownerId: Id<"use
     }),
     execute: async (_toolCtx, input) => {
       const decisionId = input.decisionId as Id<"decisions">;
+      if (options?.voiceClaim) {
+        if (!options.decisionId || decisionId !== options.decisionId) {
+          throw new ConvexError({ code: "VOICE_DECISION_TARGET_MISMATCH" });
+        }
+        const result = await ctx.runMutation(internal.decisions.answerNonbindingFromVoice, {
+          ownerId,
+          ...options.voiceClaim,
+          decisionId,
+          choice: input.choice,
+          ...(input.text ? { text: input.text } : {}),
+        });
+        options.onEffect?.("decision", ["decision"]);
+        return result;
+      }
       return await ctx.runMutation(internal.decisions.answerFromScout, { ownerId, decisionId, choice: input.choice, ...(input.text ? { text: input.text } : {}) });
     },
   });
   // Free text in the Scout chat is always addressed to the Scout. Dictating a message to a
   // provider happens only in Nachrichten, where the recipient is unambiguous.
   return { answerDecision: answerDecisionTool };
+}
+
+export type ScoutToolContext = {
+  mode: "search_discovery" | "signal_advisor" | "outreach_drafting";
+  activeNeedId?: Id<"savedNeeds">;
+  focusedSignalId?: Id<"signals">;
+  hasOpenDecision: boolean;
+};
+
+/** The one tool factory used by streamed chat and nonstreaming Live turns. */
+export function buildScoutTools(
+  ctx: Parameters<typeof runScoutTurn>[0],
+  args: {
+    ownerId: Id<"users">;
+    threadId: string;
+    context: ScoutToolContext;
+    voiceClaim?: VoiceClaimRef;
+    decisionId?: Id<"decisions">;
+    onEffect?: (kind: string, fields: string[]) => void;
+  },
+): ToolSet {
+  const { ownerId, context } = args;
+  const decisionToolSet = decisionTools(ctx, ownerId, context.hasOpenDecision, {
+    voiceClaim: args.voiceClaim,
+    decisionId: args.decisionId,
+    onEffect: args.onEffect,
+  });
+  const rememberFact = createTool({
+    description: "Remember one durable musician, band, collaboration, mobility, equipment, schedule, or room-search fact. Do not use for transient chat or sensitive secrets.",
+    inputSchema: memoryToolSchema,
+    execute: async (_toolCtx, input) => {
+      const result = await ctx.runMutation(internal.memory.rememberFromScout, {
+        ownerId,
+        ...input,
+        ...(args.voiceClaim ? { voiceClaim: args.voiceClaim } : {}),
+      });
+      if (result.created) args.onEffect?.("memory", ["memory"]);
+      return { remembered: result.created, factId: result.factId };
+    },
+  });
+  const voiceOnlyTools: ToolSet = args.voiceClaim ? {
+    setConversationLanguage: createTool({
+      description: "Persist the conversation language only when the musician explicitly asks to speak English or German. Do not infer a switch from place names, band names, or isolated foreign words.",
+      inputSchema: z.object({ locale: z.enum(["en", "de"]) }),
+      execute: async (_toolCtx, input) => {
+        const result = await ctx.runMutation(internal.voiceLive.setLanguageFromClaim, {
+          ownerId,
+          ...args.voiceClaim!,
+          locale: input.locale,
+        });
+        args.onEffect?.("language", ["conversationLocale"]);
+        return result;
+      },
+    }),
+  } : {};
+
+  if (context.mode === "search_discovery" && context.activeNeedId) {
+    const needId = context.activeNeedId;
+    const updateSearchDraft = createSearchDraftTool(ctx, {
+      ownerId,
+      needId,
+      voiceClaim: args.voiceClaim,
+      onUpdated: (result) => args.onEffect?.("search", result.changedFields),
+    });
+    const markSearchBriefReady = createTool({
+      description: "Mark the current draft search ready for the musician to review when it is already useful enough to run. This only reveals the brief and never activates the search.",
+      inputSchema: z.object({}),
+      execute: async () => {
+        const result = await ctx.runMutation(internal.scout.markBriefReady, {
+          ownerId,
+          threadId: args.threadId,
+          needId,
+          ...(args.voiceClaim ? { voiceClaim: args.voiceClaim } : {}),
+        });
+        args.onEffect?.("brief", ["briefReadiness"]);
+        return { readyForReview: true, ...result, activationRequired: true };
+      },
+    });
+    return { updateSearchDraft, markSearchBriefReady, rememberFact, ...decisionToolSet, ...voiceOnlyTools };
+  }
+
+  if (context.mode === "outreach_drafting" && context.activeNeedId && context.focusedSignalId) {
+    const savedNeedId = context.activeNeedId;
+    const signalId = context.focusedSignalId;
+    const createOutreachDraft = createTool({
+      description: "Create a private outreach draft for review. This never approves or sends it.",
+      inputSchema: z.object({ recipientName: z.string(), recipientEmail: z.string().email(), subject: z.string(), body: z.string() }),
+      execute: async (_toolCtx, input) => {
+        const draftId: Id<"outreachDrafts"> = await ctx.runMutation(internal.outreach.createFromScout, {
+          ownerId, savedNeedId, signalId, ...input,
+          ...(args.voiceClaim ? { voiceClaim: args.voiceClaim } : {}),
+        });
+        args.onEffect?.("outreach_draft", ["outreachDraft"]);
+        return { drafted: true, draftId };
+      },
+    });
+    const tools: ToolSet = { createOutreachDraft, rememberFact, ...decisionToolSet, ...voiceOnlyTools };
+    if (!args.voiceClaim) {
+      tools.createWebformDraft = createTool({
+        description: "Prepare a contact-form action for the focused listing when RoomScout has a reviewed webform adapter. The server resolves destination, policy and adapter from trusted state.",
+        inputSchema: z.object({ subject: z.string(), body: z.string() }),
+        execute: async (_toolCtx, input) => {
+          const mailbox = await ctx.runAction(internal.mailboxes.ensureForOwner, { ownerId });
+          if (mailbox.status !== "active") return { drafted: false, reason: "A personal RoomScout reply inbox is not ready." };
+          const result: { requestId: Id<"actionRequests">; status: Doc<"actionRequests">["status"]; authorizedByAutopilot: boolean } = await ctx.runMutation(internal.externalActions.createContactFormFromScout, {
+            ownerId, savedNeedId, signalId, senderEmail: mailbox.emailAddress, subject: input.subject, body: input.body,
+          });
+          return { drafted: true, requestId: result.requestId, channel: "webform", status: result.status, authorizedByAutopilot: result.authorizedByAutopilot };
+        },
+      });
+    }
+    return tools;
+  }
+
+  if (context.mode === "signal_advisor" && context.activeNeedId && context.focusedSignalId) {
+    const continueAutopilot = createTool({
+      description: "Use when the musician explicitly asks RoomScout to handle, contact, ask, or clarify the focused opportunity autonomously. This cannot widen permissions.",
+      inputSchema: z.object({}),
+      execute: async () => {
+        const result = await ctx.runMutation(internal.scoutOrchestrator.runForOwner, {
+          ownerId,
+          limit: 3,
+          ...(args.voiceClaim ? { voiceClaim: args.voiceClaim, signalId: context.focusedSignalId } : {}),
+        });
+        args.onEffect?.("provider_work", ["providerWork"]);
+        return {
+          status: result.created > 0 ? "provider_follow_up_started" : result.scheduled > 0 ? "portal_connection_started" : "already_running_or_waiting",
+          ...result,
+        };
+      },
+    });
+    return { continueAutopilot, rememberFact, ...decisionToolSet, ...voiceOnlyTools };
+  }
+  return { rememberFact, ...decisionToolSet, ...voiceOnlyTools };
 }
 
 /** One musician turn, streamed. A failure is logged and rethrown so the Agent marks the reply failed on the thread. */
@@ -556,137 +714,11 @@ export const reply = internalAction({
       caseCard: context.caseCard, memoryQuery: args.prompt,
       promptMessageId: args.promptMessageId, stream: true,
     };
-    const decisionToolSet = decisionTools(ctx, ownerId, context.hasOpenDecision);
-
-    const rememberFact = createTool({
-      description:
-        "Remember one durable musician, band, collaboration, mobility, equipment, schedule, or room-search fact. Do not use for transient chat or sensitive secrets.",
-      inputSchema: memoryToolSchema,
-      execute: async (_toolCtx, input) => {
-        const result = await ctx.runMutation(internal.memory.rememberFromScout, {
-          ownerId,
-          ...input,
-        });
-        return { remembered: result.created, factId: result.factId };
-      },
+    const tools = buildScoutTools(ctx, {
+      ownerId,
+      threadId: args.threadId,
+      context,
     });
-
-    if (context.mode === "search_discovery" && context.activeNeedId) {
-      const needId = context.activeNeedId;
-      const updateSearchDraft = createSearchDraftTool(ctx, { ownerId, needId });
-      const markSearchBriefReady = createTool({
-        description:
-          "Mark the current draft search ready for the musician to review when it is already useful enough to run. Do not require every optional field. Use this once material ambiguity is resolved; the Suchauftrag panel shows the captured facts, so do not recap them in chat. This only reveals the brief and never activates the search or starts matching or outreach.",
-        inputSchema: z.object({}),
-        execute: async () => {
-          const result = await ctx.runMutation(internal.scout.markBriefReady, {
-            ownerId,
-            threadId: args.threadId,
-            needId,
-          });
-          return { readyForReview: true, ...result, activationRequired: true };
-        },
-      });
-      return await streamReply(ctx, {
-        ...turn, tools: { updateSearchDraft, markSearchBriefReady, rememberFact, ...decisionToolSet },
-      });
-    }
-
-    if (
-      context.mode === "outreach_drafting" &&
-      context.activeNeedId &&
-      context.focusedSignalId
-    ) {
-      const savedNeedId = context.activeNeedId;
-      const signalId = context.focusedSignalId;
-      const createOutreachDraft = createTool({
-        description:
-          "Create a private outreach draft for review. This never approves or sends it.",
-        inputSchema: z.object({
-          recipientName: z.string(),
-          recipientEmail: z.string().email(),
-          subject: z.string(),
-          body: z.string(),
-        }),
-        execute: async (_toolCtx, input) => {
-          await ctx.runAction(internal.mailboxes.ensureForOwner, { ownerId });
-          const draftId: Id<"outreachDrafts"> = await ctx.runMutation(internal.outreach.createFromScout, {
-            ownerId,
-            savedNeedId,
-            signalId,
-            ...input,
-          });
-          return { drafted: true, draftId };
-        },
-      });
-      const createWebformDraft = createTool({
-        description:
-          "Prepare a contact-form action for the focused listing when RoomScout has a reviewed webform adapter. You provide only subject and message prose; RoomScout resolves destination, sender identity, fields, policy, and adapter from trusted state. In Autopilot mode the Freigabeprüfung may authorize and execute a non-binding message; in Rücksprache mode it becomes a decision for the musician.",
-        inputSchema: z.object({
-          subject: z.string(),
-          body: z.string(),
-        }),
-        execute: async (_toolCtx, input) => {
-          const mailbox = await ctx.runAction(internal.mailboxes.ensureForOwner, { ownerId });
-          if (mailbox.status !== "active") {
-            return { drafted: false, reason: "A personal RoomScout reply inbox is not ready." };
-          }
-          const result: { requestId: Id<"actionRequests">; status: Doc<"actionRequests">["status"]; authorizedByAutopilot: boolean } = await ctx.runMutation(
-            internal.externalActions.createContactFormFromScout,
-            {
-              ownerId,
-              savedNeedId,
-              signalId,
-              senderEmail: mailbox.emailAddress,
-              subject: input.subject,
-              body: input.body,
-            },
-          );
-          return {
-            drafted: true,
-            requestId: result.requestId,
-            channel: "webform",
-            status: result.status,
-            authorizedByAutopilot: result.authorizedByAutopilot,
-          };
-        },
-      });
-      return await streamReply(ctx, {
-        ...turn, tools: { createOutreachDraft, createWebformDraft, rememberFact, ...decisionToolSet },
-      });
-    }
-
-    if (
-      context.mode === "signal_advisor" &&
-      context.activeNeedId &&
-      context.focusedSignalId
-    ) {
-      const continueAutopilot = createTool({
-        description:
-          "Use when the musician explicitly asks RoomScout to handle, contact, ask, or clarify the focused opportunity autonomously. This runs the Scout within the user's persisted Handlungsspielraum and cannot widen permissions. Report the returned status honestly.",
-        inputSchema: z.object({}),
-        execute: async () => {
-          const result = await ctx.runMutation(
-            internal.scoutOrchestrator.runForOwner,
-            { ownerId, limit: 3 },
-          );
-          return {
-            status:
-              result.created > 0
-                ? "provider_follow_up_started"
-                : result.scheduled > 0
-                  ? "portal_connection_started"
-                  : "already_running_or_waiting",
-            ...result,
-          };
-        },
-      });
-      return await streamReply(ctx, {
-        ...turn,
-        tools: { continueAutopilot, rememberFact, ...decisionToolSet },
-      });
-    }
-
-    return await streamReply(ctx, { ...turn, tools: { rememberFact, ...decisionToolSet } });
+    return await streamReply(ctx, { ...turn, tools });
   },
 });

@@ -16,18 +16,19 @@ import {
 import { requireActionUserId, requireUserId } from "./integrations/authz";
 import { setNeedStatus } from "./lib/needLifecycle";
 import { activateNeed } from "./savedNeeds";
+import { assertVoiceClaim } from "./lib/voiceClaim";
 import { buildDecisionCaseCard, buildScoutCaseCard } from "./scoutCaseCards";
 import { openDecisionCards } from "./decisions";
-import { createSearchDraftTool } from "./scout";
+import { buildScoutTools } from "./scout";
 import { runScoutTurn } from "./scoutRuntime";
 import { liveInstructions, scoutVoiceInstructions, type ConversationLocale } from "./prompts/roomScoutLive";
 
 const MAX_SESSION_MS = 15 * 60 * 1_000;
 const MAX_REQUESTS_PER_SESSION = 64;
 const MAX_RECENT_RESULTS = 8;
-const MAX_FRAGMENTS = 64;
+const MAX_FRAGMENTS = 1_024;
 const MAX_FRAGMENT_CHARS = 2_000;
-const MAX_PROMPT_CHARS = 10_000;
+const MAX_PROMPT_CHARS = 64_000;
 const MAX_REQUEST_ID_CHARS = 160;
 const MAX_EVENT_ID_CHARS = 240;
 const DEFAULT_MODEL = "gpt-live-1";
@@ -162,6 +163,34 @@ export const setLanguage = mutation({
       languageRevision,
       updatedAt: Date.now(),
     });
+    return { locale: args.locale, languageRevision };
+  },
+});
+
+export const setLanguageFromClaim = internalMutation({
+  args: {
+    ownerId: v.id("users"),
+    voiceSessionId: v.id("voiceSessions"),
+    requestId: v.string(),
+    generation: v.number(),
+    locale: localeValidator,
+  },
+  returns: v.object({ locale: localeValidator, languageRevision: v.number() }),
+  handler: async (ctx, args) => {
+    const { session } = await assertVoiceClaim(ctx, args.ownerId, {
+      voiceSessionId: args.voiceSessionId,
+      requestId: args.requestId,
+      generation: args.generation,
+    });
+    const languageRevision = (session.languageRevision ?? 0) + 1;
+    await Promise.all([
+      ctx.db.patch(args.ownerId, { conversationLocale: args.locale }),
+      ctx.db.patch(session._id, {
+        conversationLocale: args.locale,
+        languageRevision,
+        updatedAt: Date.now(),
+      }),
+    ]);
     return { locale: args.locale, languageRevision };
   },
 });
@@ -517,7 +546,8 @@ export const finishRequest = internalMutation({
       return { status: "superseded", requestId: args.requestId, resolvedEventIds: [], locale: session?.conversationLocale ?? args.expectedLocale };
     }
     const locale = session.conversationLocale ?? "en";
-    const staleLanguage = locale !== args.expectedLocale;
+    const languageChangedByClaim = args.result.changedFields?.includes("conversationLocale") ?? false;
+    const staleLanguage = locale !== args.expectedLocale && !languageChangedByClaim;
     const context = await ctx.db.query("scoutContexts")
       .withIndex("by_owner", (q) => q.eq("ownerId", args.ownerId)).unique();
     const staleTarget = !context || context.activeNeedId !== session.activeNeedId ||
@@ -530,6 +560,7 @@ export const finishRequest = internalMutation({
       status: args.result.status,
       locale,
       ...(staleLanguage || staleTarget ? { status: "superseded", spokenSummary: undefined } : {}),
+      ...(languageChangedByClaim && locale !== args.expectedLocale ? { spokenSummary: undefined } : {}),
     };
     const stored = { ...result, completedAt: Date.now() };
     const recentResults = [...(session.recentResults ?? []).filter((entry) => entry.requestId !== args.requestId), stored]
@@ -549,13 +580,12 @@ export const changeNeedStatus = internalMutation({
   },
   returns: v.object({ status: v.union(v.literal("active"), v.literal("paused")), revision: v.number() }),
   handler: async (ctx, args) => {
-    const session = await ctx.db.get(args.voiceSessionId);
-    const claim = session?.activeClaim;
-    if (!session || session.ownerId !== args.ownerId || !claim || claim.requestId !== args.requestId || claim.generation !== args.generation) {
-      throw new ConvexError({ code: "VOICE_CLAIM_SUPERSEDED" });
-    }
-    const context = await ctx.db.query("scoutContexts").withIndex("by_owner", (q) => q.eq("ownerId", args.ownerId)).unique();
-    if (!context?.activeNeedId || context.activeNeedId !== session.activeNeedId) {
+    const { session, context } = await assertVoiceClaim(ctx, args.ownerId, {
+      voiceSessionId: args.voiceSessionId,
+      requestId: args.requestId,
+      generation: args.generation,
+    });
+    if (!context.activeNeedId || context.activeNeedId !== session.activeNeedId) {
       throw new ConvexError({ code: "VOICE_TARGET_SUPERSEDED" });
     }
     const need = await ctx.db.get(context.activeNeedId);
@@ -648,7 +678,7 @@ function promptFor(args: {
     [...user, explicit].filter(Boolean).join("\n"),
     assistant.length ? (args.locale === "de" ? "Nur Gesprächskontext vom Voice-Assistenten, keine Musikerangaben:" : "Voice assistant context only; these are not musician statements:") : "",
     assistant.join("\n"),
-  ].filter(Boolean).join("\n\n").slice(0, MAX_PROMPT_CHARS);
+  ].filter(Boolean).join("\n\n");
 }
 
 async function fingerprint(value: unknown): Promise<string> {
@@ -689,12 +719,15 @@ export const delegate = action({
       throw new ConvexError({ code: "INVALID_VOICE_REQUEST" });
     }
     const seen = new Set<string>();
+    let inputChars = args.text?.length ?? 0;
     for (const fragment of args.fragments) {
       if (!fragment.eventId || fragment.eventId.length > MAX_EVENT_ID_CHARS || seen.has(fragment.eventId) || fragment.text.length > MAX_FRAGMENT_CHARS || !Number.isFinite(fragment.startMs) || !Number.isFinite(fragment.endMs) || fragment.endMs < fragment.startMs) {
         throw new ConvexError({ code: "INVALID_VOICE_FRAGMENT" });
       }
       seen.add(fragment.eventId);
+      inputChars += fragment.text.length;
     }
+    if (inputChars > MAX_PROMPT_CHARS) throw new ConvexError({ code: "VOICE_INPUT_TOO_LARGE" });
     if (args.text !== undefined && (!normalizeText(args.text) || args.text.length > MAX_PROMPT_CHARS)) {
       throw new ConvexError({ code: "INVALID_VOICE_TEXT" });
     }
@@ -731,18 +764,20 @@ export const delegate = action({
     let revision = claimed.needRevision;
     let sideEffect = false;
     const claimRef = { voiceSessionId: args.voiceSessionId, requestId, generation: claimed.generation };
-    const tools: ToolSet = {};
+    const tools: ToolSet = buildScoutTools(ctx, {
+      ownerId,
+      threadId: state.threadId,
+      context,
+      voiceClaim: claimRef,
+      decisionId: args.decisionId,
+      onEffect: (kind, fields) => {
+        sideEffect = true;
+        fields.forEach((field) => changedFields.add(field));
+        if (kind === "memory") verifiedFacts.add("memory.updated=true");
+        if (kind === "decision") verifiedFacts.add("decision.status=answered");
+      },
+    });
     if (context.mode === "search_discovery" && context.activeNeedId) {
-      tools.updateSearchDraft = createSearchDraftTool(ctx, {
-        ownerId,
-        needId: context.activeNeedId,
-        voiceClaim: claimRef,
-        onUpdated: (result) => {
-          sideEffect = true;
-          revision = result.revision;
-          result.changedFields.forEach((field) => changedFields.add(field));
-        },
-      });
       tools.setSearchStatus = createTool({
         description: "Start or pause the current search only after the musician explicitly asks. Never infer this from a completed brief. Use pause only for the domain search, not for stopping audio.",
         inputSchema: z.object({ action: z.enum(["start", "pause"]) }),
@@ -752,20 +787,6 @@ export const delegate = action({
           revision = result.revision;
           changedFields.add("status");
           verifiedFacts.add(`search.status=${result.status}`);
-          return result;
-        },
-      });
-    }
-    if (args.decisionId) {
-      tools.answerDecision = createTool({
-        description: "Answer only the explicitly bound, still-open nonbinding Scout question. Binding offers, approvals, provider messages and human steps must remain in the app UI.",
-        inputSchema: z.object({ decisionId: z.string(), choice: z.string().min(1).max(40), text: z.string().min(1).max(4_000).optional() }),
-        execute: async (_toolCtx, input) => {
-          if (input.decisionId !== args.decisionId) throw new ConvexError({ code: "VOICE_DECISION_TARGET_MISMATCH" });
-          const result = await ctx.runMutation(internal.decisions.answerNonbindingFromVoice, { ownerId, ...claimRef, decisionId: args.decisionId!, choice: input.choice, text: input.text });
-          sideEffect = true;
-          changedFields.add("decision");
-          verifiedFacts.add("decision.status=answered");
           return result;
         },
       });
@@ -782,6 +803,13 @@ export const delegate = action({
         tools,
         stream: false,
       });
+      if (context.activeNeedId) {
+        const currentNeed = await ctx.runQuery(internal.savedNeeds.getOwnedInternal, {
+          ownerId,
+          needId: context.activeNeedId,
+        });
+        revision = currentNeed?.matchingRevision ?? revision;
+      }
       const spokenSummary = shortSummary(turn.text);
       const status: TerminalStatus = !sideEffect && spokenSummary?.trim().endsWith("?") ? "needs_clarification" : "completed";
       return await ctx.runMutation(internal.voiceLive.finishRequest, {

@@ -11,6 +11,7 @@ import {
   normalizeEmail,
   normalizeText,
 } from "./integrations/contentHash";
+import { assertVoiceClaim, voiceClaimValidator } from "./lib/voiceClaim";
 
 const draftStatus = v.union(
   v.literal("drafted"),
@@ -226,9 +227,16 @@ export const createFromScout = internalMutation({
     recipientEmail: v.string(),
     subject: v.string(),
     body: v.string(),
+    voiceClaim: v.optional(voiceClaimValidator),
   },
   returns: v.id("outreachDrafts"),
   handler: async (ctx, args) => {
+    if (args.voiceClaim) {
+      await assertVoiceClaim(ctx, args.ownerId, args.voiceClaim, {
+        savedNeedId: args.savedNeedId,
+        signalId: args.signalId,
+      });
+    }
     const [owner, need, signal] = await Promise.all([
       ctx.db.get(args.ownerId),
       ctx.db.get(args.savedNeedId),
