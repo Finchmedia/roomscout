@@ -44,7 +44,7 @@ export function ScoutPage() {
   const { t, locale } = useCopy();
   const voice = useVoiceSession();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const currentUser = useQuery(api.users.current);
   const needs = useQuery(api.savedNeeds.listMine, { limit: 10 });
   const context = useQuery(api.scout.getMine);
@@ -64,6 +64,7 @@ export function ScoutPage() {
   const decisions = useQuery(api.decisions.listOpenMine);
   const answerDecision = useMutation(api.decisions.answer);
   const [focusedConversationId, setFocusedConversationId] = useState<Id<"providerConversations">>();
+  const changingFocus = useRef(false);
   const focusedThread = useQuery(api.conversations.getMine, focusedConversationId ? { conversationId: focusedConversationId } : "skip");
   const [briefEdit, setBriefEdit] = useState<{ needId: Id<"savedNeeds">; revision: number; field: "budget" | "schedule"; value: string }>();
   const [working, setWorking] = useState(false);
@@ -223,6 +224,34 @@ export function ScoutPage() {
     setManualBrief(false); setDismissedReady(readyKey);
   }
   function openVoice() { setVoiceOpen(true); if (!voice.connected) void voice.connect(); }
+  async function openCandidate(conversationId?: Id<"providerConversations">) {
+    if (!need || !threadId || changingFocus.current) return;
+    const candidate = conversationId ? candidates.find(row => row.conversationId === conversationId) : undefined;
+    if (conversationId && !candidate) return;
+    changingFocus.current = true;
+    setError("");
+    // A manual selection supersedes a focus supplied by a previous deep link.
+    if (searchParams.has("mode") || searchParams.has("signalId")) {
+      const next = new URLSearchParams(searchParams);
+      next.delete("mode"); next.delete("signalId");
+      setSearchParams(next, { replace: true });
+    }
+    try {
+      await setFocus({
+        threadId,
+        activeNeedId: need._id,
+        mode: candidate?.signalId ? "signal_advisor" : "search_discovery",
+        ...(candidate?.signalId ? { focusedSignalId: candidate.signalId } : {}),
+      });
+      // Server ownership and session focus are settled before the browser can
+      // attach this target to a subsequent voice delegation.
+      setFocusedConversationId(conversationId);
+    } catch {
+      setError(t("liveScout.error"));
+    } finally {
+      changingFocus.current = false;
+    }
+  }
   function editBrief() { setManualBrief(false); setDismissedReady(readyKey); openChat(); }
   // Answering closes the Entscheidung server-side; `listOpenMine` drops it and
   // the stage leaves „blocked“ on its own — nothing is hidden optimistically.
@@ -319,7 +348,7 @@ export function ScoutPage() {
         reply: t("liveScout.candidateState.reply"), asked: t("liveScout.candidateState.asked"),
       }}
       formatStamp={at => formatMessageStamp(locale, at, now, { short: true })}
-      onOpen={conversationId => setFocusedConversationId(conversationId as Id<"providerConversations">)}
+      onOpen={conversationId => { void openCandidate(conversationId as Id<"providerConversations">); }}
     />
   ) : undefined;
   const briefActions = <div className="mt-[var(--space-5)] flex flex-col gap-[var(--space-4)]">
@@ -345,7 +374,7 @@ export function ScoutPage() {
     {briefActions}
   </ArrivingFactList> : undefined;
   const detailSlot = focusedConversationId ? <section className="flex h-[min(680px,70vh)] min-h-[360px] flex-col overflow-hidden rounded-card border border-rs-border-card bg-rs-surface-card" aria-label={t("liveInbox.title")}>
-    <div className="flex justify-end p-2"><Button variant="ghost" size="sm" onClick={() => setFocusedConversationId(undefined)}>{t("common.close")}</Button></div>
+    <div className="flex justify-end p-2"><Button variant="ghost" size="sm" onClick={() => { void openCandidate(); }}>{t("common.close")}</Button></div>
     {focusedThread ? <ConversationThread key={focusedConversationId} header={focusedThread.header} items={focusedThread.items} now={now}
       offerConversation={focusedOffer} offerTitle={focusedThread.header.title || undefined}
       onSend={async body => { try { await replyToConversation({ conversationId: focusedConversationId, body }); return true; } catch { setError(t("liveInbox.errorGeneric")); return false; } }}

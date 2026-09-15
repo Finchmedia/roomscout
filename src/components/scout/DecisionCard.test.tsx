@@ -3,6 +3,8 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DecisionCard, type OpenDecision } from "./DecisionCard";
 import { splitDecisionDetail } from "./decisionDetail";
+import { LocaleCtx } from "@/ui/copy/LocaleProvider";
+import { en } from "@/ui/copy/en";
 
 vi.mock("../opportunities/OfferAcceptanceDialog", () => ({
   OfferAcceptanceFlow: ({ offerId, expectedOfferHash }: { offerId: string; expectedOfferHash: string }) => (
@@ -125,6 +127,19 @@ describe("DecisionCard", () => {
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Angebot prüfen" }));
     expect(screen.getByRole("dialog", { name: "Angebot verbindlich annehmen" })).toHaveTextContent("offer-1:hash-1");
+  });
+
+  it("localizes the fixed offer question while preserving the offer evidence and exact review target", () => {
+    render(<LocaleCtx.Provider value={{ locale: "en", dict: en, availableLocales: ["en", "de"], setLocale: vi.fn() }}>
+      <MemoryRouter><DecisionCard decision={decision({
+        kind: "offer_ready", question: "Ein Angebot liegt vor. Willst du es prüfen?", detail: "EUR 180, Wednesday evenings.",
+        options: [{ id: "review", label: "Angebot prüfen" }], refs: { offerId: "offer-en" as NonNullable<OpenDecision["refs"]["offerId"]> },
+      })} offerHash="exact-en-hash" onAnswer={vi.fn()} /></MemoryRouter>
+    </LocaleCtx.Provider>);
+    expect(screen.getByText("An offer is ready. Would you like to review it?")).toBeInTheDocument();
+    expect(screen.getByText("EUR 180, Wednesday evenings.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review offer" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("offer-en:exact-en-hash");
   });
 
   it("human_step links to the browser run and offers no answers", () => {

@@ -145,7 +145,7 @@ vi.mock("@convex-dev/agent/react", () => ({
   useSmoothText: (text: string) => [text, { cursor: text.length, isStreaming: false }],
 }));
 
-vi.mock("../../ui/chat/LiveVoiceChat", () => ({ LiveVoiceChat: () => <div>Voice Scout session</div> }));
+vi.mock("../../ui/chat/LiveVoiceChat", () => ({ LiveVoiceChat: ({ onText }: { onText?: () => void }) => <div>Voice Scout session<button onClick={onText}>Zum Schreiben wechseln</button></div> }));
 vi.mock("@convex-dev/auth/react", () => ({ useAuthActions: () => ({ signOut: vi.fn() }) }));
 vi.mock("../../components/voice/VoiceSessionContext", () => ({ useVoiceSession: () => fixtures.voice }));
 
@@ -213,7 +213,7 @@ describe("live Scout route", () => {
     const view = renderPage();
     fireEvent.click(screen.getByRole("button", { name: "Mit Scout sprechen" }));
     expect(fixtures.voice.connect).toHaveBeenCalledOnce();
-    fireEvent.click(screen.getByRole("button", { name: "Lieber schreiben" }));
+    fireEvent.click(screen.getByRole("button", { name: "Zum Schreiben wechseln" }));
     expect(fixtures.voice.disconnect).not.toHaveBeenCalled();
     view.unmount();
     expect(fixtures.voice.disconnect).not.toHaveBeenCalled();
@@ -438,7 +438,6 @@ describe("live Scout route", () => {
       message({ role: "assistant", text: "Ich schaue", status: "streaming", order: 1 }),
     ];
     renderPage();
-    fireEvent.click(screen.getByRole("button", { name: "Lieber schreiben" }));
     const composer = screen.getByRole("textbox", { name: "Nachricht an deinen Scout …" });
     fireEvent.change(composer, { target: { value: "Noch etwas" } });
     expect(screen.getByRole("button", { name: "Senden" })).toBeDisabled();
@@ -454,7 +453,6 @@ describe("live Scout route", () => {
       message({ role: "assistant", text: "Ich schaue mal nach.", order: 1 }),
     ];
     renderPage();
-    fireEvent.click(screen.getByRole("button", { name: "Lieber schreiben" }));
     const composer = screen.getByRole("textbox", { name: "Nachricht an deinen Scout …" });
     fireEvent.change(composer, { target: { value: "Noch etwas" } });
     expect(screen.getByRole("button", { name: "Senden" })).toBeEnabled();
@@ -492,13 +490,18 @@ describe("live Scout route", () => {
     expect(fixtures.voice.disconnect).not.toHaveBeenCalled();
   });
 
-  it("opens a candidate beside voice and binds the Scout to that candidate", () => {
+  it("binds server focus before opening a candidate beside voice", async () => {
     fixtures.voice.connected = true; fixtures.voice.provider = "live";
     fixtures.needs = [need("active")];
     fixtures.inbox = [candidate({ id: "c-west", title: "Raum West" })];
+    let finishFocus: (() => void) | undefined;
+    mutation("scout:setFocus").mockImplementationOnce(() => new Promise<void>(resolve => { finishFocus = resolve; }));
     renderPage();
     fireEvent.click(screen.getByRole("button", { name: /Raum West/ }));
-    expect(fixtures.queries).toHaveBeenCalledWith("conversations:getMine", { conversationId: "c-west" });
+    expect(mutation("scout:setFocus")).toHaveBeenCalledWith({ threadId: "thread", activeNeedId: "need-current", mode: "signal_advisor", focusedSignalId: "signal-c-west" });
+    expect(fixtures.queries).not.toHaveBeenCalledWith("conversations:getMine", { conversationId: "c-west" });
+    finishFocus?.();
+    await waitFor(() => expect(fixtures.queries).toHaveBeenCalledWith("conversations:getMine", { conversationId: "c-west" }));
     expect(fixtures.voice.setFocus).toHaveBeenLastCalledWith(expect.objectContaining({ focusedSignalId: "signal-c-west" }));
     expect(screen.getByText("Voice Scout session")).toBeInTheDocument();
     expect(fixtures.voice.disconnect).not.toHaveBeenCalled();

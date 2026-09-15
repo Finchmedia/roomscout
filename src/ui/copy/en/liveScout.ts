@@ -109,7 +109,7 @@ export const liveScoutEn = {
   factUnsure: "{text} · needs clarification",
   facets: {
     bandSize: "{count} people",
-    equipmentStorage: "Drum kit provided or your own can stay",
+    equipmentStorage: "Storage for your own gear",
     equipmentDrums: "Drum kit provided",
     equipmentPa: "PA provided",
     equipmentBackline: "Backline provided",
@@ -122,6 +122,7 @@ export const liveScoutEn = {
     costDeposit: "€{count} deposit",
   },
   decisionWrite: "Or write instead",
+  decisionOfferQuestion: "An offer is ready. Would you like to review it?",
   decisionReviewOffer: "Review offer",
   decisionOpenChat: "View in chat",
   openCandidates: "Candidates",

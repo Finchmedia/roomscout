@@ -74,7 +74,7 @@ describe("Scout brief facts", () => {
       ort: "Stuttgart-West",
       band: "Geteilter Raum · 4er-Rockband · Schlagzeug",
       zeit: "Donnerstags ab 19 Uhr",
-      "facet:equipmentStorage": "Schlagzeug vor Ort oder eigenes darf stehen bleiben",
+      "facet:equipmentStorage": "Lagerplatz für eigenes Equipment",
     });
     expect(facts.map((fact) => fact.value).join(" ")).not.toContain("on_site_or_storage_allowed");
     expect(facts.some((fact) => fact.value === "4")).toBe(false);

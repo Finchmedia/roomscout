@@ -151,7 +151,7 @@ export function DecisionCard({ decision, onAnswer, offerHash, busy = false }: De
     {answerable && answered === undefined ? (
       <Questionnaire className="mt-[var(--space-5)] gap-[var(--space-6)]" shortcuts="letters" onSubmit={submit}>
         <QuestionnaireItem name={decision._id} required>
-          <QuestionnaireTitle>{decision.question}</QuestionnaireTitle>
+          <QuestionnaireTitle>{decision.kind === "offer_ready" ? t("liveScout.decisionOfferQuestion") : decision.question}</QuestionnaireTitle>
           <QuestionnaireDescription render={<div />} className="flex flex-col gap-[var(--space-6)] empty:hidden">
             {detail}
           </QuestionnaireDescription>
@@ -196,7 +196,7 @@ export function DecisionCard({ decision, onAnswer, offerHash, busy = false }: De
       </Questionnaire>
     ) : <>
       <p className="mt-[var(--space-5)] text-[length:var(--text-body-lg-size)] leading-[1.35] font-light tracking-[-.01em] [text-wrap:balance]">
-        {decision.question}
+        {decision.kind === "offer_ready" ? t("liveScout.decisionOfferQuestion") : decision.question}
       </p>
       <div className="mt-[var(--space-6)] flex flex-col gap-[var(--space-6)] empty:hidden">{detail}</div>
     </>}

@@ -1,6 +1,7 @@
 import * as React from "react"
 import { cva } from "class-variance-authority"
 import { cn } from "@/lib/utils"
+import { useCopy } from "@/ui/copy"
 import { XIcon } from "lucide-react"
 import { Dialog as SheetPrimitive } from "radix-ui"
 
@@ -274,9 +275,10 @@ function SheetContent({
   variant = "card",
   showCloseButton,
   showOverlay = true,
-  closeLabel = "Schließen",
+  closeLabel,
   ...props
 }: SheetContentProps) {
+  const { t } = useCopy()
   const isEdge = side === "left" || side === "right"
   // The pill is §4.4's mobile-sheet state; the edge drawers have no such shape.
   const resolvedVariant: SheetVariant = isEdge ? "card" : variant
@@ -303,8 +305,8 @@ function SheetContent({
         {closeVisible && (
           <SheetPrimitive.Close
             data-slot="sheet-close-button"
-            aria-label={closeLabel}
-            title={closeLabel}
+            aria-label={closeLabel ?? t("common.close")}
+            title={closeLabel ?? t("common.close")}
             className={sheetCloseVariants({ side })}
           >
             <XIcon />

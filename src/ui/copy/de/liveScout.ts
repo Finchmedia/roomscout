@@ -129,7 +129,7 @@ export const liveScoutDe = {
    */
   facets: {
     bandSize: "{count} Personen",
-    equipmentStorage: "Schlagzeug vor Ort oder eigenes darf stehen bleiben",
+    equipmentStorage: "Lagerplatz für eigenes Equipment",
     equipmentDrums: "Schlagzeug vorhanden",
     equipmentPa: "PA vorhanden",
     equipmentBackline: "Backline vorhanden",
@@ -143,6 +143,7 @@ export const liveScoutDe = {
   },
   /** The Entscheidung answered on the stage, next to its options. */
   decisionWrite: "Oder lieber schreiben",
+  decisionOfferQuestion: "Ein Angebot liegt vor. Willst du es prüfen?",
   decisionReviewOffer: "Angebot prüfen",
   decisionOpenChat: "Im Chat ansehen",
   /** Below 1100px the two side columns move into sheets. */

@@ -1,6 +1,7 @@
 import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
+import { useCopy } from "@/ui/copy"
 import { XIcon } from "lucide-react"
 import { Dialog as DialogPrimitive } from "radix-ui"
 
@@ -232,6 +233,7 @@ function DialogContent({
   overlayProps,
   ...props
 }: DialogContentProps) {
+  const { t } = useCopy()
   // §1.2: inside a container every overlay is absolute, not viewport-fixed.
   const scoped = container != null
   // §1.2 port delta: the shell's × lives in its breadcrumb header.
@@ -263,8 +265,8 @@ function DialogContent({
         {withCloseButton && (
           <DialogPrimitive.Close
             data-slot="dialog-close"
-            aria-label="Schließen"
-            title="Schließen"
+            aria-label={t("common.close")}
+            title={t("common.close")}
             className={dialogCloseVariants({ size })}
           >
             <XIcon />
