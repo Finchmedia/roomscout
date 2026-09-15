@@ -26,6 +26,31 @@ vi.mock("../../hooks/useRealtimeVoiceScout", async () => {
     },
   };
 });
+vi.mock("../../hooks/useGptLiveVoiceScout", () => ({
+  useGptLiveVoiceScout: () => ({
+    connected: false,
+    muted: false,
+    sessionLocale: "de",
+    setLanguage: vi.fn(),
+    connect: vi.fn(),
+  }),
+}));
+vi.mock("convex/react", () => ({
+  useQuery: () => ({ provider: "realtime", locale: "de" }),
+}));
+vi.mock("../../ui/copy", () => ({
+  useCopy: () => ({
+    locale: "de",
+    setLocale: vi.fn(),
+    t: (key: string) => ({
+      "liveScout.voice.ongoingCall": "Laufendes Scout-Gespräch",
+      "liveScout.voice.returnToScout": "Gespräch läuft · Zum Scout",
+      "liveScout.voice.microphoneOn": "Mikrofon einschalten",
+      "liveScout.voice.microphoneOff": "Mikrofon stummschalten",
+      "liveScout.voice.end": "Gespräch beenden",
+    })[key] ?? key,
+  }),
+}));
 
 beforeEach(() => vi.clearAllMocks());
 

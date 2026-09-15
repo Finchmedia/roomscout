@@ -65,8 +65,11 @@ export type RealtimeSessionAnswer = {
 
 function defaultSessionEndpoint() {
   const cloudUrl = import.meta.env.VITE_CONVEX_URL as string | undefined;
-  const derivedSiteUrl = cloudUrl?.replace(/\.convex\.cloud$/, ".convex.site");
-  const siteUrl = derivedSiteUrl ?? import.meta.env.VITE_CONVEX_SITE_URL as string | undefined;
+  const explicitSiteUrl = import.meta.env.VITE_CONVEX_SITE_URL as string | undefined;
+  const derivedSiteUrl = cloudUrl?.endsWith(".convex.cloud")
+    ? cloudUrl.replace(/\.convex\.cloud$/, ".convex.site")
+    : undefined;
+  const siteUrl = explicitSiteUrl ?? derivedSiteUrl;
   return siteUrl
     ? `${siteUrl.replace(/\/$/, "")}/api/realtime/session`
     : "/api/realtime/session";
@@ -240,6 +243,8 @@ export function useRealtimeVoiceScout(options: UseRealtimeVoiceScoutOptions = {}
       "get_focused_signal",
       "create_outreach_draft",
       "create_webform_draft",
+      "mark_search_brief_ready",
+      "answer_decision",
     ] as const;
     if (!allowedNames.includes(name as (typeof allowedNames)[number])) return;
     try {
