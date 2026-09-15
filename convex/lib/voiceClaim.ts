@@ -53,6 +53,7 @@ export async function assertVoiceClaim(
   if (
     !context || context.threadId !== session.threadId ||
     context.activeNeedId !== session.activeNeedId ||
+    context.focusedSignalId !== session.focusedSignalId ||
     (claim.focusedSignalId !== undefined && context.focusedSignalId !== claim.focusedSignalId) ||
     (target?.savedNeedId !== undefined && context.activeNeedId !== target.savedNeedId) ||
     (target?.signalId !== undefined && context.focusedSignalId !== target.signalId) ||

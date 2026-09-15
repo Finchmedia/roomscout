@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { asSchema } from "ai";
 import type { Id } from "./_generated/dataModel";
 import {
+  buildScoutTools,
   createSearchDraftTool,
   materializeSearchDraftChanges,
   SEARCH_FACET_GUIDANCE,
@@ -81,5 +82,24 @@ describe("Scout search equipment extraction contract", () => {
         { namespace: "equipment", key: "storage", value: "true", confidence: 1 },
       ],
     });
+  });
+
+  it("keeps the global search update tool available while advising on a focused candidate", () => {
+    const tools = buildScoutTools({} as never, {
+      ownerId: "owner" as Id<"users">,
+      threadId: "thread",
+      context: {
+        mode: "signal_advisor",
+        activeNeedId: "need" as Id<"savedNeeds">,
+        focusedSignalId: "signal" as Id<"signals">,
+        hasOpenDecision: true,
+      },
+    });
+    expect(Object.keys(tools)).toEqual(expect.arrayContaining([
+      "updateSearchDraft",
+      "continueAutopilot",
+      "answerDecision",
+    ]));
+    expect(tools).not.toHaveProperty("markSearchBriefReady");
   });
 });

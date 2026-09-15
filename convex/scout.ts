@@ -419,9 +419,8 @@ export const setFocus = mutation({
     if (context === null || context.ownerId !== ownerId) {
       throw new ConvexError({ code: "THREAD_NOT_FOUND" });
     }
-    if (args.activeNeedId !== undefined) {
-      await ownedNeed(ctx, args.activeNeedId, ownerId);
-    }
+    const activeNeedId = args.activeNeedId ?? context.activeNeedId;
+    if (activeNeedId !== undefined) await ownedNeed(ctx, activeNeedId, ownerId);
     if (args.mode !== "search_discovery" && args.focusedSignalId === undefined) {
       throw new ConvexError({ code: "SIGNAL_REQUIRED" });
     }
@@ -430,17 +429,34 @@ export const setFocus = mutation({
       if (signal === null || (signal.status !== "published" && signal.status !== "stale")) {
         throw new ConvexError({ code: "SIGNAL_NOT_FOUND" });
       }
+      if (args.mode === "signal_advisor" && signal.status !== "published") {
+        if (!activeNeedId) throw new ConvexError({ code: "NEED_NOT_FOUND" });
+        const conversations = await ctx.db.query("providerConversations").withIndex("by_need_and_signal", (q) =>
+          q.eq("savedNeedId", activeNeedId).eq("signalId", args.focusedSignalId!),
+        ).take(10);
+        if (!conversations.some((conversation) => conversation.ownerId === ownerId && conversation.state !== "closed")) {
+          throw new ConvexError({ code: "SIGNAL_NOT_FOUND" });
+        }
+      }
     }
+    const focusedSignalId = args.mode === "search_discovery" ? undefined : args.focusedSignalId;
+    const now = Date.now();
     await ctx.db.patch(context._id, {
       mode: args.mode,
-      activeNeedId: args.activeNeedId ?? context.activeNeedId,
-      focusedSignalId:
-        args.mode === "search_discovery" ? undefined : args.focusedSignalId,
+      activeNeedId,
+      focusedSignalId,
       ...(args.activeNeedId !== undefined && args.activeNeedId !== context.activeNeedId
         ? { readyNeedRevision: undefined, briefReadyAt: undefined }
         : {}),
-      updatedAt: Date.now(),
+      updatedAt: now,
     });
+    const sessions = await ctx.db.query("voiceSessions").withIndex("by_owner_and_started_at", (q) =>
+      q.eq("ownerId", ownerId),
+    ).order("desc").take(10);
+    for (const session of sessions) {
+      if (session.status !== "active" || session.threadId !== context.threadId || session.activeNeedId !== activeNeedId) continue;
+      await ctx.db.patch(session._id, { focusedSignalId, updatedAt: now });
+    }
     return null;
   },
 });
@@ -740,6 +756,12 @@ export function buildScoutTools(
   }
 
   if (context.mode === "signal_advisor" && context.activeNeedId && context.focusedSignalId) {
+    const updateSearchDraft = createSearchDraftTool(ctx, {
+      ownerId,
+      needId: context.activeNeedId,
+      voiceClaim: args.voiceClaim,
+      onUpdated: (result) => args.onEffect?.("search", result.changedFields),
+    });
     const continueAutopilot = createTool({
       description: "Use when the musician explicitly asks RoomScout to handle, contact, ask, or clarify the focused opportunity autonomously. This cannot widen permissions.",
       inputSchema: z.object({}),
@@ -756,7 +778,7 @@ export function buildScoutTools(
         };
       },
     });
-    return { continueAutopilot, rememberFact, ...decisionToolSet, ...voiceOnlyTools };
+    return { updateSearchDraft, continueAutopilot, rememberFact, ...decisionToolSet, ...voiceOnlyTools };
   }
   return { rememberFact, ...decisionToolSet, ...voiceOnlyTools };
 }

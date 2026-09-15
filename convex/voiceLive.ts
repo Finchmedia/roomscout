@@ -468,7 +468,8 @@ export const claimRequest = internalMutation({
     if (!context || context.ownerId !== args.ownerId || context.activeNeedId !== session.activeNeedId) {
       return { kind: "result" as const, result: { status: "superseded" as const, requestId: args.requestId, resolvedEventIds: [], locale } };
     }
-    if (args.focusedSignalId !== undefined && context.focusedSignalId !== args.focusedSignalId) {
+    if (context.focusedSignalId !== session.focusedSignalId ||
+      (args.focusedSignalId !== undefined && args.focusedSignalId !== session.focusedSignalId)) {
       return { kind: "result" as const, result: { status: "superseded" as const, requestId: args.requestId, resolvedEventIds: [], locale } };
     }
     let decisionUpdatedAt: number | undefined;
@@ -541,6 +542,7 @@ export const finishRequest = internalMutation({
     const context = await ctx.db.query("scoutContexts")
       .withIndex("by_owner", (q) => q.eq("ownerId", args.ownerId)).unique();
     const staleTarget = !context || context.activeNeedId !== session.activeNeedId ||
+      context.focusedSignalId !== session.focusedSignalId ||
       (claim.focusedSignalId !== undefined && context.focusedSignalId !== claim.focusedSignalId);
     if (args.result.status === "in_progress" || args.result.status === "busy") {
       throw new ConvexError({ code: "VOICE_RESULT_NOT_TERMINAL" });
@@ -767,8 +769,10 @@ export const delegate = action({
       if (kind === "memory") verifiedFacts.add("memory.updated=true");
       if (kind === "decision") verifiedFacts.add("decision.status=answered");
     };
+    const searchCanChange = context.activeNeedId !== undefined &&
+      (context.mode === "search_discovery" || context.mode === "signal_advisor");
     const tools: ToolSet = captureFacts
-      ? context.mode === "search_discovery" && context.activeNeedId
+      ? searchCanChange && context.activeNeedId
         ? {
             updateSearchDraft: createSearchDraftTool(ctx, {
               ownerId,
@@ -786,7 +790,7 @@ export const delegate = action({
           decisionId: args.decisionId,
           onEffect,
         });
-    if (!captureFacts && context.mode === "search_discovery" && context.activeNeedId) {
+    if (!captureFacts && searchCanChange && context.activeNeedId) {
       tools.setSearchStatus = createTool({
         description: "Start or pause the current search only after the musician explicitly asks. Never infer this from a completed brief. Use pause only for the domain search, not for stopping audio.",
         inputSchema: z.object({ action: z.enum(["start", "pause"]) }),

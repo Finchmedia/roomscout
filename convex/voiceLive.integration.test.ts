@@ -78,6 +78,13 @@ const setLanguageFromClaim = makeFunctionReference<"mutation", {
   generation: number;
   locale: "en" | "de";
 }, { locale: "en" | "de"; languageRevision: number }>("voiceLive:setLanguageFromClaim");
+const changeNeedStatus = makeFunctionReference<"mutation", {
+  ownerId: Id<"users">;
+  voiceSessionId: Id<"voiceSessions">;
+  requestId: string;
+  generation: number;
+  action: "start" | "pause";
+}, { status: "active" | "paused"; revision: number }>("voiceLive:changeNeedStatus");
 
 async function fixture() {
   const t = convexTest(schema, modules);
@@ -441,6 +448,108 @@ it("fences a claimed write after focus changes", async () => {
     maxBudgetEur: 300,
     voiceClaim: { voiceSessionId: f.voiceSessionId, requestId: "focus", generation: claim.generation },
   })).rejects.toThrow(/VOICE_TARGET_SUPERSEDED/);
+});
+
+it("syncs candidate focus into the Live session before an advisor claim can pause and update the current search", async () => {
+  const f = await fixture();
+  await f.owner.mutation(api.scout.setFocus, {
+    threadId: f.threadId,
+    mode: "signal_advisor",
+    activeNeedId: f.needId,
+    focusedSignalId: f.firstSignalId,
+  });
+  const focused = await f.t.run(async (ctx) => ({
+    context: await ctx.db.query("scoutContexts").withIndex("by_owner", (q) => q.eq("ownerId", f.ownerId)).unique(),
+    session: await ctx.db.get(f.voiceSessionId),
+  }));
+  expect(focused.context).toMatchObject({ mode: "signal_advisor", focusedSignalId: f.firstSignalId });
+  expect(focused.session?.focusedSignalId).toBe(f.firstSignalId);
+
+  const claim = await f.t.mutation(claimRequest, {
+    ...claimArgs(f, "advisor-global-search"),
+    focusedSignalId: f.firstSignalId,
+  });
+  if (claim.kind !== "accepted") throw new Error("claim not accepted");
+  const voiceClaim = {
+    voiceSessionId: f.voiceSessionId,
+    requestId: "advisor-global-search",
+    generation: claim.generation,
+  };
+  await expect(f.t.mutation(changeNeedStatus, {
+    ownerId: f.ownerId,
+    ...voiceClaim,
+    action: "pause",
+  })).resolves.toMatchObject({ status: "paused" });
+  await expect(f.t.mutation(updateFromScout, {
+    ownerId: f.ownerId,
+    needId: f.needId,
+    schedule: ["Tuesday evening"],
+    voiceClaim,
+  })).resolves.toMatchObject({ changedFields: ["schedule"] });
+  expect(await f.t.run((ctx) => ctx.db.get(f.needId))).toMatchObject({
+    status: "paused",
+    schedule: ["Tuesday evening"],
+  });
+});
+
+it("allows published deep-link focus but rejects a stale signal without an owned conversation", async () => {
+  const published = await fixture();
+  await expect(published.owner.mutation(api.scout.setFocus, {
+    threadId: published.threadId,
+    mode: "signal_advisor",
+    activeNeedId: published.needId,
+    focusedSignalId: published.secondSignalId,
+  })).resolves.toBeNull();
+  await expect(published.owner.mutation(api.scout.setFocus, {
+    threadId: published.threadId,
+    mode: "search_discovery",
+    activeNeedId: published.needId,
+  })).resolves.toBeNull();
+  const cleared = await published.t.run(async (ctx) => ({
+    context: await ctx.db.query("scoutContexts").withIndex("by_owner", (q) => q.eq("ownerId", published.ownerId)).unique(),
+    session: await ctx.db.get(published.voiceSessionId),
+  }));
+  expect(cleared.context?.focusedSignalId).toBeUndefined();
+  expect(cleared.session?.focusedSignalId).toBeUndefined();
+
+  const stale = await fixture();
+  await stale.t.run((ctx) => ctx.db.patch(stale.secondSignalId, { status: "stale" }));
+  await expect(stale.owner.mutation(api.scout.setFocus, {
+    threadId: stale.threadId,
+    mode: "signal_advisor",
+    activeNeedId: stale.needId,
+    focusedSignalId: stale.secondSignalId,
+  })).rejects.toThrow(/SIGNAL_NOT_FOUND/);
+  expect(await stale.t.run((ctx) => ctx.db.get(stale.voiceSessionId))).toMatchObject({
+    focusedSignalId: stale.firstSignalId,
+  });
+});
+
+it("allows a stale candidate only when its nonclosed provider conversation belongs to the active need", async () => {
+  const f = await fixture();
+  await f.t.run(async (ctx) => {
+    await ctx.db.patch(f.firstSignalId, { status: "stale" });
+    await ctx.db.insert("providerConversations", {
+      ownerId: f.ownerId,
+      conversationKey: "voice-focus-owned",
+      savedNeedId: f.needId,
+      signalId: f.firstSignalId,
+      agentThreadId: "voice-focus-owned-thread",
+      revision: 0,
+      state: "waiting",
+      createdAt: 2_000,
+      updatedAt: 2_000,
+    });
+  });
+  await expect(f.owner.mutation(api.scout.setFocus, {
+    threadId: f.threadId,
+    mode: "signal_advisor",
+    activeNeedId: f.needId,
+    focusedSignalId: f.firstSignalId,
+  })).resolves.toBeNull();
+  expect(await f.t.run((ctx) => ctx.db.get(f.voiceSessionId))).toMatchObject({
+    focusedSignalId: f.firstSignalId,
+  });
 });
 
 it("lets an accepted claim finish after audio ends and never reruns an uncertain partial result", async () => {
