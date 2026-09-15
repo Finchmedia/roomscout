@@ -234,6 +234,110 @@ describe("useGptLiveVoiceScout", () => {
     expect(sent.some((event) => event.type === "session.commentary.append")).toBe(false);
   });
 
+  it("keeps a late completed receipt quiet while the correction's native request is queued", async () => {
+    let resolveOriginal!: (result: LiveDelegateResult) => void;
+    let resolveCorrection!: (result: LiveDelegateResult) => void;
+    const delegate = vi.fn()
+      .mockImplementationOnce(
+        () => new Promise<LiveDelegateResult>((resolve) => { resolveOriginal = resolve; }),
+      )
+      .mockImplementationOnce(
+        () => new Promise<LiveDelegateResult>((resolve) => { resolveCorrection = resolve; }),
+      );
+    const { channel, sent } = await connect(delegate as never);
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "original-brief",
+        delta: "Budget 300 euros and Tuesday evenings",
+        start_ms: 0,
+        end_ms: 500,
+      });
+      serverEvent(channel, {
+        type: "session.delegation.created",
+        delegation: { id: "original-native", type: "delegation", target: "client" },
+      });
+    });
+    await waitFor(() => expect(delegate).toHaveBeenCalledOnce());
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "newer-correction",
+        delta: "Actually 280 euros and Wednesday evenings",
+        start_ms: 510,
+        end_ms: 900,
+      });
+      serverEvent(channel, {
+        type: "session.delegation.created",
+        delegation: { id: "correction-native", type: "delegation", target: "client" },
+      });
+    });
+    await act(async () => resolveOriginal({
+      ...completed("original-native", ["original-brief"]),
+      spokenSummary: "All set. Your brief is ready.",
+      changedFields: ["budget", "schedule", "needStatus"],
+      verifiedFacts: ["Original request committed before the correction."],
+    }));
+    await waitFor(() => expect(delegate).toHaveBeenCalledTimes(2));
+
+    expect(delegate.mock.calls[0]?.[0].fragments).toEqual([
+      expect.objectContaining({ eventId: "original-brief" }),
+    ]);
+    expect(delegate.mock.calls[1]?.[0].fragments).toEqual([
+      expect.objectContaining({ eventId: "newer-correction" }),
+    ]);
+    expect(sent.some((event) =>
+      event.type === "session.commentary.append" &&
+      event.content === "All set. Your brief is ready.",
+    )).toBe(false);
+    expect(sent).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "session.thinking.append",
+          content: expect.stringContaining("Original request committed before the correction."),
+        }),
+      ]),
+    );
+    await act(async () => resolveCorrection(completed("correction-native", ["newer-correction"])));
+  });
+
+  it("keeps a completed spoken summary quiet when newer typed work is waiting", async () => {
+    let resolveVoice!: (result: LiveDelegateResult) => void;
+    const delegate = vi.fn()
+      .mockImplementationOnce(
+        () => new Promise<LiveDelegateResult>((resolve) => { resolveVoice = resolve; }),
+      )
+      .mockImplementation(async (args: { requestId: string }) => completed(args.requestId, []));
+    const { channel, result, sent } = await connect(delegate as never);
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "voice-before-text",
+        delta: "Keep the first option open",
+        start_ms: 0,
+        end_ms: 300,
+      });
+      serverEvent(channel, {
+        type: "session.delegation.created",
+        delegation: { id: "voice-request", type: "delegation", target: "client" },
+      });
+    });
+    await waitFor(() => expect(delegate).toHaveBeenCalledOnce());
+    act(() => expect(result.current.sendText("Compare it with the second option")).toBe(true));
+    await act(async () => resolveVoice({
+      ...completed("voice-request", ["voice-before-text"]),
+      spokenSummary: "The first option is ready.",
+      changedFields: ["decisionStatus"],
+      verifiedFacts: ["The first option stayed open."],
+    }));
+    await waitFor(() => expect(delegate).toHaveBeenCalledTimes(2));
+    expect(sent.some((event) => event.content === "The first option is ready.")).toBe(false);
+    expect(sent.some((event) =>
+      event.type === "session.thinking.append" &&
+      String(event.content).includes("The first option stayed open."),
+    )).toBe(true);
+  });
+
   it("processes a late fragment in the next queued delegation even when its audio interval is older", async () => {
     let resolveFirst!: (result: LiveDelegateResult) => void;
     const delegate = vi.fn()

@@ -152,6 +152,8 @@ type QueuedInput = {
   delegationId?: string;
   text?: string;
   intent?: "capture_facts";
+  /** User transcript boundary owned by this request, fixed before later speech arrives. */
+  throughSequence?: number;
 };
 
 type FailedInput = {
@@ -572,6 +574,12 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     }
     let snapshot: LiveDelegationSnapshot;
     try {
+      if (
+        next.source === "voice" &&
+        next.delegationId &&
+        next.throughSequence === undefined &&
+        fragmentBufferRef.current.unresolvedUserFragments().length > 0
+      ) next.throughSequence = fragmentBufferRef.current.latestSequence();
       snapshot = captureCandidate
         ? {
           delegationId: next.requestId,
@@ -579,7 +587,10 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
           fragments: captureCandidate.fragments,
           unresolvedUserEventIds: captureCandidate.fragments.map((fragment) => fragment.eventId),
         }
-        : fragmentBufferRef.current.snapshot(next.delegationId ?? next.requestId);
+        : fragmentBufferRef.current.snapshot(
+            next.delegationId ?? next.requestId,
+            next.throughSequence,
+          );
     } catch (cause) {
       queueRef.current.shift();
       failedInputRef.current = { input: next, refreshRequestId: false };
@@ -709,13 +720,24 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       } else setBackendState("idle");
 
       const hasNewerInput = fragmentBufferRef.current.hasNewerUnresolvedUserInput(snapshot.maxSequence);
+      const hasNewerTypedInput = queueRef.current.some((input) => input.source === "text");
       const contextIsCurrent =
         contextEpochRef.current === contextEpoch && localeRef.current === requestLocale;
       const priorReceipt = verifiedPriorRequestReceipt(result);
-      if (next.intent !== "capture_facts" && !contextIsCurrent && priorReceipt) {
+      if (
+        next.intent !== "capture_facts" &&
+        (!contextIsCurrent || hasNewerInput || hasNewerTypedInput) &&
+        priorReceipt
+      ) {
         appendContext(priorReceipt, false);
       }
-      if (next.intent !== "capture_facts" && result.spokenSummary && !hasNewerInput && contextIsCurrent) {
+      if (
+        next.intent !== "capture_facts" &&
+        result.spokenSummary &&
+        !hasNewerInput &&
+        !hasNewerTypedInput &&
+        contextIsCurrent
+      ) {
         appendContext(result.spokenSummary, true, next.delegationId ?? null);
       }
     } catch (cause) {
@@ -877,20 +899,28 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
                 : "failed"
               : "idle",
         );
-        if (
-          uncertain.input.intent !== "capture_facts" &&
-          result.spokenSummary &&
-          !fragmentBufferRef.current.hasNewerUnresolvedUserInput(uncertain.snapshot.maxSequence) &&
-          contextEpochRef.current === uncertain.contextEpoch &&
-          localeRef.current === uncertain.locale
-        ) {
-          appendContext(result.spokenSummary, true, uncertain.input.delegationId ?? null);
-        }
+        const hasNewerInput = fragmentBufferRef.current.hasNewerUnresolvedUserInput(
+          uncertain.snapshot.maxSequence,
+        );
+        const hasNewerTypedInput = queueRef.current.some((input) => input.source === "text");
         const contextIsCurrent =
           contextEpochRef.current === uncertain.contextEpoch &&
           localeRef.current === uncertain.locale;
+        if (
+          uncertain.input.intent !== "capture_facts" &&
+          result.spokenSummary &&
+          !hasNewerInput &&
+          !hasNewerTypedInput &&
+          contextIsCurrent
+        ) {
+          appendContext(result.spokenSummary, true, uncertain.input.delegationId ?? null);
+        }
         const priorReceipt = verifiedPriorRequestReceipt(result);
-        if (uncertain.input.intent !== "capture_facts" && !contextIsCurrent && priorReceipt) {
+        if (
+          uncertain.input.intent !== "capture_facts" &&
+          (!contextIsCurrent || hasNewerInput || hasNewerTypedInput) &&
+          priorReceipt
+        ) {
           appendContext(priorReceipt, false);
         }
       }
@@ -950,6 +980,9 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
           requestId: event.delegation.id,
           delegationId: event.delegation.id,
           source: "voice",
+          ...(fragmentBufferRef.current.unresolvedUserFragments().length > 0
+            ? { throughSequence: fragmentBufferRef.current.latestSequence() }
+            : {}),
         };
         if (captureIndex >= 0) queueRef.current.splice(captureIndex, 0, delegationInput);
         else queueRef.current.push(delegationInput);
@@ -1165,7 +1198,12 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     const trimmed = text.trim();
     if (!trimmed || connectionState !== "active") return false;
     const requestId = newRequestId("typed");
-    queueRef.current.push({ requestId, source: "text", text: trimmed });
+    queueRef.current.push({
+      requestId,
+      source: "text",
+      text: trimmed,
+      throughSequence: fragmentBufferRef.current.latestSequence(),
+    });
     setPendingTextInputs((current) => [...current, { id: requestId, text: trimmed }]);
     setPendingInputCount(queueRef.current.length);
     setBackendState("queued");

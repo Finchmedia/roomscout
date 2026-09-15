@@ -135,6 +135,29 @@ describe("GptLiveFragmentBuffer", () => {
     ]);
   });
 
+  it("pins a delegation snapshot before a later unresolved correction", () => {
+    const buffer = new GptLiveFragmentBuffer();
+    buffer.append({
+      type: "session.input_transcript.delta",
+      event_id: "original-brief",
+      delta: "Budget 300, Tuesday",
+      start_ms: 0,
+      end_ms: 300,
+    });
+    const delegationBoundary = buffer.latestSequence();
+    buffer.append({
+      type: "session.input_transcript.delta",
+      event_id: "later-correction",
+      delta: "Actually 280, Wednesday",
+      start_ms: 310,
+      end_ms: 600,
+    });
+
+    const snapshot = buffer.snapshot("original-delegation", delegationBoundary);
+    expect(snapshot.fragments.map((fragment) => fragment.eventId)).toEqual(["original-brief"]);
+    expect(buffer.hasNewerUnresolvedUserInput(snapshot.maxSequence)).toBe(true);
+  });
+
   it("keeps overlapping speakers independent and lets a late fragment revise its earlier row", () => {
     const buffer = new GptLiveFragmentBuffer();
     buffer.append({

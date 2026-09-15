@@ -111,8 +111,10 @@ export class GptLiveFragmentBuffer {
     return fragment;
   }
 
-  snapshot(delegationId: string): LiveDelegationSnapshot {
-    const unresolvedUserFragments = this.unresolvedUserFragments();
+  snapshot(delegationId: string, throughSequence = this.#sequence): LiveDelegationSnapshot {
+    const unresolvedUserFragments = this.unresolvedUserFragments().filter(
+      (fragment) => fragment.sequence <= throughSequence,
+    );
     const unresolvedIds = new Set(unresolvedUserFragments.map((fragment) => fragment.eventId));
     const requiredCharacters = unresolvedUserFragments.reduce(
       (total, fragment) => total + fragment.text.length,
@@ -130,6 +132,7 @@ export class GptLiveFragmentBuffer {
     for (let index = this.#fragments.length - 1; index >= 0 && remainingFragments > 0; index -= 1) {
       const fragment = this.#fragments[index]!;
       if (
+        fragment.sequence > throughSequence ||
         fragment.role !== "assistant" ||
         unresolvedIds.has(fragment.eventId) ||
         fragment.text.length > remainingCharacters
@@ -143,7 +146,7 @@ export class GptLiveFragmentBuffer {
     );
     return {
       delegationId,
-      maxSequence: this.#sequence,
+      maxSequence: throughSequence,
       fragments,
       unresolvedUserEventIds: unresolvedUserFragments.map((fragment) => fragment.eventId),
     };
@@ -219,6 +222,10 @@ export class GptLiveFragmentBuffer {
 
   processedCursor(): number {
     return this.#processedCursor;
+  }
+
+  latestSequence(): number {
+    return this.#sequence;
   }
 
   captions(gapMs = 900): LiveCaptionRow[] {
