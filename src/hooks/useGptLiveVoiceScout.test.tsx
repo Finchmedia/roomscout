@@ -15,6 +15,9 @@ const convexMocks = vi.hoisted(() => ({
 const audioMocks = vi.hoisted(() => ({
   attach: vi.fn().mockResolvedValue(undefined),
   detach: vi.fn(),
+  inputVolume: 0,
+  outputVolume: 0,
+  callCount: 0,
 }));
 vi.mock("convex/react", () => ({
   useAction: () => convexMocks.action,
@@ -22,7 +25,13 @@ vi.mock("convex/react", () => ({
   useQuery: () => undefined,
 }));
 vi.mock("./useAudioVolume", () => ({
-  useAudioVolume: () => ({ volume: 0, attach: audioMocks.attach, detach: audioMocks.detach }),
+  useAudioVolume: () => ({
+    volume: (audioMocks.callCount++ % 2 === 0)
+      ? audioMocks.inputVolume
+      : audioMocks.outputVolume,
+    attach: audioMocks.attach,
+    detach: audioMocks.detach,
+  }),
 }));
 
 type TestConnection = {
@@ -81,6 +90,9 @@ beforeEach(() => {
   convexMocks.mutation.mockClear();
   audioMocks.attach.mockClear();
   audioMocks.detach.mockClear();
+  audioMocks.inputVolume = 0;
+  audioMocks.outputVolume = 0;
+  audioMocks.callCount = 0;
   vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
   const stream = {
@@ -331,13 +343,29 @@ describe("useGptLiveVoiceScout", () => {
       result.current.setFocus({ summary: "The selected room is now East Room." });
       result.current.setLanguage("de");
     });
-    await act(async () => resolveDelegate(completed("delegation-room", ["room-question"])));
+    await act(async () => resolveDelegate({
+      ...completed("delegation-room", ["room-question"]),
+      changedFields: ["decisionStatus"],
+      verifiedFacts: ["The previous nonbinding decision was answered no."],
+    }));
     expect(result.current.sessionLocale).toBe("de");
     expect(sent.some((event) => event.type === "session.commentary.append")).toBe(false);
     expect(sent).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ type: "session.thinking.append" }),
         expect.objectContaining({ type: "session.instructions.append" }),
+      ]),
+    );
+    expect(sent).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "session.thinking.append",
+          content: expect.stringContaining("VERIFIED_PREVIOUS_REQUEST_RESULT"),
+        }),
+        expect.objectContaining({
+          type: "session.thinking.append",
+          content: expect.stringContaining("previous nonbinding decision was answered no"),
+        }),
       ]),
     );
   });
@@ -412,6 +440,44 @@ describe("useGptLiveVoiceScout", () => {
     expect(delegate.mock.calls[1]?.[0].text).toBe("Start the search now");
     await waitFor(() => expect(result.current.backendState).toBe("idle"));
     expect(result.current.pendingTextDraft).toBe("");
+  });
+
+  it("keeps a pre-admission superseded voice request for an explicit context-aware retry", async () => {
+    const delegate = vi.fn()
+      .mockImplementationOnce(async (args: { requestId: string }): Promise<LiveDelegateResult> => ({
+        status: "superseded",
+        requestId: args.requestId,
+        resolvedEventIds: [],
+        locale: "en",
+      }))
+      .mockImplementation(async (args: { requestId: string }) => completed(args.requestId, ["pause"]));
+    const { channel, result } = await connect(delegate as never);
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "pause",
+        delta: "Pause this search",
+        start_ms: 0,
+        end_ms: 300,
+      });
+      serverEvent(channel, {
+        type: "session.delegation.created",
+        delegation: { id: "pause-delegation", type: "delegation", target: "client" },
+      });
+    });
+    await waitFor(() => expect(result.current.backendState).toBe("failed"));
+    expect(result.current.error).toContain("context changed");
+    const rejectedRequestId = delegate.mock.calls[0]?.[0].requestId;
+
+    act(() => expect(result.current.retryFailedInput()).toBe(true));
+    await waitFor(() => expect(delegate).toHaveBeenCalledTimes(2));
+    expect(delegate.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({
+        delegationId: "pause-delegation",
+        fragments: [expect.objectContaining({ eventId: "pause", text: "Pause this search" })],
+      }),
+    );
+    expect(delegate.mock.calls[1]?.[0].requestId).not.toBe(rejectedRequestId);
   });
 
   it("sends verified focus and background context with documented append events", async () => {
@@ -537,10 +603,11 @@ describe("useGptLiveVoiceScout", () => {
     expect(play.mock.calls.length).toBeGreaterThan(callsBeforeStop);
   });
 
-  it("defers spoken updates while the user speaks and announces only the latest queued version", async () => {
-    const { channel, result, sent } = await connect(
+  it("uses live input volume to defer spoken updates across delayed caption gaps", async () => {
+    const hook = await connect(
       vi.fn().mockResolvedValue(completed("none", [])) as never,
     );
+    const { channel, result, sent, rerender } = hook;
     vi.useFakeTimers();
     try {
       act(() => {
@@ -571,6 +638,8 @@ describe("useGptLiveVoiceScout", () => {
           speak: false,
         })).toBe(true);
       });
+      audioMocks.inputVolume = 0.2;
+      act(() => rerender());
       expect(sent.some((event) => event.content === "Old provider update.")).toBe(false);
       expect(sent.some((event) => event.content === "Current provider update.")).toBe(false);
       expect(sent).toEqual(
@@ -582,7 +651,25 @@ describe("useGptLiveVoiceScout", () => {
         ]),
       );
 
-      act(() => vi.advanceTimersByTime(751));
+      act(() => vi.advanceTimersByTime(4_000));
+      expect(sent.some((event) => event.content === "Current provider update.")).toBe(false);
+      act(() => {
+        serverEvent(channel, {
+          type: "session.input_transcript.delta",
+          event_id: "delayed-caption",
+          delta: " and Tuesday evenings",
+          start_ms: 510,
+          end_ms: 900,
+        });
+      });
+      act(() => vi.advanceTimersByTime(2_000));
+      expect(sent.some((event) => event.content === "Current provider update.")).toBe(false);
+
+      audioMocks.inputVolume = 0;
+      act(() => rerender());
+      act(() => vi.advanceTimersByTime(1_099));
+      expect(sent.some((event) => event.content === "Current provider update.")).toBe(false);
+      act(() => vi.advanceTimersByTime(2));
       expect(sent.some((event) => event.content === "Old provider update.")).toBe(false);
       expect(sent).toEqual(
         expect.arrayContaining([
@@ -592,6 +679,79 @@ describe("useGptLiveVoiceScout", () => {
           }),
         ]),
       );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not release queued speech on mute, reset, or manual stop", async () => {
+    const hook = await connect(
+      vi.fn().mockResolvedValue(completed("none", [])) as never,
+    );
+    const { channel, result, sent, rerender } = hook;
+    vi.useFakeTimers();
+    try {
+      audioMocks.inputVolume = 0.2;
+      act(() => rerender());
+      act(() => {
+        expect(result.current.appendVerifiedBackgroundUpdate({
+          id: "muted-update",
+          version: 1,
+          content: "Announce after unmute.",
+          speak: true,
+        })).toBe(true);
+        result.current.setMuted(true);
+      });
+      audioMocks.inputVolume = 0;
+      act(() => rerender());
+      act(() => vi.advanceTimersByTime(5_000));
+      expect(sent.some((event) => event.content === "Announce after unmute.")).toBe(false);
+
+      act(() => result.current.setMuted(false));
+      act(() => vi.advanceTimersByTime(1_101));
+      expect(sent.some((event) => event.content === "Announce after unmute.")).toBe(true);
+
+      audioMocks.inputVolume = 0.2;
+      act(() => rerender());
+      act(() => {
+        expect(result.current.appendVerifiedBackgroundUpdate({
+          id: "stopped-update",
+          version: 1,
+          content: "Wait for the next user turn.",
+          speak: true,
+        })).toBe(true);
+        result.current.stopSpeaking();
+      });
+      audioMocks.inputVolume = 0;
+      act(() => rerender());
+      act(() => vi.advanceTimersByTime(5_000));
+      expect(sent.some((event) => event.content === "Wait for the next user turn.")).toBe(false);
+      act(() => {
+        serverEvent(channel, {
+          type: "session.input_transcript.delta",
+          event_id: "new-turn-after-stop",
+          delta: "Continue now",
+          start_ms: 1_000,
+          end_ms: 1_200,
+        });
+      });
+      act(() => vi.advanceTimersByTime(1_101));
+      expect(sent.some((event) => event.content === "Wait for the next user turn.")).toBe(true);
+
+      audioMocks.inputVolume = 0.2;
+      act(() => rerender());
+      act(() => {
+        expect(result.current.appendVerifiedBackgroundUpdate({
+          id: "reset-update",
+          version: 1,
+          content: "Never announce after disconnect.",
+          speak: true,
+        })).toBe(true);
+        result.current.disconnect();
+        serverEvent(channel, { type: "session.closed" });
+      });
+      act(() => vi.advanceTimersByTime(5_000));
+      expect(sent.some((event) => event.content === "Never announce after disconnect.")).toBe(false);
     } finally {
       vi.useRealTimers();
     }

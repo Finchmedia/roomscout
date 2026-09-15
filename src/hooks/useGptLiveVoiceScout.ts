@@ -169,6 +169,8 @@ const LIVE_CLIENT_EVENT_TYPES = new Set([
   "session.close",
 ]);
 const MAX_APPEND_UTF8_BYTES = 400;
+const INPUT_SPEECH_VOLUME_THRESHOLD = 0.02;
+const SPOKEN_RELAY_QUIET_DWELL_MS = 1_100;
 const textEncoder = new TextEncoder();
 
 /**
@@ -286,6 +288,31 @@ function laterCaptureCursor(
   return current;
 }
 
+function verifiedPriorRequestReceipt(result: LiveDelegateResult): string | undefined {
+  if (
+    result.status !== "completed" ||
+    (!result.changedFields?.length && !result.verifiedFacts?.length)
+  ) return undefined;
+  return [
+    "VERIFIED_PREVIOUS_REQUEST_RESULT",
+    JSON.stringify({
+      requestId: result.requestId,
+      changedFields: result.changedFields ?? [],
+      verifiedFacts: result.verifiedFacts ?? [],
+    }),
+    "This receipt belongs to the previous request context. Do not apply it to the current focus or announce it automatically.",
+  ].join("\n");
+}
+
+function isPreAdmissionSuperseded(result: LiveDelegateResult): boolean {
+  return (
+    result.status === "superseded" &&
+    result.resolvedEventIds.length === 0 &&
+    !result.promptMessageId &&
+    !result.assistantMessageId
+  );
+}
+
 export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) {
   const accessToken = useAuthToken();
   const runDelegate = useAction(delegateReference);
@@ -321,6 +348,13 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   const speechTimersRef = useRef<{ user?: number; assistant?: number }>({});
   const userSpeakingRef = useRef(false);
   const outputSuppressedRef = useRef(false);
+  const spokenRelaySuppressedRef = useRef(false);
+  const relayQuietTimerRef = useRef<number | undefined>(undefined);
+  const lastUserActivityAtRef = useRef(0);
+  const inputVolumeRef = useRef(0);
+  const inputWasAboveThresholdRef = useRef(false);
+  const connectionStateRef = useRef<LiveConnectionState>("disconnected");
+  const microphoneStateRef = useRef<LiveMicrophoneState>("off");
   const captureTimerRef = useRef<number | undefined>(undefined);
   const captureCursorRef = useRef<LiveCaptureCursor>({ sequence: 0, characterOffset: 0 });
   const lastCaptureQueuedAtRef = useRef(0);
@@ -351,6 +385,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   const pumpRef = useRef<() => void>(() => undefined);
   const scheduleCaptureRef = useRef<() => void>(() => undefined);
   const flushSpokenUpdatesRef = useRef<() => void>(() => undefined);
+  const scheduleRelayQuietCheckRef = useRef<() => void>(() => undefined);
   const createSession = options.createSession;
   const { volume: inputVolume, attach: attachInputMeter, detach: detachInputMeter } = useAudioVolume();
   const { volume: outputVolume, attach: attachOutputMeter, detach: detachOutputMeter } = useAudioVolume();
@@ -367,6 +402,12 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   useEffect(() => {
     onEventRef.current = options.onEvent;
   }, [options.onEvent]);
+  useEffect(() => {
+    connectionStateRef.current = connectionState;
+  }, [connectionState]);
+  useEffect(() => {
+    microphoneStateRef.current = microphoneState;
+  }, [microphoneState]);
 
   const sendEvent = useCallback((event: Record<string, unknown>) => {
     const channel = channelRef.current;
@@ -428,6 +469,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       generationRef.current += 1;
       if (closingTimerRef.current !== undefined) window.clearTimeout(closingTimerRef.current);
       if (captureTimerRef.current !== undefined) window.clearTimeout(captureTimerRef.current);
+      if (relayQuietTimerRef.current !== undefined) window.clearTimeout(relayQuietTimerRef.current);
       for (const timer of Object.values(speechTimersRef.current)) {
         if (timer !== undefined) window.clearTimeout(timer);
       }
@@ -483,10 +525,17 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       lastCaptureQueuedAtRef.current = 0;
       settleFlushWaiters(false);
       setPendingInputCount(0);
+      connectionStateRef.current = "disconnected";
+      microphoneStateRef.current = "off";
       setMicrophoneState("off");
       setProviderMuted(false);
       userSpeakingRef.current = false;
       outputSuppressedRef.current = false;
+      spokenRelaySuppressedRef.current = false;
+      relayQuietTimerRef.current = undefined;
+      lastUserActivityAtRef.current = 0;
+      inputVolumeRef.current = 0;
+      inputWasAboveThresholdRef.current = false;
       setUserSpeaking(false);
       setScoutSpeaking(false);
       setConnectedAt(undefined);
@@ -581,6 +630,20 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         ...(focusRef.current.decisionId ? { decisionId: focusRef.current.decisionId } : {}),
       });
       if (generationRef.current !== generation || voiceSessionIdRef.current !== sessionId) return;
+      if (next.intent !== "capture_facts" && isPreAdmissionSuperseded(result)) {
+        failedInputRef.current = { input: next, refreshRequestId: true };
+        if (next.source === "text" && next.text) {
+          setPendingTextInputs((current) =>
+            current.some((entry) => entry.id === next.requestId)
+              ? current
+              : [...current, { id: next.requestId, text: next.text! }],
+          );
+        }
+        setBackendState("failed");
+        setError("The focused search context changed before this request started. Review it and retry.");
+        settleFlushWaiters(false);
+        return;
+      }
       if (next.intent === "capture_facts") {
         if (
           captureCandidate &&
@@ -648,6 +711,10 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       const hasNewerInput = fragmentBufferRef.current.hasNewerUnresolvedUserInput(snapshot.maxSequence);
       const contextIsCurrent =
         contextEpochRef.current === contextEpoch && localeRef.current === requestLocale;
+      const priorReceipt = verifiedPriorRequestReceipt(result);
+      if (next.intent !== "capture_facts" && !contextIsCurrent && priorReceipt) {
+        appendContext(priorReceipt, false);
+      }
       if (next.intent !== "capture_facts" && result.spokenSummary && !hasNewerInput && contextIsCurrent) {
         appendContext(result.spokenSummary, true, next.delegationId ?? null);
       }
@@ -741,6 +808,29 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         !["busy", "in_progress"].includes(sessionState.lastResult.status)
       ) {
         const result = sessionState.lastResult;
+        if (
+          uncertain.input.intent !== "capture_facts" &&
+          isPreAdmissionSuperseded(result)
+        ) {
+          uncertainInputRef.current = undefined;
+          waitingForServerIdleRef.current = false;
+          blockedByUnknownRef.current = false;
+          failedInputRef.current = { input: uncertain.input, refreshRequestId: true };
+          if (uncertain.input.source === "text" && uncertain.input.text) {
+            setPendingTextInputs((current) =>
+              current.some((entry) => entry.id === uncertain.input.requestId)
+                ? current
+                : [
+                    ...current,
+                    { id: uncertain.input.requestId, text: uncertain.input.text! },
+                  ],
+            );
+          }
+          setBackendState("failed");
+          setError("The focused search context changed before this request started. Review it and retry.");
+          settleFlushWaiters(false);
+          return;
+        }
         if (uncertain.input.intent === "capture_facts") {
           if (
             uncertain.captureCursor &&
@@ -796,6 +886,13 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         ) {
           appendContext(result.spokenSummary, true, uncertain.input.delegationId ?? null);
         }
+        const contextIsCurrent =
+          contextEpochRef.current === uncertain.contextEpoch &&
+          localeRef.current === uncertain.locale;
+        const priorReceipt = verifiedPriorRequestReceipt(result);
+        if (uncertain.input.intent !== "capture_facts" && !contextIsCurrent && priorReceipt) {
+          appendContext(priorReceipt, false);
+        }
       }
       if (!sessionState.activeRequest) {
         waitingForServerIdleRef.current = false;
@@ -809,8 +906,15 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     if (priorTimer !== undefined) window.clearTimeout(priorTimer);
     if (role === "user") {
       outputSuppressedRef.current = false;
+      spokenRelaySuppressedRef.current = false;
+      lastUserActivityAtRef.current = Date.now();
       userSpeakingRef.current = true;
-      setUserSpeaking(true);
+      const generation = generationRef.current;
+      queueMicrotask(() => {
+        if (generationRef.current === generation) setUserSpeaking(true);
+      });
+      scheduleRelayQuietCheckRef.current();
+      return;
     }
     else {
       if (outputSuppressedRef.current) return;
@@ -819,12 +923,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       if (audio?.paused) void audio.play().catch(() => undefined);
     }
     speechTimersRef.current[role] = window.setTimeout(() => {
-      if (role === "user") {
-        userSpeakingRef.current = false;
-        setUserSpeaking(false);
-        flushSpokenUpdatesRef.current();
-      }
-      else setScoutSpeaking(false);
+      setScoutSpeaking(false);
     }, 750);
   }, []);
 
@@ -914,6 +1013,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     const generation = ++generationRef.current;
     const cancelled = () => generationRef.current !== generation;
     setError(undefined);
+    connectionStateRef.current = "connecting";
     setConnectionState("connecting");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -924,6 +1024,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         return;
       }
       localStreamRef.current = stream;
+      microphoneStateRef.current = "on";
       setMicrophoneState("on");
       await attachInputMeter(stream);
       if (cancelled()) return;
@@ -960,13 +1061,15 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         connectingRef.current = false;
         setConnectedAt(Date.now());
         setHasConnected(true);
+        connectionStateRef.current = "active";
         setConnectionState("active");
         const initialFocus = focusRef.current.summary?.trim();
         if (initialFocus) appendContext(initialFocus, false);
-        for (const update of bufferedUpdatesRef.current.values()) {
-          appendContext(update.content, update.speak ?? false);
+        for (const [id, update] of bufferedUpdatesRef.current) {
+          if (update.speak === true) continue;
+          if (appendContext(update.content, false)) bufferedUpdatesRef.current.delete(id);
         }
-        bufferedUpdatesRef.current.clear();
+        scheduleRelayQuietCheckRef.current();
         pumpRef.current();
       };
       channel.onmessage = (message) => {
@@ -1015,7 +1118,9 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     localStreamRef.current?.getAudioTracks().forEach((track) => {
       track.enabled = false;
     });
+    microphoneStateRef.current = "off";
     setMicrophoneState("off");
+    connectionStateRef.current = "closing";
     setConnectionState("closing");
     const sent = sendEvent({ type: "session.close", event_id: newRequestId("close") });
     if (!sent) {
@@ -1034,7 +1139,19 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       localStreamRef.current?.getAudioTracks().forEach((track) => {
         track.enabled = !muted;
       });
-      setMicrophoneState(muted ? "locally_muted" : "on");
+      const nextMicrophoneState = muted ? "locally_muted" : "on";
+      microphoneStateRef.current = nextMicrophoneState;
+      setMicrophoneState(nextMicrophoneState);
+      if (relayQuietTimerRef.current !== undefined) {
+        window.clearTimeout(relayQuietTimerRef.current);
+        relayQuietTimerRef.current = undefined;
+      }
+      userSpeakingRef.current = false;
+      setUserSpeaking(false);
+      if (!muted) {
+        lastUserActivityAtRef.current = Date.now();
+        scheduleRelayQuietCheckRef.current();
+      }
       setProviderMuted(false);
       sendEvent({
         type: muted ? "session.input_audio.mute" : "session.input_audio.unmute",
@@ -1064,6 +1181,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       ? { ...failed.input, requestId: newRequestId(failed.input.source === "text" ? "typed" : "retry") }
       : failed.input;
     failedInputRef.current = undefined;
+    setError(undefined);
     if (failed.refreshRequestId && input.source === "text") {
       setPendingTextInputs((current) =>
         current.map((entry) =>
@@ -1121,15 +1239,83 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   );
 
   const flushSpokenUpdates = useCallback(() => {
-    if (connectionState !== "active" || userSpeakingRef.current) return;
+    if (
+      connectionStateRef.current !== "active" ||
+      microphoneStateRef.current !== "on" ||
+      spokenRelaySuppressedRef.current ||
+      userSpeakingRef.current ||
+      inputVolumeRef.current >= INPUT_SPEECH_VOLUME_THRESHOLD ||
+      Date.now() - lastUserActivityAtRef.current < SPOKEN_RELAY_QUIET_DWELL_MS
+    ) return;
     for (const [id, update] of bufferedUpdatesRef.current) {
       if (update.speak !== true) continue;
       if (appendContext(update.content, true)) bufferedUpdatesRef.current.delete(id);
     }
-  }, [appendContext, connectionState]);
+  }, [appendContext]);
   useEffect(() => {
     flushSpokenUpdatesRef.current = flushSpokenUpdates;
   }, [flushSpokenUpdates]);
+
+  const scheduleRelayQuietCheck = useCallback(() => {
+    if (relayQuietTimerRef.current !== undefined) {
+      window.clearTimeout(relayQuietTimerRef.current);
+      relayQuietTimerRef.current = undefined;
+    }
+    if (
+      connectionStateRef.current !== "active" ||
+      microphoneStateRef.current !== "on" ||
+      spokenRelaySuppressedRef.current
+    ) return;
+    const quietFor = Date.now() - lastUserActivityAtRef.current;
+    const delay = Math.max(50, SPOKEN_RELAY_QUIET_DWELL_MS - quietFor);
+    relayQuietTimerRef.current = window.setTimeout(() => {
+      relayQuietTimerRef.current = undefined;
+      if (
+        connectionStateRef.current !== "active" ||
+        microphoneStateRef.current !== "on" ||
+        spokenRelaySuppressedRef.current
+      ) return;
+      if (inputVolumeRef.current >= INPUT_SPEECH_VOLUME_THRESHOLD) {
+        lastUserActivityAtRef.current = Date.now();
+        scheduleRelayQuietCheckRef.current();
+        return;
+      }
+      const latestQuietFor = Date.now() - lastUserActivityAtRef.current;
+      if (latestQuietFor < SPOKEN_RELAY_QUIET_DWELL_MS) {
+        scheduleRelayQuietCheckRef.current();
+        return;
+      }
+      userSpeakingRef.current = false;
+      setUserSpeaking(false);
+      flushSpokenUpdatesRef.current();
+    }, delay);
+  }, []);
+  useEffect(() => {
+    scheduleRelayQuietCheckRef.current = scheduleRelayQuietCheck;
+  }, [scheduleRelayQuietCheck]);
+
+  useEffect(() => {
+    const wasAboveThreshold = inputWasAboveThresholdRef.current;
+    const isAboveThreshold = inputVolume >= INPUT_SPEECH_VOLUME_THRESHOLD;
+    inputVolumeRef.current = inputVolume;
+    inputWasAboveThresholdRef.current = isAboveThreshold;
+    if (connectionState !== "active" || microphoneState !== "on") return;
+    if (isAboveThreshold) {
+      lastUserActivityAtRef.current = Date.now();
+      userSpeakingRef.current = true;
+      const generation = generationRef.current;
+      queueMicrotask(() => {
+        if (generationRef.current === generation) setUserSpeaking(true);
+      });
+      scheduleRelayQuietCheckRef.current();
+    } else if (
+      userSpeakingRef.current ||
+      [...bufferedUpdatesRef.current.values()].some((update) => update.speak === true)
+    ) {
+      if (wasAboveThreshold) lastUserActivityAtRef.current = Date.now();
+      scheduleRelayQuietCheckRef.current();
+    }
+  }, [connectionState, inputVolume, microphoneState]);
 
   const appendVerifiedBackgroundUpdate = useCallback(
     (update: VerifiedBackgroundUpdate) => {
@@ -1141,9 +1327,19 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         return true;
       }
       if (connectionState !== "active") return false;
-      if (update.speak === true && userSpeakingRef.current) {
+      if (
+        update.speak === true &&
+        (userSpeakingRef.current ||
+          inputVolumeRef.current >= INPUT_SPEECH_VOLUME_THRESHOLD ||
+          microphoneStateRef.current !== "on" ||
+          spokenRelaySuppressedRef.current)
+      ) {
         deliveredUpdateVersionsRef.current.set(update.id, version);
         bufferedUpdatesRef.current.set(update.id, update);
+        if (
+          microphoneStateRef.current === "on" &&
+          !spokenRelaySuppressedRef.current
+        ) scheduleRelayQuietCheckRef.current();
         return true;
       }
       const sent = appendContext(update.content, update.speak ?? false);
@@ -1164,6 +1360,11 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
 
   const stopSpeaking = useCallback(() => {
     outputSuppressedRef.current = true;
+    spokenRelaySuppressedRef.current = true;
+    if (relayQuietTimerRef.current !== undefined) {
+      window.clearTimeout(relayQuietTimerRef.current);
+      relayQuietTimerRef.current = undefined;
+    }
     remoteAudioRef.current?.pause();
     setScoutSpeaking(false);
     appendInstructions("Stop speaking now. Leave room for the user and listen.");
