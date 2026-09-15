@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { asSchema } from "ai";
 import type { Id } from "./_generated/dataModel";
-import { createSearchDraftTool, SEARCH_FACET_GUIDANCE } from "./scout";
+import {
+  createSearchDraftTool,
+  materializeSearchDraftChanges,
+  SEARCH_FACET_GUIDANCE,
+  searchDraftInputSchema,
+} from "./scout";
 
 describe("Scout search equipment extraction contract", () => {
   it("keeps owned-gear storage distinct from provider-supplied equipment and ignores questions", () => {
@@ -18,5 +24,62 @@ describe("Scout search equipment extraction contract", () => {
       needId: "need" as Id<"savedNeeds">,
     });
     expect(tool.description).toContain(SEARCH_FACET_GUIDANCE);
+  });
+
+  it("materializes only named changes and preserves lists and facets across early captures", async () => {
+    // The former wide optional object admitted model-filled defaults alongside
+    // one real fact. That shape is no longer a valid tool call.
+    expect(searchDraftInputSchema.safeParse({
+      locationQuery: "Berlin",
+      maxBudgetEur: 0,
+      radiusKm: 1,
+      openToSharing: false,
+      schedule: [],
+      instruments: [],
+    }).success).toBe(false);
+    const jsonSchema = await asSchema(searchDraftInputSchema).jsonSchema;
+    expect(jsonSchema.required).toEqual(["changes"]);
+    expect(jsonSchema.properties).toHaveProperty("changes");
+    expect(jsonSchema.properties).not.toHaveProperty("maxBudgetEur");
+
+    const first = searchDraftInputSchema.parse({
+      changes: [
+        { field: "location", query: "Berlin", label: "Berlin" },
+        { field: "genres", operation: "add", values: ["indie rock"] },
+        { field: "facet", namespace: "band", key: "size", value: "4", confidence: 1 },
+      ],
+    });
+    expect(materializeSearchDraftChanges(first.changes, {
+      schedule: [],
+      requirements: [],
+      genres: undefined,
+      instruments: undefined,
+      facets: undefined,
+    })).toEqual({
+      locationQuery: "Berlin",
+      locationLabel: "Berlin",
+      genres: ["indie rock"],
+      facets: [{ namespace: "band", key: "size", value: "4", confidence: 1 }],
+    });
+
+    const later = searchDraftInputSchema.parse({
+      changes: [
+        { field: "schedule", operation: "add", values: ["Tuesday evening"] },
+        { field: "facet", namespace: "equipment", key: "storage", value: "true", confidence: 1 },
+      ],
+    });
+    expect(materializeSearchDraftChanges(later.changes, {
+      schedule: [],
+      requirements: ["Own heavy amplifiers may remain stored"],
+      genres: ["indie rock"],
+      instruments: ["drums", "guitar"],
+      facets: [{ namespace: "band", key: "size", value: "4", confidence: 1 }],
+    })).toEqual({
+      schedule: ["Tuesday evening"],
+      facets: [
+        { namespace: "band", key: "size", value: "4", confidence: 1 },
+        { namespace: "equipment", key: "storage", value: "true", confidence: 1 },
+      ],
+    });
   });
 });

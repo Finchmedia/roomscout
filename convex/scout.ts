@@ -34,30 +34,140 @@ const memoryToolSchema = z.object({
   replaceExisting: z.boolean().describe("True when this is a newer value for the same subject and predicate"),
 });
 
-export const searchDraftInputSchema = z.object({
-  title: z.string().optional(),
-  locationQuery: z.string().min(1).max(240).optional(),
-  locationLabel: z.string().min(1).max(240).optional(),
-  maxBudgetEur: z.number().nonnegative().optional(),
-  arrangement: z.array(z.enum(["permanent", "shared", "hourly"])).optional(),
-  schedule: z.array(z.string()).optional(),
-  requirements: z.array(z.string()).describe(
-    "Room requirements stated by the musician. Preserve whether equipment is user-owned, provider-supplied, merely allowed, or allowed to remain stored.",
-  ).optional(),
-  openToSharing: z.boolean().optional(),
-  radiusKm: z.number().min(1).max(200).optional(),
-  genres: z.array(z.string()).optional(),
-  instruments: z.array(z.string()).optional(),
-  collaborationOpen: z.boolean().optional(),
-  facets: z.array(z.object({
-    namespace: z.string(),
-    key: z.string(),
-    value: z.string(),
-    confidence: z.number().min(0).max(1),
-  })).describe(
-    "Structured requirements established by explicit musician statements. A question about a possible requirement or room capability is not a fact and must not create a facet.",
-  ).optional(),
+const listOperation = z.enum(["add", "replace", "remove"]).describe(
+  "Use add for new facts, replace only for an explicit correction of the whole field, and remove only for explicitly retracted values.",
+);
+const stringListChange = (field: "schedule" | "requirements" | "genres" | "instruments") => z.object({
+  field: z.literal(field),
+  operation: listOperation,
+  values: z.array(z.string().min(1)).min(1).max(50),
 });
+
+export const searchDraftChangeSchema = z.discriminatedUnion("field", [
+  z.object({ field: z.literal("title"), value: z.string().min(1).max(240) }),
+  z.object({
+    field: z.literal("location"),
+    query: z.string().min(1).max(240).describe("The complete place or address exactly as stated"),
+    label: z.string().min(1).max(240).nullable().describe("Concise display label, or null when the complete place is already concise"),
+  }),
+  z.object({ field: z.literal("maxBudgetEur"), value: z.number().nonnegative() }),
+  z.object({ field: z.literal("arrangement"), value: z.array(z.enum(["permanent", "shared", "hourly"])).min(1) }),
+  stringListChange("schedule"),
+  stringListChange("requirements"),
+  z.object({ field: z.literal("openToSharing"), value: z.boolean() }),
+  z.object({ field: z.literal("radiusKm"), value: z.number().min(1).max(200) }),
+  stringListChange("genres"),
+  stringListChange("instruments"),
+  z.object({ field: z.literal("collaborationOpen"), value: z.boolean() }),
+  z.object({
+    field: z.literal("facet"),
+    namespace: z.string().min(1).max(80),
+    key: z.string().min(1).max(80),
+    value: z.string().min(1).max(500),
+    confidence: z.number().min(0).max(1),
+  }),
+  z.object({
+    field: z.literal("removeFacet"),
+    namespace: z.string().min(1).max(80),
+    key: z.string().min(1).max(80),
+  }),
+]);
+
+export const searchDraftInputSchema = z.object({
+  changes: z.array(searchDraftChangeSchema).min(1).max(30).describe(
+    "Only fields explicitly established or corrected by this musician input. This is a patch list, not a complete search record. Never add placeholders, defaults, empty arrays, inferred false values, or minimum numeric values for unknown fields.",
+  ),
+});
+
+type SearchDraftChange = z.infer<typeof searchDraftChangeSchema>;
+type SearchDraftCurrent = Pick<Doc<"savedNeeds">,
+  "schedule" | "requirements" | "genres" | "instruments" | "facets">;
+type SearchDraftUpdate = {
+  title?: string;
+  locationQuery?: string;
+  locationLabel?: string;
+  maxBudgetEur?: number;
+  arrangement?: Array<"permanent" | "shared" | "hourly">;
+  schedule?: string[];
+  requirements?: string[];
+  openToSharing?: boolean;
+  radiusKm?: number;
+  genres?: string[];
+  instruments?: string[];
+  collaborationOpen?: boolean;
+  facets?: NonNullable<Doc<"savedNeeds">["facets"]>;
+};
+
+function listPatch(current: string[] | undefined, change: {
+  operation: "add" | "replace" | "remove";
+  values: string[];
+}): string[] {
+  if (change.operation === "replace") return change.values;
+  const keys = new Set(change.values.map((value) => value.trim().toLocaleLowerCase()));
+  if (change.operation === "remove") {
+    return (current ?? []).filter((value) => !keys.has(value.trim().toLocaleLowerCase()));
+  }
+  const result = [...(current ?? [])];
+  const existing = new Set(result.map((value) => value.trim().toLocaleLowerCase()));
+  for (const value of change.values) {
+    const key = value.trim().toLocaleLowerCase();
+    if (!existing.has(key)) {
+      existing.add(key);
+      result.push(value);
+    }
+  }
+  return result;
+}
+
+/** Materialize the explicit tool patch while retaining every unmentioned field. */
+export function materializeSearchDraftChanges(
+  changes: SearchDraftChange[],
+  current: SearchDraftCurrent,
+): SearchDraftUpdate {
+  const update: SearchDraftUpdate = {};
+  const seen = new Set<string>();
+  let facets = current.facets ?? [];
+  let facetsChanged = false;
+  for (const change of changes) {
+    const identity = change.field === "facet" || change.field === "removeFacet"
+      ? `facet:${change.namespace.trim().toLocaleLowerCase()}:${change.key.trim().toLocaleLowerCase()}`
+      : change.field;
+    if (seen.has(identity)) throw new Error("DUPLICATE_SEARCH_DRAFT_CHANGE");
+    seen.add(identity);
+    switch (change.field) {
+      case "title": update.title = change.value; break;
+      case "location":
+        update.locationQuery = change.query;
+        update.locationLabel = change.label ?? change.query;
+        break;
+      case "maxBudgetEur": update.maxBudgetEur = change.value; break;
+      case "arrangement": update.arrangement = change.value; break;
+      case "schedule": update.schedule = listPatch(current.schedule, change); break;
+      case "requirements": update.requirements = listPatch(current.requirements, change); break;
+      case "openToSharing": update.openToSharing = change.value; break;
+      case "radiusKm": update.radiusKm = change.value; break;
+      case "genres": update.genres = listPatch(current.genres, change); break;
+      case "instruments": update.instruments = listPatch(current.instruments, change); break;
+      case "collaborationOpen": update.collaborationOpen = change.value; break;
+      case "facet": {
+        const namespace = change.namespace.trim();
+        const key = change.key.trim();
+        facets = [
+          ...facets.filter((facet) => facet.namespace !== namespace || facet.key !== key),
+          { namespace, key, value: change.value, confidence: change.confidence },
+        ];
+        facetsChanged = true;
+        break;
+      }
+      case "removeFacet":
+        facets = facets.filter((facet) => facet.namespace !== change.namespace.trim() || facet.key !== change.key.trim());
+        facetsChanged = true;
+        break;
+    }
+  }
+  if (facetsChanged) update.facets = facets;
+  return update;
+}
 
 export const SEARCH_FACET_GUIDANCE =
   "Facets are namespace/key pairs; the brief only shows these keys: equipment.storage, equipment.drums, equipment.pa, equipment.backline, access.parking, access.transport, access.around_the_clock, noise.night_allowed, room.size_sqm, contract.min_term_months, cost.deposit_eur, band.size. " +
@@ -78,13 +188,20 @@ export function createSearchDraftTool(
   return createTool({
     description:
       "Update explicit facts on the user's attached draft search. Preserve the user's complete place or address in locationQuery, use locationLabel for its concise display label, and radiusKm as the geographic boundary. " +
+      "Submit only the `changes` entries supported by the current musician input. Omitted search fields remain unchanged; never represent unknown fields with zero, false, an empty array, the smallest allowed number, or a guessed arrangement. " +
       SEARCH_FACET_GUIDANCE,
     inputSchema: searchDraftInputSchema,
     execute: async (_toolCtx, input) => {
+      const current = await ctx.runQuery(internal.savedNeeds.getOwnedInternal, {
+        ownerId: args.ownerId,
+        needId: args.needId,
+      });
+      if (!current) throw new ConvexError({ code: "NEED_NOT_FOUND" });
+      const update = materializeSearchDraftChanges(input.changes, current);
       const result = await ctx.runMutation(internal.savedNeeds.updateFromScout, {
         needId: args.needId,
         ownerId: args.ownerId,
-        ...input,
+        ...update,
         ...(args.voiceClaim ? { voiceClaim: args.voiceClaim } : {}),
       });
       if (result.changedFields.length > 0) args.onUpdated?.(result);
