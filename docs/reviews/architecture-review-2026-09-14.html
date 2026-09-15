@@ -1,0 +1,588 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <title>Architecture review for roomscout</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose", flowchart: { htmlLabels: true, curve: "basis" } });
+    </script>
+    <style>
+      .seam { border-style: dashed; }
+      .leak { color: #dc2626; }
+      .deep { background: linear-gradient(135deg, #0f172a, #1e293b); color: #f8fafc; }
+      .mod { border: 1.5px solid #94a3b8; background: #fff; }
+      .mod-thin { border: 1px solid #cbd5e1; background: #fff; }
+      .lbl { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.08em; }
+      .band { height: 1.35rem; border-left: 4px solid #cbd5e1; }
+      .band-leak { border-left-color: #dc2626; }
+      .band-deep { border-left: 8px solid #0f172a; }
+      .faded { opacity: 0.55; }
+      pre.mermaid { font-size: 12px; }
+      .badge { font-size: 0.7rem; padding: 0.15rem 0.55rem; border-radius: 9999px; font-weight: 600; letter-spacing: 0.02em; }
+      .strong { background: #d1fae5; color: #065f46; }
+      .worth { background: #fef3c7; color: #92400e; }
+      .spec { background: #e2e8f0; color: #334155; }
+      .cat { background: #eef2ff; color: #3730a3; }
+      article h3 { font-family: ui-serif, Georgia, serif; }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans">
+    <main class="max-w-6xl mx-auto px-6 py-12 space-y-14">
+      <header class="space-y-4">
+        <h1 class="text-3xl font-serif">Architecture review · <span class="font-mono text-2xl">roomscout</span></h1>
+        <p class="text-sm text-slate-500">Branch ui-port · 2026-09-14 · Richtung: Policy-Gates, Inbox/Konversationen, Scout-Entscheidungen, Portal-Engine</p>
+        <div class="flex flex-wrap gap-4 text-xs text-slate-600 items-center">
+          <span class="inline-flex items-center gap-2"><span class="inline-block w-5 h-3 mod"></span> Modul</span>
+          <span class="inline-flex items-center gap-2"><span class="inline-block w-5 h-3 deep rounded-sm"></span> deep Modul</span>
+          <span class="inline-flex items-center gap-2"><span class="inline-block w-5 border-t-2 border-dashed border-slate-500"></span> Seam</span>
+          <span class="inline-flex items-center gap-2"><span class="inline-block w-5 border-t-2 border-red-600"></span> Leak über den Seam</span>
+          <span class="badge strong">Strong</span><span class="badge worth">Worth exploring</span><span class="badge spec">Speculative</span>
+          <span class="badge cat">Dependency-Kategorie</span>
+        </div>
+      </header>
+
+      <section id="candidates" class="space-y-12">
+
+        <!-- A -->
+        <article id="a" class="rounded-2xl border border-slate-200 bg-white p-8 space-y-6 shadow-sm">
+          <h3 class="text-2xl">A · Autopilot-Policy: Handlungsspielraum wird das Mandat, ein Gate liest es</h3>
+          <div class="flex flex-wrap gap-2"><span class="badge strong">Strong</span><span class="badge cat">in-process → local-substitutable</span></div>
+          <p class="font-mono text-xs text-slate-600 leading-relaxed">src/ui/settings/pages/AutonomyPage.tsx · src/ui/settings/state/useSettingsDemoState.ts · src/routes/musician/LiveAutonomySection.tsx · convex/mandates.ts · convex/schema.ts · convex/externalActions.ts · convex/lib/mandateAuthorization.ts · convex/lib/messageSafety.ts · convex/messageSafety.ts · convex/providerActions.ts · convex/mandateOrchestrator.ts</p>
+          <div class="grid md:grid-cols-2 gap-6">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-500 mb-2">Vorher · drei Zähler-Kopien, Stopps außerhalb, Seite ohne Backend</p>
+<pre class="mermaid">
+flowchart LR
+  AP["AutonomyPage /design<br/>(Demo-State)"] -. "kein Convex" .-> N0[" "]
+  LA["LiveAutonomySection"] -- "mandateToRules (lossy)" --> M[("searchMandates")]
+  LA -- "'Mit Rücksprache'" --> RV["mandates.revoke"]
+  CF["createContactFormFromScout"] -- "Zähler A" --> AZ["authorizeFromMandate"]
+  SR["submitRequest"] -- "Zähler B" --> AZ
+  CL["claimForExecutor"] -- "Zähler C" --> AZ
+  AZ -. "skipUsageLimits" .-> AE[("auditEvents")]
+  MS["messageSafety"] -. "personalDataScopes" .-> SR
+  SR -. "CONTROLLED_DEMO_ONLY" .-> S1["stop"]
+  SP["stageReply"] -. "PORTAL_CONNECTION_REQUIRED" .-> S2["needs_attention"]
+  QO["queueOpportunity"] -. "roomscout.dev only" .-> S3["return false"]
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#dc2626;
+  class S1,S2,S3,AE,RV leak
+  style N0 fill:none,stroke:none
+</pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4 relative" style="min-height:320px">
+              <p class="lbl text-slate-500 mb-3">Nachher · ein deep Modul, ein Interface</p>
+              <div class="flex gap-3 items-stretch">
+                <div class="flex flex-col gap-2 w-40 text-xs">
+                  <div class="mod-thin rounded p-2">AutonomyPage</div>
+                  <div class="mod-thin rounded p-2">createContactFormFromScout</div>
+                  <div class="mod-thin rounded p-2">submitRequest</div>
+                  <div class="mod-thin rounded p-2">claimForExecutor</div>
+                  <div class="mod-thin rounded p-2">stageReply</div>
+                  <div class="mod-thin rounded p-2">queueOpportunity</div>
+                </div>
+                <div class="flex items-center text-slate-400">→</div>
+                <div class="deep rounded-xl p-4 flex-1 flex flex-col">
+                  <p class="lbl opacity-80">Interface</p>
+                  <p class="font-mono text-xs mt-1">searchMandates.rules = {autopilot|review, contact, viewings, publishAd, shareProfile, sharePrivate, perDay, unlimited}</p>
+                  <p class="font-mono text-xs mt-1">authorizeScoutAction(intent, phase) → proceed | wait | ask_user | stop</p>
+                  <p class="font-mono text-xs">recordOutcome(subject, outcome)</p>
+                  <div class="border-t border-dashed border-slate-500 my-3"></div>
+                  <p class="lbl opacity-80">Implementation (innen, faded)</p>
+                  <ul class="faded text-xs mt-1 space-y-0.5 font-mono">
+                    <li>Mandat laden · rules → erlaubte Aktionen/Daten/Limits</li>
+                    <li>Tageszähler (executions, browserRuns, mailThreads) einmal</li>
+                    <li>Demo-Domain-Regel · Safety-Verdict · Scopes</li>
+                    <li>Snapshot-Vergleich · Retry-Politik</li>
+                    <li>Status, Grund, Notification, Re-Schedule</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="grid md:grid-cols-2 gap-6">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-500 mb-2">Querschnitt vorher · 12 Stopps, jeder mit eigener Regelquelle</p>
+              <div class="space-y-1 text-xs font-mono">
+                <div class="band band-leak pl-2">Datenscopes (member_first_names) · DEFAULT_AUTOPILOT_DATA</div>
+                <div class="band band-leak pl-2">Tageslimit Kontakte · Zähler A/B/C</div>
+                <div class="band band-leak pl-2">Browser-Minuten · inkl. Registrierung</div>
+                <div class="band band-leak pl-2">CONTROLLED_DEMO_ONLY · Konstante ×2</div>
+                <div class="band band-leak pl-2">PORTAL_CONNECTION_REQUIRED · stageReply</div>
+                <div class="band band-leak pl-2">roomscout.dev only · queueOpportunity</div>
+                <div class="band band-leak pl-2">Safety: unsupportedClaims · lib/messageSafety</div>
+                <div class="band band-leak pl-2">Safety exhausted → awaiting_approval</div>
+                <div class="band band-leak pl-2">Snapshot drift → expired, kein Re-Stage</div>
+                <div class="band band-leak pl-2">Provider-Mismatch · env vs Stempel</div>
+                <div class="band band-leak pl-2">BROWSER_SESSION_BUSY · kein Retry</div>
+                <div class="band band-leak pl-2">'unbegrenzt' = auditEvents-Zeile</div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-500 mb-2">Querschnitt nachher · ein Band, eine Quelle</p>
+              <div class="band band-deep pl-3 text-xs font-mono flex items-center" style="height:6.5rem">Autopilot-Gate · liest searchMandates.rules · autopilot: non-binding stoppt nie · review: ask_user · binding: immer ask_user</div>
+              <div class="mt-3 text-xs text-slate-600">Harte Linie bleibt in beiden Modi: Zusage, Buchung, Zahlung, Kaution, Vertrag.</div>
+            </div>
+          </div>
+          <p><span class="font-semibold">Problem.</span> Die Seite, die Quelle der Wahrheit sein soll, ist unter <span class="font-mono">/design</span> reiner Demo-State; die Live-Variante projiziert das Mandat verlustbehaftet und macht aus „Mit Rücksprache“ ein <span class="font-mono">revoke</span>; „darf der Scout das jetzt“ wird dreimal mit drei verschiedenen Tageszählern berechnet, weitere Stopps liegen außerhalb des Gates, und „unbegrenzt“ ist ein Audit-Event statt eines Feldes.</p>
+          <p><span class="font-semibold">Lösung.</span> Die Handlungsspielraum-Wahl selbst wird auf <span class="font-mono">searchMandates</span> persistiert; ein Gate-Modul liest genau das, kapselt Zähler, Demo-Domain, Safety-Verdict und Scopes, und liefert ein typisiertes Ergebnis, das ein Persister an einer Stelle festschreibt.</p>
+          <ul class="grid md:grid-cols-3 gap-x-6 gap-y-1 text-sm list-disc list-inside">
+            <li>Locality: eine Limit-Herleitung</li><li>Interface: 14 Inputs → Intent + Phase</li><li>Seite = Zeile, verlustfrei</li>
+            <li>Rücksprache = Gate, nicht Revoke</li><li>Jeder Stopp trägt einen Grund</li><li>Autopilot hält nie still an</li>
+          </ul>
+          <p class="text-sm text-slate-600"><span class="font-semibold">Deletion-Test.</span> Die drei Zähler-Blöcke in <span class="font-mono">externalActions.ts</span> sind Pass-throughs (der Block in createContactFormFromScout wird von submitRequest sofort wiederholt); <span class="font-mono">authorizeFromMandate</span> verdient sein Geld und wird interner Seam. <span class="font-semibold">Tests.</span> <span class="font-mono">lib/mandateAuthorization.test.ts</span> kollabiert in Gate-Tests mit echten Zeilen; die per <span class="font-mono">ctx.db</span> geschmiedeten Fixtures in externalActions entfallen; neue Oberfläche: Tabelle Modus × Aktion × Scopes × Zähler × Verdict → ein Outcome.</p>
+        </article>
+
+        <!-- B -->
+        <article id="b" class="rounded-2xl border border-slate-200 bg-white p-8 space-y-6 shadow-sm">
+          <h3 class="text-2xl">B · Decision-Modul: der Scout fragt, du antwortest im Chat, die Antwort führt aus</h3>
+          <div class="flex flex-wrap gap-2"><span class="badge strong">Strong</span><span class="badge cat">local-substitutable</span></div>
+          <p class="font-mono text-xs text-slate-600 leading-relaxed">convex/externalActions.ts (decide) · convex/outreach.ts (decide) · convex/offerAcceptance.ts · convex/providerConversations.ts (ask_musician) · convex/messageSafety.ts · convex/scout.ts · convex/voice.ts · src/routes/musician/MusicianInboxPage.tsx · src/components/actions/* · src/components/outreach/ApprovalComposer.tsx · src/components/opportunities/OfferAcceptanceDialog.tsx · src/ui/chat/ScoutChat.tsx · src/ui/scout/stages/ClarificationStage.tsx</p>
+          <div class="grid md:grid-cols-2 gap-6">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-500 mb-2">Vorher · vier Freigabepfade, keiner erreichbar aus dem Chat</p>
+<pre class="mermaid">
+flowchart LR
+  G["Gate schreibt<br/>awaiting_approval"] --> AR[("actionRequests")]
+  AR --> P["Inbox › Advanced activity<br/>(eingeklappt)"]
+  P --> D["externalActions.decide<br/>(nur Status-Patch)"]
+  D --> K["Klick 'Execute approved action'"]
+  K -. "Executor als String" .-> W["Worker"]
+  OD["outreach.decide"] --> AC["ApprovalComposer"]
+  OA["offerAcceptance.approveAndSend"] --> OAD["OfferAcceptanceDialog"]
+  RA["recordAssessment(ask_musician)"] -. "kein Leser" .-> NT[("notifications")]
+  SC["ScoutChat"] -. "kein Tool" .-> X["'kein Kontaktkanal'"]
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#dc2626;
+  class K,NT,X leak
+</pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4" style="min-height:320px">
+              <p class="lbl text-slate-500 mb-3">Nachher · raise → Karte im Chat → answer → Executor</p>
+              <div class="flex gap-3 items-stretch">
+                <div class="flex flex-col gap-2 w-40 text-xs">
+                  <div class="mod-thin rounded p-2">Gate (A) · ask_user</div>
+                  <div class="mod-thin rounded p-2">Graded generation (F) · needs_human</div>
+                  <div class="mod-thin rounded p-2">Angebot · binding</div>
+                </div>
+                <div class="flex items-center text-slate-400">→</div>
+                <div class="deep rounded-xl p-4 flex-1">
+                  <p class="lbl opacity-80">Interface</p>
+                  <p class="font-mono text-xs mt-1">decisions.listMine()</p>
+                  <p class="font-mono text-xs">decisions.raise(kind, subject, reason)</p>
+                  <p class="font-mono text-xs">decisions.answer(id, yes|no, version)</p>
+                  <div class="border-t border-dashed border-slate-500 my-3"></div>
+                  <p class="lbl opacity-80">Implementation</p>
+                  <ul class="faded text-xs mt-1 space-y-0.5 font-mono">
+                    <li>Freigabe buchen (actionApprovals)</li>
+                    <li>Executor serverseitig planen</li>
+                    <li>Angebots-Annahme mit Review-Pflicht</li>
+                    <li>Version/Hash-Prüfung intern</li>
+                  </ul>
+                </div>
+                <div class="flex items-center text-slate-400">→</div>
+                <div class="flex flex-col gap-2 w-36 text-xs">
+                  <div class="mod-thin rounded p-2">ScoutChat: Ja/Nein-Karte</div>
+                  <div class="mod-thin rounded p-2">Chat-Tool answerDecision</div>
+                  <div class="mod-thin rounded p-2">Voice-Tool</div>
+                  <div class="mod-thin rounded p-2 faded">Inbox: Historie (read-only)</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p><span class="font-semibold">Problem.</span> Jede Stelle, an der der Scout den Menschen braucht, ist ein anderer Tabellenzustand mit eigener approve-Mutation, eigenem Hash-Ritual und eigener UI im versteckten Panel; ein „Ja“ über <span class="font-mono">externalActions.decide</span> führt nichts aus, und <span class="font-mono">ask_musician</span> aus der Bewertung landet in einer Tabelle, die kein Frontend liest.</p>
+          <p><span class="font-semibold">Lösung.</span> Ein Modul besitzt „offene Entscheidungen“, „raise“ und „answer“; answer bucht die Freigabe und plant den Executor intern; als Chat-Tool, Voice-Tool und Ja/Nein-Karte im Scout-Chat (der Live-Zwilling der Demo-ClarificationStage); die Inbox-Ledger werden read-only Historie.</p>
+          <ul class="grid md:grid-cols-3 gap-x-6 gap-y-1 text-sm list-disc list-inside">
+            <li>Freigabe→Ausführung: Locality</li><li>Interface: 4 Pfade → 1</li><li>Chat bekommt Leverage</li>
+            <li>ask_musician erreicht den Nutzer</li><li>Verstecktes Panel entfällt</li><li>Tests an einem Interface</li>
+          </ul>
+          <p class="text-sm text-slate-600"><span class="font-semibold">Deletion-Test.</span> Die Freigabelogik verdient ihr Geld (sie taucht sonst in Chat, Inbox, Angebotskarte und Voice wieder auf); der Client-seitige Executor-Dispatch in MusicianInboxPage ist ein Pass-through, den messageSafety.recordAndAuthorize serverseitig schon hat, und wird gelöscht.</p>
+        </article>
+
+        <!-- C -->
+        <article id="c" class="rounded-2xl border border-slate-200 bg-white p-8 space-y-6 shadow-sm">
+          <h3 class="text-2xl">C · Conversation-Modul mit Email- und Portal-Adapter; die Inbox im Settings-Stil rendert daraus</h3>
+          <div class="flex flex-wrap gap-2"><span class="badge strong">Strong</span><span class="badge cat">mock (AgentMail, Firecrawl)</span></div>
+          <p class="font-mono text-xs text-slate-600 leading-relaxed">convex/communications.ts · convex/inbox.ts · convex/platformInbox.ts · convex/portalInboxSync.ts · convex/providerConversations.ts · convex/providerActions.ts · src/routes/musician/MusicianInboxPage.tsx · src/components/navigation/WorkspaceShell.tsx · src/components/opportunities/ProviderOfferPanel.tsx · convex/schema.ts</p>
+          <div class="grid md:grid-cols-2 gap-6">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-500 mb-2">Vorher · sechs Queries, ein Client-Join, drei Renderer, drei listThreadsMine</p>
+<pre class="mermaid">
+flowchart TD
+  PG["MusicianInboxPage"] --> Q1["communications.listThreadsMine"]
+  PG --> Q2["inbox.getThreadMine"]
+  PG --> Q3["platformInbox.getThreadMine"]
+  PG --> Q4["externalActions.listMine<br/>→ Webform-Pseudo-Thread"]
+  PG --> Q5["providerConversations.listMine<br/>→ Client-Join mailThreadId/platformThreadId"]
+  PG --> Q6["inbox.listMailboxMessagesMine"]
+  SH["WorkspaceShell Badge"] --> Q7["inbox.listThreadsMine (nur Email)"]
+  OP["OpsInboxPage"] --> Q8["platformInbox.listThreadsMine"]
+  PG -. "'Antwort mit Scout' ohne signalId" .-> SC["Scout-Chat: nur rememberFact"]
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#dc2626;
+  class Q4,Q5,SC leak
+</pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4" style="min-height:320px">
+              <p class="lbl text-slate-500 mb-3">Nachher · vier Aufrufe, zwei Adapter</p>
+              <div class="flex gap-3 items-stretch">
+                <div class="flex flex-col gap-2 w-40 text-xs">
+                  <div class="mod-thin rounded p-2">Inbox (Settings-Shell): Threads links · Transcript rechts · Composer</div>
+                  <div class="mod-thin rounded p-2">Shell-Badge</div>
+                  <div class="mod-thin rounded p-2">ScoutPage · Voice</div>
+                  <div class="mod-thin rounded p-2">Scout-Tool replyToProvider</div>
+                </div>
+                <div class="flex items-center text-slate-400">→</div>
+                <div class="deep rounded-xl p-4 flex-1">
+                  <p class="lbl opacity-80">Interface</p>
+                  <p class="font-mono text-xs mt-1">Conversation.listMine(needId?)</p>
+                  <p class="font-mono text-xs">Conversation.transcript(id)</p>
+                  <p class="font-mono text-xs">Conversation.send(id, body, author: user|scout)</p>
+                  <p class="font-mono text-xs">Conversation.pendingDecision(id)</p>
+                  <div class="border-t border-dashed border-slate-500 my-3"></div>
+                  <ul class="faded text-xs space-y-0.5 font-mono">
+                    <li>Wurzel: providerConversations</li>
+                    <li>Bewertung (providerTurns, offerRevisions) intern</li>
+                    <li>send → Gate (A) → Adapter, sofortige Zustellung</li>
+                  </ul>
+                </div>
+                <div class="flex items-center text-slate-400">⇢</div>
+                <div class="flex flex-col gap-2 w-36 text-xs">
+                  <div class="mod rounded p-2 seam">EmailAdapter (AgentMail)<br/><span class="faded">mailThreads · mailMessages</span></div>
+                  <div class="mod rounded p-2 seam">PortalAdapter (Firecrawl / Browserbase)<br/><span class="faded">platformThreads · platformMessages · inboxSync</span></div>
+                  <div class="mod rounded p-2 seam faded">Tests: FakeEmail · FakePortal</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p><span class="font-semibold">Problem.</span> Sechs Thread-Formen und sieben Nachrichten-Formen werden von der Seite zusammengenäht; niemand kann „was ist der Stand mit diesem Anbieter“ beantworten, ohne fünf Module zu lesen; der Mensch kann nirgends selbst schreiben.</p>
+          <p><span class="font-semibold">Lösung.</span> <span class="font-mono">providerConversations</span> wird die Wurzel-Identität; ein Modul mit vier Aufrufen davor; Mail- und Portal-Tabellen werden Adapter-Speicher; send läuft durch dasselbe Gate wie alles andere und stellt freigegebene Nachrichten sofort zu, ohne Klick.</p>
+          <ul class="grid md:grid-cols-3 gap-x-6 gap-y-1 text-sm list-disc list-inside">
+            <li>Interface: vier Aufrufe</li><li>Locality: ein Ort pro Gespräch</li><li>Leverage: Inbox, Badge, Scout, Voice</li>
+            <li>Webform-Pseudo-Thread wird serverseitig</li><li>Drei listThreadsMine → eins</li><li>Mensch und Scout senden über einen Seam</li>
+          </ul>
+          <p class="text-sm text-slate-600"><span class="font-semibold">Deletion-Test.</span> <span class="font-mono">communications.ts</span> ist ein Pass-through (die Union existiert dreimal). Der Join und die Renderer sind echte Komplexität, heute verstreut; konzentriert gehören sie ins Modul. <span class="font-semibold">Tests.</span> <span class="font-mono">providerConversations.integration.test.ts</span> (store → enqueue → assess → listMine, echter Agent-Loop mit Mock-Modell) wird der Kern; inbox/platformInbox-Tests werden Adapter-Receipt-Tests.</p>
+        </article>
+
+        <!-- D -->
+        <article id="d" class="rounded-2xl border border-slate-200 bg-white p-8 space-y-6 shadow-sm">
+          <h3 class="text-2xl">D · Ein Outbound-Ledger: outreachDrafts in actionRequests falten, outreach.ts löschen</h3>
+          <div class="flex flex-wrap gap-2"><span class="badge strong">Strong</span><span class="badge cat">local-substitutable</span></div>
+          <p class="font-mono text-xs text-slate-600 leading-relaxed">convex/outreach.ts (670 Zeilen) · convex/agentmail.ts · convex/inbox.ts · convex/externalActions.ts · convex/schema.ts · convex/scout.ts · src/components/outreach/ApprovalComposer.tsx · src/components/navigation/WorkspaceShell.tsx</p>
+          <div class="grid md:grid-cols-2 gap-6">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-500 mb-2">Vorher · zwei Pipelines für dieselbe E-Mail</p>
+              <div class="grid grid-cols-2 gap-3 text-xs font-mono">
+                <div>
+                  <p class="lbl text-slate-500 mb-1">Erstkontakt</p>
+                  <div class="band pl-2">scout.createOutreachDraft</div>
+                  <div class="band pl-2">outreachDrafts (awaiting_approval, liest kein Mandat)</div>
+                  <div class="band pl-2">outreach.decide → outreachApprovals</div>
+                  <div class="band pl-2">sendApproved → claimApprovedSend</div>
+                  <div class="band pl-2">markSent → mailThreads(draftId)</div>
+                  <div class="band band-leak pl-2">inbox.ts patcht Drafts ×3</div>
+                  <div class="band band-leak pl-2">WorkspaceShell-Badge liest Drafts</div>
+                </div>
+                <div>
+                  <p class="lbl text-slate-500 mb-1">Jede weitere</p>
+                  <div class="band pl-2">stageReply</div>
+                  <div class="band pl-2">actionRequests (email_message)</div>
+                  <div class="band pl-2">actionApprovals · Gate</div>
+                  <div class="band pl-2">claimForExecutor</div>
+                  <div class="band pl-2">agentmail.executeApprovedReply</div>
+                  <div class="band pl-2">recordOutboundActionReply</div>
+                  <div class="band band-leak pl-2">verlangt mailThreadId (Erstkontakt unmöglich)</div>
+                </div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4" style="min-height:320px">
+              <p class="lbl text-slate-500 mb-2">Nachher · ein Sendepfad</p>
+              <div class="text-xs font-mono">
+                <div class="band band-deep pl-3">Conversation.send(user|scout)</div>
+                <div class="band band-deep pl-3">Gate (A)</div>
+                <div class="band band-deep pl-3">actionRequests (email_message, mailThreadId?)</div>
+                <div class="band band-deep pl-3">EmailAdapter.deliver → mailThread beim ersten Receipt</div>
+                <div class="band band-deep pl-3">EmailAdapter.onDeliveryEvent → nur mailMessages/mailThreads</div>
+              </div>
+              <p class="text-xs text-slate-600 mt-3">Gelöscht: outreach.ts, outreachApprovals, ApprovalComposer, mailThreads.draftId.</p>
+            </div>
+          </div>
+          <p><span class="font-semibold">Problem.</span> Erste E-Mail und jede weitere sind zwei Module mit zwei Freigabetabellen und zwei Receipt-Recordern; die erste leakt dreimal in inbox.ts und in den Badge; das Chat-Tool liest nie das Mandat und stoppt in Autopilot immer.</p>
+          <p><span class="font-semibold">Lösung.</span> Erstkontakt über denselben actionRequests-Pfad wie Antworten; der EmailAdapter legt den Thread beim ersten Receipt an; die zweite Pipeline wird gelöscht.</p>
+          <ul class="grid md:grid-cols-3 gap-x-6 gap-y-1 text-sm list-disc list-inside">
+            <li>Ein Sendepfad, eine Freigabe</li><li>670 Zeilen weg</li><li>inbox.ts patcht keine Drafts</li>
+            <li>Badge liest ein Ledger</li><li>Chat gehorcht dem Handlungsspielraum</li><li>Tests an einem Interface</li>
+          </ul>
+        </article>
+
+        <!-- E -->
+        <article id="e" class="rounded-2xl border border-slate-200 bg-white p-8 space-y-6 shadow-sm">
+          <h3 class="text-2xl">E · Scout-Werkzeuge aus dem Zustand ableiten statt aus einem Client-Modus</h3>
+          <div class="flex flex-wrap gap-2"><span class="badge strong">Strong</span><span class="badge cat">in-process</span></div>
+          <p class="font-mono text-xs text-slate-600 leading-relaxed">convex/scout.ts · convex/scoutCaseCards.ts · convex/voice.ts · convex/schema.ts (scoutContexts) · src/routes/musician/ScoutPage.tsx · src/routes/musician/MusicianInboxPage.tsx · src/routes/public/SignalDetailPage.tsx</p>
+          <div class="grid md:grid-cols-2 gap-6">
+            <div class="rounded-lg border border-slate-200 bg-white p-4" style="min-height:320px">
+              <p class="lbl text-slate-500 mb-2">Vorher · shallow: Interface so breit wie die Implementation</p>
+              <div class="flex gap-6 items-end h-64">
+                <div class="flex flex-col justify-end w-1/2">
+                  <div class="mod rounded-t p-2 text-xs font-mono" style="height:11rem">
+                    <p class="lbl text-slate-500">Interface</p>
+                    mode ×3 · focusedSignalId · setFocus · SIGNAL_REQUIRED · ?mode=&amp;signalId= URL-Vertrag · getOrCreateThread-Reset · Duplikat in voice.ts
+                  </div>
+                  <div class="mod-thin rounded-b p-2 text-xs font-mono faded" style="height:3.5rem"><p class="lbl text-slate-500">Implementation</p>drei if-Zweige, drei Case-Cards</div>
+                </div>
+                <div class="w-1/2 text-xs text-slate-600 leak">Ohne fokussiertes Signal: nur <span class="font-mono">rememberFact</span>. Inbox-Links ohne signalId: setFocus feuert nie. Ergebnis: „kein autorisierter Kontaktkanal“.</div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4" style="min-height:320px">
+              <p class="lbl text-slate-500 mb-2">Nachher · deep: kleines Interface, Verhalten innen</p>
+              <div class="flex flex-col justify-end w-2/3 h-64">
+                <div class="mod rounded-t p-2 text-xs font-mono" style="height:2.5rem"><p class="lbl text-slate-500">Interface</p>scoutTools.forOwner(state)</div>
+                <div class="deep rounded-b p-2 text-xs font-mono" style="height:12rem">
+                  <p class="lbl opacity-80">Implementation</p>
+                  need draft → Brief-Tools · aktiv + Mandat → Autopilot/Decision-Tools · Provider-Gespräche → reply/ask(conversationId) · eine Case-Card · geteilt von Chat und Voice · scoutContexts behält nur threadId, activeNeedId, briefReadiness
+                </div>
+              </div>
+            </div>
+          </div>
+          <p><span class="font-semibold">Problem.</span> Modus und Fokus werden per URL gesetzt und nur benutzt, um einen von drei Tool-Sätzen zu wählen; das Interface ist so breit wie die drei if-Zweige, die es bewacht, und ist die direkte Ursache dafür, dass der Chat nichts freigeben oder senden kann.</p>
+          <p><span class="font-semibold">Lösung.</span> Modus, Fokus, setFocus und die Modus-Case-Cards löschen; den Tool-Satz einmal pro Turn aus persistierten Fakten berechnen, geteilt von Chat und Voice.</p>
+          <ul class="grid md:grid-cols-3 gap-x-6 gap-y-1 text-sm list-disc list-inside">
+            <li>Interface: setFocus/mode weg</li><li>Locality: Tool-Gating an einem Ort</li><li>Leverage: Voice und Chat aus einer Liste</li><li>Stille Sackgassen entfallen</li>
+          </ul>
+          <p class="text-sm text-slate-600"><span class="font-semibold">Deletion-Test.</span> Was wiederkommt („über welches Inserat reden wir“) ist ein Tool-Parameter, kein persistierter Modus. Pass-through.</p>
+        </article>
+
+        <!-- F -->
+        <article id="f" class="rounded-2xl border border-slate-200 bg-white p-8 space-y-6 shadow-sm">
+          <h3 class="text-2xl">F · Graded Generation: LLM-Validierung mit Feedback-Retry, Ergebnis als Wert</h3>
+          <div class="flex flex-wrap gap-2"><span class="badge strong">Strong</span><span class="badge cat">mock (Modell)</span></div>
+          <p class="font-mono text-xs text-slate-600 leading-relaxed">convex/providerConversations.ts · convex/lib/providerAssessment.ts · convex/matchAssessments.ts · convex/lib/matchAssessment.ts · convex/messageSafety.ts · convex/lib/messageSafety.ts · convex/workpools.ts · convex/scoutRuntime.ts</p>
+          <div class="grid md:grid-cols-2 gap-6">
+            <div class="rounded-lg border border-slate-200 bg-white p-4" style="min-height:320px">
+              <p class="lbl text-slate-500 mb-2">Vorher · drei Retry-Leitern, kein Feedback ans Modell</p>
+              <div class="grid grid-cols-3 gap-2 text-xs font-mono">
+                <div><p class="lbl text-slate-500 mb-1">Provider-Bewertung</p><div class="band pl-2">Tool wirft</div><div class="band pl-2">processEvent wirft</div><div class="band pl-2">Workpool ×3 (ganzer Turn)</div><div class="band band-leak pl-2">needs_attention, still</div></div>
+                <div><p class="lbl text-slate-500 mb-1">Match-Bewertung</p><div class="band pl-2">validate</div><div class="band pl-2">save(failed)</div><div class="band pl-2">eigene retryFailed ×3</div><div class="band band-leak pl-2">Notification, Ende</div></div>
+                <div><p class="lbl text-slate-500 mb-1">Nachrichten-Safety</p><div class="band pl-2">ein Versuch</div><div class="band band-leak pl-2">awaiting_approval</div><div class="band band-leak pl-2">Snapshot-Drift → expired</div></div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4" style="min-height:320px">
+              <p class="lbl text-slate-500 mb-3">Nachher · ein Modul, drei dünne Adapter</p>
+              <div class="deep rounded-xl p-4">
+                <p class="lbl opacity-80">Interface</p>
+                <p class="font-mono text-xs mt-1">gradedGeneration({schema, validate, model, maxAttempts}) → {ready: value} | {needs_human: reason}</p>
+                <div class="border-t border-dashed border-slate-500 my-3"></div>
+                <ul class="faded text-xs space-y-0.5 font-mono"><li>generate → validate → Fehler zurückspielen → retry N</li><li>Kontext geändert → superseded</li><li>Workpool trägt nur Transport-Retries</li></ul>
+              </div>
+              <div class="flex gap-2 mt-3 text-xs">
+                <div class="mod-thin rounded p-2 flex-1">providerAssessment-Adapter</div>
+                <div class="mod-thin rounded p-2 flex-1">matchAssessment-Adapter</div>
+                <div class="mod-thin rounded p-2 flex-1">messageSafety-Adapter</div>
+              </div>
+              <p class="text-xs text-slate-600 mt-2">needs_human → decisions.raise (B) statt Sackgasse.</p>
+            </div>
+          </div>
+          <p><span class="font-semibold">Problem.</span> Drei LLM-Gates paaren je einen reinen, gut getesteten Validator mit Ad-hoc-Retry am Aufrufer; keiner reicht den Validierungsfehler ans Modell zurück; die Fehler leben in der Aufrufweise, nicht in den Validatoren.</p>
+          <p><span class="font-semibold">Lösung.</span> generate → validate → Feedback → N Versuche → terminales Ergebnis als Wert in einem Modul; die Gates werden dünne Schema/Validator-Adapter.</p>
+          <ul class="grid md:grid-cols-3 gap-x-6 gap-y-1 text-sm list-disc list-inside">
+            <li>Retry-Locality an einem Ort</li><li>Tests an einem Interface</li><li>Leverage über drei Gates</li><li>Stilles needs_attention verschwindet</li>
+          </ul>
+        </article>
+
+        <!-- G -->
+        <article id="g" class="rounded-2xl border border-slate-200 bg-white p-8 space-y-6 shadow-sm">
+          <h3 class="text-2xl">G · Engine einmal pro Verbindung wählen; Stempel-Vergleiche und Drain-Modul löschen</h3>
+          <div class="flex flex-wrap gap-2"><span class="badge strong">Strong</span><span class="badge cat">mock (Firecrawl, Browserbase)</span></div>
+          <p class="font-mono text-xs text-slate-600 leading-relaxed">convex/integrations/portalBrowserEngine.ts · convex/portalConnections.ts · convex/browserbasePortal.ts · convex/firecrawlPortal.ts · convex/externalActions.ts · convex/portalInboxSync.ts · convex/portalBrowserMaintenance.ts · convex/mandateOrchestrator.ts · convex/messageSafety.ts · convex/offerAcceptance.ts</p>
+          <div class="grid md:grid-cols-2 gap-6">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-500 mb-2">Vorher · env an 31 Stellen, 96 Vergleiche, 23 Throws, ein Adapter-Name in der UI</p>
+<pre class="mermaid">
+flowchart LR
+  UI["Frontend<br/>importiert browserbasePortal.* ×24"] --> BB["browserbasePortal.*"]
+  BB -- "env ×8" --> FC["firecrawlPortal.*"]
+  BB --> PC["portalConnections<br/>11 Lifecycle-Mutationen"]
+  FC --> PC
+  PC -. "stamp vs env ×96" .-> ENV["PORTAL_BROWSER_ENGINE"]
+  EA["externalActions.claimForExecutor"] -. "stamp vs env" .-> ENV
+  IS["portalInboxSync"] -. "stamp vs env" .-> ENV
+  MO["mandateOrchestrator · messageSafety · offerAcceptance"] -. "stamp vs env" .-> ENV
+  DR["portalBrowserMaintenance<br/>drain / resumeAfterSwitch"] -. "existiert nur wegen env-Flips" .-> ENV
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#dc2626;
+  class ENV,DR leak
+</pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4" style="min-height:320px">
+              <p class="lbl text-slate-500 mb-3">Nachher · ein Seam, zwei Adapter</p>
+              <div class="flex gap-3 items-stretch">
+                <div class="flex flex-col gap-2 w-32 text-xs"><div class="mod-thin rounded p-2">Frontend</div><div class="mod-thin rounded p-2">claimForExecutor</div><div class="mod-thin rounded p-2">Inbox-Sync</div><div class="mod-thin rounded p-2">Orchestrator</div></div>
+                <div class="flex items-center text-slate-400">→</div>
+                <div class="deep rounded-xl p-4 flex-1">
+                  <p class="lbl opacity-80">Interface</p>
+                  <p class="font-mono text-xs mt-1">portalAccount.{register, resume, stop, sendMessage, syncInbox, recover, disable}</p>
+                  <div class="border-t border-dashed border-slate-500 my-3"></div>
+                  <ul class="faded text-xs space-y-0.5 font-mono"><li>engineFor(connection) einmal am Eingang</li><li>Lifecycle-Tabellen intern, keine Provider-Argumente</li><li>eine Invariante: Firecrawl-Session nicht reconnectbar</li><li>env nur Default für neue Verbindungen</li></ul>
+                </div>
+                <div class="flex items-center text-slate-400">⇢</div>
+                <div class="flex flex-col gap-2 w-36 text-xs"><div class="mod rounded p-2 seam">firecrawlEngine</div><div class="mod rounded p-2 seam">browserbaseEngine</div><div class="mod rounded p-2 seam faded">in-memory Engine (Tests)</div><div class="text-xs text-slate-500">beide wrappen StagehandPortalPrimitives</div></div>
+              </div>
+            </div>
+          </div>
+          <p><span class="font-semibold">Problem.</span> Der Engine-Wert wird an 31 Stellen aus env gelesen, als Stempel auf fünf Tabellen persistiert und in 96 Ausdrücken mit 23 Throw-Stellen in 10 Dateien verglichen; jedes Lifecycle-Interface trägt „sag mir, welcher Provider du glaubst zu sein“.</p>
+          <p><span class="font-semibold">Lösung.</span> Die gespeicherte Engine der Verbindung ist maßgeblich; der Adapter wird einmal aufgelöst; Stempelvergleiche, RECONNECT_REQUIRED, validateRunProvider, requireSelectedFirecrawl und das Drain-Modul entfallen.</p>
+          <ul class="grid md:grid-cols-3 gap-x-6 gap-y-1 text-sm list-disc list-inside">
+            <li>Interface: keine browserProvider-Argumente</li><li>Locality: eine Engine-Entscheidung</li><li>Leverage: ein Dispatch statt acht</li><li>Drain-Modul gelöscht</li><li>Tests, die den Leak testen, entfallen</li>
+          </ul>
+          <p class="text-sm text-slate-600"><span class="font-semibold">Deletion-Test.</span> ~90 Vergleichsstellen verschwinden, statt zu wandern: die eine echte Invariante überlebt als ein Check bei Fortsetzung. Zwei Adapter rechtfertigen den Seam.</p>
+        </article>
+
+        <!-- H -->
+        <article id="h" class="rounded-2xl border border-slate-200 bg-white p-8 space-y-6 shadow-sm">
+          <h3 class="text-2xl">H · Ein Registrierungs-Lebenszyklus statt drei</h3>
+          <div class="flex flex-wrap gap-2"><span class="badge strong">Strong</span><span class="badge cat">mock</span></div>
+          <p class="font-mono text-xs text-slate-600 leading-relaxed">convex/firecrawlPortal.ts · convex/browserbasePortal.ts · convex/portalConnections.ts · convex/mandateOrchestrator.ts · convex/integrations/stagehandPortalDriver.ts · convex/integrations/firecrawlPortalRuntime.ts · convex/integrations/stagehandV4Runtime.ts</p>
+          <div class="grid md:grid-cols-2 gap-6">
+            <div class="rounded-lg border border-slate-200 bg-white p-4" style="min-height:300px">
+              <p class="lbl text-slate-500 mb-2">Vorher · dieselbe Maschine dreimal gegen dieselben sechs Mutationen</p>
+              <div class="grid grid-cols-3 gap-2 text-xs font-mono">
+                <div><p class="lbl text-slate-500 mb-1">Firecrawl inline</p><div class="band pl-2">reserve · open · attach</div><div class="band pl-2">signup · OTP inline</div><div class="band pl-2">stop · Profil-Proof</div><div class="band band-leak pl-2">human_required: Session weg, kein Resume</div><div class="band band-leak pl-2">continueAgentRegistration tot</div></div>
+                <div><p class="lbl text-slate-500 mb-1">Browserbase/Stagehand</p><div class="band pl-2">reserve · open · attach</div><div class="band pl-2">signup · OTP</div><div class="band pl-2">Live-View · Resume</div></div>
+                <div><p class="lbl text-slate-500 mb-1">Browserbase legacy</p><div class="band pl-2">EMAIL_SELECTORS</div><div class="band pl-2">Scheduler-Fortsetzung</div><div class="band band-leak pl-2">Retry-Politik divergiert</div></div>
+              </div>
+              <p class="text-xs text-slate-500 mt-2">Driver <span class="font-mono">ensureControlledPortalRegistration</span> ist schon engine-agnostisch.</p>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4" style="min-height:300px">
+              <p class="lbl text-slate-500 mb-3">Nachher</p>
+              <div class="deep rounded-xl p-4">
+                <p class="lbl opacity-80">Interface</p>
+                <p class="font-mono text-xs mt-1">registration.run(connectionId, policy) → registered | awaiting_code | human_required(reason)</p>
+                <div class="border-t border-dashed border-slate-500 my-3"></div>
+                <ul class="faded text-xs space-y-0.5 font-mono"><li>engine.capabilities: resumable · profileProof · liveView · captcha</li><li>eine Fortsetzung (inline oder geplant)</li><li>human_required: Live-View · Autopilot-Retry mit frischem Profil · Stopp mit Grund</li></ul>
+              </div>
+            </div>
+          </div>
+          <p><span class="font-semibold">Problem.</span> OTP-, human_required- und Retry-Verhalten divergieren in drei Kopien, und ein Firecrawl-Lauf mit human_required wartet unresumierbar bis TTL.</p>
+          <p><span class="font-semibold">Lösung.</span> Ein <span class="font-mono">registerPortalAccount</span>, das engine-spezifische Fakten aus <span class="font-mono">engine.capabilities</span> zieht und die human_required/Retry-Entscheidung an einer Stelle trifft, die den Mandats-Modus liest.</p>
+          <ul class="grid md:grid-cols-3 gap-x-6 gap-y-1 text-sm list-disc list-inside"><li>Locality: eine Zustandsmaschine</li><li>Leverage: Driver wiederverwendet</li><li>Legacy-Pfad gelöscht</li><li>Autopilot-Retry steckbar</li></ul>
+        </article>
+
+        <!-- I -->
+        <article id="i" class="rounded-2xl border border-slate-200 bg-white p-8 space-y-6 shadow-sm">
+          <h3 class="text-2xl">I · Ein Write-Lock: claim, renew, release in einer Lifecycle-Mutation mit Stale-Run-Ablauf</h3>
+          <div class="flex flex-wrap gap-2"><span class="badge strong">Strong</span><span class="badge cat">local-substitutable</span></div>
+          <p class="font-mono text-xs text-slate-600 leading-relaxed">convex/externalActions.ts · convex/portalConnections.ts · convex/firecrawlPortal.ts · convex/browserbasePortal.ts · convex/integrations/portalWriteAdapters.ts · convex/portalInboxSync.ts</p>
+          <div class="grid md:grid-cols-2 gap-6">
+            <div class="rounded-lg border border-slate-200 bg-white p-4" style="min-height:260px">
+              <p class="lbl text-slate-500 mb-2">Vorher · Lock dreimal gesetzt, an zehn Stellen geprüft, einmal abgelaufen</p>
+              <div class="text-xs font-mono">
+                <div class="band pl-2">claimForExecutor: BROWSER_WRITE_LOCK_MS (8 min)</div>
+                <div class="band pl-2">claimWriteSession: PORTAL_WRITE_TTL_MS (8 min, andere Datei)</div>
+                <div class="band pl-2">markContextPendingAfterWrite: erneut prüfen</div>
+                <div class="band pl-2">beforeSubmit: claimForExecutor ein drittes Mal</div>
+                <div class="band band-leak pl-2">In-Flight-Prädikat ×10, nur reserveRun lässt ablaufen</div>
+                <div class="band band-leak pl-2">abgestürzter Lauf → Phantom BROWSER_SESSION_BUSY</div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4" style="min-height:260px">
+              <p class="lbl text-slate-500 mb-3">Nachher</p>
+              <div class="deep rounded-xl p-4">
+                <p class="lbl opacity-80">Interface</p>
+                <p class="font-mono text-xs mt-1">lifecycle.claimWrite(connectionId, executionId) · confirmClaim · releaseWrite · busy(connectionId)</p>
+                <div class="border-t border-dashed border-slate-500 my-3"></div>
+                <ul class="faded text-xs space-y-0.5 font-mono"><li>eine Konstante, stale Runs und Locks laufen ab</li><li>Inbox-Generation-Check innen</li><li>Firecrawl-Post-Write-Proof im engine.commitProfile</li></ul>
+              </div>
+            </div>
+          </div>
+          <p><span class="font-semibold">Problem.</span> Die echte Invariante „ein Browser-Write pro Verbindung“ ist real (Firecrawl antwortet 409), aber dreimal gesetzt und zehnmal kopiert; nur eine Kopie lässt stale Runs ablaufen.</p>
+          <p><span class="font-semibold">Lösung.</span> Eine Lifecycle-Mutation besitzt claim, renew-before-submit und release inklusive Ablauf; Executor erhält nur, was der Engine-Schritt braucht.</p>
+          <ul class="grid md:grid-cols-3 gap-x-6 gap-y-1 text-sm list-disc list-inside"><li>Locality: ein Lock, eine Konstante</li><li>Interface: kein Re-Claim-Callback</li><li>Phantom-Busy-Stopp verschwindet</li><li>Tests ohne Engine</li></ul>
+        </article>
+
+        <!-- J -->
+        <article id="j" class="rounded-2xl border border-slate-200 bg-white p-8 space-y-6 shadow-sm">
+          <h3 class="text-2xl">J · Ein Resolver für das freigegebene Ziel: Plattform, Policy, Binding, Verbindung</h3>
+          <div class="flex flex-wrap gap-2"><span class="badge strong">Strong</span><span class="badge cat">local-substitutable</span></div>
+          <p class="font-mono text-xs text-slate-600 leading-relaxed">convex/mandateOrchestrator.ts · convex/lib/providerPortal.ts · convex/providerActions.ts · convex/externalActions.ts · convex/sourcePolicies.ts</p>
+          <div class="grid md:grid-cols-2 gap-6">
+            <div class="rounded-lg border border-slate-200 bg-white p-4" style="min-height:260px">
+              <p class="lbl text-slate-500 mb-2">Vorher · vier Resolver, drei hart codierte Keys, eine 22-Klausel-Prüfung</p>
+<pre class="mermaid">
+flowchart LR
+  O["processNeed"] --> R1["eligibleControlledRegistration<br/>policy 8-clause · binding 5-clause"]
+  O --> R2["queueOpportunity<br/>'roomscout.dev' ×3"]
+  SR["stageReply"] --> R3["resolveControlledPortal<br/>'roomscout-dev-v1' + workflowKey"]
+  CF["createContactFormFromScout"] --> R4["'bandnet-contact-form-v1' + policy 7-clause"]
+  EX["claimForExecutor"] --> R5["22-Klausel EXECUTION_POLICY_CHANGED"]
+  SP["sourcePolicies.resolveEffective"] -. "von niemandem gelesen" .-> N0[" "]
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#dc2626;
+  class R2,R5,SP leak
+  style N0 fill:none,stroke:none
+</pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4" style="min-height:260px">
+              <p class="lbl text-slate-500 mb-3">Nachher</p>
+              <div class="deep rounded-xl p-4">
+                <p class="lbl opacity-80">Interface</p>
+                <p class="font-mono text-xs mt-1">resolveReviewedDestination({ownerId, flow, signal|conversation}) → {platform, policy, binding, connection, thread} | refusal(code)</p>
+                <div class="border-t border-dashed border-slate-500 my-3"></div>
+                <ul class="faded text-xs space-y-0.5 font-mono"><li>policyIsCurrent(policy, flow, level, at)</li><li>Domain-Regel · Adapter-Key-Tabelle</li><li>claimForExecutor vergleicht nur IDs mit dem Snapshot</li></ul>
+              </div>
+              <p class="text-xs text-slate-600 mt-3">Ein zweites Portal wird Daten, nicht fünf Module.</p>
+            </div>
+          </div>
+          <p><span class="font-semibold">Problem.</span> „Welche Plattform, Policy, Binding und Verbindung darf diese Aktion nutzen“ beantworten vier Resolver, danach wird es zweimal boolesch nachgeprüft; <span class="font-mono">sourceFlowPolicies.externalApprovalRequired</span> wird nie gelesen.</p>
+          <p><span class="font-semibold">Lösung.</span> Ein Resolver mit typisierter Ablehnung, den Orchestrator, stageReply, createContactFormFromScout und claimForExecutor rufen.</p>
+          <ul class="grid md:grid-cols-3 gap-x-6 gap-y-1 text-sm list-disc list-inside"><li>Locality: eine Zielregel</li><li>Leverage: zweites Portal ist Daten</li><li>Interface: ein Prädikat</li><li>Hart codierte Keys konzentriert</li></ul>
+        </article>
+
+        <!-- K compact -->
+        <article id="k" class="rounded-2xl border border-slate-200 bg-stone-100 p-8 space-y-5">
+          <h3 class="text-2xl">Weitere Kandidaten</h3>
+          <div class="grid md:grid-cols-2 gap-4 text-sm">
+            <div class="rounded-lg bg-white border border-slate-200 p-4 space-y-2">
+              <div class="flex gap-2 items-center"><span class="badge worth">Worth exploring</span><span class="badge cat">mock</span></div>
+              <p class="font-semibold">Durable Stop im Engine-Adapter statt Lease-Tabelle</p>
+              <p class="font-mono text-xs text-slate-600">convex/portalBrowserCleanup.ts · convex/portalConnections.ts · convex/firecrawlPortal.ts</p>
+              <p><span class="font-mono text-xs">6 Aufrufer try/catch-then-schedule · 3 Validatoren · providerCleanupLeases</span> → <span class="font-mono text-xs">engine.stop(sessionId) mit interner Retry-Queue</span></p>
+              <p class="text-slate-600 text-xs">Retry/429-Logik bleibt (echt); Lease und Validatoren sind Pass-throughs.</p>
+            </div>
+            <div class="rounded-lg bg-white border border-slate-200 p-4 space-y-2">
+              <div class="flex gap-2 items-center"><span class="badge worth">Worth exploring</span><span class="badge cat">local-substitutable</span></div>
+              <p class="font-semibold">busy(connectionId) als eine Lifecycle-Query mit Run-TTL</p>
+              <p class="font-mono text-xs text-slate-600">convex/portalConnections.ts · convex/externalActions.ts · convex/portalInboxSync.ts</p>
+              <p><span class="font-mono text-xs">In-Flight-Prädikat ×10, Ablauf nur in reserveRun</span> → <span class="font-mono text-xs">lifecycle.busy() lässt stale Runs/Locks ablaufen, ein Grund</span></p>
+              <p class="text-slate-600 text-xs">Teilmenge von I, eigenständig lieferbar.</p>
+            </div>
+            <div class="rounded-lg bg-white border border-slate-200 p-4 space-y-2">
+              <div class="flex gap-2 items-center"><span class="badge worth">Worth exploring</span><span class="badge cat">local-substitutable</span></div>
+              <p class="font-semibold">ScoutPage als shallow Hub: eine Server-Query getSurface</p>
+              <p class="font-mono text-xs text-slate-600">src/routes/musician/ScoutPage.tsx · src/ui/scout/live/* · convex/scout.ts</p>
+              <p><span class="font-mono text-xs">7 Queries → 40 Zeilen Client-Herleitung → 8 Booleans → 25 Copy-Felder</span> → <span class="font-mono text-xs">scout.getSurface → {stage, offer, pendingDecision, briefReadiness, blockedReason}</span></p>
+              <p class="text-slate-600 text-xs">„Ich brauche dich“ kann dann sagen, wobei. Voice liest denselben Wert.</p>
+            </div>
+            <div class="rounded-lg bg-white border border-slate-200 p-4 space-y-2">
+              <div class="flex gap-2 items-center"><span class="badge worth">Worth exploring</span><span class="badge cat">local-substitutable</span></div>
+              <p class="font-semibold">Tests über den Seam: ein activateScout-Szenario statt ctx.db-Fixtures</p>
+              <p class="font-mono text-xs text-slate-600">convex/externalActions.integration.test.ts · convex/lib/mandateAuthorization.test.ts · convex/messageSafety.integration.test.ts</p>
+              <p><span class="font-mono text-xs">geschmiedete actionRequests/Assessments, _scheduled_functions-Zähler, skipUsageLimits: true</span> → <span class="font-mono text-xs">activateScout({rules, destination}) → act → Outcome prüfen</span></p>
+              <p class="text-slate-600 text-xs">Folgt A und B; heute testen vier von fünf Suiten am Interface vorbei.</p>
+            </div>
+            <div class="rounded-lg bg-white border border-slate-200 p-4 space-y-2 md:col-span-2">
+              <div class="flex gap-2 items-center"><span class="badge worth">Worth exploring</span><span class="badge cat">local-substitutable</span></div>
+              <p class="font-semibold">mailboxMessages ist Registrierungs-Plumbing, kein Inbox-Begriff</p>
+              <p class="font-mono text-xs text-slate-600">convex/inbox.ts · convex/agentmail.ts · src/components/actions/MailboxVerificationPanel.tsx</p>
+              <p><span class="font-mono text-xs">OTP-Mails als „Account &amp; verification mail“ in der Musiker-Inbox mit eigenem Status-Vokabular</span> → <span class="font-mono text-xs">privates Postfach des Registrierungs-Adapters; steckende Registrierung = pendingDecision(verification_needed)</span></p>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section id="top-recommendation" class="rounded-2xl deep p-10 space-y-4">
+        <p class="lbl opacity-80">Top-Empfehlung</p>
+        <h2 class="text-3xl font-serif"><a href="#a" class="underline decoration-dotted underline-offset-4">A · Autopilot-Policy</a></h2>
+        <p class="text-slate-200">Dort leben die zwölf stillen Stopps, dort liegt die Quelle der Wahrheit, die du willst, und B, C, D und F konsumieren ihr Ergebnis. Die erste Scheibe (Handlungsspielraum auf das Mandat persistieren, „Mit Rücksprache“ als Gate statt Revoke) ist in-process und klein; die zweite (ein Gate mit typisiertem Outcome) macht aus jedem „darf nicht“ eine Entscheidung mit Grund. Danach <a href="#b" class="underline decoration-dotted">B</a>, damit die Entscheidung im Chat landet, dann <a href="#c" class="underline decoration-dotted">C</a> für die Inbox in deiner Skizze.</p>
+        <p class="text-xs text-slate-400">Vorgeschlagene Reihenfolge: A → B → C (+D) → E, F → G, H, I, J.</p>
+      </section>
+    </main>
+  </body>
+</html>
