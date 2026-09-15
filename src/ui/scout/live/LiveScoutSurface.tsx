@@ -280,7 +280,13 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
           </>
         ) : null}
       />
-      <main className={cn("relative z-2 flex min-h-0 flex-1 flex-col overflow-x-hidden [scrollbar-width:none]", columns ? "overflow-y-hidden" : "overflow-y-auto")}>
+      <main className={cn(
+        "relative z-2 flex min-h-0 flex-1 flex-col [scrollbar-width:none]",
+        // `overflow:hidden` remains programmatically scrollable: focusing the
+        // chat composer can move this whole viewport and hide the voice card.
+        // Column children own their scrolling, so make this a hard boundary.
+        columns ? "overflow-clip" : "overflow-x-hidden overflow-y-auto"
+      )}>
         {props.errorSlot ? (
           <div className="sticky top-0 z-5 mx-auto w-[min(760px,calc(100%_-_var(--space-11)_*_2))] pt-[var(--space-5)]">
             {props.errorSlot}

@@ -112,7 +112,8 @@ describe("live Scout surface columns", () => {
     const centre = centreColumn();
     const chatHost = document.querySelector('[data-live-scout-chat-host="true"]');
     const briefColumn = document.querySelector('[data-live-scout-column="brief"]');
-    expect(main).toHaveClass("overflow-y-hidden", "min-h-0");
+    expect(main).toHaveClass("overflow-clip", "min-h-0");
+    expect(main).not.toHaveClass("overflow-y-hidden", "overflow-y-auto");
     expect(centre).toHaveClass("justify-start", "overflow-hidden", "min-h-0");
     expect(chatHost).toHaveClass("min-h-0", "flex-1", "overflow-hidden");
     expect(briefColumn).toHaveClass("h-full", "min-h-0", "overflow-y-auto", "overscroll-contain");
