@@ -1,5 +1,15 @@
 # RoomScout — Build Log
 
+## 2026-09-15 — GPT-Live integration: real transport proof, full product proof pending
+
+GPT-Live is being integrated on an isolated branch and worktree while the original checkout remains untouched. The implemented architecture keeps audio and Live events in the browser over WebRTC, sends client delegations through a small authenticated adapter, and runs them through the existing Convex Scout and `openai/gpt-5.6-terra` on the Convex AI Gateway. Voice and ordinary text therefore share the same Scout brain, search state, tools and business rules. A serial input path coordinates voice and text work; the reactive saved-need query remains the authority for facts shown in the UI. English is the default UI and conversation language, with an explicit persisted German switch. The earlier Realtime provider remains an explicit fallback while migration acceptance is incomplete.
+
+The integration uses the isolated cloud development deployment `descriptive-kookaburra-886`; the local Convex backend cannot exercise the AI Gateway. An ordinary text Scout turn on that cloud deployment reached the real Gateway and returned a ready reply, confirming the existing Brain/Gateway path independently of Live. A real GPT-Live session also completed its WebRTC handshake and produced captions plus acknowledged client events. In one synthetic uninterrupted English speech run, 95 transcript deltas arrived over 36.84 seconds; the first native client delegation arrived about 1.0 second after the audio ended. This proves the transport and native delegation path, but does not prove that native delegation alone updates saved facts during speech.
+
+The bounded application-owned early-fact path is now wired for reversible search facts only. It remains distinct from native delegation, runs through the same Scout and serial queue, and cannot start or pause a search, answer decisions, contact providers or perform a binding action. Validation of early saved-fact updates, a correction made while speech continues, language switching and the complete uncut Live journey is still running; none is recorded as passed here. Before the latest runtime work, the full repository suite passed 1,151 tests with one skip. That count is baseline evidence, not a substitute for rerunning the changed runtime and live-browser cases.
+
+No provider message, offer acceptance or other external action was sent during these GPT-Live checks, and no production rollout is claimed. The fallback remains available, and provider selection is deliberate rather than an automatic retry chain. Detailed product criteria and the evolving proof checklist remain in `GPT_LIVE_MIGRATION_PLAN_2026-09-15.md` and `GPT_LIVE_IMPLEMENTATION_STATUS.md`; those documents must be updated from the final observed runs rather than from this interim narrative.
+
 ## 2026-09-10 — First completed controlled happy path checkpoint
 
 The user verified the complete core flow against their landlord listing in the

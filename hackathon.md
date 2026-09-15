@@ -1,5 +1,11 @@
 # Hackathon log
 
+## Latest: GPT-Live transport works; integrated voice proof is in progress
+
+RoomScout's GPT-Live migration is running in an isolated worktree and cloud development deployment, leaving the original checkout untouched; this checkpoint is not a production rollout. Browser WebRTC carries the conversation; client delegations and bounded early reversible-fact intents enter the existing Convex Scout, which continues to use `openai/gpt-5.6-terra` through the Convex AI Gateway. The saved search query remains the source for visible facts, and the existing Realtime path remains available as an explicit fallback.
+
+Real evidence so far: the Live handshake, captions and event acknowledgements succeeded; a 36.84-second uninterrupted synthetic English brief produced 95 transcript deltas, with the first native delegation about 1.0 second after speech ended. An ordinary text Scout turn separately reached the real cloud Gateway and returned ready. This proves transport and the existing Brain/Gateway connection, but not the desired mid-speech saved-fact behavior. Early capture, correction during speech, language switching and the uncut end-to-end Live journey are still being tested. The last complete suite before the newest runtime changes passed 1,151 tests with one skip. These checks sent no provider message and performed no offer acceptance.
+
 ## Latest: Autopilot policy, first production autopilot run, proven webhook chain
 
 The per-search mandate is gone. Each musician has one set of per-user autonomy
@@ -36,7 +42,7 @@ read-only. No production rollout or external messages in this verification.
 - **Components:** @convex-dev/agent, @convex-dev/auth, @convex-dev/static-hosting, @convex-dev/workpool, @agentmail/convex, local Firecrawl and Stagehand components
 - **Convex features:** schema, tables, indexes, vector search, queries, mutations, actions, HTTP actions, crons, scheduled functions, realtime queries, paginated queries
 - **Auth:** Convex Auth
-- **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-realtime-2.1`
+- **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-live-1` in the isolated migration, `gpt-realtime-2.1` as the current fallback
 - **Started:** 2026-08-26T13:55:26Z
 - **Last updated:** 2026-09-15T00:42:53Z
 
@@ -554,3 +560,9 @@ radix-nova registry URL in a terminal, keeping the project's own button. The
 labelled stand-in is replaced by the registry's styled layer over the headless
 primitive; the decision card needed no change. Tests and build green, frontend
 deployed to production and dev.
+
+### 2026-09-15 — GPT-Live isolated integration checkpoint
+
+The migration branch now connects browser WebRTC and GPT-Live client delegation to the existing Convex Scout instead of introducing a second domain agent. Voice and text share the same Scout tools, Gateway model and saved search state; a small serial input path coordinates their turns. English is the default visible and spoken path, German remains an explicit persisted switch, and only canonical saved facts drive the search brief. A bounded app-owned early-capture intent is limited to reversible search facts and cannot perform search lifecycle, decision, provider or binding actions.
+
+The isolated cloud development deployment is necessary because the local Convex backend does not support the AI Gateway. There, an ordinary Scout text turn reached the real Gateway and returned ready. A real Live WebRTC session established successfully and delivered captions plus acknowledged events. The initial long-speech check received 95 transcript deltas during 36.84 seconds; its first native delegation followed about 1.0 second after audio ended, so mid-speech fact arrival is not claimed from native delegation. Early capture, an in-speech correction, language changes and the complete Live journey remain under test. The last full suite before the latest runtime changes passed 1,151 tests with one skip. The original checkout was untouched, no production rollout is claimed, the Realtime fallback remains available, and no provider message or acceptance was sent in this checkpoint.
