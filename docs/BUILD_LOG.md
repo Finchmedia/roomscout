@@ -1753,3 +1753,39 @@ corrected. Full suite 1083 tests green, build green. Still open is the live
 proof of the first real message without a write lock; the first real
 registration is to be watched as well, because the profile proof is now the
 live observed sign-in.
+
+### 2026-09-15 — Seven fixes from the maintainer's live run
+
+The maintainer ran the whole loop on production and came back with seven
+findings: the thinking state was a frozen label, the captured facts arrived in
+the chat instead of the Suchauftrag aside, facets showed raw keys such as
+`equipment.storage`, the Scout kept talking about the search after it was
+already live, the stage hung from the top of the viewport, a decision could
+only be answered with the offered chips, and reviewing an offer took two
+clicks with vague acceptance states. A four-phase workflow (backend, chat and
+decisions, facts and stage, verify) built the fix; the orchestrator's brief
+named the exact shadcn primitives after an earlier "like shadcn" phrasing had
+produced a custom rebuild.
+
+Result (commit 61797c3): the chat shows one rotating verb in shadcn's
+`shimmer` utility, installed the documented way (`npm install shadcn`,
+`@import "shadcn/tailwind.css"`, `<MarkerContent className="shimmer">`); the
+hand-rolled text sweep is deleted. Facts render through an allowlist of
+namespace/key pairs with German labels, band details fuse into one row,
+duplicates are dropped, and a new fact flies as a capsule from the chat into
+the aside, which now also shows during discovery. The case card forbids
+recapping the facts and tells the Scout when the search is live; the centre
+column is vertically centred; "Scout losschicken" closes chat and voice first.
+Decisions render the shadcn Questionnaire with chips and an own text field;
+typed text becomes an instruction to the Scout through `decisions.answer`
+(choice `custom`), never a provider message. The stage decision slot is the
+same card, so "Angebot prüfen" opens the acceptance flow in one click, and the
+acceptance reads pending, confirming, unconfirmed, failed or "Zusage gesendet"
+with a timestamp. The `updateSearchDraft` tool description names the twelve
+facet keys the brief can show.
+
+Open: `npx shadcn@latest add questionnaire` fails with a registry 404 (the
+item is not in the `@shadcn` registry yet), so `src/components/ui/questionnaire.tsx`
+is a labelled temporary stand-in over the real `@shadcn/react/questionnaire`
+primitive; the maintainer runs the CLI himself once the item is published.
+Typecheck, 1116 tests and the build are green; deployed to production and dev.

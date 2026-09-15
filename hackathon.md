@@ -514,3 +514,22 @@ priorities for the final week (`docs/DEMO_PRIORITIES.md`). Convex features:
 actions, internal mutations, scheduled functions (`convex/scout.ts`,
 `convex/voice.ts`, `convex/scoutCaseCards.ts`,
 `convex/integrations/firecrawlPortalEngine.ts`, `convex/firecrawlPortal.ts`).
+
+### 2026-09-15 — 61797c3 Seven fixes from the first full live run
+
+The maintainer ran the loop end to end on production and listed what broke
+the illusion: a frozen "thinking" label, facts landing in the chat rather than
+the Suchauftrag aside, raw facet keys on screen, a Scout that kept discussing
+a search that was already live, a stage hanging from the top, decisions that
+could only be answered with the offered chips, and a two-click offer review
+with vague states. All seven are fixed: the chat shows one rotating verb in
+shadcn's `shimmer` utility, facts render through a labelled allowlist and fly
+into the aside as capsules, the case card forbids recapping and knows when the
+search is live, the stage is centred, decisions use the shadcn Questionnaire
+with chips plus an own text field (typed text is an instruction to the Scout,
+never a provider message), and "Angebot prüfen" opens the acceptance flow in
+one click with precise acceptance states. The shadcn registry does not carry
+`questionnaire` yet, so its styled layer is a labelled stand-in over the real
+headless primitive. Convex features: actions and agent tools
+(`convex/scout.ts`, `convex/scoutCaseCards.ts`), mutations
+(`convex/decisions.ts`), reactive queries behind the stage and the inbox.
