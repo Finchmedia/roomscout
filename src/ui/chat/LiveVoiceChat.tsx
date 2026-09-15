@@ -136,6 +136,13 @@ function LiveVoiceChat({
         </p>
       ) : null}
 
+      {voice.provider === "live" && voice.backendState === "failed" ? (
+        <div role="alert" className="flex items-center gap-3 text-sm text-rs-red-text">
+          <span>{t("liveScout.failed")}</span>
+          <button type="button" className="underline underline-offset-4" onClick={() => voice.retryFailedInput()}>{t("liveScout.retry")}</button>
+        </div>
+      ) : null}
+
       {latestTurns.length > 0 && (
         <div aria-label={t("liveScout.voice.transcript")} className="flex max-h-[32vh] w-full max-w-[42rem] flex-col gap-[var(--space-5)] overflow-y-auto text-left">
           {latestTurns.map((turn) => {

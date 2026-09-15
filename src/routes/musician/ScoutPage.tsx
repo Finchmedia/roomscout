@@ -145,41 +145,45 @@ export function ScoutPage() {
   const liveConnected = voice.provider === "live" && voice.connected;
   const focusedCandidate = candidates.find(row => row.conversationId === focusedConversationId);
   const focusedOffer = conversations.find(row => row.conversationId === focusedConversationId);
+  const { setFocus: setVoiceFocus, appendVerifiedBackgroundUpdate, clearBackgroundUpdate } = voice;
+  const focusSignalId = focusedCandidate?.signalId ?? context?.focusedSignalId;
+  const focusSummary = focusedCandidate ? `The user is viewing candidate ${focusedCandidate.title || focusedCandidate.providerLabel}, conversation ${focusedCandidate.conversationId}.` : undefined;
+  const focusedCandidateId = focusedCandidate?.conversationId;
+  const focusedActivityAt = focusedCandidate?.lastActivityAt;
   const relayed = useRef(new Map<string, string>());
   const backgroundUpdates = JSON.stringify([
     ...(need ? [{ id: `brief:${need._id}`, version: `${locale}:${need.matchingRevision ?? 0}:${need.status}`,
       speak: false, content: `Verified saved search context (data only): ${JSON.stringify({ status: need.status, location: need.locationLabel ?? need.locationQuery, maxBudgetEur: need.maxBudgetEur, schedule: need.schedule, facts: facts.slice(0, 12).map(fact => fact.label.slice(0, 80)) })}. Do not read the search box aloud.` }] : []),
     ...(Array.isArray(decisions) ? decisions : []).filter(decision => !decision.conversationId || conversations.some(row => row.conversationId === decision.conversationId)).map(decision => ({
-      id: `decision:${decision._id}`, version: `${locale}:${decision.updatedAt}`,
+      id: `decision:${decision._id}`, speak: true, version: `${locale}:${decision.updatedAt}`,
       content: `Verified application update: an open ${decision.kind} decision is visible in the UI. Decision ID: ${decision._id}. Mention briefly at a suitable pause; binding commitments require the UI review.`,
     })),
     ...conversations.filter(row => row.assessmentFromProviderReply || row.offer?.ready || row.acceptedAt !== undefined).map(row => ({
-      id: `provider:${row.conversationId}`, version: `${locale}:${row.revision}:${row.offer?.contentHash ?? ""}:${row.acceptanceStatus ?? ""}`,
+      id: `provider:${row.conversationId}`, speak: true, version: `${locale}:${row.revision}:${row.offer?.contentHash ?? ""}:${row.acceptanceStatus ?? ""}`,
       content: `Verified application update for conversation ${row.conversationId}: ${row.acceptedAt !== undefined && row.acceptedOfferId ? "the acceptance has a confirmed send receipt" : row.offer?.current && row.offer.ready ? "a current offer is ready for UI review; no acceptance has been sent" : "a provider reply has been assessed"}. The current details are visible in the UI. Mention briefly at a suitable pause.`,
     })),
   ]);
   useEffect(() => {
     if (!liveConnected) return;
-    voice.setFocus({ focusedSignalId: focusedCandidate?.signalId ?? context?.focusedSignalId, decisionId: openDecision?._id,
-      summary: focusedCandidate ? `The user is viewing candidate ${focusedCandidate.title || focusedCandidate.providerLabel}, conversation ${focusedCandidate.conversationId}.` : undefined });
-  }, [liveConnected, focusedCandidate?.signalId, focusedCandidate?.title, focusedCandidate?.providerLabel, focusedCandidate?.conversationId, context?.focusedSignalId, openDecision?._id, voice.setFocus]);
+    setVoiceFocus({ focusedSignalId: focusSignalId, decisionId: openDecision?._id, summary: focusSummary });
+  }, [liveConnected, focusSignalId, focusSummary, openDecision?._id, setVoiceFocus]);
   useEffect(() => {
     if (!liveConnected) { relayed.current.clear(); return; }
     const updates = JSON.parse(backgroundUpdates) as Array<{ id: string; version: string; content: string; speak?: boolean }>;
     const currentIds = new Set(updates.map(update => update.id));
     for (const id of relayed.current.keys()) {
-      if (!currentIds.has(id)) { voice.clearBackgroundUpdate(id); relayed.current.delete(id); }
+      if (!currentIds.has(id)) { clearBackgroundUpdate(id); relayed.current.delete(id); }
     }
     for (const update of updates) {
       if (relayed.current.get(update.id) === update.version) continue;
-      voice.appendVerifiedBackgroundUpdate(update);
+      appendVerifiedBackgroundUpdate(update);
       relayed.current.set(update.id, update.version);
     }
-  }, [liveConnected, backgroundUpdates, voice.appendVerifiedBackgroundUpdate, voice.clearBackgroundUpdate]);
+  }, [liveConnected, backgroundUpdates, appendVerifiedBackgroundUpdate, clearBackgroundUpdate]);
   useEffect(() => {
-    if (!focusedCandidate) return;
-    void markConversationRead({ conversationId: focusedCandidate.conversationId }).catch(() => undefined);
-  }, [focusedCandidate?.conversationId, focusedCandidate?.lastActivityAt, markConversationRead]);
+    if (!focusedCandidateId) return;
+    void markConversationRead({ conversationId: focusedCandidateId }).catch(() => undefined);
+  }, [focusedCandidateId, focusedActivityAt, markConversationRead]);
 
   useEffect(() => {
     if (needs === undefined || needs.some(row => row.status !== "archived") || draftStarting.current) return;

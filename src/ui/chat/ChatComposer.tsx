@@ -96,14 +96,13 @@ function ChatComposer({
   const statusId = React.useId()
   const isBusy = busy || submitting
 
-  React.useEffect(() => {
-    if (!restoredDraft) return
-    setDraft(current => current && current !== restoredDraft ? `${current}\n${restoredDraft}` : restoredDraft)
-    onDraftRestored?.()
-  }, [restoredDraft, onDraftRestored])
+  // The session's unadmitted text stays recoverable until the user edits or sends it.
+  const displayedDraft = restoredDraft && restoredDraft !== draft
+    ? draft ? `${draft}\n${restoredDraft}` : restoredDraft
+    : draft
 
   const submit = async () => {
-    const body = draft.trim()
+    const body = displayedDraft.trim()
     if (!body || busy || disabled || submittingRef.current) return
 
     submittingRef.current = true
@@ -114,6 +113,7 @@ function ChatComposer({
     setLocalError(null)
     setFailedDraft(null)
     setDraft("")
+    if (restoredDraft) onDraftRestored?.()
     try {
       const sent = await onSubmit(body)
       if (!sent) {
@@ -156,7 +156,7 @@ function ChatComposer({
           className="mb-[var(--space-4)] flex flex-wrap items-center gap-[var(--space-3)] text-[length:var(--text-caption-size)] text-rs-red-text"
         >
           <span>{shownError}</span>
-          {failedDraft && draft !== failedDraft ? (
+          {failedDraft && displayedDraft !== failedDraft ? (
             <Button
               type="button"
               variant="link"
@@ -186,8 +186,8 @@ function ChatComposer({
           disabled={disabled}
           maxLength={maxLength}
           rows={1}
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
+          value={displayedDraft}
+          onChange={(event) => { setDraft(event.target.value); if (restoredDraft) onDraftRestored?.() }}
           onKeyDown={(event) => {
             if (
               event.key !== "Enter" ||
@@ -219,7 +219,7 @@ function ChatComposer({
           variant="secondary"
           size="icon-sm"
           aria-label={labels.send}
-          disabled={isBusy || disabled || draft.trim().length === 0}
+          disabled={isBusy || disabled || displayedDraft.trim().length === 0}
         >
           <Icon name="send" />
         </Button>

@@ -17,7 +17,9 @@ const fixtures = vi.hoisted(() => ({
   queries: vi.fn(),
   mutations: new Map<string, ReturnType<typeof vi.fn>>(),
   actionFns: new Map<string, ReturnType<typeof vi.fn>>(),
-  voice: { connected: false, connect: vi.fn().mockResolvedValue(undefined), disconnect: vi.fn() },
+  voice: { connected: false, provider: "realtime" as "realtime" | "live", connect: vi.fn().mockResolvedValue(undefined), disconnect: vi.fn(),
+    sendText: vi.fn().mockReturnValue(true), setFocus: vi.fn(), appendVerifiedBackgroundUpdate: vi.fn(), clearBackgroundUpdate: vi.fn(),
+    pendingTextDraft: "", clearPendingTextDraft: vi.fn() },
 }));
 
 function mutation(name: string) {
@@ -155,7 +157,9 @@ beforeEach(() => {
   fixtures.context = { threadId: "thread", activeNeedId: "need-current", mode: "search_discovery" };
   fixtures.matches = []; fixtures.conversations = []; fixtures.inbox = []; fixtures.actions = []; fixtures.messages = []; fixtures.decisions = [];
   fixtures.queries.mockClear(); fixtures.mutations.clear(); fixtures.actionFns.clear();
-  fixtures.voice.connected = false; fixtures.voice.connect.mockClear(); fixtures.voice.disconnect.mockClear();
+  fixtures.voice.connected = false; fixtures.voice.provider = "realtime";
+  fixtures.voice.connect.mockClear(); fixtures.voice.disconnect.mockClear(); fixtures.voice.sendText.mockClear();
+  fixtures.voice.setFocus.mockClear(); fixtures.voice.appendVerifiedBackgroundUpdate.mockClear(); fixtures.voice.clearBackgroundUpdate.mockClear();
 });
 
 describe("live Scout route", () => {
@@ -463,4 +467,41 @@ describe("live Scout route", () => {
     expect(screen.getByRole("heading", { name: "Eure Zusage ist angekommen." })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Eure Suche macht eine Pause." })).not.toBeInTheDocument();
   });
+  it("queues Live search start behind pending speech instead of racing the domain mutation", () => {
+    fixtures.voice.connected = true; fixtures.voice.provider = "live";
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Scout losschicken" }));
+    expect(fixtures.voice.sendText).toHaveBeenCalledWith("Start the search now using my current requirements.");
+    expect(mutation("savedNeeds:activate")).not.toHaveBeenCalled();
+    expect(fixtures.voice.disconnect).not.toHaveBeenCalled();
+  });
+
+  it("saves a versioned inline edit and displays only the committed query value", async () => {
+    fixtures.voice.connected = true; fixtures.voice.provider = "live";
+    fixtures.needs = [{ ...need(), matchingRevision: 7 }];
+    const view = renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Budget bearbeiten" }));
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Maximales Budget pro Monat" }), { target: { value: "280" } });
+    expect(screen.getByRole("group", { name: "Euer Suchauftrag" })).toHaveTextContent("Bis 350 € / Monat");
+    fireEvent.click(screen.getByRole("button", { name: "Änderungen speichern" }));
+    await waitFor(() => expect(mutation("savedNeeds:update")).toHaveBeenCalledWith({ needId: "need-current", expectedRevision: 7, maxBudgetEur: 280 }));
+    expect(screen.getByRole("group", { name: "Euer Suchauftrag" })).toHaveTextContent("Bis 350 € / Monat");
+    fixtures.needs = [{ ...need(), maxBudgetEur: 280, matchingRevision: 8 }];
+    view.rerender(<MemoryRouter><ScoutPage /></MemoryRouter>);
+    expect(screen.getByRole("group", { name: "Euer Suchauftrag" })).toHaveTextContent("Bis 280 € / Monat");
+    expect(fixtures.voice.disconnect).not.toHaveBeenCalled();
+  });
+
+  it("opens a candidate beside voice and binds the Scout to that candidate", () => {
+    fixtures.voice.connected = true; fixtures.voice.provider = "live";
+    fixtures.needs = [need("active")];
+    fixtures.inbox = [candidate({ id: "c-west", title: "Raum West" })];
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: /Raum West/ }));
+    expect(fixtures.queries).toHaveBeenCalledWith("conversations:getMine", { conversationId: "c-west" });
+    expect(fixtures.voice.setFocus).toHaveBeenLastCalledWith(expect.objectContaining({ focusedSignalId: "signal-c-west" }));
+    expect(screen.getByText("Voice Scout session")).toBeInTheDocument();
+    expect(fixtures.voice.disconnect).not.toHaveBeenCalled();
+  });
+
 });
