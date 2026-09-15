@@ -420,14 +420,19 @@ describe("useGptLiveVoiceScout", () => {
   });
 
   it("chunks large append context at sentence boundaries without dropping content", async () => {
-    const content = Array.from(
-      { length: 12 },
-      (_, index) => `Verified sentence ${index} ${"detail ".repeat(20).trim()}.`,
-    ).join(" ");
+    const content = [
+      "Do not accept room ID raum_äöü_東京_🎸; it is not available. ",
+      ...Array.from(
+        { length: 18 },
+        (_, index) => `Negation ${index}: do not remove Köln or budget €300.\n`,
+      ),
+      "Final fact: Wednesday remains required, not Thursday.",
+    ].join("");
     const chunks = splitLiveAppendContent(content);
     expect(chunks.length).toBeGreaterThan(1);
-    expect(chunks.every((chunk) => chunk.length <= 1_000)).toBe(true);
-    expect(chunks.join(" ")).toBe(content);
+    expect(chunks.every((chunk) => new TextEncoder().encode(chunk).length <= 400)).toBe(true);
+    expect(chunks.join("")).toBe(content);
+    expect(chunks.join("").match(/do not/gi)).toHaveLength(19);
 
     const { result, sent } = await connect(
       vi.fn().mockResolvedValue(completed("none", [])) as never,
@@ -441,7 +446,55 @@ describe("useGptLiveVoiceScout", () => {
       })).toBe(true);
     });
     const appended = sent.filter((event) => event.type === "session.thinking.append");
-    expect(appended.map((event) => event.content).join(" ")).toBe(content);
+    expect(appended.map((event) => event.content).join("")).toBe(content);
+  });
+
+  it("keeps remote audio stopped across trailing output until new user input", async () => {
+    const { channel, result } = await connect(
+      vi.fn().mockResolvedValue(completed("none", [])) as never,
+    );
+    const play = vi.mocked(HTMLMediaElement.prototype.play);
+    act(() => {
+      serverEvent(channel, {
+        type: "session.output_transcript.delta",
+        event_id: "assistant-before-stop",
+        delta: "Here is the first result",
+        start_ms: 0,
+        end_ms: 200,
+      });
+    });
+    const callsBeforeStop = play.mock.calls.length;
+    expect(callsBeforeStop).toBeGreaterThan(0);
+
+    act(() => result.current.stopSpeaking());
+    act(() => {
+      serverEvent(channel, {
+        type: "session.output_transcript.delta",
+        event_id: "assistant-trailing",
+        delta: "and a trailing fragment",
+        start_ms: 210,
+        end_ms: 400,
+      });
+    });
+    expect(play).toHaveBeenCalledTimes(callsBeforeStop);
+
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "user-next-turn",
+        delta: "Tell me about the next room",
+        start_ms: 500,
+        end_ms: 700,
+      });
+      serverEvent(channel, {
+        type: "session.output_transcript.delta",
+        event_id: "assistant-next-turn",
+        delta: "The next room is available",
+        start_ms: 710,
+        end_ms: 900,
+      });
+    });
+    expect(play.mock.calls.length).toBeGreaterThan(callsBeforeStop);
   });
 
   it("defers spoken updates while the user speaks and announces only the latest queued version", async () => {

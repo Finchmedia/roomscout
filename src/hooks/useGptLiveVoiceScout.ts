@@ -167,31 +167,44 @@ const LIVE_CLIENT_EVENT_TYPES = new Set([
   "session.instructions.append",
   "session.close",
 ]);
-const MAX_APPEND_CHARACTERS = 1_000;
+const MAX_APPEND_UTF8_BYTES = 400;
+const textEncoder = new TextEncoder();
 
 /**
- * Live append commands are capped in tokens. EN/DE app context stays well below
- * that ceiling at this conservative character size; chunking preserves all text
- * and prefers complete sentence boundaries without pretending to tokenize it.
+ * Live append commands are capped in tokens. A small UTF-8 byte ceiling gives
+ * arbitrary Unicode text a conservative margin without estimating token count.
+ * Chunks preserve the input exactly and prefer sentence or whitespace boundaries.
  */
 export function splitLiveAppendContent(content: string): string[] {
   const chunks: string[] = [];
-  let remaining = content.trim();
+  let remaining = content;
   while (remaining) {
-    if (remaining.length <= MAX_APPEND_CHARACTERS) {
+    if (textEncoder.encode(remaining).length <= MAX_APPEND_UTF8_BYTES) {
       chunks.push(remaining);
       break;
     }
-    const window = remaining.slice(0, MAX_APPEND_CHARACTERS + 1);
+    let prefixEnd = 0;
+    let prefixBytes = 0;
+    for (const codePoint of remaining) {
+      const codePointBytes = textEncoder.encode(codePoint).length;
+      if (prefixBytes + codePointBytes > MAX_APPEND_UTF8_BYTES) break;
+      prefixBytes += codePointBytes;
+      prefixEnd += codePoint.length;
+    }
+    const window = remaining.slice(0, prefixEnd);
     let boundary = -1;
-    const sentenceBoundary = /[.!?](?:["')\]]*)?(?=\s|$)|\n/gu;
+    const sentenceBoundary = /[.!?](?:["')\]]*)?(?:\s+|$)|\n+/gu;
     for (const match of window.matchAll(sentenceBoundary)) {
       boundary = (match.index ?? 0) + match[0].length;
     }
-    if (boundary < 1) boundary = window.lastIndexOf(" ");
-    if (boundary < 1) boundary = MAX_APPEND_CHARACTERS;
-    chunks.push(remaining.slice(0, boundary).trim());
-    remaining = remaining.slice(boundary).trimStart();
+    if (boundary < 1) {
+      for (const match of window.matchAll(/\s+/gu)) {
+        boundary = (match.index ?? 0) + match[0].length;
+      }
+    }
+    if (boundary < 1) boundary = prefixEnd;
+    chunks.push(remaining.slice(0, boundary));
+    remaining = remaining.slice(boundary);
   }
   return chunks;
 }
@@ -294,6 +307,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   const closingTimerRef = useRef<number | undefined>(undefined);
   const speechTimersRef = useRef<{ user?: number; assistant?: number }>({});
   const userSpeakingRef = useRef(false);
+  const outputSuppressedRef = useRef(false);
   const captureTimerRef = useRef<number | undefined>(undefined);
   const captureWatermarkRef = useRef(0);
   const lastCaptureQueuedAtRef = useRef(0);
@@ -358,7 +372,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       const trimmed = content.trim();
       if (!trimmed) return false;
       let sentAll = true;
-      for (const chunk of splitLiveAppendContent(trimmed)) {
+      for (const chunk of splitLiveAppendContent(content)) {
         const eventId = newRequestId(speak ? "commentary" : "thinking");
         const sent = sendEvent({
           type: speak ? "session.commentary.append" : "session.thinking.append",
@@ -379,7 +393,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       const trimmed = content.trim();
       if (!trimmed) return false;
       let sentAll = true;
-      for (const chunk of splitLiveAppendContent(trimmed)) {
+      for (const chunk of splitLiveAppendContent(content)) {
         const eventId = newRequestId("instructions");
         const sent = sendEvent({
           type: "session.instructions.append",
@@ -458,6 +472,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       setMicrophoneState("off");
       setProviderMuted(false);
       userSpeakingRef.current = false;
+      outputSuppressedRef.current = false;
       setUserSpeaking(false);
       setScoutSpeaking(false);
       setConnectedAt(undefined);
@@ -752,10 +767,12 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     const priorTimer = speechTimersRef.current[role];
     if (priorTimer !== undefined) window.clearTimeout(priorTimer);
     if (role === "user") {
+      outputSuppressedRef.current = false;
       userSpeakingRef.current = true;
       setUserSpeaking(true);
     }
     else {
+      if (outputSuppressedRef.current) return;
       setScoutSpeaking(true);
       const audio = remoteAudioRef.current;
       if (audio?.paused) void audio.play().catch(() => undefined);
@@ -880,7 +897,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         if (cancelled() || peerRef.current !== peer) return;
         const remoteStream = event.streams[0] ?? new MediaStream([event.track]);
         remoteAudio.srcObject = remoteStream;
-        void remoteAudio.play().catch(() => undefined);
+        if (!outputSuppressedRef.current) void remoteAudio.play().catch(() => undefined);
         void attachOutputMeter(remoteStream);
       };
       peer.onconnectionstatechange = () => {
@@ -1105,6 +1122,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   }, []);
 
   const stopSpeaking = useCallback(() => {
+    outputSuppressedRef.current = true;
     remoteAudioRef.current?.pause();
     setScoutSpeaking(false);
     appendInstructions("Stop speaking now. Leave room for the user and listen.");
