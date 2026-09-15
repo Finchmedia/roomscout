@@ -65,7 +65,7 @@ describe("Scout search equipment extraction contract", () => {
 
     const later = searchDraftInputSchema.parse({
       changes: [
-        { field: "schedule", operation: "add", values: ["Tuesday evening"] },
+        { field: "schedule", operation: "add", values: ["Tuesday evening"], removeConflictingRequirements: [] },
         { field: "facet", namespace: "equipment", key: "storage", value: "true", confidence: 1 },
       ],
     });
@@ -81,6 +81,46 @@ describe("Scout search equipment extraction contract", () => {
         { namespace: "band", key: "size", value: "4", confidence: 1 },
         { namespace: "equipment", key: "storage", value: "true", confidence: 1 },
       ],
+    });
+  });
+
+  it("reconciles corrected canonical facts and converges member roles to instruments", () => {
+    const changes = searchDraftInputSchema.parse({
+      changes: [
+        {
+          field: "maxBudgetEur",
+          value: 280,
+          removeConflictingRequirements: ["€300/month budget including usual bills"],
+        },
+        {
+          field: "requirements",
+          operation: "add",
+          values: ["Budget includes usual bills"],
+        },
+        {
+          field: "instruments",
+          operation: "add",
+          values: ["drums", "guitar", "bass"],
+        },
+      ],
+    });
+
+    expect(materializeSearchDraftChanges(changes.changes, {
+      schedule: ["Tuesday evening"],
+      requirements: [
+        "€300/month budget including usual bills",
+        "Own drum kit may remain stored",
+      ],
+      genres: ["indie rock"],
+      instruments: ["drummer", "guitarist", "bass player"],
+      facets: [],
+    })).toEqual({
+      maxBudgetEur: 280,
+      requirements: [
+        "Own drum kit may remain stored",
+        "Budget includes usual bills",
+      ],
+      instruments: ["drums", "guitar", "bass"],
     });
   });
 

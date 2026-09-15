@@ -37,11 +37,19 @@ const memoryToolSchema = z.object({
 const listOperation = z.enum(["add", "replace", "remove"]).describe(
   "Use add for new facts, replace only for an explicit correction of the whole field, and remove only for explicitly retracted values.",
 );
-const stringListChange = (field: "schedule" | "requirements" | "genres" | "instruments") => z.object({
+const stringListChange = (field: "genres" | "instruments") => z.object({
   field: z.literal(field),
   operation: listOperation,
-  values: z.array(z.string().min(1)).min(1).max(50),
+  values: z.array(z.string().min(1)).min(1).max(50).describe(
+    field === "instruments"
+      ? "Instrument names only, for example drums, guitar, or bass. Never use musician roles such as drummer, guitarist, or bass player."
+      : "Explicit values for this field.",
+  ),
 });
+
+const conflictingRequirementValues = z.array(z.string().min(1)).max(50).describe(
+  "Exact strings from the current requirements list that duplicate or conflict with this corrected canonical field. Use [] when there are none. The server removes these strings atomically with the canonical update.",
+);
 
 export const searchDraftChangeSchema = z.discriminatedUnion("field", [
   z.object({ field: z.literal("title"), value: z.string().min(1).max(240) }),
@@ -50,10 +58,25 @@ export const searchDraftChangeSchema = z.discriminatedUnion("field", [
     query: z.string().min(1).max(240).describe("The complete place or address exactly as stated"),
     label: z.string().min(1).max(240).nullable().describe("Concise display label, or null when the complete place is already concise"),
   }),
-  z.object({ field: z.literal("maxBudgetEur"), value: z.number().nonnegative() }),
+  z.object({
+    field: z.literal("maxBudgetEur"),
+    value: z.number().nonnegative(),
+    removeConflictingRequirements: conflictingRequirementValues,
+  }),
   z.object({ field: z.literal("arrangement"), value: z.array(z.enum(["permanent", "shared", "hourly"])).min(1) }),
-  stringListChange("schedule"),
-  stringListChange("requirements"),
+  z.object({
+    field: z.literal("schedule"),
+    operation: listOperation,
+    values: z.array(z.string().min(1)).min(1).max(50),
+    removeConflictingRequirements: conflictingRequirementValues,
+  }),
+  z.object({
+    field: z.literal("requirements"),
+    operation: listOperation,
+    values: z.array(z.string().min(1)).min(1).max(50).describe(
+      "Standalone constraints and qualifiers only. Never repeat a budget amount, radius, arrangement, or schedule already represented by its canonical field. Preserve useful qualifiers without the canonical value, for example 'Budget includes usual bills'.",
+    ),
+  }),
   z.object({ field: z.literal("openToSharing"), value: z.boolean() }),
   z.object({ field: z.literal("radiusKm"), value: z.number().min(1).max(200) }),
   stringListChange("genres"),
@@ -119,6 +142,39 @@ function listPatch(current: string[] | undefined, change: {
   return result;
 }
 
+const instrumentRoleAliases = new Map([
+  ["drummer", "drums"],
+  ["drummers", "drums"],
+  ["guitarist", "guitar"],
+  ["guitarists", "guitar"],
+  ["bass player", "bass"],
+  ["bass players", "bass"],
+  ["bassist", "bass"],
+  ["bassists", "bass"],
+  ["singer", "vocals"],
+  ["singers", "vocals"],
+  ["vocalist", "vocals"],
+  ["vocalists", "vocals"],
+  ["keyboardist", "keyboards"],
+  ["keyboardists", "keyboards"],
+  ["pianist", "piano"],
+  ["pianists", "piano"],
+]);
+
+function canonicalInstrument(value: string): string {
+  return instrumentRoleAliases.get(value.trim().toLocaleLowerCase()) ?? value;
+}
+
+function instrumentListPatch(current: string[] | undefined, change: {
+  operation: "add" | "replace" | "remove";
+  values: string[];
+}): string[] {
+  return listPatch(
+    current?.map(canonicalInstrument),
+    { ...change, values: change.values.map(canonicalInstrument) },
+  );
+}
+
 /** Materialize the explicit tool patch while retaining every unmentioned field. */
 export function materializeSearchDraftChanges(
   changes: SearchDraftChange[],
@@ -126,6 +182,22 @@ export function materializeSearchDraftChanges(
 ): SearchDraftUpdate {
   const update: SearchDraftUpdate = {};
   const seen = new Set<string>();
+  const requirementsToRemove = new Set(
+    changes.flatMap((change) =>
+      change.field === "maxBudgetEur" || change.field === "schedule"
+        ? change.removeConflictingRequirements.map((value) => value.trim().toLocaleLowerCase())
+        : [],
+    ),
+  );
+  const reconciledRequirements = requirementsToRemove.size === 0
+    ? current.requirements
+    : (current.requirements ?? []).filter(
+        (value) => !requirementsToRemove.has(value.trim().toLocaleLowerCase()),
+      );
+  if (requirementsToRemove.size > 0 &&
+    JSON.stringify(reconciledRequirements) !== JSON.stringify(current.requirements ?? [])) {
+    update.requirements = reconciledRequirements;
+  }
   let facets = current.facets ?? [];
   let facetsChanged = false;
   for (const change of changes) {
@@ -143,11 +215,11 @@ export function materializeSearchDraftChanges(
       case "maxBudgetEur": update.maxBudgetEur = change.value; break;
       case "arrangement": update.arrangement = change.value; break;
       case "schedule": update.schedule = listPatch(current.schedule, change); break;
-      case "requirements": update.requirements = listPatch(current.requirements, change); break;
+      case "requirements": update.requirements = listPatch(reconciledRequirements, change); break;
       case "openToSharing": update.openToSharing = change.value; break;
       case "radiusKm": update.radiusKm = change.value; break;
       case "genres": update.genres = listPatch(current.genres, change); break;
-      case "instruments": update.instruments = listPatch(current.instruments, change); break;
+      case "instruments": update.instruments = instrumentListPatch(current.instruments, change); break;
       case "collaborationOpen": update.collaborationOpen = change.value; break;
       case "facet": {
         const namespace = change.namespace.trim();
@@ -189,6 +261,7 @@ export function createSearchDraftTool(
     description:
       "Update explicit facts on the user's attached draft search. Preserve the user's complete place or address in locationQuery, use locationLabel for its concise display label, and radiusKm as the geographic boundary. " +
       "Submit only the `changes` entries supported by the current musician input. Omitted search fields remain unchanged; never represent unknown fields with zero, false, an empty array, the smallest allowed number, or a guessed arrangement. " +
+      "Canonical fields are the only source for their values: never mirror budget amounts, radius, arrangement, or schedule into requirements. Keep a useful qualifier amount-free, for example 'Budget includes usual bills'. On a correction, name every exact current requirement string made stale by the corrected budget or schedule in removeConflictingRequirements; do not leave contradictory prose behind. Instruments contains instrument names, never band-member roles. " +
       SEARCH_FACET_GUIDANCE,
     inputSchema: searchDraftInputSchema,
     execute: async (_toolCtx, input) => {
