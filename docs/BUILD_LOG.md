@@ -1,5 +1,15 @@
 # RoomScout — Build Log
 
+## 2026-09-16 — Voice call closure and inactivity handling
+
+The Live Scout now has a voice-only `endVoiceCall` tool for an explicit hangup request or a genuine farewell. The tool returns a localized close directive through the existing delegation result; completed search edits and action receipts remain independent of closing audio. Quoted, negated and hypothetical farewells are rejected, and stale results cannot end the current conversation. Ending voice does not pause an active search or cancel provider work.
+
+The browser checks for presence after two minutes without user activity and allows another thirty seconds for a response. Speech, active delegated work and meaningful UI input participate in the timer. The closing path gives the farewell time to play, requests the documented Live session close, releases microphone and transport resources, records the ended session through the existing authenticated mutation, and leaves voice mode for the normal Scout surface.
+
+Verification: 49 backend and 41 frontend focused tests passed, along with typecheck, scoped lint and the production build. A synthetic-audio run through real GPT-Live and the real Scout/Gateway requested hangup, received the spoken farewell and terminal `session.closed`, and returned to the ready search view. A second real session asked whether the musician was still present after approximately 120 seconds, announced its departure thirty seconds later, and finalized after the farewell at approximately 155 seconds. The search remained a draft throughout; a separate backend regression verifies that ending a call leaves an already active search unchanged. Idle cancellation on new activity, stale/failed close directives and playback-aware cleanup are covered by focused regressions.
+
+That single explicit-hangup run also exposed coarse latency: 1.362 seconds from synthetic speech ending to native delegation, 5.584 seconds from delegation to the application's result append, and 0.834 seconds from append to the first farewell transcript fragment. These event timings are illustrative rather than a benchmark; transcript timestamps do not establish exact audible playback timing. There is still no complete per-stage latency trace for context retrieval, embeddings, Gateway generation and tools. Ordinary conversation behavior, model routing and reasoning settings remain unchanged apart from call-ending instructions.
+
 ## 2026-09-16 — Voice follow-up: activation readiness and one conversation surface
 
 A human voice review exposed a draft that was labelled ready even though its normalized location had no search radius. Scout readiness, activation and the UI now share the same location/radius check. Old readiness stamps no longer make incomplete drafts appear ready; the Scout receives the missing field and a focused English or German clarification. Supplying a radius remains a user choice rather than an invented default.

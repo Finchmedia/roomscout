@@ -98,6 +98,15 @@ function LiveVoiceChat({
 }: LiveVoiceChatProps) {
   const voice = useVoiceSession()
   const { t } = useCopy()
+  const handledAutomaticEnd = React.useRef(voice.automaticEndToken)
+  React.useEffect(() => {
+    if (
+      voice.automaticEndToken === 0 ||
+      voice.automaticEndToken === handledAutomaticEnd.current
+    ) return
+    handledAutomaticEnd.current = voice.automaticEndToken
+    onEnd?.()
+  }, [onEnd, voice.automaticEndToken])
   const labels: LiveVoiceChatLabels = {
     cancel: t("liveScout.voice.cancel"), connect: t("liveScout.voice.connect"),
     connecting: t("liveScout.voice.connecting"), controls: t("liveScout.voice.controls"),

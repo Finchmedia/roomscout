@@ -19,6 +19,9 @@ describe("RoomScout Live prompts", () => {
     expect(prompt).toContain("Never say that all requirements are captured or done before the application confirms the current turn");
     expect(prompt).toContain("A saved requirement says what the musician needs, not what a candidate room provides");
     expect(prompt).toContain('can "start the search"');
+    expect(prompt).toContain("Always delegate a direct request to hang up/end this voice call");
+    expect(prompt).toContain("A negated, quoted, reported, or hypothetical goodbye is not an end-call request");
+    expect(prompt).toContain('"Stop speaking"');
     expect(prompt).not.toContain("Scout losschicken");
   });
 
@@ -36,6 +39,9 @@ describe("RoomScout Live prompts", () => {
     expect(prompt).toContain("einzige Quelle für fachliche Schlussfolgerungen und Fragen zur Suche");
     expect(prompt).toContain("Stille Anwendungs- oder Denk-Kontexte enthalten nur die bisher bestätigten Felder");
     expect(prompt).toContain("muss immer delegiert werden");
+    expect(prompt).toContain("Delegiere immer eine direkte Bitte, diesen Sprachanruf zu beenden oder aufzulegen");
+    expect(prompt).toContain("Ein verneinter, zitierter, berichteter oder hypothetischer Abschied");
+    expect(prompt).toContain("Pausieren oder Stoppen der Suche");
     expect(prompt).not.toContain("Scout losschicken");
   });
 

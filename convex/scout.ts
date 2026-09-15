@@ -17,6 +17,7 @@ import {
   getSavedNeedActivationReadiness,
   savedNeedActivationClarificationQuestion,
 } from "./lib/savedNeedLocation";
+import { rejectsVoiceEndIntent, type VoiceEndReason } from "./lib/voiceEndIntent";
 export { scoutAgent } from "./scoutRuntime";
 export { currentSearchTruth } from "./lib/currentSearchTruth";
 
@@ -805,6 +806,8 @@ export function buildScoutTools(
     context: ScoutToolContext;
     voiceClaim?: VoiceClaimRef;
     decisionId?: Id<"decisions">;
+    musicianInput?: string;
+    onEndCall?: (reason: VoiceEndReason) => void;
     onEffect?: (kind: string, fields: string[]) => void;
   },
 ): ToolSet {
@@ -842,6 +845,21 @@ export function buildScoutTools(
         });
         args.onEffect?.("language", ["conversationLocale"]);
         return result;
+      },
+    }),
+    endVoiceCall: createTool({
+      description:
+        "End the current voice call only when this musician turn directly asks to hang up/end the call, or ends with a clear genuine farewell such as 'bye, see you' or 'tschüss'. " +
+        "Never use this for a negated, quoted, reported, or hypothetical goodbye, and never for 'stop speaking', muting, pausing/stopping the search, or cancelling provider work. " +
+        "If the same turn also changes facts or requests an action, complete those tools first; this tool only asks the client to close voice after the backend result is delivered. " +
+        "Do not repeat a goodbye in final prose because the result carries the localized farewell; final prose may briefly report other completed work.",
+      inputSchema: z.object({ reason: z.enum(["user_request", "farewell"]) }),
+      execute: async (_toolCtx, input) => {
+        if (rejectsVoiceEndIntent(args.musicianInput ?? "")) {
+          return { endCall: false, reason: "No direct call-ending intent in the current musician turn." };
+        }
+        args.onEndCall?.(input.reason);
+        return { endCall: true, reason: input.reason };
       },
     }),
   } : {};

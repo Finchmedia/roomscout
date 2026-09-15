@@ -90,6 +90,7 @@ interface ScoutChatProps extends Omit<React.ComponentProps<"section">, "onError"
   onSend: (body: string) => Promise<boolean>
   restoredDraft?: string
   onDraftRestored?: () => void
+  onActivity?: () => void
   /** The thread has an unfinished turn on it — derived from the messages, never from a local flag. */
   replying?: boolean
   error?: React.ReactNode
@@ -251,6 +252,7 @@ function ScoutChat({
   onSend,
   restoredDraft,
   onDraftRestored,
+  onActivity,
   replying = false,
   error,
   onVoice,
@@ -468,7 +470,8 @@ function ScoutChat({
         labels={labels}
         onSubmit={submit}
         restoredDraft={restoredDraft}
-        onDraftRestored={onDraftRestored}
+      onDraftRestored={onDraftRestored}
+      onActivity={onActivity}
         busy={replying}
         error={error || localError}
         onVoice={onVoice}

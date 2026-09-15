@@ -35,6 +35,8 @@ export type VoiceSessionValue = {
   /** Work waiting behind the current backend request; excludes the active request. */
   pendingInputCount: number;
   pendingTextDraft: string;
+  /** Increments after an automatic farewell has closed the provider session. */
+  automaticEndToken: number;
   sessionLocale: LiveLocale;
   connect: () => Promise<void>;
   disconnect: () => void;
@@ -44,6 +46,7 @@ export type VoiceSessionValue = {
   flushPendingInputs: () => Promise<boolean>;
   retryFailedInput: () => boolean;
   clearPendingTextDraft: () => void;
+  noteActivity: () => void;
   interrupt: () => void;
   stopSpeaking: () => void;
   setLanguage: (locale: LiveLocale) => void;

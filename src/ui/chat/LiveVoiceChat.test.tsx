@@ -28,6 +28,7 @@ function session(overrides: Partial<VoiceSessionValue> = {}): VoiceSessionValue 
     backendState: "idle",
     pendingInputCount: 0,
     pendingTextDraft: "",
+    automaticEndToken: 0,
     sessionLocale: "de",
     connect: vi.fn().mockResolvedValue(undefined),
     disconnect: vi.fn(),
@@ -37,6 +38,7 @@ function session(overrides: Partial<VoiceSessionValue> = {}): VoiceSessionValue 
     flushPendingInputs: vi.fn().mockResolvedValue(true),
     retryFailedInput: vi.fn().mockReturnValue(false),
     clearPendingTextDraft: vi.fn(),
+    noteActivity: vi.fn(),
     interrupt: vi.fn(),
     stopSpeaking: vi.fn(),
     setLanguage: vi.fn(),
@@ -71,6 +73,18 @@ describe("LiveVoiceChat", () => {
     render(<LiveVoiceChat onEnd={() => calls.push("onEnd")} />)
     fireEvent.click(screen.getByRole("button", { name: "Gespräch beenden" }))
     expect(calls).toEqual(["disconnect", "onEnd"])
+  })
+
+  it("leaves voice for text after an automatic farewell closes", () => {
+    const onEnd = vi.fn()
+    fixture.session = session({ connected: true, status: "listening", automaticEndToken: 0 })
+    const view = render(<LiveVoiceChat onEnd={onEnd} />)
+    fixture.session = session({ connected: false, status: "disconnected", automaticEndToken: 1 })
+    view.rerender(<LiveVoiceChat onEnd={onEnd} />)
+    expect(onEnd).toHaveBeenCalledOnce()
+    expect(fixture.session.disconnect).not.toHaveBeenCalled()
+    view.rerender(<LiveVoiceChat onEnd={onEnd} />)
+    expect(onEnd).toHaveBeenCalledOnce()
   })
 
   it("preserves overlapping caption history and active mute, interrupt, and text controls", () => {

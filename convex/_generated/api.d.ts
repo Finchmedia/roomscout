@@ -92,6 +92,7 @@ import type * as lib_savedNeedLocation from "../lib/savedNeedLocation.js";
 import type * as lib_sourceCandidate from "../lib/sourceCandidate.js";
 import type * as lib_sourceDiscoveryQueries from "../lib/sourceDiscoveryQueries.js";
 import type * as lib_voiceClaim from "../lib/voiceClaim.js";
+import type * as lib_voiceEndIntent from "../lib/voiceEndIntent.js";
 import type * as liveProofFixture from "../liveProofFixture.js";
 import type * as mailboxes from "../mailboxes.js";
 import type * as map from "../map.js";
@@ -232,6 +233,7 @@ declare const fullApi: ApiFromModules<{
   "lib/sourceCandidate": typeof lib_sourceCandidate;
   "lib/sourceDiscoveryQueries": typeof lib_sourceDiscoveryQueries;
   "lib/voiceClaim": typeof lib_voiceClaim;
+  "lib/voiceEndIntent": typeof lib_voiceEndIntent;
   liveProofFixture: typeof liveProofFixture;
   mailboxes: typeof mailboxes;
   map: typeof map;

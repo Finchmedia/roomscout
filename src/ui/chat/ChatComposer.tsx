@@ -70,6 +70,8 @@ interface ChatComposerProps
   onBusyChange?: (busy: boolean) => void
   restoredDraft?: string
   onDraftRestored?: () => void
+  /** Actual user interaction that keeps an open voice session present. */
+  onActivity?: () => void
 }
 
 function ChatComposer({
@@ -85,6 +87,7 @@ function ChatComposer({
   onBusyChange,
   restoredDraft,
   onDraftRestored,
+  onActivity,
   className,
   ...props
 }: ChatComposerProps) {
@@ -102,6 +105,7 @@ function ChatComposer({
     : draft
 
   const submit = async () => {
+    onActivity?.()
     const body = displayedDraft.trim()
     if (!body || busy || disabled || submittingRef.current) return
 
@@ -187,8 +191,13 @@ function ChatComposer({
           maxLength={maxLength}
           rows={1}
           value={displayedDraft}
-          onChange={(event) => { setDraft(event.target.value); if (restoredDraft) onDraftRestored?.() }}
+          onChange={(event) => {
+            onActivity?.()
+            setDraft(event.target.value)
+            if (restoredDraft) onDraftRestored?.()
+          }}
           onKeyDown={(event) => {
+            onActivity?.()
             if (
               event.key !== "Enter" ||
               event.shiftKey ||

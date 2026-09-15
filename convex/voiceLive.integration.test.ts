@@ -33,6 +33,7 @@ type Result = {
   promptMessageId?: string;
   spokenSummary?: string;
   changedFields?: string[];
+  endCall?: { reason: "user_request" | "farewell"; farewell: string };
 };
 type ClaimResult =
   | { kind: "accepted"; generation: number; promptMessageId?: string; locale: "en" | "de"; activeNeedId?: Id<"savedNeeds">; needRevision?: number }
@@ -210,6 +211,7 @@ it("claims once, reports active duplicates and caches terminal results", async (
     resolvedEventIds: ["event:one"],
     locale: "en",
     promptMessageId: first.promptMessageId,
+    endCall: { reason: "farewell", farewell: "Bye for now!" },
   };
   await f.t.mutation(finishRequest, {
     ownerId: f.ownerId,
@@ -366,10 +368,12 @@ it("persists explicit EN/DE changes and suppresses a result in the old language"
       resolvedEventIds: ["event:language"],
       locale: "en",
       spokenSummary: "Saved in English",
+      endCall: { reason: "farewell", farewell: "Bye for now!" },
     },
   });
   expect(result).toMatchObject({ status: "superseded", locale: "de" });
   expect(result.spokenSummary).toBeUndefined();
+  expect(result.endCall).toBeUndefined();
 });
 
 it("returns the new locale when the claimed language tool made the change", async () => {
@@ -454,6 +458,24 @@ it("fences a claimed write after focus changes", async () => {
     maxBudgetEur: 300,
     voiceClaim: { voiceSessionId: f.voiceSessionId, requestId: "focus", generation: claim.generation },
   })).rejects.toThrow(/VOICE_TARGET_SUPERSEDED/);
+  const reconciled = await f.t.mutation(finishRequest, {
+    ownerId: f.ownerId,
+    voiceSessionId: f.voiceSessionId,
+    requestId: "focus",
+    generation: claim.generation,
+    expectedLocale: "en",
+    result: {
+      status: "completed",
+      requestId: "focus",
+      resolvedEventIds: ["event:focus"],
+      locale: "en",
+      spokenSummary: "Goodbye.",
+      endCall: { reason: "farewell", farewell: "Bye for now!" },
+    },
+  });
+  expect(reconciled).toMatchObject({ status: "superseded" });
+  expect(reconciled.spokenSummary).toBeUndefined();
+  expect(reconciled.endCall).toBeUndefined();
 });
 
 it("syncs candidate focus into the Live session before an advisor claim can pause and update the current search", async () => {
@@ -518,6 +540,33 @@ it("returns a readable missing-radius clarification instead of failing a claimed
     clarificationQuestion: "What radius around Berlin should I use?",
   });
   expect((await f.t.run((ctx) => ctx.db.get(f.needId)))?.status).toBe("draft");
+});
+
+it("records Live call closure idempotently for its owner without changing the active search", async () => {
+  const f = await fixture();
+  await f.t.run((ctx) => ctx.db.patch(f.needId, { status: "active", matchingRevision: 7 }));
+  const otherOwnerId = await f.t.run((ctx) => ctx.db.insert("users", {
+    username: "other-live-owner",
+    role: "musician",
+    createdAt: 1_000,
+    lastSeenAt: 1_000,
+  }));
+  const other = f.t.withIdentity({ subject: otherOwnerId });
+
+  await expect(other.mutation(api.voice.endMine, { voiceSessionId: f.voiceSessionId }))
+    .rejects.toThrow(/VOICE_SESSION_NOT_FOUND/);
+  await expect(f.owner.mutation(api.voice.endMine, { voiceSessionId: f.voiceSessionId }))
+    .resolves.toBeNull();
+  await expect(f.owner.mutation(api.voice.endMine, { voiceSessionId: f.voiceSessionId }))
+    .resolves.toBeNull();
+
+  expect(await f.t.run((ctx) => ctx.db.get(f.voiceSessionId))).toMatchObject({
+    status: "ended",
+  });
+  expect(await f.t.run((ctx) => ctx.db.get(f.needId))).toMatchObject({
+    status: "active",
+    matchingRevision: 7,
+  });
 });
 
 it("allows published deep-link focus but rejects a stale signal without an owned conversation", async () => {

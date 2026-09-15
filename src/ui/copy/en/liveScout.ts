@@ -52,6 +52,8 @@ export const liveScoutEn = {
     outcomeUnknown: "The last step is still being checked.",
     ongoingCall: "Conversation in progress",
     returnToScout: "Return to Scout",
+    idleCheckIn: "Are you still there?",
+    idleFarewell: "I’ll end the voice call for now. I’ll be here when you’re back.",
   },
   editBudget: "Edit budget",
   editSchedule: "Edit schedule",

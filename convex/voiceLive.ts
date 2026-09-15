@@ -26,6 +26,7 @@ import { openDecisionCards } from "./decisions";
 import { buildScoutTools, createSearchDraftTool } from "./scout";
 import { runScoutTurn } from "./scoutRuntime";
 import { liveInstructions, scoutVoiceInstructions, type ConversationLocale } from "./prompts/roomScoutLive";
+import { voiceEndFarewell, type VoiceEndReason } from "./lib/voiceEndIntent";
 
 const MAX_SESSION_MS = 15 * 60 * 1_000;
 const MAX_REQUESTS_PER_SESSION = 64;
@@ -77,6 +78,10 @@ const delegateResultValidator = v.object({
   assistantMessageId: v.optional(v.string()),
   changedFields: v.optional(v.array(v.string())),
   verifiedFacts: v.optional(v.array(v.string())),
+  endCall: v.optional(v.object({
+    reason: v.union(v.literal("user_request"), v.literal("farewell")),
+    farewell: v.string(),
+  })),
 });
 
 type TerminalStatus = "completed" | "needs_clarification" | "superseded" | "failed" | "outcome_unknown";
@@ -91,6 +96,7 @@ type DelegateResult = {
   assistantMessageId?: string;
   changedFields?: string[];
   verifiedFacts?: string[];
+  endCall?: { reason: VoiceEndReason; farewell: string };
 };
 
 type LiveEnvironment = {
@@ -462,6 +468,7 @@ export const claimRequest = internalMutation({
             assistantMessageId: cached.assistantMessageId,
             changedFields: cached.changedFields,
             verifiedFacts: cached.verifiedFacts,
+            endCall: cached.endCall,
           },
         };
       }
@@ -560,7 +567,9 @@ export const finishRequest = internalMutation({
       ...args.result,
       status: args.result.status,
       locale,
-      ...(staleLanguage || staleTarget ? { status: "superseded", spokenSummary: undefined } : {}),
+      ...(staleLanguage || staleTarget
+        ? { status: "superseded", spokenSummary: undefined, endCall: undefined }
+        : {}),
       ...(languageChangedByClaim && locale !== args.expectedLocale ? { spokenSummary: undefined } : {}),
     };
     const stored = { ...result, completedAt: Date.now() };
@@ -668,6 +677,7 @@ export const getSessionState = query({
       assistantMessageId: cached.assistantMessageId,
       changedFields: cached.changedFields,
       verifiedFacts: cached.verifiedFacts,
+      endCall: cached.endCall,
     } : undefined;
     return {
       voiceSessionId: session._id,
@@ -798,6 +808,7 @@ export const delegate = action({
     const verifiedFacts = new Set<string>();
     let revision = claimed.needRevision;
     let sideEffect = false;
+    let endCallReason: VoiceEndReason | undefined;
     const claimRef = { voiceSessionId: args.voiceSessionId, requestId, generation: claimed.generation };
     const captureFacts = args.intent === "capture_facts";
     const onEffect = (kind: string, fields: string[]) => {
@@ -825,6 +836,8 @@ export const delegate = action({
           context,
           voiceClaim: claimRef,
           decisionId: args.decisionId,
+          musicianInput: userPrompt,
+          onEndCall: (reason) => { endCallReason = reason; },
           onEffect,
         });
     if (!captureFacts && searchCanChange && context.activeNeedId) {
@@ -871,7 +884,19 @@ export const delegate = action({
         });
         revision = currentNeed?.matchingRevision ?? revision;
       }
-      const spokenSummary = captureFacts ? undefined : shortSummary(turn.text);
+      const endCallState = endCallReason
+        ? await ctx.runQuery(internal.voiceLive.getOwnedSessionForDelegate, {
+            ownerId,
+            voiceSessionId: args.voiceSessionId,
+          })
+        : null;
+      const endCall = endCallReason
+        ? {
+            reason: endCallReason,
+            farewell: voiceEndFarewell(endCallState?.locale ?? claimed.locale, endCallReason),
+          }
+        : undefined;
+      const spokenSummary = captureFacts || (endCall && !sideEffect) ? undefined : shortSummary(turn.text);
       const status: TerminalStatus = captureFacts
         ? "completed"
         : !sideEffect && spokenSummary?.trim().endsWith("?")
@@ -894,12 +919,16 @@ export const delegate = action({
           changedFields: [...changedFields],
           verifiedFacts: [...verifiedFacts],
           ...(spokenSummary ? { spokenSummary } : {}),
+          ...(endCall ? { endCall } : {}),
         },
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const superseded = message.includes("VOICE_CLAIM_SUPERSEDED") || message.includes("VOICE_TARGET_SUPERSEDED") || message.includes("VOICE_FIELD_CONFLICT") || message.includes("VOICE_DECISION_TARGET");
       console.error("LIVE_DELEGATE_FAILED", { requestId, sideEffect, error: message });
+      const endCall = endCallReason
+        ? { reason: endCallReason, farewell: voiceEndFarewell(claimed.locale, endCallReason) }
+        : undefined;
       return await ctx.runMutation(internal.voiceLive.finishRequest, {
         ownerId,
         voiceSessionId: args.voiceSessionId,
@@ -915,6 +944,7 @@ export const delegate = action({
           promptMessageId: claimed.promptMessageId,
           changedFields: [...changedFields],
           verifiedFacts: [...verifiedFacts],
+          ...(endCall ? { endCall } : {}),
         },
       });
     }

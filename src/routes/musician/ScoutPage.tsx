@@ -44,6 +44,7 @@ const listScoutMessages = api.scout.listMessages as unknown as ScoutMessagesQuer
 export function ScoutPage() {
   const { t, locale } = useCopy();
   const voice = useVoiceSession();
+  const noteVoiceActivity = voice.noteActivity;
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const currentUser = useQuery(api.users.current);
@@ -179,6 +180,20 @@ export function ScoutPage() {
     if (!liveConnected) return;
     setVoiceFocus({ focusedSignalId: focusSignalId, decisionId: openDecision?._id, summary: focusSummary });
   }, [liveConnected, focusSignalId, focusSummary, openDecision?._id, setVoiceFocus]);
+  useEffect(() => {
+    if (!liveConnected) return;
+    const noteTrustedActivity = (event: Event) => {
+      if (event.isTrusted) noteVoiceActivity();
+    };
+    document.addEventListener("pointerdown", noteTrustedActivity, true);
+    document.addEventListener("keydown", noteTrustedActivity, true);
+    document.addEventListener("input", noteTrustedActivity, true);
+    return () => {
+      document.removeEventListener("pointerdown", noteTrustedActivity, true);
+      document.removeEventListener("keydown", noteTrustedActivity, true);
+      document.removeEventListener("input", noteTrustedActivity, true);
+    };
+  }, [liveConnected, noteVoiceActivity]);
   useEffect(() => {
     if (!liveConnected) { relayed.current.clear(); return; }
     const updates = JSON.parse(backgroundUpdates) as Array<{ id: string; version: string; content: string; speak?: boolean }>;
@@ -439,7 +454,7 @@ export function ScoutPage() {
     }}
     briefReviewSlot={brief}
     briefExpanded={manualBrief}
-    chatSlot={showScoutChat ? <ScoutChat key={threadId ?? "loading"} className={voiceOpen ? "h-full max-h-full min-h-[18rem]" : undefined} messages={messages.length ? messages : [{ id: "intro", author: "scout", body: t("liveScout.intro") }]} onSend={send} replying={(!liveConnected && scoutBusy) || !threadId} restoredDraft={voice.pendingTextDraft || undefined} onDraftRestored={voice.clearPendingTextDraft} labels={chatLabels} error={error} onVoice={openVoice} autoFocus decision={openDecision} decisionOfferHash={decisionOfferHash} onAnswerDecision={async (decisionId, choice, text) => { await answerOpenDecision(decisionId, choice, text); }} decisionAnsweredText={t("liveScout.decisionAnswered")} hasMoreHistory={history.status === "CanLoadMore"} historyBusy={history.status === "LoadingMore"} onLoadHistory={() => history.loadMore(60)} /> : undefined}
+    chatSlot={showScoutChat ? <ScoutChat key={threadId ?? "loading"} className={voiceOpen ? "h-full max-h-full min-h-[18rem]" : undefined} messages={messages.length ? messages : [{ id: "intro", author: "scout", body: t("liveScout.intro") }]} onSend={send} replying={(!liveConnected && scoutBusy) || !threadId} restoredDraft={voice.pendingTextDraft || undefined} onDraftRestored={voice.clearPendingTextDraft} onActivity={voice.noteActivity} labels={chatLabels} error={error} onVoice={openVoice} autoFocus decision={openDecision} decisionOfferHash={decisionOfferHash} onAnswerDecision={async (decisionId, choice, text) => { voice.noteActivity(); await answerOpenDecision(decisionId, choice, text); }} decisionAnsweredText={t("liveScout.decisionAnswered")} hasMoreHistory={history.status === "CanLoadMore"} historyBusy={history.status === "LoadingMore"} onLoadHistory={() => history.loadMore(60)} /> : undefined}
     voiceSlot={voiceOpen ? <LiveVoiceChat compact={voiceCompact} primary={voicePrimary} showTranscript={!showScoutChat} onText={openChat} onEnd={() => { setVoiceOpen(false); setTextOpen(true); }} /> : undefined}
     providerUpdateSlot={offerSlot} offerSlot={offerSlot} detailSlot={detailSlot}
     decisionSlot={surfaceDecisionSlot} railSlot={railSlot} asideSlot={asideSlot}

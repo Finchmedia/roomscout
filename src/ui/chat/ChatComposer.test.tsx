@@ -40,4 +40,11 @@ describe("ChatComposer voice draft recovery", () => {
     expect(screen.getByRole("textbox")).toHaveValue("Please keep the search paused.")
     expect(screen.getByRole("alert")).toHaveTextContent("Could not send")
   })
+
+  it("reports typing as real user activity", () => {
+    const onActivity = vi.fn()
+    render(<ChatComposer labels={labels} onSubmit={vi.fn().mockResolvedValue(true)} onActivity={onActivity} />)
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "Still here" } })
+    expect(onActivity).toHaveBeenCalled()
+  })
 })

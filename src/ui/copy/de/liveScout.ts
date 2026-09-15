@@ -50,6 +50,8 @@ export const liveScoutDe = {
     outcomeUnknown: "Der letzte Schritt wird noch geprüft.",
     ongoingCall: "Gespräch läuft",
     returnToScout: "Zum Scout zurückkehren",
+    idleCheckIn: "Bist du noch da?",
+    idleFarewell: "Ich beende den Sprachanruf erst einmal. Dein Scout bleibt hier für dich bereit.",
   },
   editBudget: "Budget bearbeiten",
   editSchedule: "Zeiten bearbeiten",

@@ -58,6 +58,10 @@ export type LiveDelegateResult = {
   assistantMessageId?: string;
   changedFields?: string[];
   verifiedFacts?: string[];
+  endCall?: {
+    reason: "user_request" | "farewell";
+    farewell: string;
+  };
 };
 
 export type LiveSessionState = {
@@ -109,6 +113,11 @@ const setLanguageReference = makeFunctionReference<
   { locale: LiveLocale; voiceSessionId?: Id<"voiceSessions"> },
   { locale: LiveLocale; languageRevision: number }
 >("voiceLive:setLanguage");
+const endVoiceSessionReference = makeFunctionReference<
+  "mutation",
+  { voiceSessionId: Id<"voiceSessions"> },
+  null
+>("voice:endMine");
 
 export type LiveSessionAnswer = {
   answerSdp: string;
@@ -143,7 +152,33 @@ export type UseGptLiveVoiceScoutOptions = {
   enableEarlyFactCapture?: boolean;
   /** Defaults to 5 seconds; exposed so deterministic tests do not wait on a wall clock. */
   earlyFactCaptureCadenceMs?: number;
+  /** Silence before the Scout checks whether the musician is still present. */
+  idleTimeoutMs?: number;
+  /** Time after the presence check before the Scout says goodbye. */
+  idleGraceMs?: number;
+  /** Quiet output-meter dwell after farewell audio playback. */
+  farewellOutputQuietMs?: number;
+  /** Bounded fallback when the provider emits no output transcript activity. */
+  farewellMaxWaitMs?: number;
+  /** Wait for the provider's terminal session.closed event before local cleanup. */
+  closeAckTimeoutMs?: number;
+  idleCopy?: Record<LiveLocale, { checkIn: string; farewell: string }>;
   onEvent?: (event: LiveServerEvent) => void;
+};
+
+type PendingCallEnd = NonNullable<LiveDelegateResult["endCall"]> & {
+  source: "delegate" | "idle";
+};
+
+const DEFAULT_IDLE_COPY: Record<LiveLocale, { checkIn: string; farewell: string }> = {
+  en: {
+    checkIn: "Are you still there?",
+    farewell: "I’ll end the voice call for now. I’ll be here when you’re back.",
+  },
+  de: {
+    checkIn: "Bist du noch da?",
+    farewell: "Ich beende den Sprachanruf erst einmal. Dein Scout bleibt hier für dich bereit.",
+  },
 };
 
 type QueuedInput = {
@@ -172,6 +207,7 @@ const LIVE_CLIENT_EVENT_TYPES = new Set([
 ]);
 const MAX_APPEND_UTF8_BYTES = 400;
 const INPUT_SPEECH_VOLUME_THRESHOLD = 0.02;
+const OUTPUT_SPEECH_VOLUME_THRESHOLD = 0.01;
 const SPOKEN_RELAY_QUIET_DWELL_MS = 1_100;
 const textEncoder = new TextEncoder();
 
@@ -319,6 +355,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   const accessToken = useAuthToken();
   const runDelegate = useAction(delegateReference);
   const persistLanguage = useMutation(setLanguageReference);
+  const endVoiceSession = useMutation(endVoiceSessionReference);
   const endpoint = options.sessionEndpoint ?? defaultLiveSessionEndpoint();
   const delegate = options.delegate ?? runDelegate;
   const [connectionState, setConnectionState] = useState<LiveConnectionState>("disconnected");
@@ -336,8 +373,15 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   const [modality, setModalityState] = useState<VoiceScoutModality>("voice");
   const [pendingTextInputs, setPendingTextInputs] = useState<Array<{ id: string; text: string }>>([]);
   const [pendingInputCount, setPendingInputCount] = useState(0);
+  const [automaticEndToken, setAutomaticEndToken] = useState(0);
   const earlyCaptureEnabled = options.enableEarlyFactCapture ?? true;
   const earlyCaptureCadenceMs = options.earlyFactCaptureCadenceMs ?? 5_000;
+  const idleTimeoutMs = options.idleTimeoutMs ?? 120_000;
+  const idleGraceMs = options.idleGraceMs ?? 30_000;
+  const farewellOutputQuietMs = options.farewellOutputQuietMs ?? 1_500;
+  const farewellMaxWaitMs = options.farewellMaxWaitMs ?? 12_000;
+  const closeAckTimeoutMs = options.closeAckTimeoutMs ?? 1_000;
+  const idleCopy = options.idleCopy ?? DEFAULT_IDLE_COPY;
 
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<RTCDataChannel | null>(null);
@@ -347,16 +391,24 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   const generationRef = useRef(0);
   const connectingRef = useRef(false);
   const closingTimerRef = useRef<number | undefined>(undefined);
+  const idleTimerRef = useRef<number | undefined>(undefined);
+  const idleGraceTimerRef = useRef<number | undefined>(undefined);
+  const farewellQuietTimerRef = useRef<number | undefined>(undefined);
+  const farewellMaxTimerRef = useRef<number | undefined>(undefined);
   const speechTimersRef = useRef<{ user?: number; assistant?: number }>({});
   const userSpeakingRef = useRef(false);
+  const scoutSpeakingRef = useRef(false);
   const outputSuppressedRef = useRef(false);
   const spokenRelaySuppressedRef = useRef(false);
   const relayQuietTimerRef = useRef<number | undefined>(undefined);
   const lastUserActivityAtRef = useRef(0);
   const inputVolumeRef = useRef(0);
+  const outputVolumeRef = useRef(0);
+  const outputWasAboveThresholdRef = useRef(false);
   const inputWasAboveThresholdRef = useRef(false);
   const connectionStateRef = useRef<LiveConnectionState>("disconnected");
   const microphoneStateRef = useRef<LiveMicrophoneState>("off");
+  const backendStateRef = useRef<LiveBackendState>("idle");
   const captureTimerRef = useRef<number | undefined>(undefined);
   const captureCursorRef = useRef<LiveCaptureCursor>({ sequence: 0, characterOffset: 0 });
   const lastCaptureQueuedAtRef = useRef(0);
@@ -379,6 +431,13 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   const focusRef = useRef<LiveFocus>({});
   const contextEpochRef = useRef(0);
   const pendingAppendIdsRef = useRef(new Set<string>());
+  const endedVoiceSessionsRef = useRef(new Set<string>());
+  const pendingCallEndRef = useRef<PendingCallEnd | undefined>(undefined);
+  const farewellActiveRef = useRef(false);
+  const farewellSawOutputRef = useRef(false);
+  const automaticCloseRef = useRef(false);
+  const idleGraceActiveRef = useRef(false);
+  const lastActualActivityAtRef = useRef(0);
   const flushWaitersRef = useRef<Array<(complete: boolean) => void>>([]);
   const deliveredUpdateVersionsRef = useRef(new Map<string, string>());
   const bufferedUpdatesRef = useRef(new Map<string, VerifiedBackgroundUpdate>());
@@ -388,6 +447,12 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   const scheduleCaptureRef = useRef<() => void>(() => undefined);
   const flushSpokenUpdatesRef = useRef<() => void>(() => undefined);
   const scheduleRelayQuietCheckRef = useRef<() => void>(() => undefined);
+  const scheduleIdleRef = useRef<() => void>(() => undefined);
+  const noteActivityRef = useRef<() => void>(() => undefined);
+  const beginFarewellRef = useRef<() => void>(() => undefined);
+  const scheduleFarewellQuietRef = useRef<() => void>(() => undefined);
+  const requestSessionCloseRef = useRef<(automatic: boolean) => void>(() => undefined);
+  const finalizeDisconnectRef = useRef<(automatic: boolean) => void>(() => undefined);
   const createSession = options.createSession;
   const { volume: inputVolume, attach: attachInputMeter, detach: detachInputMeter } = useAudioVolume();
   const { volume: outputVolume, attach: attachOutputMeter, detach: detachOutputMeter } = useAudioVolume();
@@ -410,6 +475,16 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   useEffect(() => {
     microphoneStateRef.current = microphoneState;
   }, [microphoneState]);
+  useEffect(() => {
+    backendStateRef.current = backendState;
+  }, [backendState]);
+
+  const persistSessionEnd = useCallback(() => {
+    const sessionId = voiceSessionIdRef.current;
+    if (!sessionId || endedVoiceSessionsRef.current.has(sessionId)) return;
+    endedVoiceSessionsRef.current.add(sessionId);
+    void endVoiceSession({ voiceSessionId: sessionId }).catch(() => undefined);
+  }, [endVoiceSession]);
 
   const sendEvent = useCallback((event: Record<string, unknown>) => {
     const channel = channelRef.current;
@@ -468,8 +543,13 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
 
   const cleanup = useCallback(
     (preservePendingText = true) => {
+      persistSessionEnd();
       generationRef.current += 1;
       if (closingTimerRef.current !== undefined) window.clearTimeout(closingTimerRef.current);
+      if (idleTimerRef.current !== undefined) window.clearTimeout(idleTimerRef.current);
+      if (idleGraceTimerRef.current !== undefined) window.clearTimeout(idleGraceTimerRef.current);
+      if (farewellQuietTimerRef.current !== undefined) window.clearTimeout(farewellQuietTimerRef.current);
+      if (farewellMaxTimerRef.current !== undefined) window.clearTimeout(farewellMaxTimerRef.current);
       if (captureTimerRef.current !== undefined) window.clearTimeout(captureTimerRef.current);
       if (relayQuietTimerRef.current !== undefined) window.clearTimeout(relayQuietTimerRef.current);
       for (const timer of Object.values(speechTimersRef.current)) {
@@ -518,6 +598,11 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       setVoiceSessionId(undefined);
       connectingRef.current = false;
       blockedByUnknownRef.current = false;
+      pendingCallEndRef.current = undefined;
+      farewellActiveRef.current = false;
+      farewellSawOutputRef.current = false;
+      automaticCloseRef.current = false;
+      idleGraceActiveRef.current = false;
       pendingAppendIdsRef.current.clear();
       bufferedUpdatesRef.current.clear();
       deliveredUpdateVersionsRef.current.clear();
@@ -538,14 +623,180 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       lastUserActivityAtRef.current = 0;
       inputVolumeRef.current = 0;
       inputWasAboveThresholdRef.current = false;
+      outputVolumeRef.current = 0;
+      outputWasAboveThresholdRef.current = false;
       setUserSpeaking(false);
       setScoutSpeaking(false);
+      scoutSpeakingRef.current = false;
       setConnectedAt(undefined);
       detachInputMeter();
       detachOutputMeter();
     },
-    [detachInputMeter, detachOutputMeter, settleFlushWaiters],
+    [detachInputMeter, detachOutputMeter, persistSessionEnd, settleFlushWaiters],
   );
+
+  const finalizeDisconnect = useCallback((automatic: boolean) => {
+    persistSessionEnd();
+    cleanup();
+    connectionStateRef.current = "disconnected";
+    setConnectionState("disconnected");
+    if (automatic) setAutomaticEndToken((token) => token + 1);
+  }, [cleanup, persistSessionEnd]);
+  useEffect(() => {
+    finalizeDisconnectRef.current = finalizeDisconnect;
+  }, [finalizeDisconnect]);
+
+  const requestSessionClose = useCallback((automatic: boolean) => {
+    if (connectionStateRef.current === "disconnected") return;
+    automaticCloseRef.current = automatic;
+    localStreamRef.current?.getAudioTracks().forEach((track) => {
+      track.enabled = false;
+    });
+    microphoneStateRef.current = "off";
+    setMicrophoneState("off");
+    connectionStateRef.current = "closing";
+    setConnectionState("closing");
+    const sent = sendEvent({ type: "session.close", event_id: newRequestId("close") });
+    if (!sent) {
+      finalizeDisconnectRef.current(automatic);
+      return;
+    }
+    if (closingTimerRef.current !== undefined) window.clearTimeout(closingTimerRef.current);
+    closingTimerRef.current = window.setTimeout(() => {
+      finalizeDisconnectRef.current(automatic);
+    }, closeAckTimeoutMs);
+  }, [closeAckTimeoutMs, sendEvent]);
+  useEffect(() => {
+    requestSessionCloseRef.current = requestSessionClose;
+  }, [requestSessionClose]);
+
+  const beginFarewell = useCallback(() => {
+    const pending = pendingCallEndRef.current;
+    if (!pending || farewellActiveRef.current || connectionStateRef.current !== "active") return;
+    pendingCallEndRef.current = undefined;
+    farewellActiveRef.current = true;
+    farewellSawOutputRef.current = false;
+    automaticCloseRef.current = true;
+    idleGraceActiveRef.current = false;
+    if (idleTimerRef.current !== undefined) window.clearTimeout(idleTimerRef.current);
+    if (idleGraceTimerRef.current !== undefined) window.clearTimeout(idleGraceTimerRef.current);
+    localStreamRef.current?.getAudioTracks().forEach((track) => {
+      track.enabled = false;
+    });
+    microphoneStateRef.current = "off";
+    setMicrophoneState("off");
+    outputSuppressedRef.current = false;
+    if (!appendContext(pending.farewell, true)) {
+      requestSessionCloseRef.current(true);
+      return;
+    }
+    farewellMaxTimerRef.current = window.setTimeout(() => {
+      requestSessionCloseRef.current(true);
+    }, farewellMaxWaitMs);
+  }, [appendContext, farewellMaxWaitMs]);
+  useEffect(() => {
+    beginFarewellRef.current = beginFarewell;
+  }, [beginFarewell]);
+
+  const scheduleFarewellQuiet = useCallback(() => {
+    if (!farewellActiveRef.current || !farewellSawOutputRef.current) return;
+    if (farewellQuietTimerRef.current !== undefined) {
+      window.clearTimeout(farewellQuietTimerRef.current);
+    }
+    farewellQuietTimerRef.current = window.setTimeout(() => {
+      farewellQuietTimerRef.current = undefined;
+      if (
+        outputVolumeRef.current >= OUTPUT_SPEECH_VOLUME_THRESHOLD ||
+        scoutSpeakingRef.current
+      ) {
+        scheduleFarewellQuietRef.current();
+        return;
+      }
+      requestSessionCloseRef.current(true);
+    }, farewellOutputQuietMs);
+  }, [farewellOutputQuietMs]);
+  useEffect(() => {
+    scheduleFarewellQuietRef.current = scheduleFarewellQuiet;
+  }, [scheduleFarewellQuiet]);
+
+  const idleIsBlocked = useCallback(() => (
+    connectionStateRef.current !== "active" ||
+    microphoneStateRef.current === "off" ||
+    userSpeakingRef.current ||
+    scoutSpeakingRef.current ||
+    inputVolumeRef.current >= INPUT_SPEECH_VOLUME_THRESHOLD ||
+    outputVolumeRef.current >= OUTPUT_SPEECH_VOLUME_THRESHOLD ||
+    backendStateRef.current === "processing" ||
+    backendStateRef.current === "queued" ||
+    activeInputRef.current !== undefined ||
+    queueRef.current.length > 0 ||
+    failedInputRef.current !== undefined ||
+    blockedByUnknownRef.current ||
+    pendingCallEndRef.current !== undefined ||
+    farewellActiveRef.current
+  ), []);
+
+  const scheduleIdle = useCallback(() => {
+    if (idleTimerRef.current !== undefined) window.clearTimeout(idleTimerRef.current);
+    idleTimerRef.current = undefined;
+    if (idleGraceActiveRef.current || connectionStateRef.current !== "active") return;
+    const elapsed = Date.now() - lastActualActivityAtRef.current;
+    const beginPresenceCheck = () => {
+      idleTimerRef.current = undefined;
+      if (idleIsBlocked()) {
+        idleTimerRef.current = window.setTimeout(beginPresenceCheck, 1_000);
+        return;
+      }
+      idleGraceActiveRef.current = true;
+      appendContext(idleCopy[localeRef.current].checkIn, true);
+      const finishGrace = () => {
+        idleGraceTimerRef.current = undefined;
+        if (idleIsBlocked()) {
+          idleGraceTimerRef.current = window.setTimeout(finishGrace, 1_000);
+          return;
+        }
+        pendingCallEndRef.current = {
+          reason: "farewell",
+          farewell: idleCopy[localeRef.current].farewell,
+          source: "idle",
+        };
+        beginFarewellRef.current();
+      };
+      idleGraceTimerRef.current = window.setTimeout(finishGrace, idleGraceMs);
+    };
+    idleTimerRef.current = window.setTimeout(beginPresenceCheck, Math.max(0, idleTimeoutMs - elapsed));
+  }, [appendContext, idleCopy, idleGraceMs, idleIsBlocked, idleTimeoutMs]);
+  useEffect(() => {
+    scheduleIdleRef.current = scheduleIdle;
+  }, [scheduleIdle]);
+
+  const noteActivity = useCallback(() => {
+    lastActualActivityAtRef.current = Date.now();
+    idleGraceActiveRef.current = false;
+    if (idleGraceTimerRef.current !== undefined) {
+      window.clearTimeout(idleGraceTimerRef.current);
+      idleGraceTimerRef.current = undefined;
+    }
+    scheduleIdleRef.current();
+  }, []);
+  useEffect(() => {
+    noteActivityRef.current = noteActivity;
+  }, [noteActivity]);
+
+  const armCallEnd = useCallback((endCall: LiveDelegateResult["endCall"]) => {
+    if (!endCall || pendingCallEndRef.current || farewellActiveRef.current) return;
+    pendingCallEndRef.current = { ...endCall, source: "delegate" };
+    if (captureTimerRef.current !== undefined) {
+      window.clearTimeout(captureTimerRef.current);
+      captureTimerRef.current = undefined;
+    }
+    localStreamRef.current?.getAudioTracks().forEach((track) => {
+      track.enabled = false;
+    });
+    microphoneStateRef.current = "off";
+    setMicrophoneState("off");
+    sendEvent({ type: "session.input_audio.mute", event_id: newRequestId("ending-mute") });
+  }, [sendEvent]);
 
   const pumpQueue = useCallback(async () => {
     if (
@@ -561,6 +812,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     if (!next) {
       setPendingInputCount(0);
       settleFlushWaiters(true);
+      if (pendingCallEndRef.current) beginFarewellRef.current();
       return;
     }
     const captureCandidate = next.intent === "capture_facts"
@@ -723,6 +975,21 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       const hasNewerTypedInput = queueRef.current.some((input) => input.source === "text");
       const contextIsCurrent =
         contextEpochRef.current === contextEpoch && localeRef.current === requestLocale;
+      const honoredEndCall =
+        next.intent !== "capture_facts" &&
+        result.endCall !== undefined &&
+        (result.status === "completed" || result.status === "needs_clarification") &&
+        !hasNewerInput &&
+        !hasNewerTypedInput &&
+        contextIsCurrent;
+      if (honoredEndCall && result.endCall) {
+        armCallEnd({
+          ...result.endCall,
+          farewell: result.spokenSummary?.trim()
+            ? `${result.spokenSummary.trim()} ${result.endCall.farewell}`
+            : result.endCall.farewell,
+        });
+      }
       const priorReceipt = verifiedPriorRequestReceipt(result);
       if (
         next.intent !== "capture_facts" &&
@@ -734,6 +1001,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       if (
         next.intent !== "capture_facts" &&
         result.spokenSummary &&
+        !honoredEndCall &&
         !hasNewerInput &&
         !hasNewerTypedInput &&
         contextIsCurrent
@@ -781,7 +1049,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         scheduleCaptureRef.current();
       }
     }
-  }, [appendContext, connectionState, delegate, settleFlushWaiters]);
+  }, [appendContext, armCallEnd, connectionState, delegate, settleFlushWaiters]);
   useEffect(() => {
     pumpRef.current = () => void pumpQueue();
   }, [pumpQueue]);
@@ -792,6 +1060,8 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       connectionState !== "active" ||
       activeInputRef.current?.intent === "capture_facts" ||
       queueRef.current.some((input) => input.intent === "capture_facts") ||
+      pendingCallEndRef.current !== undefined ||
+      farewellActiveRef.current ||
       !fragmentBufferRef.current.captureCandidate(captureCursorRef.current)
     )
       return;
@@ -906,9 +1176,25 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         const contextIsCurrent =
           contextEpochRef.current === uncertain.contextEpoch &&
           localeRef.current === uncertain.locale;
+        const honoredEndCall =
+          uncertain.input.intent !== "capture_facts" &&
+          result.endCall !== undefined &&
+          (result.status === "completed" || result.status === "needs_clarification") &&
+          !hasNewerInput &&
+          !hasNewerTypedInput &&
+          contextIsCurrent;
+        if (honoredEndCall && result.endCall) {
+          armCallEnd({
+            ...result.endCall,
+            farewell: result.spokenSummary?.trim()
+              ? `${result.spokenSummary.trim()} ${result.endCall.farewell}`
+              : result.endCall.farewell,
+          });
+        }
         if (
           uncertain.input.intent !== "capture_facts" &&
           result.spokenSummary &&
+          !honoredEndCall &&
           !hasNewerInput &&
           !hasNewerTypedInput &&
           contextIsCurrent
@@ -929,7 +1215,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         pumpRef.current();
       }
     });
-  }, [appendContext, sessionState, settleFlushWaiters]);
+  }, [appendContext, armCallEnd, sessionState, settleFlushWaiters]);
 
   const noteSpeaking = useCallback((role: "user" | "assistant") => {
     const priorTimer = speechTimersRef.current[role];
@@ -938,6 +1224,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       outputSuppressedRef.current = false;
       spokenRelaySuppressedRef.current = false;
       lastUserActivityAtRef.current = Date.now();
+      noteActivityRef.current();
       userSpeakingRef.current = true;
       const generation = generationRef.current;
       queueMicrotask(() => {
@@ -948,12 +1235,15 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     }
     else {
       if (outputSuppressedRef.current) return;
+      scoutSpeakingRef.current = true;
       setScoutSpeaking(true);
       const audio = remoteAudioRef.current;
       if (audio?.paused) void audio.play().catch(() => undefined);
     }
     speechTimersRef.current[role] = window.setTimeout(() => {
+      scoutSpeakingRef.current = false;
       setScoutSpeaking(false);
+      scheduleIdleRef.current();
     }, 750);
   }, []);
 
@@ -961,6 +1251,10 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     (event: LiveServerEvent) => {
       onEventRef.current?.(event);
       if (isLiveTranscriptEvent(event)) {
+        if (event.type === "session.output_transcript.delta" && farewellActiveRef.current) {
+          // Transcript delivery can lead or lag audio playback. The output
+          // meter below owns playback completion; the max timer is the fallback.
+        }
         const fragment = fragmentBufferRef.current.append(event);
         if (!fragment) return;
         setTranscript(toTranscript(fragmentBufferRef.current.captions()));
@@ -970,6 +1264,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         return;
       }
       if (isClientDelegationEvent(event)) {
+        if (pendingCallEndRef.current || farewellActiveRef.current) return;
         if (
           activeInputRef.current?.requestId === event.delegation.id ||
           queueRef.current.some((input) => input.requestId === event.delegation.id)
@@ -1016,8 +1311,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         return;
       }
       if (event.type === "session.closed") {
-        cleanup();
-        setConnectionState("disconnected");
+        finalizeDisconnectRef.current(automaticCloseRef.current);
         return;
       }
       if (event.type === "error") {
@@ -1026,7 +1320,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         setError(safeLiveProviderError(event));
       }
     },
-    [appendInstructions, cleanup, noteSpeaking],
+    [appendInstructions, noteSpeaking],
   );
 
   const connect = useCallback(async () => {
@@ -1081,8 +1375,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
           setError("The Live peer connection failed.");
           setConnectionState("error");
         } else if (peer.connectionState === "disconnected" || peer.connectionState === "closed") {
-          cleanup();
-          setConnectionState("disconnected");
+          finalizeDisconnectRef.current(automaticCloseRef.current);
         }
       };
       for (const track of stream.getAudioTracks()) peer.addTrack(track, stream);
@@ -1096,6 +1389,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         setHasConnected(true);
         connectionStateRef.current = "active";
         setConnectionState("active");
+        noteActivityRef.current();
         const initialFocus = focusRef.current.summary?.trim();
         if (initialFocus) appendContext(initialFocus, false);
         for (const [id, update] of bufferedUpdatesRef.current) {
@@ -1120,8 +1414,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       };
       channel.onclose = () => {
         if (cancelled() || channelRef.current !== channel) return;
-        cleanup();
-        setConnectionState("disconnected");
+        finalizeDisconnectRef.current(automaticCloseRef.current);
       };
 
       const offer = await peer.createOffer();
@@ -1148,27 +1441,12 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
 
   const disconnect = useCallback(() => {
     if (connectionState === "disconnected") return;
-    localStreamRef.current?.getAudioTracks().forEach((track) => {
-      track.enabled = false;
-    });
-    microphoneStateRef.current = "off";
-    setMicrophoneState("off");
-    connectionStateRef.current = "closing";
-    setConnectionState("closing");
-    const sent = sendEvent({ type: "session.close", event_id: newRequestId("close") });
-    if (!sent) {
-      cleanup();
-      setConnectionState("disconnected");
-      return;
-    }
-    closingTimerRef.current = window.setTimeout(() => {
-      cleanup();
-      setConnectionState("disconnected");
-    }, 1_000);
-  }, [cleanup, connectionState, sendEvent]);
+    requestSessionCloseRef.current(false);
+  }, [connectionState]);
 
   const setMuted = useCallback(
     (muted: boolean) => {
+      noteActivityRef.current();
       localStreamRef.current?.getAudioTracks().forEach((track) => {
         track.enabled = !muted;
       });
@@ -1196,7 +1474,13 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
 
   const sendText = useCallback((text: string) => {
     const trimmed = text.trim();
-    if (!trimmed || connectionState !== "active") return false;
+    if (
+      !trimmed ||
+      connectionState !== "active" ||
+      pendingCallEndRef.current ||
+      farewellActiveRef.current
+    ) return false;
+    noteActivityRef.current();
     const requestId = newRequestId("typed");
     queueRef.current.push({
       requestId,
@@ -1215,6 +1499,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   const retryFailedInput = useCallback(() => {
     const failed = failedInputRef.current;
     if (!failed || connectionState !== "active") return false;
+    noteActivityRef.current();
     const input = failed.refreshRequestId
       ? { ...failed.input, requestId: newRequestId(failed.input.source === "text" ? "typed" : "retry") }
       : failed.input;
@@ -1340,6 +1625,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     if (connectionState !== "active" || microphoneState !== "on") return;
     if (isAboveThreshold) {
       lastUserActivityAtRef.current = Date.now();
+      noteActivityRef.current();
       userSpeakingRef.current = true;
       const generation = generationRef.current;
       queueMicrotask(() => {
@@ -1354,6 +1640,27 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       scheduleRelayQuietCheckRef.current();
     }
   }, [connectionState, inputVolume, microphoneState]);
+
+  useEffect(() => {
+    const wasAboveThreshold = outputWasAboveThresholdRef.current;
+    const isAboveThreshold = outputVolume >= OUTPUT_SPEECH_VOLUME_THRESHOLD;
+    outputVolumeRef.current = outputVolume;
+    outputWasAboveThresholdRef.current = isAboveThreshold;
+    if (!farewellActiveRef.current) return;
+    if (isAboveThreshold) {
+      farewellSawOutputRef.current = true;
+      if (farewellQuietTimerRef.current !== undefined) {
+        window.clearTimeout(farewellQuietTimerRef.current);
+        farewellQuietTimerRef.current = undefined;
+      }
+    } else if (wasAboveThreshold && farewellSawOutputRef.current) {
+      scheduleFarewellQuietRef.current();
+    }
+  }, [outputVolume]);
+
+  useEffect(() => {
+    if (connectionState === "active") scheduleIdleRef.current();
+  }, [backendState, connectionState, pendingInputCount, scoutSpeaking, userSpeaking]);
 
   const appendVerifiedBackgroundUpdate = useCallback(
     (update: VerifiedBackgroundUpdate) => {
@@ -1456,6 +1763,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     backendState,
     pendingInputCount,
     pendingTextDraft,
+    automaticEndToken,
     sessionLocale,
     connect,
     disconnect,
@@ -1465,6 +1773,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     flushPendingInputs,
     retryFailedInput,
     clearPendingTextDraft,
+    noteActivity,
     interrupt: stopSpeaking,
     stopSpeaking,
     setLanguage,

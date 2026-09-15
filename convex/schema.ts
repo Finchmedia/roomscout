@@ -1040,6 +1040,10 @@ export default defineSchema({
       assistantMessageId: v.optional(v.string()),
       changedFields: v.optional(v.array(v.string())),
       verifiedFacts: v.optional(v.array(v.string())),
+      endCall: v.optional(v.object({
+        reason: v.union(v.literal("user_request"), v.literal("farewell")),
+        farewell: v.string(),
+      })),
       completedAt: v.number(),
     }))),
     focusedSignalId: v.optional(v.id("signals")),

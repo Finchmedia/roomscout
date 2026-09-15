@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { asSchema } from "ai";
 import type { Id } from "./_generated/dataModel";
 import { currentSearchAuthority } from "./lib/currentSearchTruth";
@@ -146,6 +146,82 @@ describe("Scout search equipment extraction contract", () => {
     ]));
     expect(tools).not.toHaveProperty("markSearchBriefReady");
     expect(tools.getCurrentSearch?.description).toContain("overrides earlier chat messages");
+  });
+
+  it.each(["search_discovery", "signal_advisor", "outreach_drafting"] as const)(
+    "keeps endVoiceCall available in %s voice mode",
+    (mode) => {
+      const tools = buildScoutTools({} as never, {
+        ownerId: "owner" as Id<"users">,
+        threadId: "thread",
+        context: {
+          mode,
+          activeNeedId: "need" as Id<"savedNeeds">,
+          focusedSignalId: "signal" as Id<"signals">,
+          hasOpenDecision: false,
+        },
+        voiceClaim: {
+          voiceSessionId: "voice" as Id<"voiceSessions">,
+          requestId: "request",
+          generation: 1,
+        },
+        musicianInput: "Bye, see you later.",
+      });
+      expect(tools).toHaveProperty("endVoiceCall");
+      expect(tools.endVoiceCall?.description).toContain("only asks the client to close voice");
+    },
+  );
+
+  it("executes the voice end callback for semantic intent and vetoes a negative current turn", async () => {
+    const onEndCall = vi.fn();
+    const makeTools = (musicianInput: string) => buildScoutTools({} as never, {
+      ownerId: "owner" as Id<"users">,
+      threadId: "thread",
+      context: {
+        mode: "search_discovery",
+        activeNeedId: "need" as Id<"savedNeeds">,
+        hasOpenDecision: false,
+      },
+      voiceClaim: {
+        voiceSessionId: "voice" as Id<"voiceSessions">,
+        requestId: "request",
+        generation: 1,
+      },
+      musicianInput,
+      onEndCall,
+    });
+    const executeEnd = async (musicianInput: string, reason: "user_request" | "farewell") => {
+      const tool = makeTools(musicianInput).endVoiceCall;
+      if (!tool?.execute) throw new Error("endVoiceCall is not executable");
+      return await tool.execute.call({ ...tool, ctx: {} } as never, { reason }, {} as never);
+    };
+
+    await expect(executeEnd("Mach's gut, wir hören uns.", "farewell"))
+      .resolves.toEqual({ endCall: true, reason: "farewell" });
+    expect(onEndCall).toHaveBeenCalledOnce();
+    expect(onEndCall).toHaveBeenCalledWith("farewell");
+
+    onEndCall.mockClear();
+    await expect(executeEnd("Please do not end the call.", "user_request"))
+      .resolves.toEqual({
+        endCall: false,
+        reason: "No direct call-ending intent in the current musician turn.",
+      });
+    expect(onEndCall).not.toHaveBeenCalled();
+  });
+
+  it("does not expose endVoiceCall outside a voice claim", () => {
+    const tools = buildScoutTools({} as never, {
+      ownerId: "owner" as Id<"users">,
+      threadId: "thread",
+      context: {
+        mode: "search_discovery",
+        activeNeedId: "need" as Id<"savedNeeds">,
+        hasOpenDecision: false,
+      },
+      musicianInput: "Bye.",
+    });
+    expect(tools).not.toHaveProperty("endVoiceCall");
   });
 
   it("projects the latest canonical budget instead of a stale prior conversation value", () => {

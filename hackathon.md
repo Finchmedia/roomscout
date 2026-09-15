@@ -1,5 +1,9 @@
 # Hackathon log
 
+## Latest: voice call closure
+
+The isolated GPT-Live branch adds explicit or farewell-driven hangup and a two-minute inactivity check followed by a thirty-second grace period. Closing the conversation leaves the domain search and provider work independent. Final verification is recorded in [BUILD_LOG.md](docs/BUILD_LOG.md).
+
 ## Latest: human voice review follow-up
 
 A human test found that a missing search radius could leave the start button disabled despite a ready message. The isolated GPT-Live branch now shares one activation check across the Scout, voice action and UI, with a focused missing-radius question in English or German. The voice surface reuses the existing blob and streaming captions, with one visible conversation at a time. Follow-up verification is recorded in [BUILD_LOG.md](docs/BUILD_LOG.md).

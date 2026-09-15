@@ -145,6 +145,11 @@ describe("useGptLiveVoiceScout", () => {
       enableEarlyFactCapture?: boolean;
       earlyFactCaptureCadenceMs?: number;
       initialLocale?: "en" | "de";
+      idleTimeoutMs?: number;
+      idleGraceMs?: number;
+      farewellOutputQuietMs?: number;
+      farewellMaxWaitMs?: number;
+      closeAckTimeoutMs?: number;
     } = {},
   ) {
     const connection = installConnection();
@@ -1153,5 +1158,141 @@ describe("useGptLiveVoiceScout", () => {
       expect.objectContaining({ requestId: "priority-native", delegationId: "priority-native" }),
     );
     expect(delegate.mock.calls[1]?.[0]).not.toHaveProperty("intent");
+  });
+
+  it("speaks a current verified farewell, waits for output-meter quiet, then closes once", async () => {
+    const delegate = vi.fn().mockImplementation(async (args: {
+      requestId: string;
+      fragments: Array<{ eventId: string }>;
+    }) => ({
+      ...completed(args.requestId, args.fragments.map((fragment) => fragment.eventId)),
+      spokenSummary: "Wednesday is saved.",
+      endCall: { reason: "user_request" as const, farewell: "Goodbye for now." },
+    }));
+    const hook = await connect(delegate as never, {
+      idleTimeoutMs: 60_000,
+      farewellOutputQuietMs: 100,
+      farewellMaxWaitMs: 5_000,
+    });
+    act(() => {
+      serverEvent(hook.channel, {
+        type: "session.input_transcript.delta",
+        event_id: "goodbye-input",
+        delta: "Save Wednesday and end the call",
+        start_ms: 0,
+        end_ms: 500,
+      });
+      serverEvent(hook.channel, {
+        type: "session.delegation.created",
+        delegation: { id: "goodbye-request", type: "delegation", target: "client" },
+      });
+    });
+    await waitFor(() => expect(hook.sent).toContainEqual(expect.objectContaining({
+      type: "session.commentary.append",
+      content: "Wednesday is saved. Goodbye for now.",
+    })));
+    const farewell = hook.sent.find((event) => event.content === "Wednesday is saved. Goodbye for now.");
+    act(() => serverEvent(hook.channel, {
+      type: "session.commentary.appended",
+      client_event_id: farewell?.event_id,
+    }));
+    expect(hook.sent.some((event) => event.type === "session.close")).toBe(false);
+
+    vi.useFakeTimers();
+    try {
+      audioMocks.outputVolume = 0.2;
+      hook.rerender();
+      audioMocks.outputVolume = 0;
+      hook.rerender();
+      act(() => vi.advanceTimersByTime(99));
+      expect(hook.sent.some((event) => event.type === "session.close")).toBe(false);
+      act(() => vi.advanceTimersByTime(1));
+      expect(hook.sent.some((event) => event.type === "session.close")).toBe(true);
+      act(() => serverEvent(hook.channel, { type: "session.closed" }));
+      expect(hook.result.current.connectionState).toBe("disconnected");
+      expect(hook.result.current.automaticEndToken).toBe(1);
+      expect(convexMocks.mutation).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores stale and failed end-call directives", async () => {
+    let finishFirst!: (result: LiveDelegateResult) => void;
+    const delegate = vi.fn()
+      .mockImplementationOnce(() => new Promise<LiveDelegateResult>((resolve) => { finishFirst = resolve; }))
+      .mockImplementationOnce(async (args: { requestId: string; fragments: Array<{ eventId: string }> }) =>
+        completed(args.requestId, args.fragments.map((fragment) => fragment.eventId)))
+      .mockImplementationOnce(async (args: { requestId: string }) => ({
+        ...completed(args.requestId, []),
+        status: "failed" as const,
+        endCall: { reason: "farewell" as const, farewell: "Should not play." },
+      }));
+    const hook = await connect(delegate as never, { idleTimeoutMs: 60_000 });
+    act(() => {
+      serverEvent(hook.channel, { type: "session.input_transcript.delta", event_id: "bye-a", delta: "Goodbye", start_ms: 0, end_ms: 100 });
+      serverEvent(hook.channel, { type: "session.delegation.created", delegation: { id: "bye-a-request", type: "delegation", target: "client" } });
+    });
+    await waitFor(() => expect(delegate).toHaveBeenCalledOnce());
+    act(() => {
+      serverEvent(hook.channel, { type: "session.input_transcript.delta", event_id: "wait-b", delta: "Actually wait", start_ms: 110, end_ms: 250 });
+      serverEvent(hook.channel, { type: "session.delegation.created", delegation: { id: "wait-b-request", type: "delegation", target: "client" } });
+    });
+    await act(async () => finishFirst({
+      ...completed("bye-a-request", ["bye-a"]),
+      endCall: { reason: "farewell", farewell: "Should be stale." },
+    }));
+    await waitFor(() => expect(delegate).toHaveBeenCalledTimes(2));
+    expect(hook.sent.some((event) => event.content === "Should be stale.")).toBe(false);
+    expect(hook.result.current.microphoneState).toBe("on");
+
+    act(() => expect(hook.result.current.sendText("test failed ending")).toBe(true));
+    await waitFor(() => expect(delegate).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(hook.result.current.backendState).toBe("failed"));
+    expect(hook.sent.some((event) => event.content === "Should not play.")).toBe(false);
+    expect(hook.result.current.microphoneState).toBe("on");
+  });
+
+  it("checks presence after idle, recovers from blocked grace, then says goodbye", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const hook = await connect(
+        vi.fn().mockImplementation(async (args: { requestId: string }) => completed(args.requestId, [])) as never,
+        {
+          idleTimeoutMs: 100,
+          idleGraceMs: 50,
+          farewellOutputQuietMs: 20,
+          farewellMaxWaitMs: 100,
+          closeAckTimeoutMs: 20,
+        },
+      );
+      act(() => vi.advanceTimersByTime(100));
+      expect(hook.sent).toContainEqual(expect.objectContaining({
+        type: "session.commentary.append",
+        content: "Are you still there?",
+      }));
+
+      act(() => hook.result.current.noteActivity());
+      act(() => vi.advanceTimersByTime(99));
+      expect(hook.sent.some((event) => String(event.content).includes("I’ll end"))).toBe(false);
+      act(() => vi.advanceTimersByTime(1));
+
+      audioMocks.outputVolume = 0.2;
+      hook.rerender();
+      act(() => vi.advanceTimersByTime(1_050));
+      expect(hook.sent.some((event) => String(event.content).includes("I’ll end"))).toBe(false);
+
+      audioMocks.outputVolume = 0;
+      hook.rerender();
+      act(() => vi.advanceTimersByTime(1_000));
+      expect(hook.sent).toContainEqual(expect.objectContaining({
+        type: "session.commentary.append",
+        content: "I’ll end the voice call for now. I’ll be here when you’re back.",
+      }));
+      act(() => vi.advanceTimersByTime(100));
+      expect(hook.sent.some((event) => event.type === "session.close")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
