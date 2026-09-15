@@ -10,6 +10,7 @@ export const commonDe = {
   cancel: "Abbrechen",
   back: "Zurück",
   close: "Schließen",
+  notifications: "Benachrichtigungen",
   details: "Details",
   demoName: "Herzbuben",
 

@@ -5,6 +5,7 @@ import { Link, useLocation } from "react-router-dom";
 import { PublicHeader } from "../../components/navigation/PublicHeader";
 import { LedgerCard } from "../../components/ui/LedgerCard";
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "../../features/auth/errors";
+import { useCopy } from "../../ui/copy";
 
 export type AuthCredentials = { username: string; password: string };
 
@@ -16,6 +17,7 @@ type AuthPageProps = {
 };
 
 export function AuthPage({ initialMode, onAuthenticate, error, pending = false }: AuthPageProps) {
+  const { t } = useCopy();
   const location = useLocation();
   const inferredMode = location.pathname.endsWith("sign-up") ? "signUp" : "signIn";
   const [mode, setMode] = useState(initialMode ?? inferredMode);
@@ -60,8 +62,8 @@ export function AuthPage({ initialMode, onAuthenticate, error, pending = false }
     <>
       <PublicHeader />
       <main className="center rs-auth-page">
-        <LedgerCard className="authcard" header={<span className="type t-scout">Dein persönlicher RoomScout</span>}>
-          <div className="rs-auth-intro"><h1>{isSignUp ? "Euer nächster Raum beginnt hier." : "Schön, dass du wieder da bist."}</h1><p>{isSignUp ? "Ein Gespräch. Ein Suchauftrag. Dein Scout bleibt dran." : "Deine Suche und eure Gespräche warten auf dich."}</p></div>
+        <LedgerCard className="authcard" header={<span className="type t-scout">{t("appRoutes.auth.personalScout")}</span>}>
+          <div className="rs-auth-intro"><h1>{t(isSignUp ? "appRoutes.auth.signUpTitle" : "appRoutes.auth.signInTitle")}</h1><p>{t(isSignUp ? "appRoutes.auth.signUpSubtitle" : "appRoutes.auth.signInSubtitle")}</p></div>
           <div className="ctx"><Bookmark aria-hidden="true" size={15} /><span>Your current search can continue after authentication.</span></div>
           <form onSubmit={submit}>
             <div className="field"><label className="flabel" htmlFor={usernameId}>Username</label><input autoComplete="username" className="input" id={usernameId} onChange={(event) => setUsername(event.target.value)} placeholder="e.g. vierteltakt" value={username} /></div>

@@ -7,6 +7,7 @@ export const commonEn = {
   cancel: "Cancel",
   back: "Back",
   close: "Close",
+  notifications: "Notifications",
   details: "Details",
   demoName: "Herzbuben",
   save: "Save",

@@ -14,4 +14,11 @@ export const appRoutesDe = {
   operator: "Betreiberansicht",
   signOut: "Abmelden",
   signOutError: "Abmelden hat gerade nicht geklappt. Bitte versuche es erneut.",
+  auth: {
+    personalScout: "Dein persönlicher RoomScout",
+    signUpTitle: "Euer nächster Raum beginnt hier.",
+    signUpSubtitle: "Ein Gespräch. Ein Suchauftrag. Dein Scout bleibt dran.",
+    signInTitle: "Schön, dass du wieder da bist.",
+    signInSubtitle: "Deine Suche und eure Gespräche warten auf dich.",
+  },
 } as const;

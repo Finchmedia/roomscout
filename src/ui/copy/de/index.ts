@@ -29,7 +29,7 @@ import { liveInboxDe } from "./liveInbox";
 type NamespaceContract = {
   liveSettings: typeof liveSettingsCopy;
   liveOperator: typeof liveOperatorCopy;
-  appRoutes: Record<string, string>;
+  appRoutes: typeof appRoutesDe;
   common: { saved: string; back: string; close: string };
   scout: { chrome: { menu: { backToScout: string } } };
   settings: { nav: { back: string } }; // §6.1 rule 1 — NOT settings.settings.nav.back

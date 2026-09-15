@@ -17,4 +17,11 @@ export const appRoutesEn = {
   operator: "Operator view",
   signOut: "Sign out",
   signOutError: "Signing out did not work. Please try again.",
+  auth: {
+    personalScout: "Your personal RoomScout",
+    signUpTitle: "Your next rehearsal room starts here.",
+    signUpSubtitle: "One conversation. One search. Your Scout stays on it.",
+    signInTitle: "Welcome back.",
+    signInSubtitle: "Your search and conversations are waiting for you.",
+  },
 } as const satisfies DeepWiden<typeof appRoutesDe>;

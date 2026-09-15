@@ -7,6 +7,7 @@ import {
 } from "sonner"
 
 import { cn } from "@/lib/utils"
+import { useCopy } from "@/ui/copy"
 
 /**
  * RoomScout toast — the sonner primitive restyled to the design-system Toast.
@@ -76,14 +77,6 @@ import { cn } from "@/lib/utils"
 const DS_ACTION_LABEL = "Zum Scout"
 /** DS dismiss `aria-label` (Toast.jsx / SCOUT_SCREENS.md §18.2), verbatim. */
 const DS_DISMISS_LABEL = "Schließen"
-/**
- * Accessible name of sonner's live region. Without it AT reads the English
- * default „Notifications alt+T“; the product is German only
- * (design-system/readme.md §Content fundamentals). sonner appends its own
- * hotkey label, so this stays a bare noun.
- */
-const DS_CONTAINER_LABEL = "Benachrichtigungen"
-
 /**
  * DS anchor: „Positioned top-right under the header (right 24, top 96)“
  * (Toast.prompt.md). 96px = the 84px header plus 12px, both tokens; 24px is
@@ -262,13 +255,14 @@ const Toaster = ({
   toastOptions,
   ...props
 }: React.ComponentProps<typeof Sonner>) => {
+  const { t } = useCopy()
   return (
     <Sonner
       theme="dark"
       position="top-right"
       offset={DS_OFFSET}
       mobileOffset={DS_MOBILE_OFFSET}
-      containerAriaLabel={DS_CONTAINER_LABEL}
+      containerAriaLabel={t("common.notifications")}
       className={cn("toaster group", className)}
       style={{ ...DS_TOASTER_STYLE, ...style }}
       toastOptions={{
@@ -276,7 +270,7 @@ const Toaster = ({
         // Merged *after* the caller's object, per key, so overriding one field
         // of a style does not drop the rest of the DS spec.
         closeButtonAriaLabel:
-          toastOptions?.closeButtonAriaLabel ?? DS_DISMISS_LABEL,
+          toastOptions?.closeButtonAriaLabel ?? t("common.close"),
         actionButtonStyle: {
           ...DS_ACTION_BUTTON_STYLE,
           ...toastOptions?.actionButtonStyle,

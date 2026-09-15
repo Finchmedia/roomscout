@@ -9,6 +9,7 @@ import { api } from "../../convex/_generated/api";
 import { authErrorMessage } from "../features/auth/errors";
 import { AuthPage } from "../routes";
 import type { AuthCredentials } from "../routes";
+import { useCopy } from "../ui/copy";
 import { safeReturnTo } from "./returnTo";
 
 function PasswordAuthForm() {
@@ -46,13 +47,14 @@ function PasswordAuthForm() {
 }
 
 export function AuthRoute() {
+  const { t } = useCopy();
   const [searchParams] = useSearchParams();
   const returnTo = safeReturnTo(searchParams.get("returnTo"));
 
   return (
     <>
       <AuthLoading>
-        <div className="rs-route-state" role="status">Restoring your session…</div>
+        <div className="rs-route-state" role="status">{t("appRoutes.restoring")}</div>
       </AuthLoading>
       <Authenticated>
         <Navigate replace to={returnTo} />
