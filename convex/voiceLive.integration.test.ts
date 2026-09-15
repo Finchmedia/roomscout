@@ -232,6 +232,23 @@ it("preserves provider delta spacing and keeps assistant context separate", () =
   });
 });
 
+it("preserves the first facts and exact spacing across more than one hundred deltas", () => {
+  const transcript = "Berlin, four-piece band, Kreuzberg or Neukölln. " +
+    "We need evening access and secure drum storage. ".repeat(8);
+  const chunks = Array.from({ length: Math.ceil(transcript.length / 4) }, (_, index) =>
+    transcript.slice(index * 4, index * 4 + 4));
+  expect(chunks.length).toBeGreaterThan(100);
+
+  const composed = composeVoiceInput({
+    source: "voice",
+    locale: "en",
+    fragments: chunks.map((text) => ({ role: "user" as const, text })),
+  });
+  expect(composed.userPrompt).toBe(transcript.trim());
+  expect(composed.userPrompt.startsWith("Berlin, four-piece band, Kreuzberg or Neukölln.")).toBe(true);
+  expect(composed.assistantContext).toBe("");
+});
+
 it("claims fact capture without adding a technical message to the Scout thread", async () => {
   const f = await fixture();
   const capture = await f.t.mutation(claimRequest, {
