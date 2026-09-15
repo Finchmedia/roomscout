@@ -105,7 +105,7 @@ describe("live operator surface", () => {
       "muted",
     );
     // Stamped against the injected clock, never the wall clock.
-    expect(screen.getByText("Heute, 10:30")).toBeInTheDocument();
+    expect(screen.getByText("Today, 10:30")).toBeInTheDocument();
     expect(screen.getAllByText("—").length).toBe(2);
   });
 

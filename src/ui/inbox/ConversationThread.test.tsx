@@ -86,7 +86,7 @@ describe("ConversationThread", () => {
     const provider = screen.getByRole("group", { name: "Anna Meier" });
     expect(provider).toHaveAttribute("data-align", "start");
     expect(provider).toHaveTextContent("Der Raum ist frei.");
-    expect(provider).toHaveTextContent("Heute, 09:41");
+    expect(provider).toHaveTextContent("Today, 09:41");
 
     const scout = screen.getByRole("group", { name: "Dein Scout" });
     expect(scout).toHaveAttribute("data-align", "end");

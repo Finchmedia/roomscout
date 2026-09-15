@@ -26,16 +26,16 @@ function renderPage() {
 describe("public landing route", () => {
   it("mounts the Claude design-system landing as the real public page", () => {
     renderPage();
-    expect(screen.getByRole("heading", { name: /Ihr macht Musik/ })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Ich kümmere mich darum." })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Bereit für euren nächsten Proberaum?" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /You make the music/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "I’m on it." })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Ready to find your next rehearsal room?" })).toBeInTheDocument();
   });
 
   it("separates the synthetic demo from real start and sign-in destinations", () => {
     renderPage();
     const demoLinks = [
-      ...screen.getAllByRole("link", { name: /Demo (starten|ausprobieren)/ }),
-      screen.getByRole("link", { name: "Angebot prüfen" }),
+      ...screen.getAllByRole("link", { name: /Start demo|Try the demo/ }),
+      screen.getByRole("link", { name: "Review offer" }),
     ];
     demoLinks.forEach((link) => expect(link).toHaveAttribute("href", "/design/scout"));
     const primaryLinks = screen.getAllByRole("link").filter((link) => link.dataset.variant === "primary");
@@ -43,16 +43,16 @@ describe("public landing route", () => {
     primaryLinks.forEach((link) => {
       expect(link).toHaveClass("text-rs-white!", "hover:text-rs-white!");
     });
-    expect(screen.getByRole("link", { name: "Suche starten" })).toHaveAttribute("href", "/sign-up?returnTo=%2Fapp%2Fscout");
-    expect(screen.getByRole("link", { name: "Anmelden" })).toHaveAttribute("href", "/sign-in?returnTo=%2Fapp%2Fscout");
-    expect(screen.getByRole("link", { name: "Öffentlichen Markt ansehen →" })).toHaveAttribute("href", "/explore");
+    expect(screen.getByRole("link", { name: "Start searching" })).toHaveAttribute("href", "/sign-up?returnTo=%2Fapp%2Fscout");
+    expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/sign-in?returnTo=%2Fapp%2Fscout");
+    expect(screen.getByRole("link", { name: "Explore the public market →" })).toHaveAttribute("href", "/explore");
   });
 
   it("marks the scripted story and offer as examples without live claims", () => {
     renderPage();
-    expect(screen.getByText("Interaktive Beispieldemo · synthetische Beispieldaten · es wird nichts versendet.")).toBeInTheDocument();
-    expect(screen.getByText("Beispielangebot")).toBeInTheDocument();
-    expect(screen.getByText("Beispielsuche · Ablauf verkürzt dargestellt")).toBeInTheDocument();
-    expect(screen.getByText("Aktuell: kontrollierte Demo. Keine Anfragen an fremde Anbieter.")).toBeInTheDocument();
+    expect(screen.getByText("Interactive sample demo · synthetic data · nothing will be sent.")).toBeInTheDocument();
+    expect(screen.getByText("Sample offer")).toBeInTheDocument();
+    expect(screen.getByText("Sample search · flow shortened for the demo")).toBeInTheDocument();
+    expect(screen.getByText("Currently a controlled demo. No inquiries to third-party providers.")).toBeInTheDocument();
   });
 });
