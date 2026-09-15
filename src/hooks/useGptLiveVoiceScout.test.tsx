@@ -209,6 +209,86 @@ describe("useGptLiveVoiceScout", () => {
     expect(sent.some((event) => event.type === "session.commentary.append")).toBe(false);
   });
 
+  it("processes a late fragment in the next queued delegation even when its audio interval is older", async () => {
+    let resolveFirst!: (result: LiveDelegateResult) => void;
+    const delegate = vi.fn()
+      .mockImplementationOnce(() => new Promise<LiveDelegateResult>((resolve) => { resolveFirst = resolve; }))
+      .mockImplementation(async (args: { requestId: string }) => completed(args.requestId, ["late-correction"]));
+    const { channel } = await connect(delegate as never);
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "first-value",
+        delta: "Tuesday",
+        start_ms: 500,
+        end_ms: 700,
+      });
+      serverEvent(channel, {
+        type: "session.delegation.created",
+        delegation: { id: "delegation-1", type: "delegation", target: "client" },
+      });
+    });
+    await waitFor(() => expect(delegate).toHaveBeenCalledOnce());
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "late-correction",
+        delta: "Actually Wednesday",
+        start_ms: 300,
+        end_ms: 490,
+      });
+      serverEvent(channel, {
+        type: "session.delegation.created",
+        delegation: { id: "delegation-2", type: "delegation", target: "client" },
+      });
+    });
+    await act(async () => resolveFirst(completed("delegation-1", ["first-value"])));
+    await waitFor(() => expect(delegate).toHaveBeenCalledTimes(2));
+    expect(delegate.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({
+        requestId: "delegation-2",
+        fragments: expect.arrayContaining([
+          expect.objectContaining({ eventId: "late-correction", text: "Actually Wednesday" }),
+        ]),
+      }),
+    );
+  });
+
+  it("does not speak or restore the old locale after focus and language change mid-request", async () => {
+    let resolveDelegate!: (result: LiveDelegateResult) => void;
+    const delegate = vi.fn(
+      () => new Promise<LiveDelegateResult>((resolve) => { resolveDelegate = resolve; }),
+    );
+    const { channel, result, sent } = await connect(delegate as never);
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "room-question",
+        delta: "What about this room?",
+        start_ms: 100,
+        end_ms: 400,
+      });
+      serverEvent(channel, {
+        type: "session.delegation.created",
+        delegation: { id: "delegation-room", type: "delegation", target: "client" },
+      });
+    });
+    await waitFor(() => expect(delegate).toHaveBeenCalledOnce());
+    act(() => {
+      result.current.setFocus({ summary: "The selected room is now East Room." });
+      result.current.setLanguage("de");
+    });
+    await act(async () => resolveDelegate(completed("delegation-room", ["room-question"])));
+    expect(result.current.sessionLocale).toBe("de");
+    expect(sent.some((event) => event.type === "session.commentary.append")).toBe(false);
+    expect(sent).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "session.thinking.append" }),
+        expect.objectContaining({ type: "session.instructions.append" }),
+      ]),
+    );
+  });
+
   it("waits for actual backend completion and preserves queued typed input on close", async () => {
     let resolveDelegate!: (result: LiveDelegateResult) => void;
     const delegate = vi.fn(
@@ -260,6 +340,64 @@ describe("useGptLiveVoiceScout", () => {
       expect.arrayContaining([
         expect.objectContaining({ type: "session.thinking.append", delegation_id: null }),
         expect.objectContaining({ type: "session.commentary.append", delegation_id: null }),
+      ]),
+    );
+    act(() => {
+      expect(
+        result.current.appendVerifiedBackgroundUpdate({
+          id: "brief-quiet",
+          version: 3,
+          content: "The saved brief now says Wednesday.",
+          speak: false,
+        }),
+      ).toBe(true);
+    });
+    expect(sent.at(-1)).toEqual(
+      expect.objectContaining({
+        type: "session.thinking.append",
+        content: "The saved brief now says Wednesday.",
+      }),
+    );
+  });
+
+  it("can invalidate and rebuild a queued background update while connecting", async () => {
+    const connection = installConnection();
+    let resolveSession!: (answer: { answerSdp: string; voiceSessionId: string; provider: "live" }) => void;
+    const createSession = vi.fn(
+      () => new Promise((resolve) => { resolveSession = resolve; }),
+    );
+    const { result } = renderHook(() =>
+      useGptLiveVoiceScout({ createSession: createSession as never, initialLocale: "en" }),
+    );
+    let connectPromise!: Promise<void>;
+    act(() => { connectPromise = result.current.connect(); });
+    await waitFor(() => expect(result.current.connectionState).toBe("connecting"));
+    act(() => {
+      expect(result.current.appendVerifiedBackgroundUpdate({
+        id: "brief:need-1",
+        version: 4,
+        content: "Old budget: 300.",
+        speak: false,
+      })).toBe(true);
+      result.current.clearBackgroundUpdate("brief:need-1");
+      expect(result.current.appendVerifiedBackgroundUpdate({
+        id: "brief:need-1",
+        version: 4,
+        content: "Current budget: 280.",
+        speak: false,
+      })).toBe(true);
+    });
+    await act(async () => resolveSession({ answerSdp: "answer", voiceSessionId: "voice-1", provider: "live" }));
+    await act(async () => connectPromise);
+    act(() => connection.channel.onopen?.(new Event("open")));
+    await waitFor(() => expect(result.current.connectionState).toBe("active"));
+    expect(connection.sent.some((event) => event.content === "Old budget: 300.")).toBe(false);
+    expect(connection.sent).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "session.thinking.append",
+          content: "Current budget: 280.",
+        }),
       ]),
     );
   });

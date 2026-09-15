@@ -253,12 +253,18 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   const queueRef = useRef<QueuedInput[]>([]);
   const activeInputRef = useRef<QueuedInput | undefined>(undefined);
   const uncertainInputRef = useRef<
-    { input: QueuedInput; snapshot: LiveDelegationSnapshot } | undefined
+    {
+      input: QueuedInput;
+      snapshot: LiveDelegationSnapshot;
+      contextEpoch: number;
+      locale: LiveLocale;
+    } | undefined
   >(undefined);
   const waitingForServerIdleRef = useRef(false);
   const blockedByUnknownRef = useRef(false);
   const greetedGenerationRef = useRef(0);
   const focusRef = useRef<LiveFocus>({});
+  const contextEpochRef = useRef(0);
   const pendingAppendIdsRef = useRef(new Set<string>());
   const flushWaitersRef = useRef<Array<(complete: boolean) => void>>([]);
   const deliveredUpdateVersionsRef = useRef(new Map<string, string>());
@@ -420,6 +426,8 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     }
     const generation = generationRef.current;
     const sessionId = voiceSessionIdRef.current;
+    const contextEpoch = contextEpochRef.current;
+    const requestLocale = localeRef.current;
     try {
       const result = await delegate({
         voiceSessionId: sessionId,
@@ -436,8 +444,10 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       if (generationRef.current !== generation || voiceSessionIdRef.current !== sessionId) return;
       fragmentBufferRef.current.resolve(result.resolvedEventIds);
       setTranscript(toTranscript(fragmentBufferRef.current.captions()));
-      setSessionLocale(result.locale);
-      localeRef.current = result.locale;
+      if (contextEpochRef.current === contextEpoch && localeRef.current === requestLocale) {
+        setSessionLocale(result.locale);
+        localeRef.current = result.locale;
+      }
       if (result.status === "busy") {
         queueRef.current.unshift(next);
         waitingForServerIdleRef.current = true;
@@ -445,7 +455,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         return;
       }
       if (result.status === "in_progress") {
-        uncertainInputRef.current = { input: next, snapshot };
+        uncertainInputRef.current = { input: next, snapshot, contextEpoch, locale: requestLocale };
         waitingForServerIdleRef.current = true;
         setBackendState("processing");
         return;
@@ -459,12 +469,14 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       } else setBackendState("idle");
 
       const hasNewerInput = fragmentBufferRef.current.hasNewerUnresolvedUserInput(snapshot.maxSequence);
-      if (result.spokenSummary && !hasNewerInput) {
+      const contextIsCurrent =
+        contextEpochRef.current === contextEpoch && localeRef.current === requestLocale;
+      if (result.spokenSummary && !hasNewerInput && contextIsCurrent) {
         appendContext(result.spokenSummary, true, next.delegationId ?? null);
       }
     } catch {
       if (generationRef.current !== generation || voiceSessionIdRef.current !== sessionId) return;
-      uncertainInputRef.current = { input: next, snapshot };
+      uncertainInputRef.current = { input: next, snapshot, contextEpoch, locale: requestLocale };
       waitingForServerIdleRef.current = true;
       blockedByUnknownRef.current = true;
       setBackendState("outcome_unknown");
@@ -510,7 +522,9 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         );
         if (
           result.spokenSummary &&
-          !fragmentBufferRef.current.hasNewerUnresolvedUserInput(uncertain.snapshot.maxSequence)
+          !fragmentBufferRef.current.hasNewerUnresolvedUserInput(uncertain.snapshot.maxSequence) &&
+          contextEpochRef.current === uncertain.contextEpoch &&
+          localeRef.current === uncertain.locale
         ) {
           appendContext(result.spokenSummary, true, uncertain.input.delegationId ?? null);
         }
@@ -773,6 +787,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
 
   const setLanguage = useCallback(
     (locale: LiveLocale) => {
+      if (localeRef.current !== locale) contextEpochRef.current += 1;
       setSessionLocale(locale);
       localeRef.current = locale;
       const voiceSessionId = voiceSessionIdRef.current;
@@ -791,6 +806,11 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   const setFocus = useCallback(
     (focus: LiveFocus) => {
       const priorSummary = focusRef.current.summary;
+      const changed =
+        focus.focusedSignalId !== focusRef.current.focusedSignalId ||
+        focus.decisionId !== focusRef.current.decisionId ||
+        focus.summary !== focusRef.current.summary;
+      if (changed) contextEpochRef.current += 1;
       focusRef.current = focus;
       if (connectionState === "active" && focus.summary?.trim() && focus.summary !== priorSummary) {
         appendContext(focus.summary, false);

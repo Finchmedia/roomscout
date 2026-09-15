@@ -101,6 +101,35 @@ describe("GptLiveFragmentBuffer", () => {
     });
     expect(buffer.hasNewerUnresolvedUserInput(snapshot.maxSequence)).toBe(true);
   });
+
+  it("keeps overlapping speakers independent and lets a late fragment revise its earlier row", () => {
+    const buffer = new GptLiveFragmentBuffer();
+    buffer.append({
+      type: "session.input_transcript.delta",
+      event_id: "user-a",
+      delta: "We need Tuesday",
+      start_ms: 100,
+      end_ms: 400,
+    });
+    buffer.append({
+      type: "session.output_transcript.delta",
+      event_id: "assistant-a",
+      delta: "Mm-hm",
+      start_ms: 300,
+      end_ms: 430,
+    });
+    buffer.append({
+      type: "session.input_transcript.delta",
+      event_id: "user-late",
+      delta: "—Wednesday, sorry",
+      start_ms: 410,
+      end_ms: 650,
+    });
+    expect(buffer.captions()).toEqual([
+      expect.objectContaining({ role: "user", text: "We need Tuesday—Wednesday, sorry" }),
+      expect.objectContaining({ role: "assistant", text: "Mm-hm" }),
+    ]);
+  });
 });
 
 it("accepts only documented transcript and client-delegation event shapes", () => {
