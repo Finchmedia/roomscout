@@ -84,7 +84,7 @@ describe("live Scout surface columns", () => {
     expect(screen.getByRole("button", { name: "Suchauftrag ansehen" })).toBeInTheDocument();
   });
 
-  it("centres the stage column vertically while the side columns stay at the top", () => {
+  it("centres a quiet stage while both long side columns own their viewport scroll", () => {
     renderSurface("working", {
       railSlot: <div>Kandidaten</div>,
       asideSlot: <div>Euer Suchauftrag</div>,
@@ -95,10 +95,35 @@ describe("live Scout surface columns", () => {
     // The mock centres blob and headline in the space the columns leave.
     expect(centre).toHaveClass("justify-center", "flex-1", "min-h-0");
     const row = centre?.parentElement;
-    expect(row).toHaveClass("items-stretch");
+    expect(row).toHaveClass("items-stretch", "overflow-hidden", "min-h-0");
     for (const side of [row?.firstElementChild, row?.lastElementChild]) {
-      expect(side).toHaveClass("self-start");
+      expect(side).toHaveClass("h-full", "min-h-0", "overflow-y-auto");
     }
+  });
+
+  it("constrains a long text chat and keeps only the mobile side-sheet entries in the footer", () => {
+    renderSurface("discovery", {
+      chatSlot: <section data-scout-conversation="text"><textarea aria-label="Message your Scout" /></section>,
+      railSlot: <div>Candidate one</div>,
+      asideSlot: <div>{Array.from({ length: 40 }, (_, index) => <p key={index}>Saved fact {index + 1}</p>)}</div>,
+    });
+
+    const main = document.querySelector("main");
+    const centre = centreColumn();
+    const chatHost = document.querySelector('[data-live-scout-chat-host="true"]');
+    const briefColumn = document.querySelector('[data-live-scout-column="brief"]');
+    expect(main).toHaveClass("overflow-y-hidden", "min-h-0");
+    expect(centre).toHaveClass("justify-start", "overflow-hidden", "min-h-0");
+    expect(chatHost).toHaveClass("min-h-0", "flex-1", "overflow-hidden");
+    expect(briefColumn).toHaveClass("h-full", "min-h-0", "overflow-y-auto", "overscroll-contain");
+    expect(screen.queryByRole("button", { name: "Mit Scout sprechen" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Lieber schreiben" })).not.toBeInTheDocument();
+
+    const candidates = screen.getByRole("button", { name: "Kandidaten" });
+    const brief = screen.getByRole("button", { name: "Suchauftrag" });
+    expect(brief.closest("div")?.parentElement).toHaveClass("min-[1100px]:hidden");
+    fireEvent.click(candidates);
+    expect(screen.getAllByText("Candidate one").length).toBeGreaterThan(1);
   });
 
   it("says nothing where the Entscheidung card already asks the question", () => {
@@ -150,6 +175,9 @@ describe("live Scout surface columns", () => {
     expect(document.querySelector('[data-voice-companion-scroll="true"]')).toHaveClass("overflow-y-auto", "flex-1", "min-h-0");
     expect(screen.getByText("Text composer and history")).toBeInTheDocument();
     expect(screen.getAllByText("All saved facts").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "Mit Scout sprechen" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Lieber schreiben" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Suchauftrag" })).toBeInTheDocument();
 
     view.rerender(<Harness stage="offer" />);
     expect(screen.getByTestId("voice-probe")).toBe(voiceNode);

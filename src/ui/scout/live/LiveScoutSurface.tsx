@@ -123,6 +123,7 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
     : props.briefReviewSlot;
   const voiceDetailSlot = props.detailSlot ?? (stage === "offer" ? props.offerSlot : stage === "provider-update" ? props.providerUpdateSlot : null);
   const voiceHasScrollableCompanion = Boolean(props.chatSlot || voiceDetailSlot);
+  const conversationOpen = Boolean(props.chatSlot || props.voiceSlot);
 
   let content: React.ReactNode;
   switch (stage) {
@@ -145,10 +146,24 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
       break;
     case "discovery":
       content = (
-        <div className={STAGE_SHELL} data-live-scout-stage={stage}>
-          {!props.voiceSlot ? <ScoutBlob size={narrow ? 88 : 104} state="idle" className="mb-[var(--space-10)]" /> : null}
-          <div className="mb-[var(--space-7)] text-[length:var(--text-body-sm-size)] text-rs-ink-4">{copy.discoveryLabel}</div>
-          <div className="w-[min(760px,100%)]">{props.chatSlot}</div>
+        <div
+          className={cn(
+            STAGE_SHELL,
+            props.chatSlot && "min-h-0 justify-start overflow-hidden px-[var(--space-5)] py-[var(--space-5)] min-[960px]:px-[var(--space-7)] min-[960px]:py-[var(--space-7)]"
+          )}
+          data-live-scout-stage={stage}
+        >
+          {!props.voiceSlot && !props.chatSlot ? <ScoutBlob size={narrow ? 88 : 104} state="idle" className="mb-[var(--space-10)]" /> : null}
+          <div className={cn("text-[length:var(--text-body-sm-size)] text-rs-ink-4", props.chatSlot ? "mb-[var(--space-4)]" : "mb-[var(--space-7)]")}>{copy.discoveryLabel}</div>
+          <div
+            className={cn(
+              "w-[min(760px,100%)]",
+              props.chatSlot && "min-h-0 flex-1 overflow-hidden [&>[data-scout-conversation=text]]:h-full [&>[data-scout-conversation=text]]:max-h-full"
+            )}
+            data-live-scout-chat-host={Boolean(props.chatSlot) || undefined}
+          >
+            {props.chatSlot}
+          </div>
           {props.voiceSlot ? <div className="mt-[var(--space-9)]">{props.voiceSlot}</div> : null}
         </div>
       );
@@ -258,34 +273,38 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
           </>
         ) : null}
       />
-      <main className="relative z-2 flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto [scrollbar-width:none]">
+      <main className={cn("relative z-2 flex min-h-0 flex-1 flex-col overflow-x-hidden [scrollbar-width:none]", columns ? "overflow-y-hidden" : "overflow-y-auto")}>
         {props.errorSlot ? (
           <div className="sticky top-0 z-5 mx-auto w-[min(760px,calc(100%_-_var(--space-11)_*_2))] pt-[var(--space-5)]">
             {props.errorSlot}
           </div>
         ) : null}
         {columns ? (
-          // The side columns start at the top of the stage and stay there; the
-          // centre is vertically centred in what is left, so the blob and the
-          // headline sit in the middle of the screen instead of hanging from
-          // its top edge with a field of empty below them.
-          <div className="flex min-h-0 w-full flex-1 items-stretch">
-            <div className="hidden w-[260px] shrink-0 self-start pt-[var(--space-7)] pr-[var(--space-7)] pl-[var(--space-11)] min-[1100px]:block">
+          // Each side column scrolls within the stage while the centre keeps
+          // either the active conversation or the quiet-state composition in
+          // the viewport.
+          <div className="flex min-h-0 w-full flex-1 items-stretch overflow-hidden">
+            <div data-live-scout-column="candidates" className="hidden h-full min-h-0 w-[260px] shrink-0 overflow-y-auto overscroll-contain pt-[var(--space-7)] pr-[var(--space-7)] pb-[var(--space-7)] pl-[var(--space-11)] [scrollbar-width:thin] min-[1100px]:block">
               {props.railSlot}
             </div>
-            <div data-live-scout-column="center" className="flex min-h-0 min-w-0 flex-1 flex-col justify-center">
+            <div data-live-scout-column="center" className={cn("flex min-h-0 min-w-0 flex-1 flex-col", conversationOpen ? "justify-start overflow-hidden" : "justify-center")}>
               {content}
             </div>
-            <div className="hidden w-[300px] shrink-0 self-start pt-[var(--space-7)] pr-[var(--space-11)] pl-[var(--space-7)] min-[1100px]:block">
+            <div data-live-scout-column="brief" className="hidden h-full min-h-0 w-[300px] shrink-0 overflow-y-auto overscroll-contain pt-[var(--space-7)] pr-[var(--space-11)] pb-[var(--space-7)] pl-[var(--space-7)] [scrollbar-width:thin] min-[1100px]:block">
               {props.asideSlot}
             </div>
           </div>
         ) : content}
         {stage !== "welcome" && stage !== "loading" ? (
-          <div className="mx-auto flex w-[min(760px,calc(100%_-_var(--space-11)_*_2))] shrink-0 flex-col items-center gap-[var(--space-7)] pb-[var(--space-8)]">
+          <div className={cn(
+            "mx-auto flex w-[min(760px,calc(100%_-_var(--space-11)_*_2))] shrink-0 flex-col items-center gap-[var(--space-7)] pb-[var(--space-8)]",
+            conversationOpen && (columns ? "min-[1100px]:hidden" : "hidden")
+          )}>
             <div className="flex flex-wrap justify-center gap-[var(--space-4)]">
-              {!props.voiceSlot ? <Button variant="ghost" size="sm" icon={<Icon name="mic" size={16} />} onClick={props.onVoice}>{copy.welcomeVoiceAction}</Button> : null}
-              <Button variant="ghost" size="sm" icon={<Icon name="keyboard" size={16} />} onClick={props.onChat}>{copy.welcomeChatAction}</Button>
+              {!conversationOpen ? <>
+                <Button variant="ghost" size="sm" icon={<Icon name="mic" size={16} />} onClick={props.onVoice}>{copy.welcomeVoiceAction}</Button>
+                <Button variant="ghost" size="sm" icon={<Icon name="keyboard" size={16} />} onClick={props.onChat}>{copy.welcomeChatAction}</Button>
+              </> : null}
               {/* The side columns are folded away below 1100px; these two reach them. */}
               {columns && props.railSlot ? <Button variant="ghost" size="sm" className="min-[1100px]:hidden" onClick={() => setSheet("candidates")}>{copy.openCandidates}</Button> : null}
               {columns && props.asideSlot ? <Button variant="ghost" size="sm" className="min-[1100px]:hidden" onClick={() => setSheet("brief")}>{copy.openBrief}</Button> : null}
