@@ -163,4 +163,60 @@ describe("LiveVoiceChat", () => {
     expect(fixture.session.interrupt).toHaveBeenCalledOnce()
     expect(onText).toHaveBeenCalledOnce()
   })
+
+  it("scrolls only its caption viewport and preserves user-scrolled history", () => {
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    })
+    fixture.session = session({
+      connected: true,
+      status: "listening",
+      transcript: [{ id: "first", role: "user", text: "First caption", final: false }],
+    })
+    const { container, rerender } = render(
+      <div data-outer-scroll>
+        <LiveVoiceChat compact />
+      </div>,
+    )
+    const outer = container.querySelector<HTMLElement>("[data-outer-scroll]")!
+    const captions = container.querySelector<HTMLElement>("[data-voice-transcript-density]")!
+    outer.scrollTop = 345
+    Object.defineProperty(captions, "clientHeight", { configurable: true, value: 100 })
+    Object.defineProperty(captions, "scrollHeight", { configurable: true, value: 300 })
+    captions.scrollTop = 200
+    fireEvent.scroll(captions)
+
+    fixture.session = session({
+      connected: true,
+      status: "listening",
+      transcript: [
+        { id: "first", role: "user", text: "First caption", final: false },
+        { id: "latest", role: "assistant", text: "Latest caption", final: false },
+      ],
+    })
+    Object.defineProperty(captions, "scrollHeight", { configurable: true, value: 420 })
+    rerender(<div data-outer-scroll><LiveVoiceChat compact /></div>)
+    expect(captions.scrollTop).toBe(420)
+    expect(outer.scrollTop).toBe(345)
+    expect(scrollIntoView).not.toHaveBeenCalled()
+    expect(screen.getByText("Latest caption")).toBeInTheDocument()
+
+    captions.scrollTop = 40
+    fireEvent.scroll(captions)
+    fixture.session = session({
+      connected: true,
+      status: "listening",
+      transcript: [
+        { id: "first", role: "user", text: "First caption", final: false },
+        { id: "latest", role: "assistant", text: "Latest caption", final: false },
+        { id: "newest", role: "user", text: "Newest caption", final: false },
+      ],
+    })
+    Object.defineProperty(captions, "scrollHeight", { configurable: true, value: 520 })
+    rerender(<div data-outer-scroll><LiveVoiceChat compact /></div>)
+    expect(captions.scrollTop).toBe(40)
+    expect(outer.scrollTop).toBe(345)
+  })
 })

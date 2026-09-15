@@ -109,8 +109,12 @@ function LiveVoiceChat({
 
   // Input and output can overlap. Keep their actual caption rows in sequence.
   const latestTurns = React.useMemo(() => transcript.filter(turn => turn.text.trim()).slice(-8), [transcript])
-  const captionEnd = React.useRef<HTMLDivElement>(null)
-  React.useEffect(() => { captionEnd.current?.scrollIntoView?.({ block: "nearest" }) }, [latestTurns])
+  const captionViewport = React.useRef<HTMLDivElement>(null)
+  const followLatestCaption = React.useRef(true)
+  React.useLayoutEffect(() => {
+    const viewport = captionViewport.current
+    if (viewport && followLatestCaption.current) viewport.scrollTop = viewport.scrollHeight
+  }, [latestTurns])
 
   const statusCopy = voice.error ?? (
     busy
@@ -177,8 +181,14 @@ function LiveVoiceChat({
 
       {latestTurns.length > 0 && (
         <div
+          ref={captionViewport}
           aria-label={t("liveScout.voice.transcript")}
           data-voice-transcript-density={compact ? "compact" : "full"}
+          onScroll={(event) => {
+            const viewport = event.currentTarget
+            followLatestCaption.current =
+              viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 24
+          }}
           className={cn(
             "flex w-full flex-col overflow-y-auto text-left",
             compact
@@ -194,7 +204,6 @@ function LiveVoiceChat({
               </ChatTurn>
             )
           })}
-          <div ref={captionEnd} />
         </div>
       )}
 
