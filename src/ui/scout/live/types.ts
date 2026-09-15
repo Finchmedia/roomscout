@@ -83,8 +83,12 @@ export interface LiveScoutSurfaceProps {
   copy: LiveScoutCopy;
   chatSlot?: React.ReactNode;
   profileMenuSlot?: React.ReactNode;
+  /**
+   * The mounted call surface. Its position remains stable while the stage and
+   * the scrollable text/candidate/offer companion below it change.
+   */
   voiceSlot?: React.ReactNode;
-  /** A selected candidate stays beside the active conversation. */
+  /** A selected candidate scrolls below the pinned active conversation. */
   detailSlot?: React.ReactNode;
   briefFacts?: React.ReactNode;
   briefExpanded?: boolean;

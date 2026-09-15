@@ -361,6 +361,12 @@ export function ScoutPage() {
       </> : null}
     </div>
   </FactList>;
+  const showScoutChat = (!voiceOpen && stage === "discovery") || (chatOpen && (voiceOpen || stage !== "brief")) || Boolean(voice.pendingTextDraft);
+  const voiceCompact = voiceOpen && (
+    showScoutChat ||
+    focusedConversationId !== undefined ||
+    ((stage === "offer" || stage === "provider-update") && Boolean(offerSlot))
+  );
   return <LiveScoutSurface stage={stage} band={{ displayName: currentUser?.displayName ?? currentUser?.username ?? "" }}
     profileMenuSlot={<LiveProfileMenu name={currentUser?.displayName ?? currentUser?.username ?? ""} operator={currentUser?.role === "operator"} />}
     copy={{
@@ -381,8 +387,8 @@ export function ScoutPage() {
     }}
     briefReviewSlot={brief}
     briefExpanded={manualBrief}
-    chatSlot={((!voiceOpen && stage === "discovery") || (chatOpen && (voiceOpen || stage !== "brief")) || Boolean(voice.pendingTextDraft)) ? <ScoutChat key={threadId ?? "loading"} messages={messages.length ? messages : [{ id: "intro", author: "scout", body: t("liveScout.intro") }]} onSend={send} replying={(!liveConnected && scoutBusy) || !threadId} restoredDraft={voice.pendingTextDraft || undefined} onDraftRestored={voice.clearPendingTextDraft} labels={chatLabels} error={error} onVoice={openVoice} autoFocus decision={openDecision} decisionOfferHash={decisionOfferHash} onAnswerDecision={async (decisionId, choice, text) => { await answerOpenDecision(decisionId, choice, text); }} decisionAnsweredText={t("liveScout.decisionAnswered")} hasMoreHistory={history.status === "CanLoadMore"} historyBusy={history.status === "LoadingMore"} onLoadHistory={() => history.loadMore(60)} /> : undefined}
-    voiceSlot={voiceOpen ? <LiveVoiceChat onText={openChat} onEnd={() => { setVoiceOpen(false); setTextOpen(true); }} /> : undefined}
+    chatSlot={showScoutChat ? <ScoutChat key={threadId ?? "loading"} className={voiceOpen ? "h-full max-h-full min-h-[18rem]" : undefined} messages={messages.length ? messages : [{ id: "intro", author: "scout", body: t("liveScout.intro") }]} onSend={send} replying={(!liveConnected && scoutBusy) || !threadId} restoredDraft={voice.pendingTextDraft || undefined} onDraftRestored={voice.clearPendingTextDraft} labels={chatLabels} error={error} onVoice={openVoice} autoFocus decision={openDecision} decisionOfferHash={decisionOfferHash} onAnswerDecision={async (decisionId, choice, text) => { await answerOpenDecision(decisionId, choice, text); }} decisionAnsweredText={t("liveScout.decisionAnswered")} hasMoreHistory={history.status === "CanLoadMore"} historyBusy={history.status === "LoadingMore"} onLoadHistory={() => history.loadMore(60)} /> : undefined}
+    voiceSlot={voiceOpen ? <LiveVoiceChat compact={voiceCompact} onText={openChat} onEnd={() => { setVoiceOpen(false); setTextOpen(true); }} /> : undefined}
     providerUpdateSlot={offerSlot} offerSlot={offerSlot} detailSlot={detailSlot}
     decisionSlot={decisionSlot} railSlot={railSlot} asideSlot={asideSlot}
     completeSlot={<Link className="text-rs-ink-2 underline underline-offset-4" to="/app/inbox">{t("liveScout.viewMessages")}</Link>}

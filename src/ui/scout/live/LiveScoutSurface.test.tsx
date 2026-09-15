@@ -1,4 +1,5 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import * as React from "react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LiveScoutSurface } from "./LiveScoutSurface";
@@ -104,5 +105,58 @@ describe("live Scout surface columns", () => {
     renderSurface("blocked", { decisionSlot: <div>Soll ich das senden?</div> });
     expect(screen.getByRole("heading", { name: "Hier brauche ich kurz deine Hilfe." })).toBeInTheDocument();
     expect(screen.getAllByText("Soll ich das senden?")).toHaveLength(1);
+  });
+
+  it("keeps one pinned voice subtree while typing gives way to an interactive offer", () => {
+    let mounts = 0;
+    let unmounts = 0;
+    const reviewOffer = vi.fn();
+
+    function VoiceProbe() {
+      React.useEffect(() => {
+        mounts += 1;
+        return () => { unmounts += 1; };
+      }, []);
+      return <div data-testid="voice-probe">Active call controls</div>;
+    }
+
+    function Harness({ stage }: { stage: "discovery" | "offer" }) {
+      return (
+        <MemoryRouter>
+          <LiveScoutSurface
+            stage={stage}
+            band={{ displayName: "Test Band" }}
+            copy={copy}
+            voiceSlot={<VoiceProbe />}
+            chatSlot={stage === "discovery" ? <div>Text composer and history</div> : undefined}
+            offerSlot={stage === "offer" ? <button type="button" onClick={reviewOffer}>Review exact offer</button> : undefined}
+            asideSlot={<div>All saved facts</div>}
+            onChat={vi.fn()}
+            onCloseChat={vi.fn()}
+            onVoice={vi.fn()}
+            onReviewBrief={vi.fn()}
+            onActivate={vi.fn()}
+            onPause={vi.fn()}
+            onResume={vi.fn()}
+            onSettings={vi.fn()}
+          />
+        </MemoryRouter>
+      );
+    }
+
+    const view = render(<Harness stage="discovery" />);
+    const voiceNode = screen.getByTestId("voice-probe");
+    expect(voiceNode.parentElement).toHaveAttribute("data-voice-sticky", "true");
+    expect(document.querySelector('[data-voice-companion-scroll="true"]')).toHaveClass("overflow-y-auto", "flex-1", "min-h-0");
+    expect(screen.getByText("Text composer and history")).toBeInTheDocument();
+    expect(screen.getAllByText("All saved facts").length).toBeGreaterThan(0);
+
+    view.rerender(<Harness stage="offer" />);
+    expect(screen.getByTestId("voice-probe")).toBe(voiceNode);
+    expect(mounts).toBe(1);
+    expect(unmounts).toBe(0);
+    expect(screen.queryByText("Text composer and history")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review exact offer" }));
+    expect(reviewOffer).toHaveBeenCalledOnce();
   });
 });

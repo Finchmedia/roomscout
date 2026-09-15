@@ -33,6 +33,8 @@ interface LiveVoiceChatProps {
   onEnd?: () => void
   onText?: () => void
   title?: React.ReactNode
+  /** Keep the active call small while text, a candidate, or an offer shares the centre pane. */
+  compact?: boolean
   /** Suppress the decorative blob when the parent stage already renders one. */
   hideBlob?: boolean
   labels?: Partial<LiveVoiceChatLabels>
@@ -61,6 +63,7 @@ function LiveVoiceChat({
   onEnd,
   onText,
   title,
+  compact = false,
   hideBlob = false,
   labels: labelOverrides,
   className,
@@ -110,19 +113,23 @@ function LiveVoiceChat({
     <section
       aria-label={t("liveScout.voice.region")}
       data-scout-conversation="voice"
+      data-compact={compact || undefined}
       className={cn(
-        "flex min-h-0 w-full flex-col items-center justify-center gap-[var(--space-11)] rounded-card border border-rs-border-card bg-rs-surface-card px-[var(--space-7)] py-[var(--space-13)] text-center",
+        "flex min-h-0 w-full flex-col rounded-card border border-rs-border-card bg-rs-surface-card",
+        compact
+          ? "items-stretch justify-start gap-[var(--space-5)] px-[var(--space-5)] py-[var(--space-5)] text-left"
+          : "items-center justify-center gap-[var(--space-11)] px-[var(--space-7)] py-[var(--space-13)] text-center",
         className
       )}
     >
-      {!hideBlob && <ScoutBlob state={blobState(voice.status)} size={160} />}
+      {!hideBlob && !compact ? <ScoutBlob state={blobState(voice.status)} size={160} /> : null}
 
-      <div className="max-w-[38rem]">
-        <h2 className="text-[length:var(--text-card-title-size)] font-light text-rs-ink">{title ?? t("liveScout.voice.title")}</h2>
+      <div className={cn("max-w-[38rem]", compact && "w-full max-w-none")}>
+        <h2 className={cn("font-light text-rs-ink", compact ? "text-[length:var(--text-body-lg-size)]" : "text-[length:var(--text-card-title-size)]")}>{title ?? t("liveScout.voice.title")}</h2>
         <p
           role={voice.error ? "alert" : "status"}
           className={cn(
-            "mt-[var(--space-4)] text-[length:var(--text-body-sm-size)] text-rs-ink-6",
+            compact ? "mt-[var(--space-2)] text-[length:var(--text-caption-size)] text-rs-ink-6" : "mt-[var(--space-4)] text-[length:var(--text-body-sm-size)] text-rs-ink-6",
             voice.error && "text-rs-red-text"
           )}
         >
@@ -144,7 +151,16 @@ function LiveVoiceChat({
       ) : null}
 
       {latestTurns.length > 0 && (
-        <div aria-label={t("liveScout.voice.transcript")} className="flex max-h-[32vh] w-full max-w-[42rem] flex-col gap-[var(--space-5)] overflow-y-auto text-left">
+        <div
+          aria-label={t("liveScout.voice.transcript")}
+          data-voice-transcript-density={compact ? "compact" : "full"}
+          className={cn(
+            "flex w-full flex-col overflow-y-auto text-left",
+            compact
+              ? "max-h-[8.5rem] max-w-none gap-[var(--space-3)] rounded-control bg-rs-surface-inset px-[var(--space-4)] py-[var(--space-3)]"
+              : "max-h-[32vh] max-w-[42rem] gap-[var(--space-5)]"
+          )}
+        >
           {latestTurns.map((turn) => {
             const user = turn.role === "user"
             return (
@@ -157,10 +173,11 @@ function LiveVoiceChat({
         </div>
       )}
 
-      <div aria-label={labels.controls} role="group" className="flex flex-wrap items-start justify-center gap-[var(--space-9)]">
+      <div aria-label={labels.controls} role="group" className={cn("flex flex-wrap items-start justify-center", compact ? "gap-[var(--space-5)]" : "gap-[var(--space-9)]")}>
         {!active && !busy && (
           <VoiceControl
             tone="accent"
+            density={compact ? "narrow" : "wide"}
             label={voice.status === "error" || voice.status === "disconnected" ? labels.reconnect : labels.connect}
             onClick={() => void voice.connect()}
           >
@@ -169,7 +186,7 @@ function LiveVoiceChat({
         )}
 
         {busy && (
-          <VoiceControl tone="danger" label={labels.cancel} onClick={end}>
+          <VoiceControl density={compact ? "narrow" : "wide"} tone="danger" label={labels.cancel} onClick={end}>
             <Icon name="close" size={22} />
           </VoiceControl>
         )}
@@ -178,6 +195,7 @@ function LiveVoiceChat({
           <>
             <VoiceControl
               tone="accent"
+              density={compact ? "narrow" : "wide"}
               active={!voice.muted}
               label={voice.muted ? labels.microphoneOn : labels.microphoneOff}
               onClick={() => voice.setMuted(!voice.muted)}
@@ -185,11 +203,11 @@ function LiveVoiceChat({
               <Icon name={voice.muted ? "mic-off" : "mic"} size={22} />
             </VoiceControl>
             {(voice.scoutSpeaking || voice.status === "speaking") && (
-              <VoiceControl label={labels.interrupt} onClick={voice.interrupt}>
+              <VoiceControl density={compact ? "narrow" : "wide"} label={labels.interrupt} onClick={voice.interrupt}>
                 <Icon name="pause" size={22} />
               </VoiceControl>
             )}
-            <VoiceControl tone="danger" label={labels.end} onClick={end}>
+            <VoiceControl density={compact ? "narrow" : "wide"} tone="danger" label={labels.end} onClick={end}>
               <Icon name="close" size={22} />
             </VoiceControl>
           </>

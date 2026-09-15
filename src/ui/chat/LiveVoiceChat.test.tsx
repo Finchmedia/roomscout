@@ -109,4 +109,50 @@ describe("LiveVoiceChat", () => {
     const { container } = render(<LiveVoiceChat hideBlob />)
     expect(container.querySelector('[data-slot="scout-blob"]')).toBeNull()
   })
+
+  it("keeps real captions and call controls usable in compact companion mode", () => {
+    fixture.session = session({
+      connected: true,
+      status: "speaking",
+      transcript: [
+        { id: "user", role: "user", text: "Wednesday evenings, around three hundred euros.", final: true },
+        { id: "scout", role: "assistant", text: "I am updating the saved search.", final: false },
+      ],
+    })
+    const onText = vi.fn()
+    const { container } = render(
+      <LiveVoiceChat
+        compact
+        onText={onText}
+        labels={{
+          end: "End conversation",
+          interrupt: "Interrupt Scout",
+          microphoneOff: "Turn microphone off",
+          switchToText: "Switch to text",
+        }}
+      />,
+    )
+
+    const surface = container.querySelector('[data-scout-conversation="voice"]')
+    const transcript = container.querySelector('[data-voice-transcript-density="compact"]')
+    expect(surface).toHaveAttribute("data-compact", "true")
+    expect(container.querySelector('[data-slot="scout-blob"]')).toBeNull()
+    expect(transcript).toHaveAttribute("data-voice-transcript-density", "compact")
+    expect(transcript).toHaveTextContent("Wednesday evenings, around three hundred euros.")
+    expect(transcript).toHaveTextContent("I am updating the saved search.")
+
+    const mic = screen.getByRole("button", { name: "Turn microphone off" })
+    const interrupt = screen.getByRole("button", { name: "Interrupt Scout" })
+    const end = screen.getByRole("button", { name: "End conversation" })
+    expect(mic).toHaveAttribute("data-density", "narrow")
+    expect(interrupt).toHaveAttribute("data-density", "narrow")
+    expect(end).toHaveAttribute("data-density", "narrow")
+
+    fireEvent.click(mic)
+    fireEvent.click(interrupt)
+    fireEvent.click(screen.getByRole("button", { name: "Switch to text" }))
+    expect(fixture.session.setMuted).toHaveBeenCalledWith(true)
+    expect(fixture.session.interrupt).toHaveBeenCalledOnce()
+    expect(onText).toHaveBeenCalledOnce()
+  })
 })

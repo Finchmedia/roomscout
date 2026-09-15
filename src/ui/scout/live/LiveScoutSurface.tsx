@@ -8,6 +8,7 @@ import { Sheet, SheetBody, SheetContent, SheetHeader, SheetTitle } from "@/compo
 import { StatusDot } from "@/components/ui/status-dot";
 import { AppHeader } from "@/ui/chrome/AppHeader";
 import { StageBackground } from "@/ui/chrome/StageBackground";
+import { cn } from "@/lib/utils";
 import { useNarrow } from "../state/useNarrow";
 import type { LiveScoutStage, LiveScoutSurfaceProps } from "./types";
 
@@ -120,6 +121,8 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
   const briefReview = typeof props.briefReviewSlot === "function"
     ? props.briefReviewSlot({ onReviewBrief: props.onReviewBrief, onActivate: props.onActivate })
     : props.briefReviewSlot;
+  const voiceDetailSlot = props.detailSlot ?? (stage === "offer" ? props.offerSlot : stage === "provider-update" ? props.providerUpdateSlot : null);
+  const voiceHasScrollableCompanion = Boolean(props.chatSlot || voiceDetailSlot);
 
   let content: React.ReactNode;
   switch (stage) {
@@ -201,13 +204,32 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
   // Status and domain cards can update without remounting the conversation.
   if (props.voiceSlot) {
     content = (
-      <div className="flex min-w-0 flex-1 flex-col gap-[var(--space-8)] px-[var(--space-7)] py-[var(--space-7)]" data-live-scout-stage={stage}>
-        <div className="w-full">{props.voiceSlot}</div>
-        {props.chatSlot ? <div className="w-full" data-voice-text-companion>{props.chatSlot}</div> : null}
-        {working ? <p role="status" className="text-center text-sm text-rs-ink-4">{stage === "paused" ? copy.pausedHeadline : props.decisionSlot ? copy.blockedHeadline : copy.workingHeadline}</p> : null}
-        {props.decisionSlot ? <div>{props.decisionSlot}</div> : null}
-        {props.detailSlot ?? (stage === "offer" ? props.offerSlot : stage === "provider-update" ? props.providerUpdateSlot : null)}
-        {stage === "complete" ? <div className="text-center">{copy.completeHeadline}{props.completeSlot}</div> : null}
+      <div
+        className={cn(
+          "flex min-h-0 min-w-0 flex-1 flex-col gap-[var(--space-7)] px-[var(--space-5)] py-[var(--space-5)] min-[960px]:px-[var(--space-7)] min-[960px]:py-[var(--space-7)]",
+          voiceHasScrollableCompanion && "h-full overflow-hidden"
+        )}
+        data-live-scout-stage={stage}
+      >
+        <div
+          className={cn("w-full shrink-0", voiceHasScrollableCompanion && "sticky top-0 z-4")}
+          data-voice-sticky={voiceHasScrollableCompanion || undefined}
+        >
+          {props.voiceSlot}
+        </div>
+        <div
+          className={cn(
+            "flex w-full flex-col gap-[var(--space-7)]",
+            voiceHasScrollableCompanion && "min-h-0 flex-1 overflow-y-auto overscroll-contain pb-[var(--space-2)] [scrollbar-width:thin]"
+          )}
+          data-voice-companion-scroll={voiceHasScrollableCompanion || undefined}
+        >
+          {props.chatSlot ? <div className="h-full min-h-0 w-full" data-voice-text-companion>{props.chatSlot}</div> : null}
+          {working ? <p role="status" className="text-center text-sm text-rs-ink-4">{stage === "paused" ? copy.pausedHeadline : props.decisionSlot ? copy.blockedHeadline : copy.workingHeadline}</p> : null}
+          {props.decisionSlot ? <div>{props.decisionSlot}</div> : null}
+          {voiceDetailSlot}
+          {stage === "complete" ? <div className="text-center">{copy.completeHeadline}{props.completeSlot}</div> : null}
+        </div>
       </div>
     );
   } else if (props.detailSlot) {
