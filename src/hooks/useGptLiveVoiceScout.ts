@@ -1005,8 +1005,8 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
           greetedGenerationRef.current = generation;
           appendInstructions(
             localeRef.current === "en"
-              ? "Greet the musician briefly in English now, ask what matters for their rehearsal room, then pause and listen."
-              : "Begrüße den Musiker jetzt kurz auf Deutsch, frage, was beim Proberaum wichtig ist, und höre dann zu.",
+              ? "Apply the existing SESSION OPENING rule now in English. Follow it exactly."
+              : "Wende jetzt die bestehende Regel SESSION OPENING auf Deutsch an. Befolge sie genau.",
           );
         }
         return;

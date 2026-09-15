@@ -141,7 +141,11 @@ it("requires the explicit Live provider and app session headers", async () => {
 describe("useGptLiveVoiceScout", () => {
   async function connect(
     delegate: (args: never) => Promise<LiveDelegateResult>,
-    captureOptions: { enableEarlyFactCapture?: boolean; earlyFactCaptureCadenceMs?: number } = {},
+    captureOptions: {
+      enableEarlyFactCapture?: boolean;
+      earlyFactCaptureCadenceMs?: number;
+      initialLocale?: "en" | "de";
+    } = {},
   ) {
     const connection = installConnection();
     const createSession = vi.fn().mockResolvedValue({
@@ -163,6 +167,23 @@ describe("useGptLiveVoiceScout", () => {
     await waitFor(() => expect(hook.result.current.connectionState).toBe("active"));
     return { ...connection, ...hook };
   }
+
+  it("triggers the server-owned session opening without imposing a client question", async () => {
+    for (const [locale, expected] of [
+      ["en", "Apply the existing SESSION OPENING rule now in English. Follow it exactly."],
+      ["de", "Wende jetzt die bestehende Regel SESSION OPENING auf Deutsch an. Befolge sie genau."],
+    ] as const) {
+      const hook = await connect(
+        vi.fn().mockResolvedValue(completed("none", [])) as never,
+        { initialLocale: locale },
+      );
+      act(() => serverEvent(hook.channel, { type: "session.started" }));
+      const opening = hook.sent.find((event) => event.type === "session.instructions.append");
+      expect(opening).toEqual(expect.objectContaining({ content: expected }));
+      expect(String(opening?.content)).not.toMatch(/ask what matters|frage, was/i);
+      hook.unmount();
+    }
+  });
 
   it("retains an early delegation until a user fragment arrives", async () => {
     const delegate = vi.fn().mockImplementation(async (args: { requestId: string }) =>
