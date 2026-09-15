@@ -20,6 +20,11 @@ import {
 const FIXTURE_PREFIX = "gpt-live-proof-";
 const FIXTURE_CONFIRMATION = "CREATE_ISOLATED_GPT_LIVE_FIXTURE";
 const EXPLICIT_ISOLATED_TEST_USER = "live-scout-check-0915";
+const CURRENT_ISOLATED_TEST_USER = "gpt-live-proof-0915-b";
+const inspectUsernameValidator = v.union(
+  v.literal(EXPLICIT_ISOLATED_TEST_USER),
+  v.literal(CURRENT_ISOLATED_TEST_USER),
+);
 
 const resultValidator = v.object({
   ownerId: v.id("users"),
@@ -338,7 +343,7 @@ export const create = internalMutation({
 /** Read-only post-proof assertions. No message, request payload, or secret text is returned. */
 export const inspect = internalQuery({
   args: {
-    username: v.literal(EXPLICIT_ISOLATED_TEST_USER),
+    username: inspectUsernameValidator,
     fixtureKey: v.string(),
     confirmation: v.literal(FIXTURE_CONFIRMATION),
   },
@@ -349,7 +354,7 @@ export const inspect = internalQuery({
       throw new ConvexError({ code: "INVALID_LIVE_PROOF_FIXTURE_TARGET" });
     }
     const owner = await ctx.db.query("users").withIndex("by_username", (q) =>
-      q.eq("username", EXPLICIT_ISOLATED_TEST_USER),
+      q.eq("username", args.username),
     ).unique();
     if (!owner || owner.role !== "musician" || owner.username !== args.username) {
       throw new ConvexError({ code: "SYNTHETIC_LIVE_PROOF_USER_REQUIRED" });
