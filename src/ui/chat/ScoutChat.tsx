@@ -1,5 +1,6 @@
 import { useSmoothText } from "@convex-dev/agent/react"
 import * as React from "react"
+import { ArrowDownIcon } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
@@ -7,7 +8,7 @@ import { ChatComposer } from "@/ui/chat/ChatComposer"
 import { DecisionCard, type OpenDecision } from "@/components/scout/DecisionCard"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
-import { Marker, MarkerContent } from "@/components/ui/marker"
+import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker"
 import { Message, MessageContent, MessageHeader } from "@/components/ui/message"
 import {
   MessageScroller,
@@ -17,6 +18,7 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller"
+import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 
 type ScoutChatAuthor = "scout" | "user" | "system"
@@ -61,6 +63,8 @@ interface ScoutChatLabels {
   restoreDraft: string
   retry: string
   scout: string
+  /** Accessible name of the scroller's "jump to the newest message" button. */
+  scrollToEnd: string
   send: string
   sendError: string
   sending: string
@@ -125,6 +129,7 @@ const DEFAULT_LABELS: ScoutChatLabels = {
   restoreDraft: "Fehlgeschlagenen Entwurf wiederherstellen",
   retry: "Erneut senden",
   scout: "Dein Scout",
+  scrollToEnd: "Zu den neuesten Nachrichten",
   send: "Senden",
   sendError: "Die Nachricht konnte nicht gesendet werden.",
   sending: "Nachricht wird gesendet …",
@@ -202,7 +207,8 @@ const THINKING_VERB_INTERVAL = 2_200
  * The line the chat shows while the Scout works and has written nothing yet.
  *
  * Two things make it read as somebody thinking rather than as a frozen label:
- * the text sweeps (shadcn's `shimmer` utility from `shadcn/tailwind.css`), and the
+ * the text sweeps (shadcn's `shimmer` utility from `shadcn/tailwind.css`, next to
+ * a `Spinner` in the `MarkerIcon`, the way the shadcn docs show it), and the
  * verb rotates. The rotation starts at a random index, so two waits in a row do
  * not open with the same canned line, and the element is mounted only while the
  * Scout is pending — a new turn is therefore a new start, for free.
@@ -227,6 +233,9 @@ function ThinkingMarker({ label, verbs }: { label: string; verbs: readonly strin
 
   return (
     <Marker role="status" aria-label={label}>
+      <MarkerIcon>
+        <Spinner />
+      </MarkerIcon>
       <MarkerContent className="shimmer">
         {(verbs.length > 0 ? verbs[index % verbs.length] : undefined) ?? label}
       </MarkerContent>
@@ -327,7 +336,7 @@ function ScoutChat({
                 if (message.author === "system") {
                   return (
                     <MessageScrollerItem key={message.id} messageId={message.id}>
-                      <Marker role="status" aria-label={labels.system}>
+                      <Marker role="status" aria-label={labels.system} variant="separator">
                         <MarkerContent>{message.body}</MarkerContent>
                       </Marker>
                     </MessageScrollerItem>
@@ -351,6 +360,9 @@ function ScoutChat({
                     {runningToolParts(message).map((part) => (
                       <MessageScrollerItem key={part.toolCallId} messageId={`${message.id}-${part.toolCallId}`}>
                         <Marker role="status" aria-label={labels.scout}>
+                          <MarkerIcon>
+                            <Spinner />
+                          </MarkerIcon>
                           <MarkerContent>{labels.tools[toolName(part.type)] ?? labels.toolDefault}</MarkerContent>
                         </Marker>
                       </MessageScrollerItem>
@@ -361,7 +373,7 @@ function ScoutChat({
                         <Message align={isUser ? "end" : "start"} role="group" aria-label={speaker}>
                           <MessageContent>
                             <MessageHeader aria-hidden="true">{speaker}</MessageHeader>
-                            <Bubble align={isUser ? "end" : "start"}>
+                            <Bubble align={isUser ? "end" : "start"} variant={isUser ? "tinted" : "secondary"}>
                               <BubbleContent>
                                 {isUser
                                   ? <MarkdownMessage body={message.body} />
@@ -375,7 +387,7 @@ function ScoutChat({
 
                     {message.status === "failed" ? (
                       <MessageScrollerItem messageId={`${message.id}-failed`}>
-                        <Marker role="status" aria-label={labels.failed} className="text-rs-red-text">
+                        <Marker role="status" aria-label={labels.failed} variant="separator" className="text-rs-red-text">
                           <MarkerContent className="flex items-center gap-[var(--space-3)]">
                             {labels.failed}
                             {retryBody ? (
@@ -397,7 +409,7 @@ function ScoutChat({
                     <Message align="end" role="group" aria-label={labels.user}>
                       <MessageContent>
                         <MessageHeader aria-hidden="true">{labels.user}</MessageHeader>
-                        <Bubble align="end"><BubbleContent>{echo.user}</BubbleContent></Bubble>
+                        <Bubble align="end" variant="tinted"><BubbleContent>{echo.user}</BubbleContent></Bubble>
                       </MessageContent>
                     </Message>
                   </MessageScrollerItem>
@@ -406,7 +418,7 @@ function ScoutChat({
                       <Message align="start" role="group" aria-label={labels.scout}>
                         <MessageContent>
                           <MessageHeader aria-hidden="true">{labels.scout}</MessageHeader>
-                          <Bubble align="start"><BubbleContent>{echo.scout}</BubbleContent></Bubble>
+                          <Bubble align="start" variant="secondary"><BubbleContent>{echo.scout}</BubbleContent></Bubble>
                         </MessageContent>
                       </Message>
                     </MessageScrollerItem>
@@ -427,7 +439,10 @@ function ScoutChat({
               )}
             </MessageScrollerContent>
           </MessageScrollerViewport>
-          <MessageScrollerButton />
+          <MessageScrollerButton>
+            <ArrowDownIcon />
+            <span className="sr-only">{labels.scrollToEnd}</span>
+          </MessageScrollerButton>
         </MessageScroller>
       </MessageScrollerProvider>
 

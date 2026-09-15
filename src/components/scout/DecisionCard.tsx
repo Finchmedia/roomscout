@@ -139,7 +139,7 @@ export function DecisionCard({ decision, onAnswer, offerHash, busy = false }: De
 
     {message ? <div className="flex flex-col gap-[var(--space-3)]">
       {messageKind ? <span className="text-[length:var(--text-caption-size)] text-rs-ink-6">{t("liveScout.decisionMessage")}</span> : null}
-      <Bubble align="start" className="max-w-full">
+      <Bubble align="start" variant="secondary" className="max-w-full">
         <BubbleContent><blockquote className="m-0">{message}</blockquote></BubbleContent>
       </Bubble>
     </div> : null}

@@ -8,6 +8,8 @@ export const liveScoutDe = {
   // Chat states, all read off the thread: the reply is on its way, is being
   // written, or the turn failed and can be sent again.
   thinking: "Dein Scout denkt nach …",
+  /** Accessible name of the scroller's "jump to the newest message" button. */
+  scrollToEnd: "Zu den neuesten Nachrichten",
   /**
    * What the Marker says while the Scout works and has not written a word yet.
    * One is picked at random per turn and they rotate every ~2.2 s, so a long

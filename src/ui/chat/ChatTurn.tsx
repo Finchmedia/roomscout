@@ -80,7 +80,7 @@ function ChatTurn({
     >
       <MessageContent>
         {label ? <MessageHeader>{label}</MessageHeader> : null}
-        <Bubble align={align}>
+        <Bubble align={align} variant={who === "user" ? "tinted" : "secondary"}>
           <BubbleContent className={bodyClassName}>{children}</BubbleContent>
         </Bubble>
       </MessageContent>

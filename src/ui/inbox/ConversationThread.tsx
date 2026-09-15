@@ -1,5 +1,6 @@
 import * as React from "react";
 import type { FunctionReturnType } from "convex/server";
+import { ArrowDownIcon } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { api } from "../../../convex/_generated/api";
 import { DecisionCard, type OpenDecision } from "../../components/scout/DecisionCard";
@@ -127,7 +128,7 @@ export function ConversationThread({
         return <Message align="start" role="group" aria-label={speaker}>
           <MessageContent>
             <MessageHeader>{speaker}</MessageHeader>
-            <Bubble align="start"><BubbleContent>{item.text}</BubbleContent></Bubble>
+            <Bubble align="start" variant="secondary"><BubbleContent>{item.text}</BubbleContent></Bubble>
             <MessageFooter>{stamp(item.at)}</MessageFooter>
           </MessageContent>
         </Message>;
@@ -139,7 +140,7 @@ export function ConversationThread({
         return <Message align="end" role="group" aria-label={speaker}>
           <MessageContent>
             <MessageHeader>{speaker}</MessageHeader>
-            <Bubble align="end"><BubbleContent>{item.text}</BubbleContent></Bubble>
+            <Bubble align="end" variant="tinted"><BubbleContent>{item.text}</BubbleContent></Bubble>
             <MessageFooter>{stamp(item.at)}</MessageFooter>
           </MessageContent>
         </Message>;
@@ -152,7 +153,7 @@ export function ConversationThread({
         return <Message align="end" role="group" aria-label={speaker}>
           <MessageContent>
             <MessageHeader>{speaker}</MessageHeader>
-            <Bubble align="end"><BubbleContent>{item.text}</BubbleContent></Bubble>
+            <Bubble align="end" variant="tinted"><BubbleContent>{item.text}</BubbleContent></Bubble>
             <MessageFooter className="flex flex-wrap items-center justify-end gap-[var(--space-3)]">
               <span>{acceptance ? t("liveInbox.pendingAcceptance") : pendingFooter(item)}</span>
               {acceptance && offer ? (
@@ -174,7 +175,7 @@ export function ConversationThread({
         return <Message align="end" role="group" aria-label={t("liveInbox.youToScout")}>
           <MessageContent>
             <MessageHeader>{t("liveInbox.youToScout")}</MessageHeader>
-            <Bubble align="end"><BubbleContent>{item.text}</BubbleContent></Bubble>
+            <Bubble align="end" variant="tinted"><BubbleContent>{item.text}</BubbleContent></Bubble>
             <MessageFooter>{stamp(item.at)}</MessageFooter>
           </MessageContent>
         </Message>;
@@ -202,7 +203,7 @@ export function ConversationThread({
             onAnswer={async (choice, _label, text) => { await onAnswerDecision(item.decision._id, choice, text); }}
           />;
         }
-        return <Marker>
+        return <Marker variant="separator">
           <MarkerContent>
             {t("liveInbox.decisionAnswered", {
               label: item.decision.question,
@@ -256,7 +257,10 @@ export function ConversationThread({
             ))}
           </MessageScrollerContent>
         </MessageScrollerViewport>
-        <MessageScrollerButton />
+        <MessageScrollerButton>
+          <ArrowDownIcon />
+          <span className="sr-only">{t("liveInbox.scrollToEnd")}</span>
+        </MessageScrollerButton>
       </MessageScroller>
     </MessageScrollerProvider>
 

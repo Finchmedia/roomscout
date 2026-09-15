@@ -56,6 +56,15 @@ export default tseslint.config(
     },
   },
   {
+    // Files written by `npx shadcn add` stay verbatim (the CLI is the source of
+    // truth, see docs/BUILD_LOG.md 2026-09-15). Upstream exports cva variants
+    // and hooks next to the components, so the fast-refresh rule is off here.
+    files: ["src/components/ui/**/*.{ts,tsx}"],
+    rules: {
+      "react-refresh/only-export-components": "off",
+    },
+  },
+  {
     // The local Firecrawl component intentionally preserves upstream source
     // byte-for-byte where possible. Match upstream's lint posture instead of
     // rewriting its provider-envelope and callback types during vendoring.

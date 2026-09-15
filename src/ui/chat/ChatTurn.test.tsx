@@ -12,15 +12,13 @@ const bubble = (container: HTMLElement) =>
 describe("ChatTurn", () => {
   afterEach(cleanup)
 
-  it("puts the musician on the right in the rust bubble", () => {
+  it("puts the musician on the right in the tinted bubble", () => {
     const { container } = render(<ChatTurn who="user">Mittwoch passt</ChatTurn>)
 
     expect(turn(container)).toHaveAttribute("data-align", "end")
     expect(turn(container)).toHaveAttribute("data-who", "user")
     expect(bubble(container)).toHaveAttribute("data-align", "end")
-    expect(
-      container.querySelector('[data-slot="bubble-content"]')?.className
-    ).toContain("group-data-[align=end]/bubble:bg-rs-rust")
+    expect(bubble(container)).toHaveAttribute("data-variant", "tinted")
     expect(screen.getByText("Mittwoch passt")).toBeInTheDocument()
   })
 

@@ -217,6 +217,7 @@ export function ScoutPage() {
   // what it passed or got back.
   const chatLabels = {
     thinking: t("liveScout.thinking"), replying: t("liveScout.replying"),
+    scrollToEnd: t("liveScout.scrollToEnd"),
     // The rotating status verbs come from the dictionary, not from the chat's
     // own German fallback — `THINKING_VERB_KEYS` is the rotation order.
     thinkingVerbs: THINKING_VERB_KEYS.map(key => t(key)),

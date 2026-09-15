@@ -10,6 +10,7 @@ export const liveInboxDe = {
   title: "Nachrichten",
   navAria: "Nachrichten",
   messagesAria: "Nachrichtenverlauf",
+  scrollToEnd: "Zu den neuesten Nachrichten",
 
   count: { one: "{count} Unterhaltung", other: "{count} Unterhaltungen" },
 
