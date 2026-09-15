@@ -11,11 +11,13 @@ const need = (status: Doc<"savedNeeds">["status"]) => ({
 }) as Doc<"savedNeeds">;
 
 describe("search discovery case card", () => {
-  it("forbids recapping the captured facts and asks for exactly one follow-up question", () => {
+  it("forbids recapping captured facts and makes follow-up questions optional", () => {
     const card = buildScoutCaseCard({ mode: "search_discovery", need: need("draft") });
     expect(card).toContain("NEVER RECAP THE FACTS");
     expect(card).toContain("Suchauftrag panel");
-    expect(card).toContain("EXACTLY ONE focused follow-up question");
+    expect(card).toContain("at most one short acknowledging sentence");
+    expect(card).toContain("Add one focused follow-up only when QUESTION GATE permits it");
+    expect(card).not.toContain("EXACTLY ONE focused follow-up question");
     expect(card).not.toContain("summarize for confirmation");
   });
 
@@ -41,6 +43,9 @@ describe("search discovery case card", () => {
   it("asks only about genuine gaps and separates saved requirements from room capabilities", () => {
     const card = buildScoutCaseCard({ mode: "search_discovery", need: need("draft") });
     expect(card).toContain("QUESTION GATE");
+    expect(card).toContain("A missing optional field is not a material gap by itself");
+    expect(card).toContain("do not turn discovery into a form");
+    expect(card).toContain("blocks a useful next step or the musician explicitly invites refinement");
     expect(card).toContain("arrangements=shared already answers whether they are open to sharing");
     expect(card).toContain("Wanting to leave gear is a storage requirement; it does not create a separate security question");
     expect(card).toContain("REQUIREMENT IS NOT CAPABILITY");
