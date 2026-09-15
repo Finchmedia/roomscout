@@ -36,6 +36,10 @@ interface LiveVoiceChatProps {
   title?: React.ReactNode
   /** Keep the active call small while text, a candidate, or an offer shares the centre pane. */
   compact?: boolean
+  /** Give captions more room when voice is the centre pane's primary conversation. */
+  primary?: boolean
+  /** Keep call controls visible while an explicit text view owns the conversation history. */
+  showTranscript?: boolean
   /** Suppress the decorative blob when the parent stage already renders one. */
   hideBlob?: boolean
   labels?: Partial<LiveVoiceChatLabels>
@@ -86,6 +90,8 @@ function LiveVoiceChat({
   onText,
   title,
   compact = false,
+  primary = false,
+  showTranscript = true,
   hideBlob = false,
   labels: labelOverrides,
   className,
@@ -149,27 +155,35 @@ function LiveVoiceChat({
       aria-label={t("liveScout.voice.region")}
       data-scout-conversation="voice"
       data-compact={compact || undefined}
+      data-primary={primary || undefined}
       className={cn(
         "flex min-h-0 w-full flex-col rounded-card border border-rs-border-card bg-rs-surface-card",
         compact
-          ? "max-h-[220px] items-stretch justify-start gap-[var(--space-3)] overflow-hidden px-[var(--space-4)] py-[var(--space-4)] text-left"
+          ? cn(
+              "items-stretch justify-start gap-[var(--space-3)] overflow-hidden px-[var(--space-4)] py-[var(--space-4)] text-left",
+              primary ? "max-h-[min(30rem,calc(100dvh-10rem))]" : "max-h-[220px]"
+            )
           : "items-center justify-center gap-[var(--space-11)] px-[var(--space-7)] py-[var(--space-13)] text-center",
         className
       )}
     >
       {!hideBlob && !compact ? <ScoutBlob state={blobState(voice.status)} size={160} /> : null}
+      {!hideBlob && compact && primary ? <ScoutBlob className="shrink-0 self-center" state={blobState(voice.status)} size={96} /> : null}
 
-      <div className={cn("max-w-[38rem]", compact && "flex w-full min-w-0 items-center justify-between gap-[var(--space-4)]")}>
-        <h2 className={cn("shrink-0 font-light text-rs-ink", compact ? "text-[length:var(--text-body-size)]" : "text-[length:var(--text-card-title-size)]")}>{title ?? t("liveScout.voice.title")}</h2>
-        <p
-          role={voice.error ? "alert" : "status"}
-          className={cn(
-            compact ? "min-w-0 truncate text-right text-[length:var(--text-micro-size)] text-rs-ink-6" : "mt-[var(--space-4)] text-[length:var(--text-body-sm-size)] text-rs-ink-6",
-            voice.error && "text-rs-red-text"
-          )}
-        >
-          {statusCopy}{voice.muted ? ` · ${t("liveScout.voice.muted")}` : ""}{backendStatusCopy ? ` · ${backendStatusCopy}` : ""}
-        </p>
+      <div className={cn("max-w-[38rem]", compact && "flex w-full min-w-0 items-center gap-[var(--space-4)]")}>
+        {!hideBlob && compact && !primary ? <ScoutBlob className="shrink-0" state={blobState(voice.status)} size={48} /> : null}
+        <div className={cn(compact && "flex min-w-0 flex-1 items-center justify-between gap-[var(--space-4)]")}>
+          <h2 className={cn("shrink-0 font-light text-rs-ink", compact ? "text-[length:var(--text-body-size)]" : "text-[length:var(--text-card-title-size)]")}>{title ?? t("liveScout.voice.title")}</h2>
+          <p
+            role={voice.error ? "alert" : "status"}
+            className={cn(
+              compact ? "min-w-0 truncate text-right text-[length:var(--text-micro-size)] text-rs-ink-6" : "mt-[var(--space-4)] text-[length:var(--text-body-sm-size)] text-rs-ink-6",
+              voice.error && "text-rs-red-text"
+            )}
+          >
+            {statusCopy}{voice.muted ? ` · ${t("liveScout.voice.muted")}` : ""}{backendStatusCopy ? ` · ${backendStatusCopy}` : ""}
+          </p>
+        </div>
       </div>
 
       {voice.provider === "live" && voice.backendState === "failed" ? (
@@ -179,7 +193,7 @@ function LiveVoiceChat({
         </div>
       ) : null}
 
-      {latestTurns.length > 0 && (
+      {showTranscript && latestTurns.length > 0 && (
         <div
           ref={captionViewport}
           aria-label={t("liveScout.voice.transcript")}
@@ -192,7 +206,10 @@ function LiveVoiceChat({
           className={cn(
             "flex w-full flex-col overflow-y-auto text-left",
             compact
-              ? "min-h-0 max-h-[5rem] flex-1 max-w-none gap-[var(--space-2)] rounded-control bg-rs-surface-inset px-[var(--space-3)] py-[var(--space-2)]"
+              ? cn(
+                  "min-h-0 flex-1 max-w-none gap-[var(--space-2)] rounded-control bg-rs-surface-inset px-[var(--space-3)] py-[var(--space-2)]",
+                  primary ? "max-h-[13rem]" : "max-h-[5rem]"
+                )
               : "max-h-[32vh] max-w-[42rem] gap-[var(--space-5)]"
           )}
         >

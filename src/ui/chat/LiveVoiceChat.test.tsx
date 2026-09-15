@@ -138,7 +138,7 @@ describe("LiveVoiceChat", () => {
     const controls = screen.getByRole("group", { name: "Gesprächssteuerung" })
     expect(surface).toHaveAttribute("data-compact", "true")
     expect(surface).toHaveClass("max-h-[220px]", "overflow-hidden")
-    expect(container.querySelector('[data-slot="scout-blob"]')).toBeNull()
+    expect(container.querySelector('[data-slot="scout-blob"]')).toHaveStyle({ "--scout-blob-size": "48px" })
     expect(transcript).toHaveAttribute("data-voice-transcript-density", "compact")
     expect(transcript).toHaveClass("max-h-[5rem]", "overflow-y-auto", "flex-1")
     expect(transcript).toHaveTextContent("Wednesday evenings, around three hundred euros.")
@@ -162,6 +162,36 @@ describe("LiveVoiceChat", () => {
     expect(fixture.session.setMuted).toHaveBeenCalledWith(true)
     expect(fixture.session.interrupt).toHaveBeenCalledOnce()
     expect(onText).toHaveBeenCalledOnce()
+  })
+
+  it("keeps the familiar blob above a larger caption stream in primary voice mode", () => {
+    fixture.session = session({
+      connected: true,
+      status: "listening",
+      transcript: [{ id: "caption", role: "assistant", text: "I am checking that now.", final: false }],
+    })
+    const { container } = render(<LiveVoiceChat compact primary />)
+    const surface = container.querySelector('[data-scout-conversation="voice"]')
+    const blob = container.querySelector('[data-slot="scout-blob"]')
+    const transcript = container.querySelector('[data-voice-transcript-density="compact"]')
+    expect(surface).toHaveAttribute("data-primary", "true")
+    expect(surface).toHaveClass("max-h-[min(30rem,calc(100dvh-10rem))]")
+    expect(blob).toHaveStyle({ "--scout-blob-size": "96px" })
+    expect(blob?.nextElementSibling).not.toBe(transcript)
+    expect(transcript).toHaveClass("max-h-[13rem]", "overflow-y-auto")
+  })
+
+  it("keeps call controls while the explicit text view suppresses live captions", () => {
+    fixture.session = session({
+      connected: true,
+      status: "listening",
+      transcript: [{ id: "caption", role: "user", text: "This belongs only to voice captions.", final: true }],
+    })
+    const { container } = render(<LiveVoiceChat compact showTranscript={false} />)
+    expect(container.querySelector('[data-voice-transcript-density]')).toBeNull()
+    expect(screen.queryByText("This belongs only to voice captions.")).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Mikrofon ausschalten" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Gespräch beenden" })).toBeInTheDocument()
   })
 
   it("scrolls only its caption viewport and preserves user-scrolled history", () => {

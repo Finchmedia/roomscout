@@ -122,7 +122,7 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
     ? props.briefReviewSlot({ onReviewBrief: props.onReviewBrief, onActivate: props.onActivate })
     : props.briefReviewSlot;
   const voiceDetailSlot = props.detailSlot ?? (stage === "offer" ? props.offerSlot : stage === "provider-update" ? props.providerUpdateSlot : null);
-  const voiceHasScrollableCompanion = Boolean(props.chatSlot || voiceDetailSlot);
+  const voiceHasScrollableCompanion = Boolean(props.chatSlot || voiceDetailSlot || props.decisionSlot);
   const conversationOpen = Boolean(props.chatSlot || props.voiceSlot);
 
   let content: React.ReactNode;

@@ -7,7 +7,7 @@ import { refreshNeedMatching, setNeedStatus } from "./lib/needLifecycle";
 import {
   MAX_SEARCH_RADIUS_KM,
   MIN_SEARCH_RADIUS_KM,
-  hasCompleteSavedNeedLocation,
+  getSavedNeedActivationReadiness,
   savedNeedLocationLabel,
   savedNeedLocationQuery,
 } from "./lib/savedNeedLocation";
@@ -337,7 +337,10 @@ export async function activateNeed(
   ownerId: Doc<"savedNeeds">["ownerId"],
   need: Doc<"savedNeeds">,
 ) {
-  if (!hasCompleteSavedNeedLocation(need)) throw new ConvexError({ code: "INCOMPLETE_NEED" });
+  const activation = getSavedNeedActivationReadiness(need);
+  if (!activation.canActivate) {
+    throw new ConvexError({ code: "INCOMPLETE_NEED", missingFields: activation.missingFields });
+  }
   const wasActive = need.status === "active";
   await setNeedStatus(ctx, need, "active");
   const now = Date.now();

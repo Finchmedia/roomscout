@@ -2,6 +2,10 @@
 import { convexTest } from "convex-test";
 import { expect, it } from "vitest";
 import { api, internal } from "./_generated/api";
+import {
+  getSavedNeedActivationReadiness,
+  savedNeedActivationClarificationQuestion,
+} from "./lib/savedNeedLocation";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -69,6 +73,7 @@ it("persists readiness for one exact draft revision without activating it", asyn
   expect(JSON.parse(voiceResult.outputJson)).toMatchObject({
     readyForReview: true,
     needRevision: 0,
+    missingFields: [],
     activationRequired: true,
   });
 
@@ -81,7 +86,7 @@ it("persists readiness for one exact draft revision without activating it", asyn
     ownerId: f.ownerId,
     threadId: "brief-thread",
     needId: f.needId,
-  })).readyAt).toBe(firstReadyAt);
+  }))).toMatchObject({ readyForReview: true, readyAt: firstReadyAt, missingFields: [] });
   expect((await f.t.run((ctx) => ctx.db.get(f.needId)))?.status).toBe("draft");
 
   await f.t.mutation(internal.savedNeeds.updateFromScout, {
@@ -101,6 +106,72 @@ it("persists readiness for one exact draft revision without activating it", asyn
   expect(await f.owner.query(api.scout.getMine, {})).toMatchObject({
     briefReadiness: { status: "ready", needRevision: 1 },
   });
+});
+
+it("keeps a normalized location without radius unready until the radius is saved", async () => {
+  const f = await fixture();
+  await f.t.run(async (ctx) => {
+    const context = await ctx.db.query("scoutContexts")
+      .withIndex("by_owner", (q) => q.eq("ownerId", f.ownerId)).unique();
+    if (!context) throw new Error("missing Scout context");
+    await ctx.db.patch(f.needId, { radiusKm: undefined });
+    await ctx.db.patch(context._id, { readyNeedRevision: 0, briefReadyAt: 900 });
+  });
+
+  expect(await f.owner.query(api.scout.getMine, {})).toMatchObject({
+    briefReadiness: {
+      status: "needs_edits",
+      needRevision: 0,
+      missingFields: ["radiusKm"],
+    },
+  });
+  const incomplete = await f.t.mutation(internal.scout.markBriefReady, {
+    ownerId: f.ownerId,
+    threadId: "brief-thread",
+    needId: f.needId,
+  });
+  expect(incomplete).toEqual({
+    readyForReview: false,
+    needRevision: 0,
+    missingFields: ["radiusKm"],
+    clarificationQuestion: "What radius around Berlin should I use?",
+  });
+  expect(await f.owner.query(api.scout.getMine, {})).toMatchObject({
+    briefReadiness: { status: "collecting", missingFields: ["radiusKm"] },
+  });
+  await expect(f.owner.mutation(api.savedNeeds.activate, { savedNeedId: f.needId }))
+    .rejects.toThrow("INCOMPLETE_NEED");
+
+  await f.t.mutation(internal.savedNeeds.updateFromScout, {
+    ownerId: f.ownerId,
+    needId: f.needId,
+    radiusKm: 10,
+  });
+  const ready = await f.t.mutation(internal.scout.markBriefReady, {
+    ownerId: f.ownerId,
+    threadId: "brief-thread",
+    needId: f.needId,
+  });
+  expect(ready).toMatchObject({
+    readyForReview: true,
+    needRevision: 1,
+    missingFields: [],
+  });
+  await expect(f.owner.mutation(api.savedNeeds.activate, { savedNeedId: f.needId }))
+    .resolves.toBeNull();
+  expect((await f.t.run((ctx) => ctx.db.get(f.needId)))?.status).toBe("active");
+});
+
+it("reports activation gaps and focused EN/DE questions without changing legacy city compatibility", () => {
+  expect(getSavedNeedActivationReadiness({ locationQuery: "Berlin", city: "Berlin" }))
+    .toEqual({ canActivate: false, missingFields: ["radiusKm"] });
+  expect(getSavedNeedActivationReadiness({ city: "Berlin" }))
+    .toEqual({ canActivate: true, missingFields: [] });
+  const need = { locationQuery: "Berlin", locationLabel: "Berlin", city: "Berlin" };
+  expect(savedNeedActivationClarificationQuestion("en", need))
+    .toBe("What radius around Berlin should I use?");
+  expect(savedNeedActivationClarificationQuestion("de", need))
+    .toBe("Welchen Umkreis um Berlin soll ich verwenden?");
 });
 
 it("rejects cross-owner and non-draft readiness markers", async () => {

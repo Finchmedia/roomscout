@@ -385,7 +385,7 @@ export const executeTool = action({
         threadId: session.threadId,
         needId: session.activeNeedId,
       });
-      return { outputJson: JSON.stringify({ readyForReview: true, ...result, activationRequired: true }) };
+      return { outputJson: JSON.stringify({ ...result, activationRequired: true }) };
     }
     if (args.name === "remember_fact") {
       const input = rememberFactSchema.parse(parsed);

@@ -1,4 +1,5 @@
 import type { Doc } from "../_generated/dataModel";
+import { getSavedNeedActivationReadiness } from "./savedNeedLocation";
 
 export type CurrentSearchTruthInput = Pick<Doc<"savedNeeds">,
   "title" | "locationQuery" | "locationLabel" | "maxBudgetEur" |
@@ -8,6 +9,7 @@ export type CurrentSearchTruthInput = Pick<Doc<"savedNeeds">,
 
 /** Compact, read-only canonical state without document metadata. */
 export function currentSearchTruth(need: CurrentSearchTruthInput) {
+  const activationReadiness = getSavedNeedActivationReadiness(need);
   return {
     authority: "latest_saved_search" as const,
     revision: need.matchingRevision ?? 0,
@@ -25,6 +27,7 @@ export function currentSearchTruth(need: CurrentSearchTruthInput) {
     instruments: need.instruments ?? [],
     collaborationOpen: need.collaborationOpen ?? null,
     facets: need.facets ?? [],
+    activationReadiness,
   };
 }
 

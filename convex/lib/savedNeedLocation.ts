@@ -2,13 +2,19 @@ export const DEFAULT_SEARCH_RADIUS_KM = 20;
 export const MIN_SEARCH_RADIUS_KM = 1;
 export const MAX_SEARCH_RADIUS_KM = 200;
 
-type SavedNeedLocationFields = {
+export type SavedNeedLocationFields = {
   locationQuery?: string;
   locationLabel?: string;
   city?: string;
   radiusKm?: number;
   centerLatitude?: number;
   centerLongitude?: number;
+};
+
+export type SavedNeedActivationMissingField = "location" | "radiusKm";
+export type SavedNeedActivationReadiness = {
+  canActivate: boolean;
+  missingFields: SavedNeedActivationMissingField[];
 };
 
 export function savedNeedLocationQuery(need: SavedNeedLocationFields): string {
@@ -26,14 +32,48 @@ export function hasValidSearchRadius(radiusKm: number | undefined): radiusKm is 
     radiusKm <= MAX_SEARCH_RADIUS_KM;
 }
 
-export function hasCompleteSavedNeedLocation(need: SavedNeedLocationFields): boolean {
+/** One activation gate for Scout readiness, voice, mutations, and the UI. */
+export function getSavedNeedActivationReadiness(
+  need: SavedNeedLocationFields,
+): SavedNeedActivationReadiness {
+  const missingFields: SavedNeedActivationMissingField[] = [];
   const query = savedNeedLocationQuery(need);
-  if (!query) return false;
+  if (!query) missingFields.push("location");
   // Existing city-only rows remain activatable until the location migration
-  // assigns their radius. All newly written rows have locationQuery set.
-  return need.locationQuery === undefined && need.radiusKm === undefined
-    ? true
-    : hasValidSearchRadius(need.radiusKm);
+  // assigns their radius. Every normalized locationQuery needs a real radius.
+  const legacyCityOnly = Boolean(query) &&
+    need.locationQuery === undefined &&
+    need.radiusKm === undefined;
+  if (!legacyCityOnly && !hasValidSearchRadius(need.radiusKm)) {
+    missingFields.push("radiusKm");
+  }
+  return { canActivate: missingFields.length === 0, missingFields };
+}
+
+export function savedNeedActivationClarificationQuestion(
+  locale: "en" | "de",
+  need: SavedNeedLocationFields,
+  missingFields = getSavedNeedActivationReadiness(need).missingFields,
+): string {
+  const missingLocation = missingFields.includes("location");
+  const missingRadius = missingFields.includes("radiusKm");
+  const location = savedNeedLocationLabel(need);
+  if (locale === "de") {
+    if (missingLocation && missingRadius) {
+      return "Wo soll ich suchen und welchen Umkreis soll ich verwenden?";
+    }
+    if (missingLocation) return "Wo soll ich suchen?";
+    return `Welchen Umkreis um ${location} soll ich verwenden?`;
+  }
+  if (missingLocation && missingRadius) {
+    return "Where should I search, and what radius should I use?";
+  }
+  if (missingLocation) return "Where should I search?";
+  return `What radius around ${location} should I use?`;
+}
+
+export function hasCompleteSavedNeedLocation(need: SavedNeedLocationFields): boolean {
+  return getSavedNeedActivationReadiness(need).canActivate;
 }
 
 export function geocodeQueryForSavedNeed(need: SavedNeedLocationFields): string {

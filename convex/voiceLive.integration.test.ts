@@ -84,7 +84,13 @@ const changeNeedStatus = makeFunctionReference<"mutation", {
   requestId: string;
   generation: number;
   action: "start" | "pause";
-}, { status: "active" | "paused"; revision: number }>("voiceLive:changeNeedStatus");
+}, {
+  status: "active" | "paused" | "needs_clarification";
+  revision: number;
+  changed: boolean;
+  missingFields: Array<"location" | "radiusKm">;
+  clarificationQuestion?: string;
+}>("voiceLive:changeNeedStatus");
 
 async function fixture() {
   const t = convexTest(schema, modules);
@@ -490,6 +496,28 @@ it("syncs candidate focus into the Live session before an advisor claim can paus
     status: "paused",
     schedule: ["Tuesday evening"],
   });
+});
+
+it("returns a readable missing-radius clarification instead of failing a claimed voice start", async () => {
+  const f = await fixture();
+  await f.t.run((ctx) => ctx.db.patch(f.needId, { radiusKm: undefined }));
+  const claim = await f.t.mutation(claimRequest, claimArgs(f, "start-needs-radius"));
+  if (claim.kind !== "accepted") throw new Error("claim not accepted");
+
+  await expect(f.t.mutation(changeNeedStatus, {
+    ownerId: f.ownerId,
+    voiceSessionId: f.voiceSessionId,
+    requestId: "start-needs-radius",
+    generation: claim.generation,
+    action: "start",
+  })).resolves.toEqual({
+    status: "needs_clarification",
+    revision: 0,
+    changed: false,
+    missingFields: ["radiusKm"],
+    clarificationQuestion: "What radius around Berlin should I use?",
+  });
+  expect((await f.t.run((ctx) => ctx.db.get(f.needId)))?.status).toBe("draft");
 });
 
 it("allows published deep-link focus but rejects a stale signal without an owned conversation", async () => {

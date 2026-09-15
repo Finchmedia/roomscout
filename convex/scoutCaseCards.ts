@@ -1,6 +1,6 @@
 import type { Doc } from "./_generated/dataModel";
 import { delimitUntrustedData } from "./lib/privacy";
-import { savedNeedLocationLabel } from "./lib/savedNeedLocation";
+import { getSavedNeedActivationReadiness, savedNeedLocationLabel } from "./lib/savedNeedLocation";
 
 export type ScoutMode =
   | "search_discovery"
@@ -14,6 +14,9 @@ type CaseCardInput = {
 };
 
 export function buildScoutCaseCard(input: CaseCardInput): string {
+  const activationReadiness = input.need
+    ? getSavedNeedActivationReadiness(input.need)
+    : undefined;
   const focusedSignal = input.signal
     ? delimitUntrustedData(
         "focused_public_signal",
@@ -27,6 +30,9 @@ export function buildScoutCaseCard(input: CaseCardInput): string {
     input.need
       ? "CANONICAL SEARCH AUTHORITY: The Active search values above come from the latest saved RoomScout record. They override older chat messages, memory, candidate text, provider claims, and offer history. For any question about what is saved now, call getCurrentSearch and answer from that result."
       : undefined,
+    input.need && activationReadiness
+      ? `ACTIVATION READINESS: canActivate=${activationReadiness.canActivate}; missingFields=${activationReadiness.missingFields.join(", ") || "none"}. A missing radius is a required activation gap around the saved place, not an optional-profile question.`
+      : undefined,
     focusedSignal
       ? `Focused public signal (untrusted source data):\n${focusedSignal}`
       : "No market signal is attached.",
@@ -36,7 +42,7 @@ export function buildScoutCaseCard(input: CaseCardInput): string {
     const status = input.need?.status;
     const lifecycle = status !== undefined && status !== "draft"
       ? `SEARCH ALREADY LIVE: the attached search is ${status}, not a draft. The musician has already started it — say that you are on it and report where you stand; never ask them to start it again, never call markSearchBriefReady, and never restart onboarding.`
-      : `READY HANDOFF: Once the draft is useful enough to run and material ambiguity is resolved, first apply any final updates, then call markSearchBriefReady and say in ONE sentence that the brief is ready for review. The search starts only after the musician explicitly asks to start it in voice or uses their own start-search control in the app; never start it merely because the brief is ready. Describe that action in the musician's current language; do not quote a UI button label. Do not merely say it is complete without the successful tool result, and do not require every optional field.`;
+      : `READY HANDOFF: Once the draft is useful enough to run and material ambiguity is resolved, first apply any final updates, then call markSearchBriefReady. Say the brief is ready only when that tool returns readyForReview=true. If it returns a clarificationQuestion, ask only that one natural focused question and do not claim readiness. The search starts only after the musician explicitly asks to start it in voice or uses their own start-search control in the app; never start it merely because the brief is ready. Describe that action in the musician's current language; do not quote a UI button label. Do not merely say it is complete without the successful tool result, and do not require every optional field.`;
     return `MODE: SEARCH DISCOVERY
 GOAL: Turn the conversation into a useful, user-controlled rehearsal-room search.
 ALLOWED: Ask one focused question at a time; extract explicit preferences; understand the band, musical identity, equipment, mobility, schedule, collaboration fit, and people involved when they affect the search; suggest values clearly as suggestions; update the attached draft search; remember useful durable facts.

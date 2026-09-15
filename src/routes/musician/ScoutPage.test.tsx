@@ -18,7 +18,7 @@ const fixtures = vi.hoisted(() => ({
   queries: vi.fn(),
   mutations: new Map<string, ReturnType<typeof vi.fn>>(),
   actionFns: new Map<string, ReturnType<typeof vi.fn>>(),
-  voice: { connected: false, provider: "realtime" as "realtime" | "live", connect: vi.fn().mockResolvedValue(undefined), disconnect: vi.fn(),
+  voice: { connected: false, provider: "realtime" as "realtime" | "live", muted: false, connect: vi.fn().mockResolvedValue(undefined), disconnect: vi.fn(), setMuted: vi.fn(),
     sendText: vi.fn().mockReturnValue(true), setFocus: vi.fn(), appendVerifiedBackgroundUpdate: vi.fn(), clearBackgroundUpdate: vi.fn(),
     pendingTextDraft: "", clearPendingTextDraft: vi.fn() },
 }));
@@ -148,8 +148,8 @@ vi.mock("@convex-dev/agent/react", () => ({
 }));
 
 vi.mock("../../ui/chat/LiveVoiceChat", () => ({
-  LiveVoiceChat: ({ compact, onText }: { compact?: boolean; onText?: () => void }) => (
-    <div data-compact={compact || undefined} data-testid="voice-session">
+  LiveVoiceChat: ({ compact, primary, showTranscript, onText }: { compact?: boolean; primary?: boolean; showTranscript?: boolean; onText?: () => void }) => (
+    <div data-compact={compact || undefined} data-primary={primary || undefined} data-show-transcript={showTranscript} data-testid="voice-session">
       Voice Scout session<button onClick={onText}>Zum Schreiben wechseln</button>
     </div>
   ),
@@ -166,7 +166,9 @@ beforeEach(() => {
   fixtures.matches = []; fixtures.conversations = []; fixtures.focusedThread = null; fixtures.inbox = []; fixtures.actions = []; fixtures.messages = []; fixtures.decisions = [];
   fixtures.queries.mockClear(); fixtures.mutations.clear(); fixtures.actionFns.clear();
   fixtures.voice.connected = false; fixtures.voice.provider = "realtime";
+  fixtures.voice.muted = false;
   fixtures.voice.connect.mockClear(); fixtures.voice.disconnect.mockClear(); fixtures.voice.sendText.mockClear();
+  fixtures.voice.setMuted.mockClear();
   fixtures.voice.setFocus.mockClear(); fixtures.voice.appendVerifiedBackgroundUpdate.mockClear(); fixtures.voice.clearBackgroundUpdate.mockClear();
 });
 
@@ -218,11 +220,17 @@ describe("live Scout route", () => {
   });
 
   it("keeps voice connected when opening text and leaves route lifecycle to the provider", () => {
+    fixtures.voice.connected = true;
     const view = renderPage();
-    fireEvent.click(screen.getByRole("button", { name: "Mit Scout sprechen" }));
-    expect(fixtures.voice.connect).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole("button", { name: "Zum Schreiben wechseln" }));
     expect(fixtures.voice.disconnect).not.toHaveBeenCalled();
+    expect(fixtures.voice.setMuted).not.toHaveBeenCalled();
+    expect(screen.getByTestId("voice-session")).toHaveAttribute("data-show-transcript", "false");
+    expect(screen.getByRole("region", { name: "Scout-Chat" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Mit Scout sprechen" }));
+    expect(screen.getByTestId("voice-session")).toBeInTheDocument();
+    expect(screen.getByTestId("voice-session")).toHaveAttribute("data-show-transcript", "true");
+    expect(screen.queryByRole("region", { name: "Scout-Chat" })).not.toBeInTheDocument();
     view.unmount();
     expect(fixtures.voice.disconnect).not.toHaveBeenCalled();
   });
@@ -238,7 +246,32 @@ describe("live Scout route", () => {
     view.rerender(<MemoryRouter><ScoutPage /></MemoryRouter>);
 
     expect(screen.getByTestId("voice-session")).toHaveAttribute("data-compact", "true");
+    expect(screen.getByTestId("voice-session")).toHaveAttribute("data-primary", "true");
     expect(screen.getByRole("group", { name: "Euer Suchauftrag" })).toBeInTheDocument();
+  });
+
+  it("keeps persisted chat history out of the active voice composition", () => {
+    fixtures.voice.connected = true;
+    fixtures.messages = [message({ role: "assistant", text: "Persisted Scout reply", order: 1 })];
+    renderPage();
+    expect(screen.getByTestId("voice-session")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Scout-Chat" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Persisted Scout reply")).not.toBeInTheDocument();
+  });
+
+  it("explains a missing normalized radius and keeps legacy city-only drafts activatable", async () => {
+    fixtures.context.briefReadiness = { status: "ready", needRevision: 3, readyAt: 100 };
+    fixtures.needs = [{ ...need(), radiusKm: undefined }];
+    const view = renderPage();
+    expect(screen.getByRole("button", { name: "Scout losschicken" })).toBeDisabled();
+    expect(screen.getByText("Ergänzt einen Suchradius, bevor ihr den Scout losschickt.")).toHaveAttribute("role", "status");
+
+    fixtures.needs = [{ ...need(), locationQuery: undefined, locationLabel: undefined, radiusKm: undefined }];
+    view.rerender(<MemoryRouter><ScoutPage /></MemoryRouter>);
+    const activateButton = screen.getByRole("button", { name: "Scout losschicken" });
+    expect(activateButton).toBeEnabled();
+    fireEvent.click(activateButton);
+    await waitFor(() => expect(mutation("savedNeeds:activate")).toHaveBeenCalledWith({ savedNeedId: "need-current" }));
   });
 
   it("shows the current ready provider offer ahead of stale progress", () => {
@@ -441,6 +474,7 @@ describe("live Scout route", () => {
     expect(screen.getByText("Hier brauche ich kurz deine Hilfe.")).toBeInTheDocument();
     expect(screen.getByText("Voice Scout session")).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Scout-Chat" })).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Entscheidung" })).toBeInTheDocument();
   });
 
   it("does not repeat the global voice Entscheidung when chat and the selected provider thread already show it", async () => {

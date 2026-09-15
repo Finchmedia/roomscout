@@ -4,12 +4,14 @@ import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { getSavedNeedActivationReadiness } from "../../../convex/lib/savedNeedLocation";
 import { WorkspaceShell } from "../../components/navigation/WorkspaceShell";
 import { SearchProfileCard } from "../../components/scout/SearchProfileCard";
 import { SearchSourcesPanel } from "../../components/search/SearchSourcesPanel";
 import { EmptyState, LedgerCard, PageHeader } from "../../components/ui/LedgerCard";
 import { Table, TableBody, TableCell, TableRow } from "../../components/ui/table";
 import { savedNeedToSearch } from "../../data/convexAdapters";
+import { useCopy } from "../../ui/copy";
 
 type SearchTab = "overview" | "sources" | "activity";
 
@@ -18,6 +20,7 @@ function activityTime(timestamp: number): string {
 }
 
 export function MySearchPage() {
+  const { t } = useCopy();
   const [searchParams, setSearchParams] = useSearchParams();
   const needs = useQuery(api.savedNeeds.listMine, { limit: 10 });
   const scoutContext = useQuery(api.scout.getMine);
@@ -51,7 +54,7 @@ export function MySearchPage() {
 
   /** "Schick mich los": the search becomes active within the user's Handlungsspielraum. */
   async function startSearch() {
-    if (!need) return;
+    if (!need || !getSavedNeedActivationReadiness(need).canActivate) return;
     setWorking(true);
     setError("");
     try {
@@ -94,6 +97,14 @@ export function MySearchPage() {
   }
 
   const search = savedNeedToSearch(need);
+  const activation = getSavedNeedActivationReadiness(need);
+  const activationMissing = activation.canActivate
+    ? undefined
+    : activation.missingFields.length === 2
+      ? t("liveScout.activateMissingLocationAndRadius")
+      : activation.missingFields[0] === "location"
+        ? t("liveScout.activateMissingLocation")
+        : t("liveScout.activateMissingRadius");
   const needMatches = matches ?? [];
   const coverageSources = (sourceCoverage?.sources ?? []).map((source) => {
     const coverageStates = [source.supplyStatus, source.demandStatus].filter(Boolean);
@@ -118,9 +129,10 @@ export function MySearchPage() {
   return (
     <WorkspaceShell mode="musician">
       <PageHeader
-        meta={<div className="actionsrow"><span className="mono live"><span className="dot dot-pulse" />Convex live query</span>{need.status === "draft" ? <button className="btn btn-p btn-sm" disabled={working || !need.locationQuery?.trim() || need.radiusKm === undefined} onClick={() => void startSearch()} type="button"><Send aria-hidden="true" size={14} />{working ? "Starting…" : "Schick mich los"}</button> : need.status !== "archived" ? <button className="btn btn-g btn-sm" disabled={working} onClick={() => void toggleSearch()} type="button">{need.status === "paused" ? <Play aria-hidden="true" size={14} /> : <Pause aria-hidden="true" size={14} />}{working ? "Updating…" : need.status === "paused" ? "Weiter" : "Pause"}</button> : null}</div>}
+        meta={<div className="actionsrow"><span className="mono live"><span className="dot dot-pulse" />Convex live query</span>{need.status === "draft" ? <button className="btn btn-p btn-sm" disabled={working || !activation.canActivate} onClick={() => void startSearch()} type="button"><Send aria-hidden="true" size={14} />{working ? "Starting…" : "Schick mich los"}</button> : need.status !== "archived" ? <button className="btn btn-g btn-sm" disabled={working} onClick={() => void toggleSearch()} type="button">{need.status === "paused" ? <Play aria-hidden="true" size={14} /> : <Pause aria-hidden="true" size={14} />}{working ? "Updating…" : need.status === "paused" ? "Weiter" : "Pause"}</button> : null}</div>}
         title="My search"
       />
+      {need.status === "draft" && activationMissing ? <p className="rs-form-error" role="status">{activationMissing}</p> : null}
       <div aria-label="Search sections" className="rs-page-tabs" role="tablist">
         {(["overview", "sources", "activity"] as const).map((tab) => <button aria-selected={activeTab === tab} className={activeTab === tab ? "on" : undefined} key={tab} onClick={() => setSearchParams({ tab })} role="tab" type="button">{tab}{tab === "sources" && indexedSignals ? ` · ${indexedSignals.length}` : ""}</button>)}
       </div>

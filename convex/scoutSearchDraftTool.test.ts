@@ -27,6 +27,7 @@ describe("Scout search equipment extraction contract", () => {
       needId: "need" as Id<"savedNeeds">,
     });
     expect(tool.description).toContain(SEARCH_FACET_GUIDANCE);
+    expect(tool.description).toContain("Never infer a radius from the place, an activation request, old chat, or a typical/default travel distance");
   });
 
   it("materializes only named changes and preserves lists and facets across early captures", async () => {

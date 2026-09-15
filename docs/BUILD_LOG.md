@@ -1,5 +1,13 @@
 # RoomScout — Build Log
 
+## 2026-09-16 — Voice follow-up: activation readiness and one conversation surface
+
+A human voice review exposed a draft that was labelled ready even though its normalized location had no search radius. Scout readiness, activation and the UI now share the same location/radius check. Old readiness stamps no longer make incomplete drafts appear ready; the Scout receives the missing field and a focused English or German clarification. Supplying a radius remains a user choice rather than an invented default.
+
+Voice uses the existing Scout blob and streaming captions as its primary conversation. The duplicate persisted chat is hidden in voice mode. An explicit switch to typing keeps the call and its controls available while showing only the text conversation; candidates, decisions and the saved-facts panel remain accessible.
+
+Verification: the final combined five-file regression run passed 65 tests; the broader agent checks, typecheck, scoped lint and production build also passed. A fresh browser run through the real Scout and GPT-Live kept the radius unset, asked a focused radius question on a spoken start request, and displayed an explicit missing-radius explanation beside the disabled start control. Supplying five kilometres through the text composer while the call stayed connected made the draft ready and enabled the start control. Voice/text toggling showed one conversation at a time with call controls retained. The default voice layout was visually inspected. The initial pre-fix test had already saved an inferred radius; the tool guidance now explicitly rejects inferred/default radii, and the final fresh run verified the stored missing value before attempting start. Test searches were left draft or paused; no external-provider completion is claimed by this UI and readiness fix.
+
 ## 2026-09-15 — GPT-Live isolated review: real Brain, saved facts during speech, persistent conversation
 
 Astra coordinated the implementation; GPT-5.6-Sol agents implemented the backend adapter, browser runtime and product/English workstreams in isolated branches. The integrated branch is `codex/gpt-live-migration`, frontend port `5174`, with its own expiring Convex development deployment. The original checkout and production remain unchanged.

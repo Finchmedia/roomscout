@@ -15,6 +15,10 @@ import {
 } from "./_generated/server";
 import { requireActionUserId, requireUserId } from "./integrations/authz";
 import { setNeedStatus } from "./lib/needLifecycle";
+import {
+  getSavedNeedActivationReadiness,
+  savedNeedActivationClarificationQuestion,
+} from "./lib/savedNeedLocation";
 import { activateNeed } from "./savedNeeds";
 import { assertVoiceClaim, voiceNeedSnapshot } from "./lib/voiceClaim";
 import { buildDecisionCaseCard, buildScoutCaseCard } from "./scoutCaseCards";
@@ -35,6 +39,7 @@ const DEFAULT_MODEL = "gpt-live-1";
 const DEFAULT_VOICE = "marin";
 
 const localeValidator = v.union(v.literal("en"), v.literal("de"));
+const activationMissingFieldValidator = v.union(v.literal("location"), v.literal("radiusKm"));
 const sourceValidator = v.union(v.literal("voice"), v.literal("text"));
 const sessionStatusValidator = v.union(
   v.literal("connecting"),
@@ -574,7 +579,13 @@ export const changeNeedStatus = internalMutation({
     generation: v.number(),
     action: v.union(v.literal("start"), v.literal("pause")),
   },
-  returns: v.object({ status: v.union(v.literal("active"), v.literal("paused")), revision: v.number() }),
+  returns: v.object({
+    status: v.union(v.literal("active"), v.literal("paused"), v.literal("needs_clarification")),
+    revision: v.number(),
+    changed: v.boolean(),
+    missingFields: v.array(activationMissingFieldValidator),
+    clarificationQuestion: v.optional(v.string()),
+  }),
   handler: async (ctx, args) => {
     const { session, context } = await assertVoiceClaim(ctx, args.ownerId, {
       voiceSessionId: args.voiceSessionId,
@@ -589,9 +600,31 @@ export const changeNeedStatus = internalMutation({
       throw new ConvexError({ code: "NEED_NOT_FOUND" });
     }
     const status = args.action === "start" ? "active" as const : "paused" as const;
-    if (status === "active") await activateNeed(ctx, args.ownerId, need);
-    else await setNeedStatus(ctx, need, status);
-    return { status, revision: need.status === status ? (need.matchingRevision ?? 0) : (need.matchingRevision ?? 0) + 1 };
+    if (status === "active") {
+      const activation = getSavedNeedActivationReadiness(need);
+      if (!activation.canActivate) {
+        return {
+          status: "needs_clarification" as const,
+          revision: need.matchingRevision ?? 0,
+          changed: false,
+          missingFields: activation.missingFields,
+          clarificationQuestion: savedNeedActivationClarificationQuestion(
+            session.conversationLocale === "de" ? "de" : "en",
+            need,
+            activation.missingFields,
+          ),
+        };
+      }
+      await activateNeed(ctx, args.ownerId, need);
+    } else {
+      await setNeedStatus(ctx, need, status);
+    }
+    return {
+      status,
+      revision: need.status === status ? (need.matchingRevision ?? 0) : (need.matchingRevision ?? 0) + 1,
+      changed: need.status !== status,
+      missingFields: [],
+    };
   },
 });
 
@@ -796,10 +829,11 @@ export const delegate = action({
         });
     if (!captureFacts && searchCanChange && context.activeNeedId) {
       tools.setSearchStatus = createTool({
-        description: "Start or pause the current search only after the musician explicitly asks. Never infer this from a completed brief. Use pause only for the domain search, not for stopping audio.",
+        description: "Start or pause the current search only after the musician explicitly asks. Never infer this from a completed brief. Use pause only for the domain search, not for stopping audio. If start returns needs_clarification, ask exactly its clarificationQuestion naturally and do not claim the search started.",
         inputSchema: z.object({ action: z.enum(["start", "pause"]) }),
         execute: async (_toolCtx, input) => {
           const result = await ctx.runMutation(internal.voiceLive.changeNeedStatus, { ownerId, ...claimRef, action: input.action });
+          if (!result.changed) return result;
           sideEffect = true;
           revision = result.revision;
           changedFields.add("status");

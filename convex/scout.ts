@@ -13,6 +13,10 @@ import { runScoutTurn, scoutAgent } from "./scoutRuntime";
 import { isUserResetTombstoned } from "./devUserReset";
 import { assertVoiceClaim, voiceClaimValidator, type VoiceClaimRef } from "./lib/voiceClaim";
 import { currentSearchTruth } from "./lib/currentSearchTruth";
+import {
+  getSavedNeedActivationReadiness,
+  savedNeedActivationClarificationQuestion,
+} from "./lib/savedNeedLocation";
 export { scoutAgent } from "./scoutRuntime";
 export { currentSearchTruth } from "./lib/currentSearchTruth";
 
@@ -20,6 +24,10 @@ const modeValidator = v.union(
   v.literal("search_discovery"),
   v.literal("signal_advisor"),
   v.literal("outreach_drafting"),
+);
+const activationMissingFieldValidator = v.union(
+  v.literal("location"),
+  v.literal("radiusKm"),
 );
 
 const memoryToolSchema = z.object({
@@ -263,6 +271,7 @@ export function createSearchDraftTool(
     description:
       "Update explicit facts on the user's attached draft search. Preserve the user's complete place or address in locationQuery, use locationLabel for its concise display label, and radiusKm as the geographic boundary. " +
       "Submit only the `changes` entries supported by the current musician input. Omitted search fields remain unchanged; never represent unknown fields with zero, false, an empty array, the smallest allowed number, or a guessed arrangement. " +
+      "A radiusKm change is accepted only when this exact musician turn states that distance in kilometres. Never infer a radius from the place, an activation request, old chat, or a typical/default travel distance. " +
       "Canonical fields are the only source for their values: never mirror budget amounts, radius, arrangement, or schedule into requirements. Keep a useful qualifier amount-free, for example 'Budget includes usual bills'. On a correction, name every exact current requirement string made stale by the corrected budget or schedule in removeConflictingRequirements; do not leave contradictory prose behind. Instruments contains instrument names, never band-member roles. " +
       SEARCH_FACET_GUIDANCE,
     inputSchema: searchDraftInputSchema,
@@ -298,27 +307,40 @@ const contextValidator = v.object({
     ),
     needRevision: v.number(),
     readyAt: v.optional(v.number()),
+    missingFields: v.array(activationMissingFieldValidator),
   }),
 });
 
 export function briefReadinessFor(
-  need: Pick<Doc<"savedNeeds">, "matchingRevision"> | null,
+  need: Pick<Doc<"savedNeeds">,
+    "matchingRevision" | "locationQuery" | "locationLabel" | "city" | "radiusKm"> | null,
   context: Pick<Doc<"scoutContexts">, "readyNeedRevision" | "briefReadyAt">,
 ) {
   const needRevision = need?.matchingRevision ?? 0;
+  const activation = getSavedNeedActivationReadiness(need ?? {});
+  if (!activation.canActivate) {
+    return {
+      status: context.readyNeedRevision === undefined ? "collecting" as const : "needs_edits" as const,
+      needRevision,
+      missingFields: activation.missingFields,
+      ...(context.briefReadyAt === undefined ? {} : { readyAt: context.briefReadyAt }),
+    };
+  }
   if (context.readyNeedRevision === undefined) {
-    return { status: "collecting" as const, needRevision };
+    return { status: "collecting" as const, needRevision, missingFields: [] };
   }
   if (context.readyNeedRevision === needRevision) {
     return {
       status: "ready" as const,
       needRevision,
+      missingFields: [],
       ...(context.briefReadyAt === undefined ? {} : { readyAt: context.briefReadyAt }),
     };
   }
   return {
     status: "needs_edits" as const,
     needRevision,
+    missingFields: [],
     ...(context.briefReadyAt === undefined ? {} : { readyAt: context.briefReadyAt }),
   };
 }
@@ -402,10 +424,10 @@ export const getOrCreateThread = mutation({
       mode: "search_discovery" as const,
       activeNeedId: args.activeNeedId,
       focusedSignalId: undefined,
-      briefReadiness: {
-        status: "collecting" as const,
-        needRevision: requestedNeed?.matchingRevision ?? 0,
-      },
+      briefReadiness: briefReadinessFor(requestedNeed, {
+        readyNeedRevision: undefined,
+        briefReadyAt: undefined,
+      }),
     };
   },
 });
@@ -438,7 +460,13 @@ export const markBriefReady = internalMutation({
     needId: v.id("savedNeeds"),
     voiceClaim: v.optional(voiceClaimValidator),
   },
-  returns: v.object({ needRevision: v.number(), readyAt: v.number() }),
+  returns: v.object({
+    readyForReview: v.boolean(),
+    needRevision: v.number(),
+    readyAt: v.optional(v.number()),
+    missingFields: v.array(activationMissingFieldValidator),
+    clarificationQuestion: v.optional(v.string()),
+  }),
   handler: async (ctx, args) => {
     if (args.voiceClaim) {
       await assertVoiceClaim(ctx, args.ownerId, args.voiceClaim, { savedNeedId: args.needId });
@@ -461,11 +489,37 @@ export const markBriefReady = internalMutation({
       throw new ConvexError({ code: "NEED_NOT_DRAFT" });
     }
     const needRevision = need.matchingRevision ?? 0;
+    const activation = getSavedNeedActivationReadiness(need);
+    if (!activation.canActivate) {
+      if (context.readyNeedRevision !== undefined || context.briefReadyAt !== undefined) {
+        await ctx.db.patch(context._id, {
+          readyNeedRevision: undefined,
+          briefReadyAt: undefined,
+          updatedAt: Date.now(),
+        });
+      }
+      const user = await ctx.db.get(args.ownerId);
+      return {
+        readyForReview: false,
+        needRevision,
+        missingFields: activation.missingFields,
+        clarificationQuestion: savedNeedActivationClarificationQuestion(
+          user?.conversationLocale === "de" ? "de" : "en",
+          need,
+          activation.missingFields,
+        ),
+      };
+    }
     if (
       context.readyNeedRevision === needRevision &&
       context.briefReadyAt !== undefined
     ) {
-      return { needRevision, readyAt: context.briefReadyAt };
+      return {
+        readyForReview: true,
+        needRevision,
+        readyAt: context.briefReadyAt,
+        missingFields: [],
+      };
     }
     const readyAt = Date.now();
     await ctx.db.patch(context._id, {
@@ -473,7 +527,7 @@ export const markBriefReady = internalMutation({
       briefReadyAt: readyAt,
       updatedAt: readyAt,
     });
-    return { needRevision, readyAt };
+    return { readyForReview: true, needRevision, readyAt, missingFields: [] };
   },
 });
 
@@ -801,7 +855,7 @@ export function buildScoutTools(
       onUpdated: (result) => args.onEffect?.("search", result.changedFields),
     });
     const markSearchBriefReady = createTool({
-      description: "Mark the current draft search ready for the musician to review when it is already useful enough to run. This only reveals the brief and never activates the search.",
+      description: "Mark the current draft search ready for review only when the server confirms every activation field is present. This never activates the search. If readyForReview is false, ask exactly the returned clarificationQuestion naturally and do not claim the brief is ready.",
       inputSchema: z.object({}),
       execute: async () => {
         const result = await ctx.runMutation(internal.scout.markBriefReady, {
@@ -810,8 +864,8 @@ export function buildScoutTools(
           needId,
           ...(args.voiceClaim ? { voiceClaim: args.voiceClaim } : {}),
         });
-        args.onEffect?.("brief", ["briefReadiness"]);
-        return { readyForReview: true, ...result, activationRequired: true };
+        if (result.readyForReview) args.onEffect?.("brief", ["briefReadiness"]);
+        return { ...result, activationRequired: true };
       },
     });
     return { ...currentSearchToolSet, updateSearchDraft, markSearchBriefReady, rememberFact, ...decisionToolSet, ...voiceOnlyTools };

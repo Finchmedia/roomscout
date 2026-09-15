@@ -243,6 +243,9 @@ export const liveScoutDe = {
   editBrief: "Noch etwas ändern",
   activate: "Scout losschicken",
   activating: "Scout startet …",
+  activateMissingLocation: "Ergänzt einen Ort, bevor ihr den Scout losschickt.",
+  activateMissingRadius: "Ergänzt einen Suchradius, bevor ihr den Scout losschickt.",
+  activateMissingLocationAndRadius: "Ergänzt Ort und Suchradius, bevor ihr den Scout losschickt.",
   activateNote: "Ich suche und frage selbstständig an. Eine verbindliche Zusage gebt nur ihr.",
   location: "Ort",
   /** The one fact that carries Raumform, Bandgröße, Genre und Instrumente. */

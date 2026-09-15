@@ -1,5 +1,9 @@
 # Hackathon log
 
+## Latest: human voice review follow-up
+
+A human test found that a missing search radius could leave the start button disabled despite a ready message. The isolated GPT-Live branch now shares one activation check across the Scout, voice action and UI, with a focused missing-radius question in English or German. The voice surface reuses the existing blob and streaming captions, with one visible conversation at a time. Follow-up verification is recorded in [BUILD_LOG.md](docs/BUILD_LOG.md).
+
 ## Latest: GPT-Live is implemented in isolation; real conversation and UI proofs recorded
 
 RoomScout now connects GPT-Live browser WebRTC to its existing Convex Scout Brain through client delegation. Astra coordinated GPT-5.6-Sol implementation workstreams. The migration is isolated in `codex/gpt-live-migration` and its own cloud development deployment; the original checkout and production are unchanged. English is the default; an explicit spoken German switch persists. Realtime remains a deliberate fallback.

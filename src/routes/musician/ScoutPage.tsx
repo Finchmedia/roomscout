@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { getSavedNeedActivationReadiness } from "../../../convex/lib/savedNeedLocation";
 import { Button } from "../../components/ui/button";
 import { FactList } from "../../components/ui/fact-list";
 import { DecisionCard } from "../../components/scout/DecisionCard";
@@ -82,6 +83,16 @@ export function ScoutPage() {
     needs?.find(row => row._id === context?.activeNeedId && row.status !== "archived") ??
     needs?.find(row => row.status !== "archived");
   const threadId = need && context?.activeNeedId === need._id ? context.threadId : undefined;
+  const activation = need
+    ? getSavedNeedActivationReadiness(need)
+    : { canActivate: false, missingFields: ["location", "radiusKm"] as const };
+  const activationMissing = activation.canActivate
+    ? undefined
+    : activation.missingFields.length === 2
+      ? t("liveScout.activateMissingLocationAndRadius")
+      : activation.missingFields[0] === "location"
+        ? t("liveScout.activateMissingLocation")
+        : t("liveScout.activateMissingRadius");
   const history = useUIMessages(listScoutMessages, threadId ? { threadId } : "skip", { initialNumItems: 60, stream: true });
   const matches = useQuery(api.matches.listMine, need ? { savedNeedId: need._id, limit: 30 } : "skip");
   const conversationRows = useQuery(api.providerConversations.listMine, need ? { savedNeedId: need._id, limit: 50 } : "skip");
@@ -223,7 +234,11 @@ export function ScoutPage() {
     setTextOpen(true);
     setManualBrief(false); setDismissedReady(readyKey);
   }
-  function openVoice() { setVoiceOpen(true); if (!voice.connected) void voice.connect(); }
+  function openVoice() {
+    setTextOpen(false);
+    setVoiceOpen(true);
+    if (!voice.connected) void voice.connect();
+  }
   async function openCandidate(conversationId?: Id<"providerConversations">) {
     if (!need || !threadId || changingFocus.current) return;
     const candidate = conversationId ? candidates.find(row => row.conversationId === conversationId) : undefined;
@@ -265,7 +280,7 @@ export function ScoutPage() {
     finally { setAnsweringDecision(false); }
   }
   function activateSearch() {
-    if (!need) return;
+    if (!need || !activation.canActivate) return;
     setManualBrief(false); setDismissedReady(readyKey);
     if (liveConnected) {
       if (!voice.sendText(locale === "de" ? "Starte die Suche jetzt mit meinen aktuellen Angaben." : "Start the search now using my current requirements.")) setError(t("liveScout.error"));
@@ -366,7 +381,8 @@ export function ScoutPage() {
     </div>}
     {need?.status === "draft" && voiceOpen ? <>
       {autoBrief ? <p role="status" className="text-sm text-rs-ink-4">{t("liveScout.ready")}</p> : null}
-      <Button size="sm" disabled={working || (!liveConnected && scoutBusy) || !need.locationQuery?.trim() || need.radiusKm === undefined} onClick={activateSearch}>{t("liveScout.activate")}</Button>
+      <Button size="sm" disabled={working || (!liveConnected && scoutBusy) || !activation.canActivate} onClick={activateSearch}>{t("liveScout.activate")}</Button>
+      {activationMissing ? <p role="status" className="text-xs text-rs-ink-3">{activationMissing}</p> : null}
       <p className="text-xs text-rs-ink-4">{t("liveScout.activateNote")}</p>
     </> : null}
   </div>;
@@ -384,25 +400,25 @@ export function ScoutPage() {
     <div className="mt-[var(--space-8)] flex flex-col items-center gap-[var(--space-6)]">
       {need?.status === "draft" ? <>
         {autoBrief ? <p role="status" className="text-sm text-rs-ink-4">{t("liveScout.ready")}</p> : null}
-        <Button size="md" block disabled={working || scoutBusy || !need.locationQuery?.trim() || need.radiusKm === undefined} onClick={activateSearch}>{t(working ? "liveScout.activating" : "liveScout.activate")}</Button>
+        <Button size="md" block disabled={working || scoutBusy || !activation.canActivate} onClick={activateSearch}>{t(working ? "liveScout.activating" : "liveScout.activate")}</Button>
+        {activationMissing ? <p role="status" className="text-center text-sm text-rs-ink-3">{activationMissing}</p> : null}
         <p className="text-center text-sm leading-relaxed text-rs-ink-4">{t("liveScout.activateNote")}</p>
         <Button variant="link" size="sm" onClick={editBrief}>{t("liveScout.editBrief")}</Button>
       </> : null}
     </div>
   </FactList>;
-  const showScoutChat = (!voiceOpen && stage === "discovery") || (chatOpen && (voiceOpen || stage !== "brief")) || Boolean(voice.pendingTextDraft);
+  const showScoutChat =
+    (!voiceOpen && stage === "discovery") ||
+    (chatOpen && (voiceOpen || stage !== "brief")) ||
+    (!voiceOpen && Boolean(voice.pendingTextDraft));
   const focusedThreadShowsDecision = Boolean(openDecision && focusedThread?.items.some(item =>
     item.kind === "decision" && item.decision.status === "open" && item.decision._id === openDecision._id));
   // With voice active, the centre companion already contains the actionable
   // card when text chat or the selected provider thread shows this decision.
   // Keep the global card only as the fallback when neither panel owns it.
-  const voiceDecisionSlot = voiceOpen && (showScoutChat || focusedThreadShowsDecision) ? undefined : decisionSlot;
-  const voiceCompact = voiceOpen && (
-    voice.connected ||
-    showScoutChat ||
-    focusedConversationId !== undefined ||
-    ((stage === "offer" || stage === "provider-update") && Boolean(offerSlot))
-  );
+  const surfaceDecisionSlot = showScoutChat || focusedThreadShowsDecision ? undefined : decisionSlot;
+  const voicePrimary = voiceOpen && !showScoutChat && !focusedConversationId && !offerSlot && !openDecision;
+  const voiceCompact = voiceOpen && (voice.connected || !voicePrimary);
   return <LiveScoutSurface stage={stage} band={{ displayName: currentUser?.displayName ?? currentUser?.username ?? "" }}
     profileMenuSlot={<LiveProfileMenu name={currentUser?.displayName ?? currentUser?.username ?? ""} operator={currentUser?.role === "operator"} />}
     copy={{
@@ -424,9 +440,9 @@ export function ScoutPage() {
     briefReviewSlot={brief}
     briefExpanded={manualBrief}
     chatSlot={showScoutChat ? <ScoutChat key={threadId ?? "loading"} className={voiceOpen ? "h-full max-h-full min-h-[18rem]" : undefined} messages={messages.length ? messages : [{ id: "intro", author: "scout", body: t("liveScout.intro") }]} onSend={send} replying={(!liveConnected && scoutBusy) || !threadId} restoredDraft={voice.pendingTextDraft || undefined} onDraftRestored={voice.clearPendingTextDraft} labels={chatLabels} error={error} onVoice={openVoice} autoFocus decision={openDecision} decisionOfferHash={decisionOfferHash} onAnswerDecision={async (decisionId, choice, text) => { await answerOpenDecision(decisionId, choice, text); }} decisionAnsweredText={t("liveScout.decisionAnswered")} hasMoreHistory={history.status === "CanLoadMore"} historyBusy={history.status === "LoadingMore"} onLoadHistory={() => history.loadMore(60)} /> : undefined}
-    voiceSlot={voiceOpen ? <LiveVoiceChat compact={voiceCompact} onText={openChat} onEnd={() => { setVoiceOpen(false); setTextOpen(true); }} /> : undefined}
+    voiceSlot={voiceOpen ? <LiveVoiceChat compact={voiceCompact} primary={voicePrimary} showTranscript={!showScoutChat} onText={openChat} onEnd={() => { setVoiceOpen(false); setTextOpen(true); }} /> : undefined}
     providerUpdateSlot={offerSlot} offerSlot={offerSlot} detailSlot={detailSlot}
-    decisionSlot={voiceDecisionSlot} railSlot={railSlot} asideSlot={asideSlot}
+    decisionSlot={surfaceDecisionSlot} railSlot={railSlot} asideSlot={asideSlot}
     completeSlot={<Link className="text-rs-ink-2 underline underline-offset-4" to="/app/inbox">{t("liveScout.viewMessages")}</Link>}
     errorSlot={error ? <p role="alert">{error}</p> : undefined}
     onChat={openChat} onCloseChat={() => setTextOpen(false)} onVoice={openVoice} onReviewBrief={() => setManualBrief(value => !value)}
