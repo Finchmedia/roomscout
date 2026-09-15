@@ -546,3 +546,11 @@ thinking state. The root element declares the dark theme, so the verbatim
 files render their dark branch. The questionnaire item is published only
 under shadcn's v4 styles; it stays a labelled stand-in until the maintainer
 runs the CLI interactively. Frontend deployed to production and dev.
+
+### 2026-09-15 — Questionnaire from the registry
+
+The maintainer fetched the questionnaire through the shadcn CLI from the
+radix-nova registry URL in a terminal, keeping the project's own button. The
+labelled stand-in is replaced by the registry's styled layer over the headless
+primitive; the decision card needed no change. Tests and build green, frontend
+deployed to production and dev.

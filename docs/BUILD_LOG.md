@@ -1819,3 +1819,14 @@ Questionnaire: the item exists only under the v4 styles (`radix-nova`,
 interactive prompt (overwrite `button.tsx`?), which a non-interactive run
 cannot answer, so the labelled stand-in stays until the maintainer runs the
 command in a terminal.
+
+### 2026-09-15 — Questionnaire from the registry
+
+The maintainer ran the CLI in a terminal with the radix-nova registry URL,
+declined the overwrite of `button.tsx`, and the CLI wrote
+`src/components/ui/questionnaire.tsx` as the registry's styled layer over
+`@shadcn/react/questionnaire`. The hand-composed stand-in is gone. The file
+exports the ten parts DecisionCard already used plus Next, Previous, Progress,
+Skip and ChoiceDescription, so no call site changed. Typecheck, 1116 tests and
+build green; frontend deployed to production and dev. Every shadcn part in
+the chat and the decision card is now CLI output.
