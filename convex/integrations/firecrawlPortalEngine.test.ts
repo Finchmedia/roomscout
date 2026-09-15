@@ -222,13 +222,30 @@ describe("writeFirecrawlPortalMessage", () => {
     });
   });
 
-  it("reports a receipt without the thread read-back as unknown", async () => {
+  it("treats the portal receipt as delivery proof and only warns when the thread read-back misses the message", async () => {
+    const warn = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const fake = transport([prepared(), sent({
       thread: { providerThreadId: "thread_1", messages: [{ id: "message_old", direction: "inbound", body120: "Frei" }] },
     })]);
     await expect(writeFirecrawlPortalMessage({
       session: fake.session, body: BODY, providerThreadId: "thread_1", beforeSubmit: async () => undefined,
-    })).resolves.toMatchObject({ outcome: "unknown", errorCode: "SUBMIT_RESULT_UNKNOWN" });
+    })).resolves.toMatchObject({ outcome: "succeeded", submitted: true });
+    expect(warn).toHaveBeenCalledWith("FIRECRAWL_PORTAL_WRITE_READBACK_MISMATCH", expect.any(Object));
+    warn.mockRestore();
+  });
+
+  it("accepts a read-back whose whitespace the portal collapsed", async () => {
+    const warn = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const body = "Hallo,\n\nwir nehmen das Angebot an.\nMonatliche Gesamtkosten: 350 €.";
+    const fake = transport([prepared({ values: { body } }), sent({
+      receipt: { status: "sent", errorCode: null, providerMessageId: "message_new", providerThreadId: "thread_1", text: "sent" },
+      thread: { providerThreadId: "thread_1", messages: [{ id: "message_new", direction: "outbound", body120: body.replace(/\s+/g, " ").slice(0, 120) }] },
+    })]);
+    await expect(writeFirecrawlPortalMessage({
+      session: fake.session, body, providerThreadId: "thread_1", beforeSubmit: async () => undefined,
+    })).resolves.toMatchObject({ outcome: "succeeded" });
+    expect(warn).not.toHaveBeenCalledWith("FIRECRAWL_PORTAL_WRITE_READBACK_MISMATCH", expect.any(Object));
+    warn.mockRestore();
   });
 
   it("never retries a failure after the claim", async () => {

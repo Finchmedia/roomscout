@@ -54,6 +54,8 @@ type RegistrationPhase = "mailbox" | "session_open" | "run_attach" | "progress" 
 const INBOX_OPEN_RETRY_DELAYS_MS = [4_000, 8_000];
 /** The write path retries only its side-effect-free opening (session, navigate, fill, verify). */
 const WRITE_OPEN_RETRY_DELAYS_MS = [4_000, 8_000];
+/** After an unconfirmed send, one inbox sync reconciles the observed message. */
+const RECONCILE_SYNC_DELAY_MS = 20_000;
 /**
  * Before beforeSubmit nothing reached the portal, so sandbox and
  * result-decoding failures are retryable too. `FIRECRAWL_WRITE_PREPARE_MISMATCH`
@@ -732,6 +734,12 @@ async function executeWriteForOwner(ctx: ActionCtx, ownerId: Id<"users">, reques
     if (result.outcome === "unknown") {
       await ctx.runMutation(internal.externalActions.finishExecution, { ownerId, executionId: claim.executionId, status: "unknown", error: result.errorCode });
       await recordProfileProbe({ authenticated: result.profileAuthenticated, stopFailed: result.profileStopFailed });
+      // The portal usually did store the message. One inbox sync shortly afterwards lets the
+      // observed-message reconciliation turn "unknown" into a confirmed send instead of leaving
+      // the musician with a vague status.
+      await ctx.scheduler.runAfter(RECONCILE_SYNC_DELAY_MS, internal.portalInboxSync.requestSync, {
+        ownerId, connectionId: connection.connectionId, reason: "manual",
+      });
       return { executionId: claim.executionId, status: "unknown" as const, alreadyCompleted: false };
     }
     deliveryConfirmed = true;

@@ -176,7 +176,7 @@ describe("Entscheidung from the Freigabeprüfung (ask_user)", () => {
     expect(await s.musician.query(api.decisions.historyMine, {})).toHaveLength(1);
   });
 
-  it("the Scout turn carries answerDecision and replyToProvider only while an Entscheidung is open", async () => {
+  it("the Scout turn carries answerDecision only while an Entscheidung is open", async () => {
     const s = await portalScenario({ mode: "review" });
     const thread = await s.musician.mutation(api.scout.getOrCreateThread, {});
     const withOpen = (await s.t.query(internal.scout.getActionContext, { ownerId: s.ownerId, threadId: thread.threadId }))!;

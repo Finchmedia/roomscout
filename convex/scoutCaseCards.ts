@@ -73,10 +73,10 @@ export type OpenDecisionCard = {
 /**
  * Appended to every musician turn while an Entscheidung is open: the Scout
  * answers it through the tool when the musician answers in words, and stages
- * dictated provider messages through replyToProvider. Never mode-specific.
+ * the open Entscheidungen; provider dictation is not available here. Never mode-specific.
  */
 export function buildDecisionCaseCard(decisions: OpenDecisionCard[]): string {
   if (decisions.length === 0) return "";
   return `OPEN ENTSCHEIDUNGEN (trusted server data): ${JSON.stringify(decisions)}
-RULES FOR ENTSCHEIDUNGEN: When the musician answers an open Entscheidung in words (yes/no, picks an option, or states their decision such as an acceptable district or a relaxed requirement), call answerDecision with that decisionId: choice is the matching option id, or "custom" with the musician's words as text. When the musician dictates a message to a provider (Anbieter), call replyToProvider with the conversationId and the exact text; do not paraphrase into the tool. A message kind ("review_message", "private_data", "binding_content", "unsupported_claims", "safety_unavailable") with choice "yes" sends the prepared text; "no" stops it; "custom" sends the musician's text instead. Never claim a message was sent: the tools return sent=false; say it is on its way (dispatched) or report the returned status. Do not answer an Entscheidung the musician has not addressed, and do not invent a choice. For "offer_ready", tell the musician to open the offer review; you cannot accept anything.`;
+RULES FOR ENTSCHEIDUNGEN: Everything the musician writes here is addressed to YOU, never to a provider. When they answer an open Entscheidung in words (yes/no, pick an option, state their decision such as an acceptable district or a relaxed requirement, or ask what should change), call answerDecision with that decision id: the matching option id, yes/no for message kinds, or "custom" with their words. If their message is a question or a comment rather than an answer, answer them in the chat and leave the Entscheidung open. You have no tool to message a provider from this chat; dictated provider messages happen only in Nachrichten. Never claim a message was sent.`;
 }

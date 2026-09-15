@@ -407,16 +407,23 @@ export async function writeFirecrawlPortalMessage(input: {
   const profileAuthenticated = send.home.authenticated;
   const providerMessageId = send.receipt.providerMessageId;
   const receiptThreadId = send.receipt.providerThreadId ?? providerThreadId ?? null;
+  // The portal's own receipt (status + fresh message id) is the delivery proof, like the
+  // local script. The thread read-back is a confirmation: the portal renders bodies with
+  // collapsed whitespace, so compare normalised text and only warn on a mismatch.
   const delivered =
     send.receipt.status === "sent" &&
     providerMessageId !== null && idSchema.safeParse(providerMessageId).success &&
     receiptThreadId !== null && idSchema.safeParse(receiptThreadId).success &&
-    !existingIds.has(providerMessageId) &&
-    send.thread.providerThreadId === receiptThreadId &&
+    !existingIds.has(providerMessageId);
+  const normalise = (text: string) => text.replace(/\s+/g, " ").trim();
+  const readBack = send.thread.providerThreadId === receiptThreadId &&
     send.thread.messages.some((message) =>
       message.id === providerMessageId &&
       message.direction === "outbound" &&
-      message.body120 === input.body.slice(0, RECEIPT_BODY_PREFIX));
+      normalise(message.body120).startsWith(normalise(input.body).slice(0, Math.min(RECEIPT_BODY_PREFIX, normalise(message.body120).length) - 1)));
+  if (delivered && !readBack) {
+    console.error("FIRECRAWL_PORTAL_WRITE_READBACK_MISMATCH", { threadMessages: send.thread.messages.length, sameThread: send.thread.providerThreadId === receiptThreadId });
+  }
   if (!delivered) {
     console.error("FIRECRAWL_PORTAL_WRITE_UNCONFIRMED", {
       status: send.receipt.status,

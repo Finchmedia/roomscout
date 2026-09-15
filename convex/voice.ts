@@ -28,14 +28,12 @@ const toolName = v.union(
   v.literal("create_outreach_draft"),
   v.literal("create_webform_draft"),
   v.literal("answer_decision"),
-  v.literal("reply_to_provider"),
 );
 const answerDecisionSchema = z.object({
   decisionId: z.string().min(1),
   choice: z.string().min(1).max(40),
   text: z.string().min(1).max(4_000).optional(),
 });
-const replyToProviderSchema = z.object({ conversationId: z.string().min(1), body: z.string().min(1).max(20_000) });
 
 const updateSearchSchema = z.object({
   title: z.string().optional(),
@@ -243,7 +241,6 @@ function realtimeTools() {
     { type: "function", name: "create_outreach_draft", description: "Create a private email draft for review. This never approves or sends.", parameters: { type: "object", properties: { recipientName: { type: "string" }, recipientEmail: { type: "string" }, subject: { type: "string" }, body: { type: "string" } }, required: ["recipientName", "recipientEmail", "subject", "body"], additionalProperties: false } },
     { type: "function", name: "create_webform_draft", description: "Create a private exact-review webform action for the focused listing. Supply prose only; RoomScout resolves its reviewed destination and fields. This never approves or submits.", parameters: { type: "object", properties: { subject: { type: "string" }, body: { type: "string" } }, required: ["subject", "body"], additionalProperties: false } },
     { type: "function", name: "answer_decision", description: "Answer an open Entscheidung from the instructions with the musician's words: choice is the option id (message kinds: yes | no) or \"custom\" with text. sent is always false; never claim delivery.", parameters: { type: "object", properties: { decisionId: { type: "string" }, choice: { type: "string" }, text: { type: "string" } }, required: ["decisionId", "choice"], additionalProperties: false } },
-    { type: "function", name: "reply_to_provider", description: "Stage the musician's dictated message to the provider of one conversation (conversationId from the instructions), using their exact words. Dispatched at once as the musician's own approval; sent is always false.", parameters: { type: "object", properties: { conversationId: { type: "string" }, body: { type: "string" } }, required: ["conversationId", "body"], additionalProperties: false } },
   ];
 }
 
@@ -399,13 +396,6 @@ export const executeTool = action({
       const input = answerDecisionSchema.parse(parsed);
       const result = await ctx.runMutation(internal.decisions.answerFromScout, {
         ownerId, decisionId: input.decisionId as Id<"decisions">, choice: input.choice, ...(input.text ? { text: input.text } : {}),
-      });
-      return { outputJson: JSON.stringify(result) };
-    }
-    if (args.name === "reply_to_provider") {
-      const input = replyToProviderSchema.parse(parsed);
-      const result = await ctx.runMutation(internal.decisions.replyToProviderFromScout, {
-        ownerId, conversationId: input.conversationId as Id<"providerConversations">, body: input.body,
       });
       return { outputJson: JSON.stringify(result) };
     }

@@ -207,12 +207,6 @@ export const answerFromScout = internalMutation({
   handler: async (ctx, args) => await answerDecision(ctx, { ...args, fromChat: true }),
 });
 
-/** Chat/voice tool path for a dictated provider message. */
-export const replyToProviderFromScout = internalMutation({
-  args: { ownerId: v.id("users"), conversationId: v.id("providerConversations"), body: v.string() },
-  returns: v.object({ requestId: v.id("actionRequests"), status: v.string(), dispatched: v.boolean(), sent: v.literal(false) }),
-  handler: async (ctx, args) => await stageCustomReplyForOwner(ctx, args),
-});
 
 // ---------------------------------------------------------------------------
 // scout_question: formulate the question with one Scout round in the chat

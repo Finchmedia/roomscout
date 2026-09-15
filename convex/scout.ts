@@ -369,7 +369,7 @@ export const getActionContext = internalQuery({
       caseCard: v.string(),
       activeNeedId: v.optional(v.id("savedNeeds")),
       focusedSignalId: v.optional(v.id("signals")),
-      /** True while the owner has an open Entscheidung: the turn gets answerDecision and replyToProvider. */
+      /** True while the owner has an open Entscheidung: the turn gets answerDecision. */
       hasOpenDecision: v.boolean(),
     }),
     v.null(),
@@ -407,7 +407,7 @@ export const getActionContext = internalQuery({
   },
 });
 
-/** The two tools every turn gets while an Entscheidung is open, regardless of mode. */
+/** The tool every turn gets while an Entscheidung is open, regardless of mode. */
 function decisionTools(ctx: Parameters<typeof runScoutTurn>[0], ownerId: Id<"users">, hasOpenDecision: boolean): ToolSet {
   if (!hasOpenDecision) return {};
   const answerDecisionTool = createTool({
@@ -422,15 +422,9 @@ function decisionTools(ctx: Parameters<typeof runScoutTurn>[0], ownerId: Id<"use
       return await ctx.runMutation(internal.decisions.answerFromScout, { ownerId, decisionId, choice: input.choice, ...(input.text ? { text: input.text } : {}) });
     },
   });
-  const replyToProvider = createTool({
-    description: "Stage the musician's dictated message to the provider of one conversation (conversationId from the case card). Use the musician's exact words as body. The message is the musician's own approval and is dispatched at once; sent is always false — say it is on its way, never that it was sent.",
-    inputSchema: z.object({ conversationId: z.string(), body: z.string().min(1).max(20_000) }),
-    execute: async (_toolCtx, input) => {
-      const conversationId = input.conversationId as Id<"providerConversations">;
-      return await ctx.runMutation(internal.decisions.replyToProviderFromScout, { ownerId, conversationId, body: input.body });
-    },
-  });
-  return { answerDecision: answerDecisionTool, replyToProvider };
+  // Free text in the Scout chat is always addressed to the Scout. Dictating a message to a
+  // provider happens only in Nachrichten, where the recipient is unambiguous.
+  return { answerDecision: answerDecisionTool };
 }
 
 /** One musician turn, streamed. A failure is logged and rethrown so the Agent marks the reply failed on the thread. */
