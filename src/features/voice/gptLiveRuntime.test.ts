@@ -104,6 +104,37 @@ describe("GptLiveFragmentBuffer", () => {
     expect(buffer.hasNewerUnresolvedUserInput(snapshot.maxSequence)).toBe(true);
   });
 
+  it("never resends resolved user speech as a new backend prompt", () => {
+    const buffer = new GptLiveFragmentBuffer();
+    buffer.append({
+      type: "session.input_transcript.delta",
+      event_id: "resolved-brief",
+      delta: "We need a room in Berlin",
+      start_ms: 0,
+      end_ms: 300,
+    });
+    buffer.resolve(["resolved-brief"]);
+    buffer.append({
+      type: "session.output_transcript.delta",
+      event_id: "assistant-context",
+      delta: "Which day works?",
+      start_ms: 310,
+      end_ms: 500,
+    });
+    buffer.append({
+      type: "session.input_transcript.delta",
+      event_id: "new-answer",
+      delta: "Wednesday evening",
+      start_ms: 510,
+      end_ms: 700,
+    });
+
+    expect(buffer.snapshot("second-turn").fragments).toEqual([
+      expect.objectContaining({ eventId: "assistant-context", role: "assistant" }),
+      expect.objectContaining({ eventId: "new-answer", role: "user" }),
+    ]);
+  });
+
   it("keeps overlapping speakers independent and lets a late fragment revise its earlier row", () => {
     const buffer = new GptLiveFragmentBuffer();
     buffer.append({
@@ -142,7 +173,8 @@ describe("GptLiveFragmentBuffer", () => {
       start_ms: 0,
       end_ms: 300,
     });
-    expect(buffer.captureCandidate(0)).toBeUndefined();
+    const start = { sequence: 0, characterOffset: 0 };
+    expect(buffer.captureCandidate(start)).toBeUndefined();
 
     buffer.append({
       type: "session.input_transcript.delta",
@@ -151,7 +183,7 @@ describe("GptLiveFragmentBuffer", () => {
       start_ms: 310,
       end_ms: 700,
     });
-    expect(buffer.captureCandidate(0)).toBeUndefined();
+    expect(buffer.captureCandidate(start)).toBeUndefined();
 
     buffer.append({
       type: "session.input_transcript.delta",
@@ -160,12 +192,104 @@ describe("GptLiveFragmentBuffer", () => {
       start_ms: 710,
       end_ms: 800,
     });
-    expect(buffer.captureCandidate(0)).toEqual(
+    expect(buffer.captureCandidate(start)).toBeUndefined();
+    buffer.append({
+      type: "session.input_transcript.delta",
+      event_id: "next-sentence",
+      delta: " We also need storage",
+      start_ms: 810,
+      end_ms: 1_000,
+    });
+    expect(buffer.captureCandidate(start)).toEqual(
       expect.objectContaining({
         maxSequence: 3,
         text: "Hi, nice to meet you. Our monthly rehearsal budget is 300 euros.",
+        nextCursor: { sequence: 3, characterOffset: " euros.".length },
       }),
     );
+  });
+
+  it("captures a sentence prefix inside a real-style provider delta without changing the source", () => {
+    const buffer = new GptLiveFragmentBuffer();
+    const realFixtureDeltas = [
+      " Hey",
+      " Scout",
+      ", we're a",
+      " four",
+      "-piece",
+      " indie",
+      " rock",
+      " band",
+      " in",
+      " Berlin",
+      ". We're",
+    ];
+    realFixtureDeltas.forEach((delta, index) => {
+      buffer.append({
+        type: "session.input_transcript.delta",
+        event_id: `real-event-${index}`,
+        delta,
+        start_ms: index * 200,
+        end_ms: index * 200 + 200,
+      });
+    });
+
+    const first = buffer.captureCandidate({ sequence: 0, characterOffset: 0 });
+    expect(first).toEqual(
+      expect.objectContaining({
+        text: " Hey Scout, we're a four-piece indie rock band in Berlin.",
+      }),
+    );
+    expect(first?.fragments.at(-1)).toEqual(
+      expect.objectContaining({ eventId: "real-event-10", text: "." }),
+    );
+    expect(buffer.fragments().at(-1)?.text).toBe(". We're");
+
+    buffer.append({
+      type: "session.input_transcript.delta",
+      event_id: "event-location-next",
+      delta: " looking near Kreuzberg. Our",
+      start_ms: 1_010,
+      end_ms: 1_500,
+    });
+    const second = buffer.captureCandidate(first!.nextCursor);
+    expect(second).toEqual(
+      expect.objectContaining({
+        text: " We're looking near Kreuzberg.",
+        fragments: [
+          expect.objectContaining({ eventId: "real-event-10", text: " We're" }),
+          expect.objectContaining({
+            eventId: "event-location-next",
+            text: " looking near Kreuzberg.",
+          }),
+        ],
+      }),
+    );
+    expect(new Set(second!.fragments.map((fragment) => fragment.eventId)).size).toBe(
+      second!.fragments.length,
+    );
+    expect(buffer.snapshot("native").fragments.map((fragment) => fragment.text).join(""))
+      .toBe(" Hey Scout, we're a four-piece indie rock band in Berlin. We're looking near Kreuzberg. Our");
+  });
+
+  it("waits for lookahead before treating a punctuation-ended number as complete", () => {
+    const buffer = new GptLiveFragmentBuffer();
+    buffer.append({
+      type: "session.input_transcript.delta",
+      event_id: "decimal-first",
+      delta: "Our rehearsal budget is 300.",
+      start_ms: 0,
+      end_ms: 300,
+    });
+    expect(buffer.captureCandidate({ sequence: 0, characterOffset: 0 })).toBeUndefined();
+    buffer.append({
+      type: "session.input_transcript.delta",
+      event_id: "decimal-rest",
+      delta: "50 euros and includes bills",
+      start_ms: 310,
+      end_ms: 500,
+    });
+    expect(buffer.captureCandidate({ sequence: 0, characterOffset: 0 })).toBeUndefined();
   });
 
   it("never drops the beginning of a long unresolved monologue", () => {

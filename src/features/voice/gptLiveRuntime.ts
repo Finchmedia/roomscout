@@ -56,10 +56,17 @@ export type LiveCaptureCandidate = {
   fragments: LiveTranscriptFragment[];
   maxSequence: number;
   text: string;
+  nextCursor: LiveCaptureCursor;
+};
+
+export type LiveCaptureCursor = {
+  sequence: number;
+  characterOffset: number;
 };
 
 const FACT_SIGNAL = /\b(?:rehearsal|practice|proberaum|probe|room|raum|studio|location|city|stadt|near|nähe|radius|kilomet|\bkm\b|budget|euro|month|monat|week|woche|monday|tuesday|wednesday|thursday|friday|saturday|sunday|montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag|morning|afternoon|evening|morgen|nachmittag|abend|band|member|mitglied|people|person|piece|musician|musiker|drum|schlagzeug|equipment|gear|verstärker|amp|storage|lager|leave|stehen lassen|noise|laut|accessible|barriere|parking|parkplatz)\b|€/iu;
 const COMPLETE_CLAUSE = /[.!?](?:["')\]]*)\s*$/u;
+const CONFIRMED_SENTENCE_BOUNDARY = /[.!?](?:["')\]]*)?(?=\s+["'([]*\p{Lu})/gu;
 const MAX_DELEGATE_FRAGMENTS = 1_024;
 const MAX_DELEGATE_CHARACTERS = 64_000;
 
@@ -122,7 +129,11 @@ export class GptLiveFragmentBuffer {
     const optionalIds = new Set<string>();
     for (let index = this.#fragments.length - 1; index >= 0 && remainingFragments > 0; index -= 1) {
       const fragment = this.#fragments[index]!;
-      if (unresolvedIds.has(fragment.eventId) || fragment.text.length > remainingCharacters) continue;
+      if (
+        fragment.role !== "assistant" ||
+        unresolvedIds.has(fragment.eventId) ||
+        fragment.text.length > remainingCharacters
+      ) continue;
       optionalIds.add(fragment.eventId);
       remainingFragments -= 1;
       remainingCharacters -= fragment.text.length;
@@ -138,24 +149,47 @@ export class GptLiveFragmentBuffer {
     };
   }
 
-  captureCandidate(afterSequence: number): LiveCaptureCandidate | undefined {
-    const userFragments = this.#fragments.filter(
-      (fragment) => fragment.role === "user" && fragment.sequence > afterSequence,
-    );
-    let text = "";
-    let boundary = -1;
-    for (let index = 0; index < userFragments.length; index += 1) {
-      text += userFragments[index]!.text;
-      if (COMPLETE_CLAUSE.test(text)) boundary = index;
+  captureCandidate(after: LiveCaptureCursor): LiveCaptureCandidate | undefined {
+    const sourceSlices = this.#fragments.flatMap((fragment) => {
+      if (fragment.role !== "user" || fragment.sequence < after.sequence) return [];
+      const startOffset = fragment.sequence === after.sequence
+        ? Math.min(after.characterOffset, fragment.text.length)
+        : 0;
+      const text = fragment.text.slice(startOffset);
+      return text ? [{ fragment, startOffset, text }] : [];
+    });
+    const availableText = sourceSlices.map((slice) => slice.text).join("");
+    let boundaryEnd = -1;
+    for (const match of availableText.matchAll(CONFIRMED_SENTENCE_BOUNDARY)) {
+      boundaryEnd = (match.index ?? 0) + match[0].length;
     }
-    if (boundary < 0) return undefined;
-    const fragments = userFragments.slice(0, boundary + 1);
-    const completedText = fragments.map((fragment) => fragment.text).join("");
+    // A terminator at the current stream edge is ambiguous: the next delta may
+    // continue a number such as `300.` + `50`. Wait for the next sentence's
+    // capitalized start rather than capturing a phantom value.
+    if (boundaryEnd < 1) return undefined;
+    const completedText = availableText.slice(0, boundaryEnd);
     if (!isConservativeFactStatement(completedText)) return undefined;
+    const fragments: LiveTranscriptFragment[] = [];
+    let remainingCharacters = boundaryEnd;
+    let nextCursor = after;
+    for (const slice of sourceSlices) {
+      if (remainingCharacters <= 0) break;
+      const consumedCharacters = Math.min(remainingCharacters, slice.text.length);
+      fragments.push({
+        ...slice.fragment,
+        text: slice.text.slice(0, consumedCharacters),
+      });
+      nextCursor = {
+        sequence: slice.fragment.sequence,
+        characterOffset: slice.startOffset + consumedCharacters,
+      };
+      remainingCharacters -= consumedCharacters;
+    }
     return {
       fragments,
       maxSequence: fragments.at(-1)!.sequence,
       text: completedText,
+      nextCursor,
     };
   }
 

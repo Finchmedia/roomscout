@@ -267,6 +267,46 @@ describe("useGptLiveVoiceScout", () => {
     );
   });
 
+  it("sends only each turn's unresolved user speech across later native delegations", async () => {
+    const delegate = vi.fn().mockImplementation(async (args: {
+      requestId: string;
+      fragments: Array<{ eventId: string; role: string }>;
+    }) => completed(
+      args.requestId,
+      args.fragments.filter((fragment) => fragment.role === "user").map((fragment) => fragment.eventId),
+    ));
+    const { channel } = await connect(delegate as never);
+    for (const [index, text] of [
+      "We need a room in Berlin",
+      "Actually near Kreuzberg",
+      "Wednesday evenings work",
+    ].entries()) {
+      act(() => {
+        serverEvent(channel, {
+          type: "session.input_transcript.delta",
+          event_id: `user-turn-${index + 1}`,
+          delta: text,
+          start_ms: index * 1_000,
+          end_ms: index * 1_000 + 500,
+        });
+        serverEvent(channel, {
+          type: "session.delegation.created",
+          delegation: {
+            id: `delegation-turn-${index + 1}`,
+            type: "delegation",
+            target: "client",
+          },
+        });
+      });
+      await waitFor(() => expect(delegate).toHaveBeenCalledTimes(index + 1));
+    }
+
+    expect(delegate.mock.calls.map((call) =>
+      call[0].fragments.filter((fragment: { role: string }) => fragment.role === "user")
+        .map((fragment: { eventId: string }) => fragment.eventId),
+    )).toEqual([["user-turn-1"], ["user-turn-2"], ["user-turn-3"]]);
+  });
+
   it("does not speak or restore the old locale after focus and language change mid-request", async () => {
     let resolveDelegate!: (result: LiveDelegateResult) => void;
     const delegate = vi.fn(
@@ -616,7 +656,7 @@ describe("useGptLiveVoiceScout", () => {
       serverEvent(channel, {
         type: "session.input_transcript.delta",
         event_id: "berlin-band",
-        delta: "We are a four-piece band in Berlin.",
+        delta: "We are a four-piece band in Berlin. We're",
         start_ms: 100,
         end_ms: 900,
       });
@@ -626,7 +666,12 @@ describe("useGptLiveVoiceScout", () => {
       expect.objectContaining({
         source: "voice",
         intent: "capture_facts",
-        fragments: [expect.objectContaining({ eventId: "berlin-band" })],
+        fragments: [
+          expect.objectContaining({
+            eventId: "berlin-band",
+            text: "We are a four-piece band in Berlin.",
+          }),
+        ],
       }),
     );
     expect(delegate.mock.calls[0]?.[0]).not.toHaveProperty("delegationId");
@@ -643,7 +688,12 @@ describe("useGptLiveVoiceScout", () => {
       expect.objectContaining({
         requestId: "native-delegation",
         delegationId: "native-delegation",
-        fragments: [expect.objectContaining({ eventId: "berlin-band" })],
+        fragments: [
+          expect.objectContaining({
+            eventId: "berlin-band",
+            text: "We are a four-piece band in Berlin. We're",
+          }),
+        ],
       }),
     );
     expect(delegate.mock.calls[1]?.[0]).not.toHaveProperty("intent");
@@ -719,7 +769,7 @@ describe("useGptLiveVoiceScout", () => {
       serverEvent(channel, {
         type: "session.input_transcript.delta",
         event_id: "budget-first",
-        delta: "Our rehearsal budget is 300 euros.",
+        delta: "Our rehearsal budget is 300 euros. Actually",
         start_ms: 0,
         end_ms: 400,
       });
@@ -729,7 +779,7 @@ describe("useGptLiveVoiceScout", () => {
       serverEvent(channel, {
         type: "session.input_transcript.delta",
         event_id: "budget-correction",
-        delta: "Actually, our rehearsal budget is 280 euros.",
+        delta: ", our rehearsal budget is 280 euros. Please",
         start_ms: 410,
         end_ms: 800,
       });
@@ -747,7 +797,13 @@ describe("useGptLiveVoiceScout", () => {
     expect(delegate.mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({
         intent: "capture_facts",
-        fragments: [expect.objectContaining({ eventId: "budget-correction" })],
+        fragments: expect.arrayContaining([
+          expect.objectContaining({ eventId: "budget-first", text: " Actually" }),
+          expect.objectContaining({
+            eventId: "budget-correction",
+            text: ", our rehearsal budget is 280 euros.",
+          }),
+        ]),
       }),
     );
   });
@@ -772,7 +828,7 @@ describe("useGptLiveVoiceScout", () => {
       serverEvent(channel, {
         type: "session.input_transcript.delta",
         event_id: "priority-fact",
-        delta: "We need a rehearsal room in Berlin.",
+        delta: "We need a rehearsal room in Berlin. More",
         start_ms: 0,
         end_ms: 500,
       });

@@ -12,6 +12,7 @@ import {
   safeLiveError,
   safeLiveProviderError,
   type LiveCaptionRow,
+  type LiveCaptureCursor,
   type LiveDelegationSnapshot,
   type LiveLocale,
   type LiveServerEvent,
@@ -273,6 +274,18 @@ function newRequestId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
+function laterCaptureCursor(
+  current: LiveCaptureCursor,
+  candidate: LiveCaptureCursor,
+): LiveCaptureCursor {
+  if (candidate.sequence > current.sequence) return candidate;
+  if (
+    candidate.sequence === current.sequence &&
+    candidate.characterOffset > current.characterOffset
+  ) return candidate;
+  return current;
+}
+
 export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) {
   const accessToken = useAuthToken();
   const runDelegate = useAction(delegateReference);
@@ -309,7 +322,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   const userSpeakingRef = useRef(false);
   const outputSuppressedRef = useRef(false);
   const captureTimerRef = useRef<number | undefined>(undefined);
-  const captureWatermarkRef = useRef(0);
+  const captureCursorRef = useRef<LiveCaptureCursor>({ sequence: 0, characterOffset: 0 });
   const lastCaptureQueuedAtRef = useRef(0);
   const fragmentBufferRef = useRef(new GptLiveFragmentBuffer());
   const queueRef = useRef<QueuedInput[]>([]);
@@ -321,6 +334,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       snapshot: LiveDelegationSnapshot;
       contextEpoch: number;
       locale: LiveLocale;
+      captureCursor?: LiveCaptureCursor;
     } | undefined
   >(undefined);
   const waitingForServerIdleRef = useRef(false);
@@ -465,7 +479,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       deliveredUpdateVersionsRef.current.clear();
       fragmentBufferRef.current.clear();
       captureTimerRef.current = undefined;
-      captureWatermarkRef.current = 0;
+      captureCursorRef.current = { sequence: 0, characterOffset: 0 };
       lastCaptureQueuedAtRef.current = 0;
       settleFlushWaiters(false);
       setPendingInputCount(0);
@@ -499,7 +513,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       return;
     }
     const captureCandidate = next.intent === "capture_facts"
-      ? fragmentBufferRef.current.captureCandidate(captureWatermarkRef.current)
+      ? fragmentBufferRef.current.captureCandidate(captureCursorRef.current)
       : undefined;
     if (next.intent === "capture_facts" && !captureCandidate) {
       queueRef.current.shift();
@@ -568,14 +582,23 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       });
       if (generationRef.current !== generation || voiceSessionIdRef.current !== sessionId) return;
       if (next.intent === "capture_facts") {
-        if (!["busy", "in_progress", "outcome_unknown"].includes(result.status)) {
-          captureWatermarkRef.current = Math.max(captureWatermarkRef.current, snapshot.maxSequence);
+        if (
+          captureCandidate &&
+          !["busy", "in_progress", "outcome_unknown"].includes(result.status)
+        ) {
+          captureCursorRef.current = laterCaptureCursor(
+            captureCursorRef.current,
+            captureCandidate.nextCursor,
+          );
         }
       } else {
         fragmentBufferRef.current.resolve(result.resolvedEventIds);
-        captureWatermarkRef.current = Math.max(
-          captureWatermarkRef.current,
-          fragmentBufferRef.current.processedCursor(),
+        captureCursorRef.current = laterCaptureCursor(
+          captureCursorRef.current,
+          {
+            sequence: fragmentBufferRef.current.processedCursor(),
+            characterOffset: Number.MAX_SAFE_INTEGER,
+          },
         );
       }
       setTranscript(toTranscript(fragmentBufferRef.current.captions()));
@@ -590,7 +613,13 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         return;
       }
       if (result.status === "in_progress") {
-        uncertainInputRef.current = { input: next, snapshot, contextEpoch, locale: requestLocale };
+        uncertainInputRef.current = {
+          input: next,
+          snapshot,
+          contextEpoch,
+          locale: requestLocale,
+          ...(captureCandidate ? { captureCursor: captureCandidate.nextCursor } : {}),
+        };
         waitingForServerIdleRef.current = true;
         setBackendState("processing");
         return;
@@ -627,8 +656,11 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       if (isRetryablePreclaimFailure(cause)) {
         if (next.intent !== "capture_facts") {
           failedInputRef.current = { input: next, refreshRequestId: false };
-        } else {
-          captureWatermarkRef.current = Math.max(captureWatermarkRef.current, snapshot.maxSequence);
+        } else if (captureCandidate) {
+          captureCursorRef.current = laterCaptureCursor(
+            captureCursorRef.current,
+            captureCandidate.nextCursor,
+          );
         }
         if (next.intent !== "capture_facts" && next.source === "text" && next.text) {
           setPendingTextInputs((current) =>
@@ -640,7 +672,13 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         setBackendState(next.intent === "capture_facts" ? "idle" : "failed");
         if (next.intent !== "capture_facts") settleFlushWaiters(false);
       } else {
-        uncertainInputRef.current = { input: next, snapshot, contextEpoch, locale: requestLocale };
+        uncertainInputRef.current = {
+          input: next,
+          snapshot,
+          contextEpoch,
+          locale: requestLocale,
+          ...(captureCandidate ? { captureCursor: captureCandidate.nextCursor } : {}),
+        };
         waitingForServerIdleRef.current = true;
         blockedByUnknownRef.current = true;
         setBackendState("outcome_unknown");
@@ -665,7 +703,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       connectionState !== "active" ||
       activeInputRef.current?.intent === "capture_facts" ||
       queueRef.current.some((input) => input.intent === "capture_facts") ||
-      !fragmentBufferRef.current.captureCandidate(captureWatermarkRef.current)
+      !fragmentBufferRef.current.captureCandidate(captureCursorRef.current)
     )
       return;
     const elapsed = Date.now() - lastCaptureQueuedAtRef.current;
@@ -704,10 +742,13 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       ) {
         const result = sessionState.lastResult;
         if (uncertain.input.intent === "capture_facts") {
-          if (!["busy", "in_progress", "outcome_unknown"].includes(result.status)) {
-            captureWatermarkRef.current = Math.max(
-              captureWatermarkRef.current,
-              uncertain.snapshot.maxSequence,
+          if (
+            uncertain.captureCursor &&
+            !["busy", "in_progress", "outcome_unknown"].includes(result.status)
+          ) {
+            captureCursorRef.current = laterCaptureCursor(
+              captureCursorRef.current,
+              uncertain.captureCursor,
             );
           }
         } else {
