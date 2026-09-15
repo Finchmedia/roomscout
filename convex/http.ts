@@ -5,6 +5,7 @@ import { httpAction } from "./_generated/server";
 import { webhook as agentmailWebhook } from "./agentmail";
 import { webhook as firecrawlWebhook } from "./firecrawl";
 import { optionsHttp as realtimeOptions, sessionHttp as realtimeSession } from "./voice";
+import { optionsHttp as liveOptions, sessionHttp as liveSession } from "./voiceLive";
 
 const http = httpRouter();
 
@@ -32,6 +33,18 @@ http.route({
   path: "/api/realtime/session",
   method: "OPTIONS",
   handler: realtimeOptions,
+});
+
+http.route({
+  path: "/api/live/session",
+  method: "OPTIONS",
+  handler: liveOptions,
+});
+
+http.route({
+  path: "/api/live/session",
+  method: "POST",
+  handler: liveSession,
 });
 
 http.route({

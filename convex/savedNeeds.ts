@@ -230,6 +230,7 @@ export const getOrCreateDraft = mutation({
 export const update = mutation({
   args: {
     needId: v.id("savedNeeds"),
+    expectedRevision: v.optional(v.number()),
     title: v.optional(v.string()),
     locationQuery: v.optional(v.string()),
     locationLabel: v.optional(v.string()),
@@ -253,6 +254,13 @@ export const update = mutation({
     }
     if (need.status === "archived") {
       throw new ConvexError({ code: "NEED_ARCHIVED" });
+    }
+    if (args.expectedRevision !== undefined && (need.matchingRevision ?? 0) !== args.expectedRevision) {
+      throw new ConvexError({
+        code: "NEED_REVISION_CONFLICT",
+        expectedRevision: args.expectedRevision,
+        currentRevision: need.matchingRevision ?? 0,
+      });
     }
 
     const locationQuery = args.locationQuery === undefined
@@ -394,13 +402,67 @@ export const updateFromScout = internalMutation({
     instruments: v.optional(v.array(v.string())),
     collaborationOpen: v.optional(v.boolean()),
     facets: v.optional(v.array(facetValidator)),
+    voiceClaim: v.optional(v.object({
+      voiceSessionId: v.id("voiceSessions"),
+      requestId: v.string(),
+      generation: v.number(),
+    })),
   },
-  returns: v.null(),
+  returns: v.object({ revision: v.number(), changedFields: v.array(v.string()) }),
   handler: async (ctx, args) => {
     const need = await ctx.db.get(args.needId);
     if (need === null || need.ownerId !== args.ownerId || need.status === "archived") {
       throw new ConvexError({ code: "NEED_NOT_FOUND" });
     }
+    if (args.voiceClaim) {
+      const session = await ctx.db.get(args.voiceClaim.voiceSessionId);
+      const claim = session?.activeClaim;
+      if (
+        !session || session.ownerId !== args.ownerId || !claim ||
+        claim.requestId !== args.voiceClaim.requestId ||
+        claim.generation !== args.voiceClaim.generation
+      ) {
+        throw new ConvexError({ code: "VOICE_CLAIM_SUPERSEDED" });
+      }
+      const context = await ctx.db
+        .query("scoutContexts")
+        .withIndex("by_owner", (q) => q.eq("ownerId", args.ownerId))
+        .unique();
+      if (!context || context.activeNeedId !== need._id) {
+        throw new ConvexError({ code: "VOICE_TARGET_SUPERSEDED" });
+      }
+      if ((need.matchingRevision ?? 0) !== (claim.needRevision ?? 0)) {
+        let snapshot: Record<string, unknown> = {};
+        try {
+          snapshot = claim.needSnapshotJson ? JSON.parse(claim.needSnapshotJson) : {};
+        } catch {
+          throw new ConvexError({ code: "VOICE_TARGET_SUPERSEDED" });
+        }
+        const input = args as Record<string, unknown>;
+        const current = {
+          ...need,
+          locationQuery: savedNeedLocationQuery(need),
+          locationLabel: savedNeedLocationLabel(need),
+        } as Record<string, unknown>;
+        const guardedFields = [
+          "title", "locationQuery", "locationLabel", "maxBudgetEur", "arrangement",
+          "schedule", "requirements", "openToSharing", "radiusKm", "genres",
+          "instruments", "collaborationOpen", "facets",
+        ];
+        const conflicts = guardedFields.filter(
+          (field) => input[field] !== undefined &&
+            JSON.stringify(current[field]) !== JSON.stringify(snapshot[field]),
+        );
+        if (conflicts.length > 0) {
+          throw new ConvexError({ code: "VOICE_FIELD_CONFLICT", fields: conflicts });
+        }
+      }
+    }
+    const changedFields = [
+      "title", "locationQuery", "locationLabel", "maxBudgetEur", "arrangement",
+      "schedule", "requirements", "openToSharing", "radiusKm", "genres",
+      "instruments", "collaborationOpen", "facets",
+    ].filter((field) => (args as Record<string, unknown>)[field] !== undefined);
     const locationQuery = args.locationQuery === undefined
       ? undefined
       : requiredText(args.locationQuery, "locationQuery");
@@ -448,8 +510,8 @@ export const updateFromScout = internalMutation({
       ...(args.facets !== undefined ? { facets: args.facets } : {}),
       updatedAt: Date.now(),
     });
-    await refreshNeedMatching(ctx, need);
+    const revision = await refreshNeedMatching(ctx, need);
     if (locationChanged) await ctx.scheduler.runAfter(0, internal.map.geocodeNeed, { savedNeedId: need._id });
-    return null;
+    return { revision, changedFields };
   },
 });

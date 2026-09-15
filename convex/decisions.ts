@@ -226,6 +226,48 @@ export const answerFromScout = internalMutation({
   handler: async (ctx, args) => await answerDecision(ctx, { ...args, fromChat: true }),
 });
 
+/** Live Voice may answer only the nonbinding Scout question bound when its claim was accepted. */
+export const answerNonbindingFromVoice = internalMutation({
+  args: {
+    ownerId: v.id("users"),
+    voiceSessionId: v.id("voiceSessions"),
+    requestId: v.string(),
+    generation: v.number(),
+    decisionId: v.id("decisions"),
+    choice: v.string(),
+    text: v.optional(v.string()),
+  },
+  returns: answerResultValidator,
+  handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.voiceSessionId);
+    const claim = session?.activeClaim;
+    if (
+      !session || session.ownerId !== args.ownerId || !claim ||
+      claim.requestId !== args.requestId || claim.generation !== args.generation
+    ) {
+      throw new ConvexError({ code: "VOICE_CLAIM_SUPERSEDED" });
+    }
+    if (claim.decisionId !== args.decisionId) {
+      throw new ConvexError({ code: "VOICE_DECISION_TARGET_MISMATCH" });
+    }
+    const decision = await ctx.db.get(args.decisionId);
+    if (
+      !decision || decision.ownerId !== args.ownerId || decision.status !== "open" ||
+      decision.kind !== "scout_question" ||
+      decision.updatedAt !== claim.decisionUpdatedAt
+    ) {
+      throw new ConvexError({ code: "VOICE_DECISION_SUPERSEDED" });
+    }
+    return await answerDecision(ctx, {
+      ownerId: args.ownerId,
+      decisionId: args.decisionId,
+      choice: args.choice,
+      text: args.text,
+      fromChat: true,
+    });
+  },
+});
+
 
 // ---------------------------------------------------------------------------
 // scout_question: formulate the question with one Scout round in the chat

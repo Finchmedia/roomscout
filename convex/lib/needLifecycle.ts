@@ -16,6 +16,7 @@ export async function refreshNeedMatching(ctx: MutationCtx, need: Doc<"savedNeed
       ownerId: need.ownerId, savedNeedId: need._id,
     });
   }
+  return revision;
 }
 
 export async function setNeedStatus(ctx: MutationCtx, need: Doc<"savedNeeds">, status: Doc<"savedNeeds">["status"]) {
