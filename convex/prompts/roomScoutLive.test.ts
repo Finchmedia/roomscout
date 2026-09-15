@@ -44,3 +44,32 @@ describe("RoomScout Live prompts", () => {
     expect(scoutVoiceInstructions("de")).toContain("Leere optionale Felder sind kein Fragegrund");
   });
 });
+
+describe("GPT Live session opening", () => {
+  it.each([
+    ["en", "Hey, welcome back. What would you like to pick up?"],
+    ["de", "Hey, willkommen zurück. Womit möchtest du weitermachen?"],
+  ] as const)("continues an existing %s search without restarting discovery", (locale, greeting) => {
+    const prompt = liveInstructions(locale, "Active search: saved facts", { hasSavedNeed: true });
+
+    expect(prompt).toContain(greeting);
+    expect(prompt).toContain(locale === "de"
+      ? "stelle keine neue Frage zu Suchkriterien"
+      : "ask a new search-criteria question");
+    expect(prompt).toContain(locale === "de"
+      ? "Fasse den Suchauftrag nicht zusammen"
+      : "Do not recap the search brief");
+  });
+
+  it.each(["en", "de"] as const)("keeps the fresh %s opening in discovery", (locale) => {
+    const prompt = liveInstructions(locale, "No active structured search is attached.", {
+      hasSavedNeed: false,
+    });
+
+    expect(prompt).toContain(locale === "de"
+      ? "frage, was für einen Proberaum er sucht"
+      : "ask what they are looking for in a rehearsal room");
+    expect(prompt).not.toContain("welcome back");
+    expect(prompt).not.toContain("willkommen zurück");
+  });
+});

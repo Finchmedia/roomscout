@@ -203,6 +203,7 @@ export const getSessionBootstrap = internalQuery({
     focusedSignalId: v.optional(v.id("signals")),
     caseCard: v.string(),
     locale: localeValidator,
+    hasSavedNeed: v.boolean(),
   }), v.null()),
   handler: async (ctx, args) => {
     const [user, context] = await Promise.all([
@@ -224,6 +225,7 @@ export const getSessionBootstrap = internalQuery({
         buildDecisionCaseCard(decisions),
       ].filter(Boolean).join("\n\n"),
       locale: user.conversationLocale ?? "en",
+      hasSavedNeed: need?.ownerId === args.ownerId,
     };
   },
 });
@@ -339,7 +341,9 @@ export const sessionHttp = httpAction(async (ctx, request) => {
             },
           },
           delegation: { type: "client" },
-          instructions: liveInstructions(locale, bootstrap.caseCard),
+          instructions: liveInstructions(locale, bootstrap.caseCard, {
+            hasSavedNeed: bootstrap.hasSavedNeed,
+          }),
           store: false,
         },
         transport: { type: "webrtc", sdp: offer },

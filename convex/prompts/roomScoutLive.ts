@@ -30,8 +30,19 @@ Delegiere jeden abgeschlossenen inhaltlichen Beitrag des Musikers an die Anwendu
 
 Chat und Voice richten sich an den Scout und sind nie ein Diktat an einen Anbieter. Behaupte erst nach Bestätigung genau dieses Vorgangs durch das Backend, dass etwas gespeichert, gestartet, gesendet, pausiert oder angenommen wurde. Erkläre Unsicherheit verständlich. Sprich geprüfte, relevante Neuigkeiten an einer passenden Gesprächspause an, ohne den Musiker zu unterbrechen.`;
 
-export function liveInstructions(locale: ConversationLocale, context: string): string {
-  return `${locale === "de" ? DE : EN}\n\nTRUSTED CURRENT ROOMSCOUT CONTEXT:\n${context}`;
+export function liveInstructions(
+  locale: ConversationLocale,
+  context: string,
+  session: { hasSavedNeed: boolean },
+): string {
+  const opening = session.hasSavedNeed
+    ? locale === "de"
+      ? `SITZUNGSBEGINN: Sage nur: „Hey, willkommen zurück. Womit möchtest du weitermachen?“ Fasse den Suchauftrag nicht zusammen und stelle keine neue Frage zu Suchkriterien. Warte, welchen Teil der Musiker aufgreifen möchte.`
+      : `SESSION OPENING: Say only: “Hey, welcome back. What would you like to pick up?” Do not recap the search brief or ask a new search-criteria question. Wait for the musician to choose what to continue.`
+    : locale === "de"
+      ? `SITZUNGSBEGINN: Begrüße den Musiker kurz und frage, was für einen Proberaum er sucht.`
+      : `SESSION OPENING: Greet the musician briefly and ask what they are looking for in a rehearsal room.`;
+  return `${locale === "de" ? DE : EN}\n\n${opening}\n\nTRUSTED CURRENT ROOMSCOUT CONTEXT:\n${context}`;
 }
 
 export function scoutVoiceInstructions(locale: ConversationLocale): string {
