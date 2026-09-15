@@ -21,9 +21,11 @@ const FIXTURE_PREFIX = "gpt-live-proof-";
 const FIXTURE_CONFIRMATION = "CREATE_ISOLATED_GPT_LIVE_FIXTURE";
 const EXPLICIT_ISOLATED_TEST_USER = "live-scout-check-0915";
 const CURRENT_ISOLATED_TEST_USER = "gpt-live-proof-0915-b";
+const NEXT_ISOLATED_TEST_USER = "gpt-live-proof-0915-c";
 const inspectUsernameValidator = v.union(
   v.literal(EXPLICIT_ISOLATED_TEST_USER),
   v.literal(CURRENT_ISOLATED_TEST_USER),
+  v.literal(NEXT_ISOLATED_TEST_USER),
 );
 
 const resultValidator = v.object({
