@@ -1,10 +1,13 @@
 /// <reference types="vite/client" />
+import agentTest from "@convex-dev/agent/test";
+import { saveMessages } from "@convex-dev/agent";
 import { convexTest } from "convex-test";
 import { makeFunctionReference } from "convex/server";
 import { expect, it } from "vitest";
-import { api } from "./_generated/api";
+import { api, components } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { scoutAgent } from "./scoutRuntime";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -24,8 +27,23 @@ const createFixture = makeFunctionReference<"mutation", {
   offerHash: string;
 }>("liveProofFixture:create");
 
+const inspectFixture = makeFunctionReference<"query", {
+  username: "live-scout-check-0915";
+  fixtureKey: string;
+  confirmation: "CREATE_ISOLATED_GPT_LIVE_FIXTURE";
+}, {
+  savedNeedId: Id<"savedNeeds">;
+  need: { status: string; maxBudgetEur?: number; schedule: string[]; revision: number; facets: unknown[] };
+  openDecisions: Array<{ decisionId: Id<"decisions">; kind: string; status: "open" }>;
+  fixture: { conversationId: Id<"providerConversations">; offerId?: Id<"offerRevisions">; offerCurrent: boolean; acceptanceRequestId?: Id<"actionRequests"> };
+  ledgers: { ownerActionRequests: number; ownerApprovals: number; ownerExecutions: number; fixtureActionRequests: number; fixtureApprovals: number; fixtureExecutions: number; fixtureExecutedRequests: number; fixtureSucceededExecutions: number };
+  voice: { sessions: number; activeClaims: number; knownRequests: number; cachedResults: number };
+  agent: { recentMessages: number; recentUserMessages: number; recentPageComplete: boolean };
+}>("liveProofFixture:inspect");
+
 it("creates inert synthetic decision and provider-offer UI state without changing the current need", async () => {
   const t = convexTest(schema, modules);
+  agentTest.register(t);
   const seeded = await t.run(async (ctx) => {
     const now = 1_000;
     const ownerId = await ctx.db.insert("users", {
@@ -35,6 +53,7 @@ it("creates inert synthetic decision and provider-offer UI state without changin
       createdAt: now,
       lastSeenAt: now,
     });
+    const { threadId } = await scoutAgent.createThread(ctx, { userId: ownerId, title: "Live fixture test" });
     const savedNeedId = await ctx.db.insert("savedNeeds", {
       ownerId,
       title: "Current proof search",
@@ -52,11 +71,19 @@ it("creates inert synthetic decision and provider-offer UI state without changin
     });
     const contextId = await ctx.db.insert("scoutContexts", {
       ownerId,
-      threadId: "existing-scout-thread",
+      threadId,
       activeNeedId: savedNeedId,
       mode: "search_discovery",
       readyNeedRevision: 7,
       updatedAt: now,
+    });
+    await saveMessages(ctx, components.agent, {
+      threadId,
+      userId: ownerId,
+      messages: [
+        { role: "user", content: "Synthetic persisted user turn." },
+        { role: "assistant", content: "Synthetic persisted assistant turn." },
+      ],
     });
     return { ownerId, savedNeedId, contextId };
   });
@@ -75,6 +102,11 @@ it("creates inert synthetic decision and provider-offer UI state without changin
   const visibleConversations = await musician.query(api.conversations.listMine, {});
   const visibleConversation = await musician.query(api.conversations.getMine, {
     conversationId: result.conversationId,
+  });
+  const inspection = await t.query(inspectFixture, {
+    username: "live-scout-check-0915",
+    fixtureKey: "gpt-live-proof-p1-p2",
+    confirmation: "CREATE_ISOLATED_GPT_LIVE_FIXTURE",
   });
 
   const after = await t.run(async (ctx) => ({
@@ -136,6 +168,38 @@ it("creates inert synthetic decision and provider-offer UI state without changin
   });
   expect(after.message?.bodyText).toContain("SYNTHETIC TEST DATA ONLY");
   expect(after.offer).toMatchObject({ ready: true, needRevision: 7, revision: 1, blockers: [] });
+  expect(inspection).toMatchObject({
+    savedNeedId: seeded.savedNeedId,
+    need: {
+      status: "active",
+      maxBudgetEur: 250,
+      schedule: ["Tuesday evening"],
+      revision: 7,
+      facets: [],
+    },
+    fixture: {
+      conversationId: result.conversationId,
+      offerId: result.offerId,
+      offerCurrent: true,
+    },
+    ledgers: {
+      ownerActionRequests: 0,
+      ownerApprovals: 0,
+      ownerExecutions: 0,
+      fixtureActionRequests: 0,
+      fixtureApprovals: 0,
+      fixtureExecutions: 0,
+      fixtureExecutedRequests: 0,
+      fixtureSucceededExecutions: 0,
+    },
+    voice: { sessions: 0, activeClaims: 0, knownRequests: 0, cachedResults: 0 },
+    agent: { recentMessages: 2, recentUserMessages: 1, recentPageComplete: true },
+  });
+  expect(inspection.fixture).not.toHaveProperty("acceptanceRequestId");
+  expect(inspection.openDecisions.map((decision) => decision.decisionId)).toEqual(expect.arrayContaining([
+    result.nonbindingDecisionId,
+    result.bindingDecisionId,
+  ]));
   expect(after.actionRequests).toEqual([]);
   expect(after.approvals).toEqual([]);
   expect(after.executions).toEqual([]);

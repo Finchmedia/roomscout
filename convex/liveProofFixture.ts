@@ -3,8 +3,10 @@
  * deployment. It creates UI-readable synthetic state and no executable target.
  */
 
+import { listMessages } from "@convex-dev/agent";
 import { ConvexError, v } from "convex/values";
-import { internalMutation } from "./_generated/server";
+import { components } from "./_generated/api";
+import { internalMutation, internalQuery } from "./_generated/server";
 import { contentHash } from "./integrations/contentHash";
 import { OFFER_OPTIONS, OFFER_READY_QUESTION, raiseDecision } from "./lib/decisions";
 import { signalMatchRevision } from "./lib/matchValidity";
@@ -29,6 +31,65 @@ const resultValidator = v.object({
   providerMessageId: v.id("platformMessages"),
   offerId: v.id("offerRevisions"),
   offerHash: v.string(),
+});
+
+const facetValidator = v.object({
+  namespace: v.string(),
+  key: v.string(),
+  value: v.union(v.string(), v.number(), v.boolean(), v.array(v.string())),
+  confidence: v.number(),
+});
+
+const inspectionValidator = v.object({
+  ownerId: v.id("users"),
+  savedNeedId: v.id("savedNeeds"),
+  need: v.object({
+    status: v.union(v.literal("draft"), v.literal("active"), v.literal("paused"), v.literal("archived")),
+    maxBudgetEur: v.optional(v.number()),
+    schedule: v.array(v.string()),
+    revision: v.number(),
+    facets: v.array(facetValidator),
+  }),
+  openDecisions: v.array(v.object({
+    decisionId: v.id("decisions"),
+    kind: v.string(),
+    status: v.literal("open"),
+  })),
+  fixture: v.object({
+    conversationId: v.id("providerConversations"),
+    conversationState: v.string(),
+    conversationRevision: v.number(),
+    activeEvent: v.boolean(),
+    offerId: v.optional(v.id("offerRevisions")),
+    offerReady: v.boolean(),
+    offerRevision: v.optional(v.number()),
+    offerNeedRevision: v.optional(v.number()),
+    offerCurrent: v.boolean(),
+    acceptanceRequestId: v.optional(v.id("actionRequests")),
+    acceptedOfferId: v.optional(v.id("offerRevisions")),
+    acceptedAt: v.optional(v.number()),
+  }),
+  ledgers: v.object({
+    ownerActionRequests: v.number(),
+    ownerApprovals: v.number(),
+    ownerExecutions: v.number(),
+    fixtureActionRequests: v.number(),
+    fixtureApprovals: v.number(),
+    fixtureExecutions: v.number(),
+    fixtureExecutedRequests: v.number(),
+    fixtureSucceededExecutions: v.number(),
+  }),
+  voice: v.object({
+    sessions: v.number(),
+    activeClaims: v.number(),
+    knownRequests: v.number(),
+    cachedResults: v.number(),
+  }),
+  agent: v.object({
+    recentMessages: v.number(),
+    recentUserMessages: v.number(),
+    recentPageComplete: v.boolean(),
+  }),
 });
 
 /**
@@ -270,6 +331,133 @@ export const create = internalMutation({
       providerMessageId: platformMessageId,
       offerId,
       offerHash,
+    };
+  },
+});
+
+/** Read-only post-proof assertions. No message, request payload, or secret text is returned. */
+export const inspect = internalQuery({
+  args: {
+    username: v.literal(EXPLICIT_ISOLATED_TEST_USER),
+    fixtureKey: v.string(),
+    confirmation: v.literal(FIXTURE_CONFIRMATION),
+  },
+  returns: inspectionValidator,
+  handler: async (ctx, args) => {
+    const fixtureKey = args.fixtureKey.trim();
+    if (!fixtureKey.startsWith(FIXTURE_PREFIX) || !/^[a-z0-9-]{8,80}$/.test(fixtureKey)) {
+      throw new ConvexError({ code: "INVALID_LIVE_PROOF_FIXTURE_TARGET" });
+    }
+    const owner = await ctx.db.query("users").withIndex("by_username", (q) =>
+      q.eq("username", EXPLICIT_ISOLATED_TEST_USER),
+    ).unique();
+    if (!owner || owner.role !== "musician" || owner.username !== args.username) {
+      throw new ConvexError({ code: "SYNTHETIC_LIVE_PROOF_USER_REQUIRED" });
+    }
+    const [context, conversation, openDecisions, ownerRequests, ownerApprovals, ownerExecutions, voiceSessions] = await Promise.all([
+      ctx.db.query("scoutContexts").withIndex("by_owner", (q) => q.eq("ownerId", owner._id)).unique(),
+      ctx.db.query("providerConversations").withIndex("by_owner_and_key", (q) =>
+        q.eq("ownerId", owner._id).eq("conversationKey", `fixture:${fixtureKey}`),
+      ).unique(),
+      ctx.db.query("decisions").withIndex("by_owner_and_status", (q) =>
+        q.eq("ownerId", owner._id).eq("status", "open"),
+      ).collect(),
+      ctx.db.query("actionRequests").withIndex("by_owner_and_saved_need_and_updated_at", (q) =>
+        q.eq("ownerId", owner._id),
+      ).collect(),
+      ctx.db.query("actionApprovals").withIndex("by_owner_and_decided_at", (q) =>
+        q.eq("ownerId", owner._id),
+      ).collect(),
+      ctx.db.query("actionExecutions").withIndex("by_owner_and_created_at", (q) =>
+        q.eq("ownerId", owner._id),
+      ).collect(),
+      ctx.db.query("voiceSessions").withIndex("by_owner_and_started_at", (q) =>
+        q.eq("ownerId", owner._id),
+      ).collect(),
+    ]);
+    if (!context?.activeNeedId || !conversation) {
+      throw new ConvexError({ code: "LIVE_PROOF_FIXTURE_NOT_FOUND" });
+    }
+    const [need, offer, signal, agentMessages] = await Promise.all([
+      ctx.db.get(context.activeNeedId),
+      conversation.currentOfferId ? ctx.db.get(conversation.currentOfferId) : null,
+      ctx.db.get(conversation.signalId),
+      listMessages(ctx, components.agent, {
+        threadId: context.threadId,
+        paginationOpts: { cursor: null, numItems: 100 },
+      }),
+    ]);
+    if (!need || need.ownerId !== owner._id || conversation.savedNeedId !== need._id) {
+      throw new ConvexError({ code: "ACTIVE_LIVE_PROOF_NEED_REQUIRED" });
+    }
+
+    const fixtureRequestIds = new Set(ownerRequests
+      .filter((request) => request.providerConversationId === conversation._id)
+      .map((request) => request._id));
+    const fixtureApprovals = ownerApprovals.filter((approval) => fixtureRequestIds.has(approval.requestId));
+    const fixtureExecutions = ownerExecutions.filter((execution) => fixtureRequestIds.has(execution.requestId));
+    const currentSignalRevision = signal ? await signalMatchRevision(signal) : undefined;
+    const offerCurrent = !!offer && offer.ownerId === owner._id && !conversation.activeEventId &&
+      conversation.state !== "closed" && conversation.currentOfferId === offer._id &&
+      offer.revision === conversation.revision && offer.needRevision === (need.matchingRevision ?? 0) &&
+      !!signal && ["published", "stale"].includes(signal.status) && offer.signalRevision === currentSignalRevision;
+
+    return {
+      ownerId: owner._id,
+      savedNeedId: need._id,
+      need: {
+        status: need.status,
+        ...(need.maxBudgetEur !== undefined ? { maxBudgetEur: need.maxBudgetEur } : {}),
+        schedule: need.schedule,
+        revision: need.matchingRevision ?? 0,
+        facets: need.facets ?? [],
+      },
+      openDecisions: openDecisions.map((decision) => ({
+        decisionId: decision._id,
+        kind: decision.kind,
+        status: "open" as const,
+      })),
+      fixture: {
+        conversationId: conversation._id,
+        conversationState: conversation.state,
+        conversationRevision: conversation.revision,
+        activeEvent: conversation.activeEventId !== undefined,
+        ...(offer ? {
+          offerId: offer._id,
+          offerReady: offer.ready,
+          offerRevision: offer.revision,
+          offerNeedRevision: offer.needRevision,
+        } : { offerReady: false }),
+        offerCurrent,
+        ...(conversation.acceptanceRequestId !== undefined
+          ? { acceptanceRequestId: conversation.acceptanceRequestId }
+          : {}),
+        ...(conversation.acceptedOfferId !== undefined ? { acceptedOfferId: conversation.acceptedOfferId } : {}),
+        ...(conversation.acceptedAt !== undefined ? { acceptedAt: conversation.acceptedAt } : {}),
+      },
+      ledgers: {
+        ownerActionRequests: ownerRequests.length,
+        ownerApprovals: ownerApprovals.length,
+        ownerExecutions: ownerExecutions.length,
+        fixtureActionRequests: fixtureRequestIds.size,
+        fixtureApprovals: fixtureApprovals.length,
+        fixtureExecutions: fixtureExecutions.length,
+        fixtureExecutedRequests: ownerRequests.filter((request) =>
+          fixtureRequestIds.has(request._id) && request.status === "executed",
+        ).length,
+        fixtureSucceededExecutions: fixtureExecutions.filter((execution) => execution.status === "succeeded").length,
+      },
+      voice: {
+        sessions: voiceSessions.length,
+        activeClaims: voiceSessions.filter((session) => session.activeClaim !== undefined).length,
+        knownRequests: voiceSessions.reduce((count, session) => count + (session.requestTombstones?.length ?? 0), 0),
+        cachedResults: voiceSessions.reduce((count, session) => count + (session.recentResults?.length ?? 0), 0),
+      },
+      agent: {
+        recentMessages: agentMessages.page.length,
+        recentUserMessages: agentMessages.page.filter((message) => message.message?.role === "user").length,
+        recentPageComplete: agentMessages.isDone,
+      },
     };
   },
 });
