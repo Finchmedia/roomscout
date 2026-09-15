@@ -15,6 +15,7 @@ import {
 } from "./_generated/server";
 import { requireActionUserId, requireUserId } from "./integrations/authz";
 import { setNeedStatus } from "./lib/needLifecycle";
+import { activateNeed } from "./savedNeeds";
 import { buildDecisionCaseCard, buildScoutCaseCard } from "./scoutCaseCards";
 import { openDecisionCards } from "./decisions";
 import { createSearchDraftTool } from "./scout";
@@ -216,6 +217,7 @@ export const openLiveSession = internalMutation({
     if (!context || context.ownerId !== args.ownerId || context.activeNeedId !== args.activeNeedId) {
       throw new ConvexError({ code: "VOICE_CONTEXT_CHANGED" });
     }
+    await ctx.db.patch(args.ownerId, { conversationLocale: args.locale });
     const now = Date.now();
     const voiceSessionId = await ctx.db.insert("voiceSessions", {
       ownerId: args.ownerId,
@@ -403,6 +405,23 @@ export const claimRequest = internalMutation({
     }
     const locale = session.conversationLocale ?? "en";
     const tombstones = session.requestTombstones ?? [];
+    if (session.activeClaim) {
+      const sameRequest = session.activeClaim.requestId === args.requestId;
+      return {
+        kind: "result" as const,
+        result: {
+          status: sameRequest && session.activeClaim.fingerprint === args.fingerprint
+            ? "in_progress" as const
+            : sameRequest
+              ? "outcome_unknown" as const
+              : "busy" as const,
+          requestId: args.requestId,
+          resolvedEventIds: [],
+          locale,
+          ...(sameRequest ? { promptMessageId: session.activeClaim.promptMessageId } : {}),
+        },
+      };
+    }
     const known = tombstones.find((entry) => entry.requestId === args.requestId);
     if (known) {
       if (known.fingerprint !== args.fingerprint) {
@@ -427,18 +446,6 @@ export const claimRequest = internalMutation({
         };
       }
       return { kind: "result" as const, result: { status: "outcome_unknown" as const, requestId: args.requestId, resolvedEventIds: [], locale, promptMessageId: known.promptMessageId } };
-    }
-    if (session.activeClaim) {
-      return {
-        kind: "result" as const,
-        result: {
-          status: session.activeClaim.requestId === args.requestId ? "in_progress" as const : "busy" as const,
-          requestId: args.requestId,
-          resolvedEventIds: [],
-          locale,
-          ...(session.activeClaim.requestId === args.requestId ? { promptMessageId: session.activeClaim.promptMessageId } : {}),
-        },
-      };
     }
     if (session.status !== "active") {
       return { kind: "result" as const, result: { status: "failed" as const, requestId: args.requestId, resolvedEventIds: [], locale } };
@@ -511,6 +518,10 @@ export const finishRequest = internalMutation({
     }
     const locale = session.conversationLocale ?? "en";
     const staleLanguage = locale !== args.expectedLocale;
+    const context = await ctx.db.query("scoutContexts")
+      .withIndex("by_owner", (q) => q.eq("ownerId", args.ownerId)).unique();
+    const staleTarget = !context || context.activeNeedId !== session.activeNeedId ||
+      (claim.focusedSignalId !== undefined && context.focusedSignalId !== claim.focusedSignalId);
     if (args.result.status === "in_progress" || args.result.status === "busy") {
       throw new ConvexError({ code: "VOICE_RESULT_NOT_TERMINAL" });
     }
@@ -518,7 +529,7 @@ export const finishRequest = internalMutation({
       ...args.result,
       status: args.result.status,
       locale,
-      ...(staleLanguage ? { status: "superseded", spokenSummary: undefined } : {}),
+      ...(staleLanguage || staleTarget ? { status: "superseded", spokenSummary: undefined } : {}),
     };
     const stored = { ...result, completedAt: Date.now() };
     const recentResults = [...(session.recentResults ?? []).filter((entry) => entry.requestId !== args.requestId), stored]
@@ -552,7 +563,8 @@ export const changeNeedStatus = internalMutation({
       throw new ConvexError({ code: "NEED_NOT_FOUND" });
     }
     const status = args.action === "start" ? "active" as const : "paused" as const;
-    await setNeedStatus(ctx, need, status);
+    if (status === "active") await activateNeed(ctx, args.ownerId, need);
+    else await setNeedStatus(ctx, need, status);
     return { status, revision: need.status === status ? (need.matchingRevision ?? 0) : (need.matchingRevision ?? 0) + 1 };
   },
 });

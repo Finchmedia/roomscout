@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
-import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import { internalMutation, internalQuery, mutation, query, type MutationCtx } from "./_generated/server";
 import { requireUserId } from "./integrations/authz";
 import { refreshNeedMatching, setNeedStatus } from "./lib/needLifecycle";
 import {
@@ -331,6 +331,33 @@ export const setStatus = mutation({
   },
 });
 
+export async function activateNeed(
+  ctx: MutationCtx,
+  ownerId: Doc<"savedNeeds">["ownerId"],
+  need: Doc<"savedNeeds">,
+) {
+  if (!hasCompleteSavedNeedLocation(need)) throw new ConvexError({ code: "INCOMPLETE_NEED" });
+  const wasActive = need.status === "active";
+  await setNeedStatus(ctx, need, "active");
+  const now = Date.now();
+  await ctx.db.insert("auditEvents", {
+    eventKey: `need:${need._id}:activated:${now}`,
+    actorType: "user",
+    actorUserId: ownerId,
+    entityKey: `need:${need._id}`,
+    eventType: "search.activated",
+    summary: "Suche aktiviert",
+    occurredAt: now,
+  });
+  if (wasActive) {
+    await ctx.scheduler.runAfter(0, internal.matches.recomputeNeed, { ownerId, savedNeedId: need._id });
+  }
+  await ctx.scheduler.runAfter(0, internal.scoutOrchestrator.runForOwner, { ownerId });
+  await ctx.scheduler.runAfter(0, internal.demoSourceChecks.requestAutomatic, {
+    ownerId, requestId: `auto:need:${need._id}:${now}`,
+  });
+}
+
 /**
  * "Schick mich los": the Suchauftrag becomes active and the Scout starts
  * working within the owner's Handlungsspielraum (ADR 0001). Pausing and
@@ -345,33 +372,7 @@ export const activate = mutation({
     if (need === null || need.ownerId !== ownerId || need.status === "archived") {
       throw new ConvexError({ code: "NEED_NOT_FOUND" });
     }
-    if (!hasCompleteSavedNeedLocation(need)) throw new ConvexError({ code: "INCOMPLETE_NEED" });
-    const wasActive = need.status === "active";
-    await setNeedStatus(ctx, need, "active");
-    const now = Date.now();
-    await ctx.db.insert("auditEvents", {
-      eventKey: `need:${need._id}:activated:${now}`,
-      actorType: "user",
-      actorUserId: ownerId,
-      entityKey: `need:${need._id}`,
-      eventType: "search.activated",
-      summary: "Suche aktiviert",
-      occurredAt: now,
-    });
-    // A fresh activation already queued matching inside setNeedStatus; a
-    // re-activation of an active search refreshes the matches explicitly.
-    if (wasActive) {
-      await ctx.scheduler.runAfter(0, internal.matches.recomputeNeed, { ownerId, savedNeedId: need._id });
-    }
-    // Account registration is a prerequisite for controlled portal work, not a
-    // consequence of finding a match. Start the idempotent eligibility check now.
-    await ctx.scheduler.runAfter(0, internal.scoutOrchestrator.runForOwner, { ownerId });
-    // Listings only arrive through ingestion; the daily monitor may not have
-    // run yet. Start one bounded roomscout.dev check so the Scout has
-    // something to work on right after activation.
-    await ctx.scheduler.runAfter(0, internal.demoSourceChecks.requestAutomatic, {
-      ownerId, requestId: `auto:need:${need._id}:${now}`,
-    });
+    await activateNeed(ctx, ownerId, need);
     return null;
   },
 });
