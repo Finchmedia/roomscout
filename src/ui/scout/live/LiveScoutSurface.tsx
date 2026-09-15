@@ -239,7 +239,14 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
           )}
           data-voice-companion-scroll={voiceHasScrollableCompanion || undefined}
         >
-          {props.chatSlot ? <div className="h-full min-h-0 w-full" data-voice-text-companion>{props.chatSlot}</div> : null}
+          {props.chatSlot ? (
+            <div
+              className="h-[min(32rem,55dvh)] min-h-[18rem] w-full shrink-0 overflow-hidden"
+              data-voice-text-companion
+            >
+              {props.chatSlot}
+            </div>
+          ) : null}
           {working ? <p role="status" className="text-center text-sm text-rs-ink-4">{stage === "paused" ? copy.pausedHeadline : props.decisionSlot ? copy.blockedHeadline : copy.workingHeadline}</p> : null}
           {props.decisionSlot ? <div>{props.decisionSlot}</div> : null}
           {voiceDetailSlot}

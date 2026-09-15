@@ -171,8 +171,20 @@ describe("live Scout surface columns", () => {
 
     const view = render(<Harness stage="discovery" />);
     const voiceNode = screen.getByTestId("voice-probe");
+    const stageFrame = document.querySelector<HTMLElement>('[data-slot="stage-background-content"]');
+    const companionScroll = document.querySelector<HTMLElement>('[data-voice-companion-scroll="true"]');
+    const textCompanion = document.querySelector<HTMLElement>("[data-voice-text-companion]");
+    expect(stageFrame).toHaveClass("h-full", "min-h-0", "overflow-hidden");
     expect(voiceNode.parentElement).toHaveAttribute("data-voice-sticky", "true");
-    expect(document.querySelector('[data-voice-companion-scroll="true"]')).toHaveClass("overflow-y-auto", "flex-1", "min-h-0");
+    expect(companionScroll).toHaveClass("overflow-y-auto", "flex-1", "min-h-0");
+    expect(companionScroll).not.toContainElement(voiceNode);
+    expect(textCompanion).toHaveClass(
+      "h-[min(32rem,55dvh)]",
+      "min-h-[18rem]",
+      "shrink-0",
+      "overflow-hidden",
+    );
+    expect(companionScroll).toContainElement(textCompanion);
     expect(screen.getByText("Text composer and history")).toBeInTheDocument();
     expect(screen.getAllByText("All saved facts").length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "Mit Scout sprechen" })).not.toBeInTheDocument();
