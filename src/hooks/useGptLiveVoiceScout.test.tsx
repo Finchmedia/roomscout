@@ -396,6 +396,31 @@ describe("useGptLiveVoiceScout", () => {
     await act(async () => resolveDelegate(completed("ignored", [])));
   });
 
+  it("counts only work waiting behind the active backend request as queued", async () => {
+    let resolveFirst!: (result: LiveDelegateResult) => void;
+    let resolveSecond!: (result: LiveDelegateResult) => void;
+    const delegate = vi.fn()
+      .mockImplementationOnce(
+        () => new Promise<LiveDelegateResult>((resolve) => { resolveFirst = resolve; }),
+      )
+      .mockImplementationOnce(
+        () => new Promise<LiveDelegateResult>((resolve) => { resolveSecond = resolve; }),
+      );
+    const { result } = await connect(delegate as never);
+    act(() => expect(result.current.sendText("Update the saved budget")).toBe(true));
+    await waitFor(() => expect(delegate).toHaveBeenCalledOnce());
+    expect(result.current.backendState).toBe("processing");
+    expect(result.current.pendingInputCount).toBe(0);
+
+    act(() => expect(result.current.sendText("Then check availability")).toBe(true));
+    expect(result.current.pendingInputCount).toBe(1);
+    await act(async () => resolveFirst(completed("first", [])));
+    await waitFor(() => expect(delegate).toHaveBeenCalledTimes(2));
+    expect(result.current.backendState).toBe("processing");
+    expect(result.current.pendingInputCount).toBe(0);
+    await act(async () => resolveSecond(completed("second", [])));
+  });
+
   it("keeps a deterministically rejected typed input for explicit manual retry", async () => {
     const rejection = Object.assign(new Error("INVALID_VOICE_REQUEST"), {
       data: { code: "INVALID_VOICE_REQUEST" },

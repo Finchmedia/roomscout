@@ -590,7 +590,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
             : [...current, { id: next.requestId, text: next.text! }],
         );
       }
-      setPendingInputCount(queueRef.current.length + 1);
+      setPendingInputCount(queueRef.current.length);
       setBackendState("failed");
       setError(
         cause instanceof GptLiveContextOverflowError
@@ -606,7 +606,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
 
     queueRef.current.shift();
     activeInputRef.current = next;
-    setPendingInputCount(queueRef.current.length + 1);
+    setPendingInputCount(queueRef.current.length);
     setBackendState("processing");
     if (next.source === "text") {
       setPendingTextInputs((current) => current.filter((entry) => entry.id !== next.requestId));
@@ -790,7 +790,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       source: "voice",
       intent: "capture_facts",
     });
-    setPendingInputCount(queueRef.current.length + (activeInputRef.current ? 1 : 0));
+    setPendingInputCount(queueRef.current.length);
     if (!activeInputRef.current) setBackendState("queued");
     pumpRef.current();
   }, [connectionState, earlyCaptureCadenceMs, earlyCaptureEnabled]);
@@ -953,7 +953,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         };
         if (captureIndex >= 0) queueRef.current.splice(captureIndex, 0, delegationInput);
         else queueRef.current.push(delegationInput);
-        setPendingInputCount(queueRef.current.length + (activeInputRef.current ? 1 : 0));
+        setPendingInputCount(queueRef.current.length);
         setBackendState("queued");
         pumpRef.current();
         return;
@@ -1167,7 +1167,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     const requestId = newRequestId("typed");
     queueRef.current.push({ requestId, source: "text", text: trimmed });
     setPendingTextInputs((current) => [...current, { id: requestId, text: trimmed }]);
-    setPendingInputCount(queueRef.current.length + (activeInputRef.current ? 1 : 0));
+    setPendingInputCount(queueRef.current.length);
     setBackendState("queued");
     pumpRef.current();
     return true;

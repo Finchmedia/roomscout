@@ -32,6 +32,7 @@ export type VoiceSessionValue = {
   userSpeaking: boolean;
   scoutSpeaking: boolean;
   backendState: LiveBackendState;
+  /** Work waiting behind the current backend request; excludes the active request. */
   pendingInputCount: number;
   pendingTextDraft: string;
   sessionLocale: LiveLocale;
