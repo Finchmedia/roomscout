@@ -25,7 +25,8 @@ describe("search discovery case card", () => {
     const card = buildScoutCaseCard({ mode: "search_discovery", need: need("draft") });
     expect(card).toContain("READY HANDOFF");
     expect(card).toContain("markSearchBriefReady");
-    expect(card).toContain("start the search in the app");
+    expect(card).toContain("explicitly asks to start it in voice");
+    expect(card).toContain("never start it merely because the brief is ready");
     expect(card).toContain("do not quote a UI button label");
     expect(card).not.toContain("Scout losschicken");
   });
