@@ -172,3 +172,42 @@ yours to sign."
 - Der Suchauftrag rechts ist immer im Bild. Das Portal ist sichtbar, sobald
   der Scout handelt.
 - Wenn ein Take scheitert, wird die Szene wiederholt, nicht geschnitten.
+
+## Beat-Reihenfolge nach der Besprechung vom 2026-09-16
+
+Der Lärm muss Information tragen, sonst ist er Deko. Deshalb zwei Lärm-Beats
+mit je einer sichtbaren Wirkung im Suchauftrag, und die Korrekturen verteilt:
+
+1. **Lärm-Beat 1 (Handy).** Nach der Blende dröhnt das Handy weiter. Der Kern
+   des Auftrags kommt in den Lärm hinein: Band, Stuttgart, Mittwoch, 300.
+   Fakten landen rechts, erst dann geht das Handy aus.
+2. **Unterbrechung (Tag).** Der Scout fragt nach, Daniel fällt ihm ins Wort:
+   "Wait, Thursdays, not Wednesdays."
+3. **Lärm-Beat 2 (Mike, echtes Wohnzimmer).** Mike schlappt mit Gitarre durchs
+   Bild, schiefes Solo, das Mikro fällt um. Daniel: "Ah no. Mike just knocked
+   over our mic. Make it 250 a month, we'll need a new one." Budget springt
+   auf 250. Mike braucht eine zweite Person im Bild.
+
+Die KI-Kulisse trägt nur Szene 0. Alles danach ist echt und billig.
+
+## Aufnahme-Setup
+
+- **OBS Studio**, eine Szene: "macOS Screen Capture" auf das Browser-Fenster
+  (nimmt App-Audio direkt mit, kein BlackHole nötig), dazu die Webcam als
+  "Video Capture Device".
+- **Zwei Tonspuren:** Mikrofon auf Spur 1, Browser-Audio auf Spur 2
+  (Einstellungen → Ausgabe → Aufnahme; erweiterte Audioeigenschaften). Format
+  MOV/MP4, 1080p.
+- **Kopfhörer tragen.** Sonst landet der Scout doppelt in der Aufnahme und
+  GPT-Live hört sich selbst. Mikrospur: Daniel, Mike, Handy. Systemspur: Scout.
+- **Mikrofon:** Browser und OBS auf dasselbe Eingabegerät. Externes USB-Mikro,
+  wenn vorhanden. Der Lärm läuft in den Raum, nicht ins System.
+- **Webcam separat in voller Größe** (QuickTime "Neue Filmaufnahme"), als
+  Material für die KI-Kulisse und für Schnitte auf Daniel. In Premiere über
+  die Tonspur synchronisieren.
+- **Vorbereitung:** Browser-Fenster fest dimensionieren, Zoom 110 bis 125 %,
+  Lesezeichenleiste aus, "Nicht stören" an. Dreißig Sekunden Testaufnahme,
+  beide Spuren prüfen, dann der Take.
+- **Alternative:** Screen Studio (bezahlt) nimmt Bildschirm, Webcam, Mikro und
+  System-Audio als getrennte Ebenen auf und erlaubt Zoom und Layout im
+  Nachhinein.
