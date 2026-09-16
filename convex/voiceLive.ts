@@ -21,12 +21,11 @@ import {
 } from "./lib/savedNeedLocation";
 import { activateNeed } from "./savedNeeds";
 import { assertVoiceClaim, voiceNeedSnapshot } from "./lib/voiceClaim";
-import { buildDecisionCaseCard, buildScoutCaseCard } from "./scoutCaseCards";
-import { openDecisionCards } from "./decisions";
-import { buildScoutTools, createSearchDraftTool } from "./scout";
-import { runScoutTurn } from "./scoutRuntime";
+import { buildScoutTools, briefReadinessFor, createSearchDraftTool } from "./scout";
+import { runScoutTurn, scoutAgent } from "./scoutRuntime";
 import { liveInstructions, scoutVoiceInstructions, type ConversationLocale } from "./prompts/roomScoutLive";
 import { voiceEndFarewell, type VoiceEndReason } from "./lib/voiceEndIntent";
+import { buildLiveDiscoveryContext } from "./lib/liveDiscoveryContext";
 
 const MAX_SESSION_MS = 15 * 60 * 1_000;
 const MAX_REQUESTS_PER_SESSION = 64;
@@ -37,7 +36,7 @@ const MAX_PROMPT_CHARS = 64_000;
 const MAX_REQUEST_ID_CHARS = 160;
 const MAX_EVENT_ID_CHARS = 240;
 const DEFAULT_MODEL = "gpt-live-1";
-const DEFAULT_VOICE = "marin";
+const DEFAULT_VOICE = "ripple";
 
 const localeValidator = v.union(v.literal("en"), v.literal("de"));
 const activationMissingFieldValidator = v.union(v.literal("location"), v.literal("radiusKm"));
@@ -71,6 +70,7 @@ const delegateResultValidator = v.object({
   status: delegateStatusValidator,
   requestId: v.string(),
   resolvedEventIds: v.array(v.string()),
+  delivery: v.optional(v.union(v.literal("silent"), v.literal("spoken"))),
   spokenSummary: v.optional(v.string()),
   locale: localeValidator,
   revision: v.optional(v.number()),
@@ -89,6 +89,7 @@ type DelegateResult = {
   status: "in_progress" | "busy" | TerminalStatus;
   requestId: string;
   resolvedEventIds: string[];
+  delivery?: "silent" | "spoken";
   spokenSummary?: string;
   locale: ConversationLocale;
   revision?: number;
@@ -212,7 +213,8 @@ export const getSessionBootstrap = internalQuery({
     threadId: v.string(),
     activeNeedId: v.optional(v.id("savedNeeds")),
     focusedSignalId: v.optional(v.id("signals")),
-    caseCard: v.string(),
+    discoveryContext: v.string(),
+    discovery: v.boolean(),
     locale: localeValidator,
     hasSavedNeed: v.boolean(),
   }), v.null()),
@@ -222,21 +224,21 @@ export const getSessionBootstrap = internalQuery({
       ctx.db.query("scoutContexts").withIndex("by_owner", (q) => q.eq("ownerId", args.ownerId)).unique(),
     ]);
     if (!user || !context) return null;
-    const [need, signal, decisions] = await Promise.all([
-      context.activeNeedId ? ctx.db.get(context.activeNeedId) : null,
-      context.focusedSignalId ? ctx.db.get(context.focusedSignalId) : null,
-      openDecisionCards(ctx, args.ownerId),
-    ]);
+    const loadedNeed = context.activeNeedId ? await ctx.db.get(context.activeNeedId) : null;
+    const need = loadedNeed?.ownerId === args.ownerId ? loadedNeed : null;
+    const discoveryContext = buildLiveDiscoveryContext({
+      need,
+      mode: context.mode,
+      briefReadiness: briefReadinessFor(need, context),
+    });
     return {
       threadId: context.threadId,
       activeNeedId: context.activeNeedId,
       focusedSignalId: context.focusedSignalId,
-      caseCard: [
-        buildScoutCaseCard({ mode: context.mode, need, signal }),
-        buildDecisionCaseCard(decisions),
-      ].filter(Boolean).join("\n\n"),
+      discoveryContext: JSON.stringify(discoveryContext),
+      discovery: discoveryContext.discovery,
       locale: user.conversationLocale ?? "en",
-      hasSavedNeed: need?.ownerId === args.ownerId,
+      hasSavedNeed: need !== null,
     };
   },
 });
@@ -352,8 +354,9 @@ export const sessionHttp = httpAction(async (ctx, request) => {
             },
           },
           delegation: { type: "client" },
-          instructions: liveInstructions(locale, bootstrap.caseCard, {
+          instructions: liveInstructions(locale, bootstrap.discoveryContext, {
             hasSavedNeed: bootstrap.hasSavedNeed,
+            discovery: bootstrap.discovery,
           }),
           store: false,
         },
@@ -461,6 +464,7 @@ export const claimRequest = internalMutation({
             status: cached.status,
             requestId: cached.requestId,
             resolvedEventIds: cached.resolvedEventIds,
+            delivery: cached.delivery,
             spokenSummary: cached.spokenSummary,
             locale: cached.locale,
             revision: cached.revision,
@@ -563,15 +567,29 @@ export const finishRequest = internalMutation({
     if (args.result.status === "in_progress" || args.result.status === "busy") {
       throw new ConvexError({ code: "VOICE_RESULT_NOT_TERMINAL" });
     }
-    const result: DelegateResult & { status: TerminalStatus } = {
+    let result: DelegateResult & { status: TerminalStatus } = {
       ...args.result,
       status: args.result.status,
       locale,
       ...(staleLanguage || staleTarget
-        ? { status: "superseded", spokenSummary: undefined, endCall: undefined }
+        ? { status: "superseded", delivery: "silent", spokenSummary: undefined, endCall: undefined }
         : {}),
-      ...(languageChangedByClaim && locale !== args.expectedLocale ? { spokenSummary: undefined } : {}),
     };
+    const assistantCompletion = result.delivery === "spoken"
+      ? result.spokenSummary?.trim()
+      : result.delivery === "silent" && result.status === "completed" && claim.promptMessageId
+        ? ""
+        : undefined;
+    if (assistantCompletion !== undefined && !result.assistantMessageId) {
+      const saved = await scoutAgent.saveMessage(ctx, {
+        threadId: session.threadId,
+        userId: args.ownerId,
+        message: { role: "assistant", content: assistantCompletion },
+        ...(claim.promptMessageId ? { promptMessageId: claim.promptMessageId } : {}),
+        skipEmbeddings: true,
+      });
+      result = { ...result, assistantMessageId: saved.messageId };
+    }
     const stored = { ...result, completedAt: Date.now() };
     const recentResults = [...(session.recentResults ?? []).filter((entry) => entry.requestId !== args.requestId), stored]
       .slice(-MAX_RECENT_RESULTS);
@@ -670,6 +688,7 @@ export const getSessionState = query({
       status: cached.status,
       requestId: cached.requestId,
       resolvedEventIds: cached.resolvedEventIds,
+      delivery: cached.delivery,
       spokenSummary: cached.spokenSummary,
       locale: cached.locale,
       revision: cached.revision,
@@ -743,6 +762,68 @@ function shortSummary(text: string): string | undefined {
   return `${result.trimEnd()}…`;
 }
 
+type VoiceSemanticResult = {
+  delivery: "silent" | "spoken";
+  responseKind: "routine_update" | "answer" | "clarification" | "action_result" | "decision_result";
+  spokenSummary: string;
+};
+
+export function resolveLiveDelivery(args: {
+  semantic: VoiceSemanticResult;
+  captureFacts: boolean;
+  hasEndCall: boolean;
+  requiresSpoken: boolean;
+  requiresClarification: boolean;
+  searchStatus?: {
+    locale: ConversationLocale;
+    action: "start" | "pause";
+    result: {
+      status: "active" | "paused" | "needs_clarification";
+      changed: boolean;
+      clarificationQuestion?: string;
+    };
+  };
+}): Pick<DelegateResult, "delivery" | "spokenSummary"> & { status: "completed" | "needs_clarification" } {
+  if (args.captureFacts) {
+    return { delivery: "silent", status: "completed" };
+  }
+  if (args.searchStatus) {
+    const { locale, result } = args.searchStatus;
+    if (result.status === "needs_clarification") {
+      return {
+        delivery: "spoken",
+        status: "needs_clarification",
+        spokenSummary: result.clarificationQuestion ?? (locale === "de"
+          ? "Ich brauche noch eine Pflichtangabe, bevor ich die Suche starten kann."
+          : "I still need one required detail before I can start the search."),
+      };
+    }
+    const spokenSummary = locale === "de"
+      ? result.status === "active"
+        ? result.changed ? "Die Suche läuft jetzt." : "Die Suche läuft bereits."
+        : result.changed ? "Die Suche ist jetzt pausiert." : "Die Suche ist bereits pausiert."
+      : result.status === "active"
+        ? result.changed ? "The search is now active." : "The search is already active."
+        : result.changed ? "The search is now paused." : "The search is already paused.";
+    return { delivery: "spoken", status: "completed", spokenSummary };
+  }
+  const semanticSummary = shortSummary(args.semantic.spokenSummary);
+  // The separately validated farewell is already a complete client-facing
+  // response. Auxiliary effects must not turn a clean hangup into a failure.
+  if (args.hasEndCall && !semanticSummary) {
+    return { delivery: "silent", status: "completed" };
+  }
+  const delivery = args.requiresSpoken ? "spoken" : args.semantic.delivery;
+  const status = args.requiresClarification || args.semantic.responseKind === "clarification"
+    ? "needs_clarification" as const
+    : "completed" as const;
+  const spokenSummary = delivery === "spoken" ? semanticSummary : undefined;
+  if (delivery === "spoken" && !spokenSummary) {
+    throw new Error("VOICE_SPOKEN_SUMMARY_REQUIRED");
+  }
+  return { delivery, status, ...(spokenSummary ? { spokenSummary } : {}) };
+}
+
 export const delegate = action({
   args: {
     voiceSessionId: v.id("voiceSessions"),
@@ -806,13 +887,25 @@ export const delegate = action({
     }
     const changedFields = new Set<string>();
     const verifiedFacts = new Set<string>();
+    const effectKinds = new Set<string>();
     let revision = claimed.needRevision;
     let sideEffect = false;
+    let requiresSpoken = false;
+    let requiresClarification = false;
+    let searchStatusOutcome: {
+      action: "start" | "pause";
+      result: {
+        status: "active" | "paused" | "needs_clarification";
+        changed: boolean;
+        clarificationQuestion?: string;
+      };
+    } | undefined;
     let endCallReason: VoiceEndReason | undefined;
     const claimRef = { voiceSessionId: args.voiceSessionId, requestId, generation: claimed.generation };
     const captureFacts = args.intent === "capture_facts";
     const onEffect = (kind: string, fields: string[]) => {
       sideEffect = true;
+      effectKinds.add(kind);
       fields.forEach((field) => changedFields.add(field));
       if (kind === "memory") verifiedFacts.add("memory.updated=true");
       if (kind === "decision") verifiedFacts.add("decision.status=answered");
@@ -838,6 +931,10 @@ export const delegate = action({
           decisionId: args.decisionId,
           musicianInput: userPrompt,
           onEndCall: (reason) => { endCallReason = reason; },
+          onClarificationRequired: () => {
+            requiresSpoken = true;
+            requiresClarification = true;
+          },
           onEffect,
         });
     if (!captureFacts && searchCanChange && context.activeNeedId) {
@@ -846,8 +943,12 @@ export const delegate = action({
         inputSchema: z.object({ action: z.enum(["start", "pause"]) }),
         execute: async (_toolCtx, input) => {
           const result = await ctx.runMutation(internal.voiceLive.changeNeedStatus, { ownerId, ...claimRef, action: input.action });
+          searchStatusOutcome = { action: input.action, result };
+          requiresSpoken = true;
+          if (result.status === "needs_clarification") requiresClarification = true;
           if (!result.changed) return result;
           sideEffect = true;
+          effectKinds.add("search_status");
           revision = result.revision;
           changedFields.add("status");
           verifiedFacts.add(`search.status=${result.status}`);
@@ -864,16 +965,31 @@ export const delegate = action({
           ? `VOICE-ASSISTENT-KONTEXT (keine Musikerangabe und keine Grundlage für Suchänderungen):\n${assistantContext}`
           : `VOICE ASSISTANT CONTEXT (not a musician statement and never a basis for search changes):\n${assistantContext}`
         : "";
+      const needBeforeTurn = context.activeNeedId
+        ? await ctx.runQuery(internal.savedNeeds.getOwnedInternal, {
+            ownerId,
+            needId: context.activeNeedId,
+          })
+        : null;
+      const discovery = context.mode === "search_discovery" && needBeforeTurn?.status === "draft";
       const turn = await runScoutTurn(ctx, {
         ownerId,
         threadId: state.threadId,
         origin: "musician",
         savedNeedId: context.activeNeedId,
-        caseCard: [context.caseCard, captureFacts ? captureInstruction : scoutVoiceInstructions(claimed.locale), assistantInstruction].filter(Boolean).join("\n\n"),
+        caseCard: [
+          context.caseCard,
+          captureFacts ? captureInstruction : scoutVoiceInstructions(claimed.locale, { discovery }),
+          assistantInstruction,
+        ].filter(Boolean).join("\n\n"),
         memoryQuery: userPrompt,
         ...(captureFacts
           ? { prompt: userPrompt, saveMessages: "none" as const }
-          : { promptMessageId: claimed.promptMessageId! }),
+          : {
+              promptMessageId: claimed.promptMessageId!,
+              saveMessages: "none" as const,
+              responseMode: "voice_delivery" as const,
+            }),
         tools,
         stream: false,
       });
@@ -884,7 +1000,7 @@ export const delegate = action({
         });
         revision = currentNeed?.matchingRevision ?? revision;
       }
-      const endCallState = endCallReason
+      const postTurnSession = endCallReason || searchStatusOutcome
         ? await ctx.runQuery(internal.voiceLive.getOwnedSessionForDelegate, {
             ownerId,
             voiceSessionId: args.voiceSessionId,
@@ -893,15 +1009,29 @@ export const delegate = action({
       const endCall = endCallReason
         ? {
             reason: endCallReason,
-            farewell: voiceEndFarewell(endCallState?.locale ?? claimed.locale, endCallReason),
+            farewell: voiceEndFarewell(postTurnSession?.locale ?? claimed.locale, endCallReason),
           }
         : undefined;
-      const spokenSummary = captureFacts || (endCall && !sideEffect) ? undefined : shortSummary(turn.text);
-      const status: TerminalStatus = captureFacts
-        ? "completed"
-        : !sideEffect && spokenSummary?.trim().endsWith("?")
-          ? "needs_clarification"
-          : "completed";
+      const semantic = "output" in turn && turn.output
+        ? turn.output
+        : { delivery: "silent" as const, responseKind: "routine_update" as const, spokenSummary: "" };
+      const guardedSpokenEffect = [...effectKinds].some((kind) =>
+        kind !== "search" && kind !== "memory" && kind !== "brief");
+      const deliveryResult = resolveLiveDelivery({
+        semantic,
+        captureFacts,
+        hasEndCall: Boolean(endCall),
+        requiresSpoken: requiresSpoken || guardedSpokenEffect,
+        requiresClarification,
+        ...(searchStatusOutcome
+          ? {
+              searchStatus: {
+                locale: postTurnSession?.locale ?? claimed.locale,
+                ...searchStatusOutcome,
+              },
+            }
+          : {}),
+      });
       return await ctx.runMutation(internal.voiceLive.finishRequest, {
         ownerId,
         voiceSessionId: args.voiceSessionId,
@@ -909,16 +1039,14 @@ export const delegate = action({
         generation: claimed.generation,
         expectedLocale: claimed.locale,
         result: {
-          status,
           requestId,
           resolvedEventIds: captureFacts ? [] : args.fragments.map((fragment) => fragment.eventId),
           locale: claimed.locale,
           revision,
           ...(!captureFacts && claimed.promptMessageId ? { promptMessageId: claimed.promptMessageId } : {}),
-          ...(!captureFacts && turn.assistantMessageId ? { assistantMessageId: turn.assistantMessageId } : {}),
           changedFields: [...changedFields],
           verifiedFacts: [...verifiedFacts],
-          ...(spokenSummary ? { spokenSummary } : {}),
+          ...deliveryResult,
           ...(endCall ? { endCall } : {}),
         },
       });
@@ -929,6 +1057,10 @@ export const delegate = action({
       const endCall = endCallReason
         ? { reason: endCallReason, farewell: voiceEndFarewell(claimed.locale, endCallReason) }
         : undefined;
+      const failedStatus = superseded ? "superseded" : sideEffect ? "outcome_unknown" : "failed";
+      const failureSummary = claimed.locale === "de"
+        ? "Das konnte ich gerade nicht zuverlässig abschließen."
+        : "I couldn't finish that reliably just now.";
       return await ctx.runMutation(internal.voiceLive.finishRequest, {
         ownerId,
         voiceSessionId: args.voiceSessionId,
@@ -936,7 +1068,7 @@ export const delegate = action({
         generation: claimed.generation,
         expectedLocale: claimed.locale,
         result: {
-          status: superseded ? "superseded" : sideEffect ? "outcome_unknown" : "failed",
+          status: failedStatus,
           requestId,
           resolvedEventIds: [],
           locale: claimed.locale,
@@ -944,6 +1076,8 @@ export const delegate = action({
           promptMessageId: claimed.promptMessageId,
           changedFields: [...changedFields],
           verifiedFacts: [...verifiedFacts],
+          delivery: superseded ? "silent" : "spoken",
+          ...(!superseded ? { spokenSummary: failureSummary } : {}),
           ...(endCall ? { endCall } : {}),
         },
       });

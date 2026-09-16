@@ -11,6 +11,7 @@ vi.mock("@convex-dev/auth/react", () => ({ useAuthToken: () => "token" }));
 const convexMocks = vi.hoisted(() => ({
   action: vi.fn(),
   mutation: vi.fn().mockResolvedValue({ locale: "en", languageRevision: 1 }),
+  query: undefined as unknown,
 }));
 const audioMocks = vi.hoisted(() => ({
   attach: vi.fn().mockResolvedValue(undefined),
@@ -22,7 +23,7 @@ const audioMocks = vi.hoisted(() => ({
 vi.mock("convex/react", () => ({
   useAction: () => convexMocks.action,
   useMutation: () => convexMocks.mutation,
-  useQuery: () => undefined,
+  useQuery: () => convexMocks.query,
 }));
 vi.mock("./useAudioVolume", () => ({
   useAudioVolume: () => ({
@@ -88,6 +89,7 @@ beforeEach(() => {
   vi.restoreAllMocks();
   convexMocks.action.mockReset();
   convexMocks.mutation.mockClear();
+  convexMocks.query = undefined;
   audioMocks.attach.mockClear();
   audioMocks.detach.mockClear();
   audioMocks.inputVolume = 0;
@@ -364,6 +366,134 @@ describe("useGptLiveVoiceScout", () => {
     )).toBe(true);
   });
 
+  it("delivers routine saved facts as quiet verified context", async () => {
+    const delegate = vi.fn().mockImplementation(async (args: {
+      requestId: string;
+      fragments: Array<{ eventId: string }>;
+    }) => ({
+      ...completed(args.requestId, args.fragments.map((fragment) => fragment.eventId)),
+      delivery: "silent" as const,
+      spokenSummary: "I saved your four-piece band and guitars.",
+      changedFields: ["bandSize", "instruments"],
+      verifiedFacts: ["Band size: 4", "Instruments: guitars"],
+    }));
+    const { channel, sent } = await connect(delegate as never);
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "silent-facts",
+        delta: "We are four people and bring guitars",
+        start_ms: 0,
+        end_ms: 400,
+      });
+      serverEvent(channel, {
+        type: "session.delegation.created",
+        delegation: { id: "silent-request", type: "delegation", target: "client" },
+      });
+    });
+    await waitFor(() => expect(sent.some((event) =>
+      event.type === "session.thinking.append" &&
+      String(event.content).includes("Band size: 4"),
+    )).toBe(true));
+    expect(sent.some((event) =>
+      event.type === "session.commentary.append" &&
+      event.content === "I saved your four-piece band and guitars.",
+    )).toBe(false);
+  });
+
+  it("keeps a cached silent completion quiet during reconciliation", async () => {
+    const delegate = vi.fn().mockImplementation(async (args: { requestId: string }) => ({
+      status: "in_progress" as const,
+      requestId: args.requestId,
+      resolvedEventIds: [],
+      locale: "en" as const,
+    }));
+    const hook = await connect(delegate as never);
+    act(() => {
+      serverEvent(hook.channel, {
+        type: "session.input_transcript.delta",
+        event_id: "cached-fact",
+        delta: "The radius is twenty kilometres",
+        start_ms: 0,
+        end_ms: 300,
+      });
+      serverEvent(hook.channel, {
+        type: "session.delegation.created",
+        delegation: { id: "cached-request", type: "delegation", target: "client" },
+      });
+    });
+    await waitFor(() => expect(delegate).toHaveBeenCalledOnce());
+    convexMocks.query = {
+      voiceSessionId: "voice-1",
+      status: "active",
+      provider: "live",
+      locale: "en",
+      languageRevision: 1,
+      activeRequest: undefined,
+      lastResult: {
+        ...completed("cached-request", ["cached-fact"]),
+        delivery: "silent",
+        spokenSummary: "Your radius is saved.",
+        changedFields: ["radiusKm"],
+        verifiedFacts: ["Radius: 20 km"],
+      },
+      current: {},
+    };
+    hook.rerender();
+    await waitFor(() => expect(hook.sent.some((event) =>
+      event.type === "session.thinking.append" &&
+      String(event.content).includes("Radius: 20 km"),
+    )).toBe(true));
+    expect(hook.sent.some((event) => event.content === "Your radius is saved.")).toBe(false);
+  });
+
+  it("speaks a cached mixed language result after reconciling its own locale change", async () => {
+    const delegate = vi.fn().mockImplementation(async (args: { requestId: string }) => ({
+      status: "in_progress" as const,
+      requestId: args.requestId,
+      resolvedEventIds: [],
+      locale: "en" as const,
+    }));
+    const hook = await connect(delegate as never);
+    act(() => {
+      serverEvent(hook.channel, {
+        type: "session.input_transcript.delta",
+        event_id: "cached-language",
+        delta: "Auf Deutsch: Was fehlt noch?",
+        start_ms: 0,
+        end_ms: 300,
+      });
+      serverEvent(hook.channel, {
+        type: "session.delegation.created",
+        delegation: { id: "cached-language-request", type: "delegation", target: "client" },
+      });
+    });
+    await waitFor(() => expect(delegate).toHaveBeenCalledOnce());
+    convexMocks.query = {
+      voiceSessionId: "voice-1",
+      status: "active",
+      provider: "live",
+      locale: "de",
+      languageRevision: 2,
+      activeRequest: undefined,
+      lastResult: {
+        ...completed("cached-language-request", ["cached-language"]),
+        locale: "de",
+        delivery: "spoken",
+        spokenSummary: "Es fehlt nur noch der Suchradius.",
+        changedFields: ["conversationLocale"],
+      },
+      current: {},
+    };
+    hook.rerender();
+    await waitFor(() => expect(hook.sent).toContainEqual(expect.objectContaining({
+      type: "session.commentary.append",
+      content: "Es fehlt nur noch der Suchradius.",
+    })));
+    expect(hook.result.current.sessionLocale).toBe("de");
+    expect(hook.sent.some((event) => String(event.content).includes("VERIFIED_PREVIOUS_REQUEST_RESULT"))).toBe(false);
+  });
+
   it("processes a late fragment in the next queued delegation even when its audio interval is older", async () => {
     let resolveFirst!: (result: LiveDelegateResult) => void;
     const delegate = vi.fn()
@@ -498,6 +628,39 @@ describe("useGptLiveVoiceScout", () => {
         }),
       ]),
     );
+  });
+
+  it("speaks a fresh mixed language result after applying its own locale change", async () => {
+    const delegate = vi.fn().mockImplementation(async (args: {
+      requestId: string;
+      fragments: Array<{ eventId: string }>;
+    }) => ({
+      ...completed(args.requestId, args.fragments.map((fragment) => fragment.eventId)),
+      locale: "de" as const,
+      delivery: "spoken" as const,
+      spokenSummary: "Klar. Was möchtest du zu deiner Suche wissen?",
+      changedFields: ["conversationLocale"],
+    }));
+    const { channel, result, sent } = await connect(delegate as never);
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "switch-and-question",
+        delta: "Switch to German and tell me what is still missing",
+        start_ms: 0,
+        end_ms: 500,
+      });
+      serverEvent(channel, {
+        type: "session.delegation.created",
+        delegation: { id: "switch-request", type: "delegation", target: "client" },
+      });
+    });
+    await waitFor(() => expect(sent).toContainEqual(expect.objectContaining({
+      type: "session.commentary.append",
+      content: "Klar. Was möchtest du zu deiner Suche wissen?",
+    })));
+    expect(result.current.sessionLocale).toBe("de");
+    expect(sent.some((event) => String(event.content).includes("VERIFIED_PREVIOUS_REQUEST_RESULT"))).toBe(false);
   });
 
   it("waits for actual backend completion and preserves queued typed input on close", async () => {
@@ -676,6 +839,23 @@ describe("useGptLiveVoiceScout", () => {
       expect.objectContaining({
         type: "session.thinking.append",
         content: "The saved brief now says Wednesday.",
+      }),
+    );
+    act(() => {
+      expect(
+        result.current.appendVerifiedBackgroundUpdate({
+          id: "discovery-phase",
+          version: "active",
+          content: "Apply phase search_active now. Stop discovery questions.",
+          speak: false,
+          instruction: true,
+        }),
+      ).toBe(true);
+    });
+    expect(sent.at(-1)).toEqual(
+      expect.objectContaining({
+        type: "session.instructions.append",
+        content: "Apply phase search_active now. Stop discovery questions.",
       }),
     );
   });

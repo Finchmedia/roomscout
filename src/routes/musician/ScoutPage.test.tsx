@@ -20,7 +20,8 @@ const fixtures = vi.hoisted(() => ({
   actionFns: new Map<string, ReturnType<typeof vi.fn>>(),
   voice: { connected: false, provider: "realtime" as "realtime" | "live", muted: false, connect: vi.fn().mockResolvedValue(undefined), disconnect: vi.fn(), setMuted: vi.fn(),
     sendText: vi.fn().mockReturnValue(true), setFocus: vi.fn(), appendVerifiedBackgroundUpdate: vi.fn(), clearBackgroundUpdate: vi.fn(),
-    pendingTextDraft: "", clearPendingTextDraft: vi.fn() },
+    pendingTextDraft: "", clearPendingTextDraft: vi.fn(), noteActivity: vi.fn(),
+    backendState: "idle" as "idle" | "queued" | "processing" },
 }));
 
 function mutation(name: string) {
@@ -166,9 +167,11 @@ beforeEach(() => {
   fixtures.matches = []; fixtures.conversations = []; fixtures.focusedThread = null; fixtures.inbox = []; fixtures.actions = []; fixtures.messages = []; fixtures.decisions = [];
   fixtures.queries.mockClear(); fixtures.mutations.clear(); fixtures.actionFns.clear();
   fixtures.voice.connected = false; fixtures.voice.provider = "realtime";
+  fixtures.voice.backendState = "idle";
   fixtures.voice.muted = false;
   fixtures.voice.connect.mockClear(); fixtures.voice.disconnect.mockClear(); fixtures.voice.sendText.mockClear();
   fixtures.voice.setMuted.mockClear();
+  fixtures.voice.noteActivity.mockClear();
   fixtures.voice.setFocus.mockClear(); fixtures.voice.appendVerifiedBackgroundUpdate.mockClear(); fixtures.voice.clearBackgroundUpdate.mockClear();
 });
 
@@ -188,6 +191,32 @@ describe("live Scout route", () => {
     expect(screen.getByRole("heading", { name: "So suche ich für euch." })).toBeInTheDocument();
     expect(screen.getByText(/Euer Suchauftrag ist bereit/)).toHaveAttribute("role", "status");
     expect(mutation("savedNeeds:activate")).not.toHaveBeenCalled();
+  });
+
+  it("does not leave a completed silent Live turn busy without an assistant message", () => {
+    fixtures.voice.connected = true;
+    fixtures.voice.provider = "live";
+    fixtures.voice.backendState = "idle";
+    fixtures.needs = [{ ...need(), matchingRevision: 3 }];
+    fixtures.context.briefReadiness = { status: "ready", needRevision: 3, readyAt: 100 };
+    fixtures.messages = [message({ role: "user", text: "Twenty kilometres is fine.", order: 0 })];
+    renderPage();
+    expect(document.querySelector("[data-live-scout-stage]")).toHaveAttribute("data-live-scout-stage", "brief");
+    expect(screen.getByRole("button", { name: "Scout losschicken" })).toBeEnabled();
+    expect(screen.queryByText("Dein Scout denkt nach …")).not.toBeInTheDocument();
+  });
+
+  it("uses an empty successful assistant marker as an invisible durable silent-turn boundary", () => {
+    fixtures.needs = [{ ...need(), matchingRevision: 3 }];
+    fixtures.context.briefReadiness = { status: "ready", needRevision: 3, readyAt: 100 };
+    fixtures.messages = [
+      message({ role: "user", text: "Twenty kilometres is fine.", order: 0 }),
+      message({ role: "assistant", text: "", status: "success", order: 1 }),
+    ];
+    renderPage();
+    expect(screen.getByRole("heading", { name: "So suche ich für euch." })).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Dein Scout" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Dein Scout denkt nach …")).not.toBeInTheDocument();
   });
 
   it("dismisses the current ready event for editing but opens a later ready revision", () => {
@@ -338,6 +367,59 @@ describe("live Scout route", () => {
     expect(screen.getByRole("region", { name: "Scout-Chat" })).toBeInTheDocument();
     // Nobody has been contacted yet, so discovery carries no candidate rail.
     expect(screen.queryByRole("navigation", { name: "Kandidaten" })).not.toBeInTheDocument();
+  });
+
+  it("relays canonical saved discovery values and authoritative phase quietly", async () => {
+    fixtures.voice.connected = true;
+    fixtures.voice.provider = "live";
+    fixtures.needs = [{
+      ...need(),
+      matchingRevision: 3,
+      schedule: ["Wednesday evenings"],
+      requirements: ["Storage for our amps"],
+      genres: ["Post-rock"],
+      instruments: ["Guitar", "Drums"],
+      facets: [{ namespace: "band", key: "size", value: 4, confidence: 1 }],
+    }];
+    fixtures.context.briefReadiness = { status: "ready", needRevision: 3, readyAt: 100 };
+    const view = renderPage();
+    await waitFor(() => expect(fixtures.voice.appendVerifiedBackgroundUpdate).toHaveBeenCalled());
+    const discoveryCall = fixtures.voice.appendVerifiedBackgroundUpdate.mock.calls
+      .map(([update]) => update as { id: string; speak: boolean; content: string })
+      .find((update) => update.id === "discovery:need-current");
+    expect(discoveryCall).toEqual(expect.objectContaining({ speak: false }));
+    expect(discoveryCall?.content).toContain("phase=discovery; discovery=true")
+    expect(discoveryCall?.content).toContain("radiusKm=20")
+    expect(discoveryCall?.content).toContain('genres=["Post-rock"]')
+    expect(discoveryCall?.content).toContain('instruments=["Guitar","Drums"]')
+    expect(discoveryCall?.content).toContain('facets=[{"namespace":"band","key":"size","value":4,"confidence":1}]')
+    expect(discoveryCall?.content).toContain("readyForReview=true")
+    expect(fixtures.voice.appendVerifiedBackgroundUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "discovery-phase",
+        instruction: true,
+        content: expect.stringContaining("mode search_discovery, phase discovery"),
+      }),
+    )
+
+    fixtures.needs = [{ ...fixtures.needs[0]!, status: "active" }];
+    view.rerender(<MemoryRouter><ScoutPage /></MemoryRouter>);
+    await waitFor(() => expect(fixtures.voice.appendVerifiedBackgroundUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "discovery:need-current",
+        content: expect.stringContaining("phase=search_active; discovery=false"),
+      }),
+    ));
+    expect(fixtures.voice.appendVerifiedBackgroundUpdate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ content: expect.stringContaining("Stop discovery questions") }),
+    );
+    expect(fixtures.voice.appendVerifiedBackgroundUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "discovery-phase",
+        instruction: true,
+        content: expect.stringContaining("phase search_active"),
+      }),
+    );
   });
 
   it("keeps the conversation mounted when the search starts", async () => {

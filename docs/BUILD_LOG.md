@@ -1,5 +1,15 @@
 # RoomScout — Build Log
 
+## 2026-09-16 — Live-led discovery, Ripple and quiet persistence
+
+Option B now lets GPT-Live choose independent discovery questions while the existing Terra Scout stores search facts and durable musician memory. A shared English/German persona provides a practical, attentive musician-facing tone with occasional dry humour. New Live calls use Ripple. Canonical saved values feed both session bootstrap and quiet updates; authoritative phase instructions stop discovery when the conversation moves to search, pause or a candidate.
+
+The same existing Terra turn returns a structured silent/spoken delivery result. Routine saves remain quiet; explicit answers and action outcomes remain spoken. Internal result JSON never becomes chat prose. An empty successful Agent completion keeps silent turns from leaving the later text view busy. Start/pause speech uses the committed tool result, and request-owned language changes preserve their answer without a configuration echo invalidating it. A valid call-ending farewell no longer requires a separate summary.
+
+Real synthetic-audio checks reached GPT-Live and the Scout/Gateway. The first radius question began 7.74 seconds before the full backend result in one run. Short radius and schedule answers, a budget correction and durable memory persisted. Pause remained usable during the call, and a subsequent pause request correctly reported the already-paused state. The final DE-to-EN and EN-to-DE questions both produced actual commentary appends and spoken factual answers; the equipment answer did not invent provider confirmation. A spoken farewell then produced session.closed. The test search remained paused, with no new external-provider completion claimed.
+
+Validation: 1,257 tests passed with one skip, plus typecheck, scoped ESLint and production build. Repeated questions about already covered discovery details still appeared in some real samples; the prompt was tightened, but a human microphone review of tone and repetition remains open. Implementation and remaining limits are recorded in GPT_LIVE_DISCOVERY_PLAN.md and GPT_LIVE_IMPLEMENTATION_STATUS.md. Work remains on the isolated migration branch and development deployment.
+
 ## 2026-09-16 — Voice call closure and inactivity handling
 
 The Live Scout now has a voice-only `endVoiceCall` tool for an explicit hangup request or a genuine farewell. The tool returns a localized close directive through the existing delegation result; completed search edits and action receipts remain independent of closing audio. Quoted, negated and hypothetical farewells are rejected, and stale results cannot end the current conversation. Ending voice does not pause an active search or cancel provider work.

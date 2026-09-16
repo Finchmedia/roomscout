@@ -43,6 +43,7 @@ export function VoiceSessionProvider({
   const realtime = useRealtimeVoiceScout(options?.realtime);
   const liveSetLanguage = live.setLanguage;
   const liveSessionLocale = live.sessionLocale;
+  const liveBackendBusy = live.backendState === "queued" || live.backendState === "processing";
   const synchronizedLocaleRef = useRef<"en" | "de">(uiLocale);
   const [activeProvider, setActiveProvider] = useState<VoiceProvider>();
   const location = useLocation();
@@ -86,12 +87,12 @@ export function VoiceSessionProvider({
       setUiLocale(liveSessionLocale);
       return;
     }
-    if (config?.locale && config.locale !== synchronized) {
+    if (!liveBackendBusy && config?.locale && config.locale !== synchronized) {
       synchronizedLocaleRef.current = config.locale;
       liveSetLanguage(config.locale);
       setUiLocale(config.locale);
     }
-  }, [config?.locale, liveSessionLocale, liveSetLanguage, setUiLocale, uiLocale]);
+  }, [config?.locale, liveBackendBusy, liveSessionLocale, liveSetLanguage, setUiLocale, uiLocale]);
 
   const value = useMemo<VoiceSessionValue>(() => {
     if (selectedProvider === "live") return { ...live, connect, setLanguage };

@@ -8,7 +8,7 @@ import { api, components } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { scoutAgent } from "./scoutRuntime";
-import { composeVoiceInput } from "./voiceLive";
+import { composeVoiceInput, resolveLiveDelivery } from "./voiceLive";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -31,6 +31,8 @@ type Result = {
   resolvedEventIds: string[];
   locale: "en" | "de";
   promptMessageId?: string;
+  assistantMessageId?: string;
+  delivery?: "silent" | "spoken";
   spokenSummary?: string;
   changedFields?: string[];
   endCall?: { reason: "user_request" | "farewell"; farewell: string };
@@ -229,6 +231,83 @@ it("claims once, reports active duplicates and caches terminal results", async (
   expect(stored?.activeClaim).toBeUndefined();
 });
 
+it("persists a hidden completion marker for silent turns and only clean prose for spoken turns", async () => {
+  const f = await fixture();
+  const silentClaim = await f.t.mutation(claimRequest, claimArgs(f, "silent"));
+  if (silentClaim.kind !== "accepted") throw new Error("claim not accepted");
+  const silent = await f.t.mutation(finishRequest, {
+    ownerId: f.ownerId,
+    voiceSessionId: f.voiceSessionId,
+    requestId: "silent",
+    generation: silentClaim.generation,
+    expectedLocale: "en",
+    result: {
+      status: "completed",
+      requestId: "silent",
+      resolvedEventIds: ["event:silent"],
+      locale: "en",
+      delivery: "silent",
+      promptMessageId: silentClaim.promptMessageId,
+    },
+  });
+  expect(silent.assistantMessageId).toBeTruthy();
+  expect(await f.t.mutation(claimRequest, claimArgs(f, "silent"))).toMatchObject({
+    kind: "result",
+    result: {
+      requestId: "silent",
+      delivery: "silent",
+      assistantMessageId: silent.assistantMessageId,
+    },
+  });
+
+  const spokenClaim = await f.t.mutation(claimRequest, claimArgs(f, "spoken"));
+  if (spokenClaim.kind !== "accepted") throw new Error("claim not accepted");
+  const spoken = await f.t.mutation(finishRequest, {
+    ownerId: f.ownerId,
+    voiceSessionId: f.voiceSessionId,
+    requestId: "spoken",
+    generation: spokenClaim.generation,
+    expectedLocale: "en",
+    result: {
+      status: "completed",
+      requestId: "spoken",
+      resolvedEventIds: ["event:spoken"],
+      locale: "en",
+      delivery: "spoken",
+      spokenSummary: "Your search is active.",
+      promptMessageId: spokenClaim.promptMessageId,
+    },
+  });
+  expect(spoken.assistantMessageId).toBeTruthy();
+
+  const messages = await f.t.run((ctx) => listMessages(ctx, components.agent, {
+    threadId: f.threadId,
+    paginationOpts: { cursor: null, numItems: 20 },
+  }));
+  const orderedMessages = [...messages.page].sort((left, right) =>
+    left.order - right.order || left.stepOrder - right.stepOrder);
+  expect(orderedMessages.map((message) => ({ role: message.message?.role, text: message.message?.content }))).toEqual([
+    { role: "user", text: "Request silent" },
+    { role: "assistant", text: "" },
+    { role: "user", text: "Request spoken" },
+    { role: "assistant", text: "Your search is active." },
+  ]);
+  expect(JSON.stringify(messages.page)).not.toContain("responseKind");
+
+  const projected = await f.owner.query(api.scout.listMessages, {
+    threadId: f.threadId,
+    paginationOpts: { cursor: null, numItems: 20 },
+  });
+  const projectedInOrder = [...projected.page].sort((left, right) =>
+    left.order - right.order || left.stepOrder - right.stepOrder);
+  expect(projectedInOrder.map((message) => ({ role: message.role, text: message.text }))).toEqual([
+    { role: "user", text: "Request silent" },
+    { role: "assistant", text: "" },
+    { role: "user", text: "Request spoken" },
+    { role: "assistant", text: "Your search is active." },
+  ]);
+});
+
 it("preserves provider delta spacing and keeps assistant context separate", () => {
   expect(composeVoiceInput({
     source: "voice",
@@ -244,6 +323,103 @@ it("preserves provider delta spacing and keeps assistant context separate", () =
   })).toEqual({
     userPrompt: "Berlin, Kreuzberg or Neukölln\nYes, after 7.",
     assistantContext: "Would Wednesday work?",
+  });
+});
+
+it("uses the same-turn semantic envelope with action and clarification guards", () => {
+  expect(resolveLiveDelivery({
+    semantic: { delivery: "silent", responseKind: "routine_update", spokenSummary: "" },
+    captureFacts: false,
+    hasEndCall: false,
+    requiresSpoken: false,
+    requiresClarification: false,
+  })).toEqual({ delivery: "silent", status: "completed" });
+
+  expect(resolveLiveDelivery({
+    semantic: { delivery: "spoken", responseKind: "clarification", spokenSummary: "What radius around Berlin should I use?" },
+    captureFacts: false,
+    hasEndCall: false,
+    requiresSpoken: true,
+    requiresClarification: true,
+  })).toEqual({
+    delivery: "spoken",
+    status: "needs_clarification",
+    spokenSummary: "What radius around Berlin should I use?",
+  });
+
+  expect(resolveLiveDelivery({
+    semantic: { delivery: "silent", responseKind: "routine_update", spokenSummary: "" },
+    captureFacts: true,
+    hasEndCall: false,
+    requiresSpoken: true,
+    requiresClarification: false,
+  })).toEqual({ delivery: "silent", status: "completed" });
+
+  expect(resolveLiveDelivery({
+    semantic: { delivery: "spoken", responseKind: "action_result", spokenSummary: "" },
+    captureFacts: false,
+    hasEndCall: true,
+    requiresSpoken: true,
+    requiresClarification: false,
+  })).toEqual({ delivery: "silent", status: "completed" });
+
+  expect(resolveLiveDelivery({
+    semantic: { delivery: "spoken", responseKind: "action_result", spokenSummary: "The budget is updated." },
+    captureFacts: false,
+    hasEndCall: true,
+    requiresSpoken: true,
+    requiresClarification: false,
+  })).toEqual({ delivery: "spoken", status: "completed", spokenSummary: "The budget is updated." });
+
+  expect(resolveLiveDelivery({
+    semantic: {
+      delivery: "spoken",
+      responseKind: "action_result",
+      spokenSummary: "I can't pause it because the search is still a draft.",
+    },
+    captureFacts: false,
+    hasEndCall: false,
+    requiresSpoken: true,
+    requiresClarification: false,
+    searchStatus: {
+      locale: "en",
+      action: "pause",
+      result: { status: "paused", changed: true },
+    },
+  })).toEqual({ delivery: "spoken", status: "completed", spokenSummary: "The search is now paused." });
+
+  expect(resolveLiveDelivery({
+    semantic: { delivery: "spoken", responseKind: "action_result", spokenSummary: "stale" },
+    captureFacts: false,
+    hasEndCall: false,
+    requiresSpoken: true,
+    requiresClarification: false,
+    searchStatus: {
+      locale: "en",
+      action: "pause",
+      result: { status: "paused", changed: false },
+    },
+  })).toEqual({ delivery: "spoken", status: "completed", spokenSummary: "The search is already paused." });
+
+  expect(resolveLiveDelivery({
+    semantic: { delivery: "spoken", responseKind: "action_result", spokenSummary: "stale" },
+    captureFacts: false,
+    hasEndCall: false,
+    requiresSpoken: true,
+    requiresClarification: true,
+    searchStatus: {
+      locale: "de",
+      action: "start",
+      result: {
+        status: "needs_clarification",
+        changed: false,
+        clarificationQuestion: "Welchen Umkreis um Berlin soll ich verwenden?",
+      },
+    },
+  })).toEqual({
+    delivery: "spoken",
+    status: "needs_clarification",
+    spokenSummary: "Welchen Umkreis um Berlin soll ich verwenden?",
   });
 });
 
@@ -376,7 +552,7 @@ it("persists explicit EN/DE changes and suppresses a result in the old language"
   expect(result.endCall).toBeUndefined();
 });
 
-it("returns the new locale when the claimed language tool made the change", async () => {
+it("preserves a spoken answer in the new locale after the claimed language tool changes it", async () => {
   const f = await fixture();
   const claim = await f.t.mutation(claimRequest, claimArgs(f, "spoken-language"));
   if (claim.kind !== "accepted") throw new Error("claim not accepted");
@@ -398,7 +574,8 @@ it("returns the new locale when the claimed language tool made the change", asyn
       requestId: "spoken-language",
       resolvedEventIds: ["event:spoken-language"],
       locale: "en",
-      spokenSummary: "Now speaking German",
+      delivery: "spoken",
+      spokenSummary: "Der Lagerwunsch ist gespeichert; ob das Schlagzeug dort bleiben kann, muss für den ausgewählten Raum geprüft werden.",
       changedFields: ["conversationLocale"],
     },
   });
@@ -407,8 +584,10 @@ it("returns the new locale when the claimed language tool made the change", asyn
     locale: "de",
     resolvedEventIds: ["event:spoken-language"],
     changedFields: ["conversationLocale"],
+    delivery: "spoken",
+    spokenSummary: "Der Lagerwunsch ist gespeichert; ob das Schlagzeug dort bleiben kann, muss für den ausgewählten Raum geprüft werden.",
   });
-  expect(result.spokenSummary).toBeUndefined();
+  expect(result.assistantMessageId).toBeTruthy();
 });
 
 it("denies a binding decision even when it was explicitly bound to the claim", async () => {

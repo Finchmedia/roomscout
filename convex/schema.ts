@@ -1033,6 +1033,7 @@ export default defineSchema({
       ),
       requestId: v.string(),
       resolvedEventIds: v.array(v.string()),
+      delivery: v.optional(v.union(v.literal("silent"), v.literal("spoken"))),
       spokenSummary: v.optional(v.string()),
       locale: v.union(v.literal("en"), v.literal("de")),
       revision: v.optional(v.number()),

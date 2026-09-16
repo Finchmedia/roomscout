@@ -1,8 +1,32 @@
 # GPT-Live: Implementierungs- und Prüfstatus
 
-Stand: 2026-09-15 · Isolierte Entwicklungsintegration. Die menschliche Demo-Abnahme steht noch aus.
+Stand: 2026-09-16 · Isolierte Entwicklungsintegration. Die menschliche Demo-Abnahme steht noch aus.
 
 Dieses Dokument unterscheidet implementiertes Verhalten, reale API-Nachweise und offene Prüfungen. Es enthält keine Zugangsdaten, Session-IDs oder Rohtranskripte. Umfang: [Migrationsplan](GPT_LIVE_MIGRATION_PLAN_2026-09-15.md). Einrichtung und menschliche Prüfung: [Review Guide](GPT_LIVE_REVIEW_GUIDE.md).
+
+## Update 16.09.2026 — Live-geführte Discovery mit Ripple
+
+Option B aus dem [Discovery-Plan](GPT_LIVE_DISCOVERY_PLAN.md) ist umgesetzt. Live wählt selbst passende Discovery-Fragen; der bestehende Terra-Scout bleibt für Speicherung, Memory, Bereitschaft und Aktionen zuständig. Normale Speicherungen liefern stillen bestätigten Kontext. Explizite Antworten und Aktionsbelege bleiben gesprochen. Die bestehende Suchbox und Streaming-Captions bleiben die Oberfläche.
+
+Die gemeinsame EN-/DE-Persona ist musikverständig, aufmerksam und zurückhaltend trocken-humorig. Neue Sessions verwenden `ripple`; die echte API meldete diese Stimme. Bootstrap und laufende Updates enthalten tatsächliche gespeicherte Werte einschließlich Radius und Facets. Wechsel zu Suche, Pause oder Kandidatenansicht ändern die Live-Verhaltensanweisung ausdrücklich.
+
+### Neue reale Nachweise
+
+- Eine erste Radiusfrage begann **7,74 Sekunden vor** dem Ergebnis der vollständigen Backend-Delegation. Der Backend-Text wurde dabei nicht als zweite Discovery-Antwort eingespeist.
+- Kurze Antworten speicherten fünf Kilometer und Mittwochabend; die Budgetkorrektur von 300 auf 280 blieb erhalten. Der vollständige Turn legte auch dauerhafte Musiker-Memory an.
+- Die Suche wurde im Test pausiert, während der Call verbunden blieb. Eine erneute Pausenbitte erhielt anschließend den korrekten Beleg, dass die Suche bereits pausiert ist.
+- Der finale Call wechselte DE → EN mit einer Frage nach dem Probetag und EN → DE mit einer Equipment-Frage. Beide Antworten wurden als tatsächliches `commentary.append` an Live übergeben und in der richtigen Sprache ausgegeben. Die Equipment-Antwort unterschied gespeicherten Bedarf von unbestätigter Raumausstattung.
+- Derselbe finale Call endete auf gesprochenen Wunsch mit Abschied und `session.closed`, ohne Live-API-Fehler. Die Suche blieb pausiert.
+
+Die Eingaben waren synthetische Audiodateien; Live, WebRTC, Gateway-Scout und gespeicherte Änderungen waren echt. Gelegentliche erneute Fragen zu bekannten Angaben traten weiterhin auf; der subjektive Gesprächsfluss und Ton sind kein abgeschlossener menschlicher Akustiktest. Der aktuelle Durchlauf umfasst keine erneute externe Anbieterzustellung oder verbindliche Zusage.
+
+### Gefundene und behobene Integrationsfehler
+
+Stille Ergebnisse schließen den Agent-Turn unsichtbar ab, damit die spätere Textansicht nicht dauerhaft beschäftigt bleibt. Erfolgreiche Sprachwechsel behalten ihre Sachantwort: Der Browser prüft Aktualität vor dem eigenen Sprachwechsel; eine vorzeitig eintreffende Konfigurations-Query erzeugt währenddessen keinen zweiten Wechsel. Die tatsächlichen Start-/Pausenergebnisse überschreiben widersprüchlichen Modelltext. Eine bestätigte Auflegeanweisung benötigt neben ihrem Abschied keine zusätzliche Zusammenfassung.
+
+Dauerhaft gespeichert werden konsolidierte Nutzereingaben, sichtbare Backend-Sachantworten und leere erfolgreiche Abschlussmarkierungen für stille Turns. Lives eigenständige Gesprächsbeiträge bleiben in den bisherigen lokalen Streaming-Captions; es wurde keine zusätzliche Transkript-Persistenz eingeführt.
+
+**Finaler Prüfstand:** 159 Testdateien bestanden, eine übersprungen; **1.257 Tests bestanden, einer übersprungen**. Typecheck, Lint der betroffenen Dateien und Produktionsbuild bestanden. Die folgenden Abschnitte dokumentieren die früheren Migrationsnachweise und deren damaligen Prüfstand.
 
 ## Umgebung und Isolation
 

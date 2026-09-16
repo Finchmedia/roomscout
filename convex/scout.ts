@@ -809,6 +809,7 @@ export function buildScoutTools(
     musicianInput?: string;
     onEndCall?: (reason: VoiceEndReason) => void;
     onEffect?: (kind: string, fields: string[]) => void;
+    onClarificationRequired?: () => void;
   },
 ): ToolSet {
   const { ownerId, context } = args;
@@ -883,6 +884,7 @@ export function buildScoutTools(
           ...(args.voiceClaim ? { voiceClaim: args.voiceClaim } : {}),
         });
         if (result.readyForReview) args.onEffect?.("brief", ["briefReadiness"]);
+        else args.onClarificationRequired?.();
         return { ...result, activationRequired: true };
       },
     });

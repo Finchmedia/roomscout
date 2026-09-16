@@ -54,7 +54,7 @@ read-only. No production rollout or external messages in this verification.
 - **Auth:** Convex Auth
 - **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-live-1` in the isolated migration, `gpt-realtime-2.1` as the current fallback
 - **Started:** 2026-08-26T13:55:26Z
-- **Last updated:** 2026-09-15T00:42:53Z
+- **Last updated:** 2026-09-16T00:16:00Z
 
 ## Log
 
@@ -576,3 +576,10 @@ deployed to production and dev.
 The migration branch now connects browser WebRTC and GPT-Live client delegation to the existing Convex Scout instead of introducing a second domain agent. Voice and text share the same Scout tools, Gateway model and saved search state; a small serial input path coordinates their turns. English is the default visible and spoken path, German remains an explicit persisted switch, and only canonical saved facts drive the search brief. A bounded app-owned early-capture intent is limited to reversible search facts and cannot perform search lifecycle, decision, provider or binding actions.
 
 The isolated cloud development deployment is necessary because the local Convex backend does not support the AI Gateway. There, an ordinary Scout text turn reached the real Gateway and returned ready. A real Live WebRTC session established successfully and delivered captions plus acknowledged events. The initial long-speech check received 95 transcript deltas during 36.84 seconds; its first native delegation followed about 1.0 second after audio ended, so mid-speech fact arrival is not claimed from native delegation. Early capture, an in-speech correction, language changes and the complete Live journey remain under test. The last full suite before the latest runtime changes passed 1,151 tests with one skip. The original checkout was untouched, no production rollout is claimed, the Realtime fallback remains available, and no provider message or acceptance was sent in this checkpoint.
+
+
+### 2026-09-16 - working tree — Live-led discovery with Ripple
+
+GPT-Live now leads discovery questions while the existing Convex Agent and Terra/Gateway persist search facts and musician memory. Ripple and a shared EN/DE musician-facing persona are active in the isolated migration environment. Quiet saved-state updates keep the search brief reactive; explicit answers and canonical action receipts remain spoken. The existing Agent thread records invisible completion boundaries for silent turns, and phase/language synchronization keeps voice and UI aligned.
+
+Real API checks proved a discovery question before backend completion, persisted short answers and a correction, pause while connected, both language switches with a factual answer, and spoken hangup. The final suite passed 1,257 tests with one skip; typecheck, scoped lint and build passed. Occasional repeated discovery questions remain a human tone-review item. No production rollout or new external-provider end-to-end pass is claimed. Details: [implementation status](docs/GPT_LIVE_IMPLEMENTATION_STATUS.md).

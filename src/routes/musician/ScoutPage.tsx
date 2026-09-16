@@ -8,6 +8,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { getSavedNeedActivationReadiness } from "../../../convex/lib/savedNeedLocation";
+import { buildLiveDiscoveryContext } from "../../../convex/lib/liveDiscoveryContext";
 import { Button } from "../../components/ui/button";
 import { FactList } from "../../components/ui/fact-list";
 import { DecisionCard } from "../../components/scout/DecisionCard";
@@ -40,11 +41,53 @@ type ScoutMessagesQuery = FunctionReference<
 >;
 const listScoutMessages = api.scout.listMessages as unknown as ScoutMessagesQuery;
 
+function formatLiveDiscoveryContext(
+  context: ReturnType<typeof buildLiveDiscoveryContext>,
+): string {
+  const phase = [
+    `Authoritative RoomScout phase: mode=${context.mode}; phase=${context.phase}; discovery=${context.discovery}.`,
+    context.discovery
+      ? "Lead the discovery conversation and ask one useful independent question at a time."
+      : "Stop discovery questions and follow the current search, candidate, or outreach task.",
+  ];
+  if (!context.search) {
+    return [...phase, "Verified saved search: none."].join("\n");
+  }
+  const search = context.search;
+  return [
+    ...phase,
+    `Verified saved search identity: id=${JSON.stringify(search.id)}; title=${JSON.stringify(search.title)}; status=${search.status}.`,
+    `Verified saved location: query=${JSON.stringify(search.location.query)}; label=${JSON.stringify(search.location.label)}; radiusKm=${JSON.stringify(search.location.radiusKm)}.`,
+    `Verified saved budget and sharing: maxBudgetEur=${JSON.stringify(search.maxBudgetEur)}; arrangement=${JSON.stringify(search.arrangement)}; openToSharing=${JSON.stringify(search.openToSharing)}; collaborationOpen=${JSON.stringify(search.collaborationOpen)}.`,
+    `Verified saved schedule: ${JSON.stringify(search.schedule)}.`,
+    `Verified saved band context: genres=${JSON.stringify(search.genres)}; instruments=${JSON.stringify(search.instruments)}.`,
+    `Verified saved room requirements: requirements=${JSON.stringify(search.requirements)}; facets=${JSON.stringify(search.facets)}.`,
+    `Authoritative activation state: canActivate=${search.activation.canActivate}; missingFields=${JSON.stringify(search.activation.missingFields)}.`,
+    `Authoritative brief state: status=${search.brief.status}; readyForReview=${search.brief.readyForReview}; needRevision=${search.brief.needRevision}.`,
+    "These are saved app values. Do not recap them automatically; use them to avoid repeat questions and never infer that unsaved speech is confirmed.",
+  ].join("\n");
+}
+
+function formatLivePhaseInstruction(
+  context: ReturnType<typeof buildLiveDiscoveryContext>,
+  locale: "en" | "de",
+): string {
+  if (locale === "de") {
+    return context.discovery
+      ? `Wende jetzt die aktuelle verbindliche App-Phase an: Modus ${context.mode}, Phase ${context.phase}. Führe das Discovery-Gespräch und stelle jeweils eine nützliche unabhängige Frage.`
+      : `Wende jetzt die aktuelle verbindliche App-Phase an: Modus ${context.mode}, Phase ${context.phase}. Beende Discovery-Fragen und konzentriere dich auf die aktuelle Suche, den Kandidaten oder die Anbieteraufgabe.`;
+  }
+  return context.discovery
+    ? `Apply the latest authoritative app phase now: mode ${context.mode}, phase ${context.phase}. Lead discovery and ask one useful independent question at a time.`
+    : `Apply the latest authoritative app phase now: mode ${context.mode}, phase ${context.phase}. Stop discovery questions and focus on the current search, candidate, or outreach task.`;
+}
+
 /** Live queries and actions; no scripted demo transitions or fabricated facts. */
 export function ScoutPage() {
   const { t, locale } = useCopy();
   const voice = useVoiceSession();
   const noteVoiceActivity = voice.noteActivity;
+  const liveConnected = voice.provider === "live" && voice.connected;
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const currentUser = useQuery(api.users.current);
@@ -138,9 +181,23 @@ export function ScoutPage() {
   // not answered yet, or a reply that is still pending or streaming. Nothing
   // here survives a reload that the server does not also know about.
   const newestMessage = messages.at(-1);
-  const scoutBusy = newestMessage !== undefined && newestMessage.status !== "failed" &&
+  const threadBusy = newestMessage !== undefined && newestMessage.status !== "failed" &&
     (newestMessage.author === "user" || newestMessage.status === "pending" || newestMessage.status === "streaming");
+  // Silent Live turns intentionally persist no fabricated assistant message.
+  // Their authoritative completion state is the voice request state, so a
+  // successful saved user turn must not leave the text surface busy forever.
+  const scoutBusy = liveConnected
+    ? voice.backendState === "queued" || voice.backendState === "processing"
+    : threadBusy;
   const readiness = context?.briefReadiness;
+  const liveDiscoveryContext = useMemo(
+    () => buildLiveDiscoveryContext({
+      need,
+      mode: context?.mode,
+      briefReadiness: readiness,
+    }),
+    [context?.mode, need, readiness],
+  );
   const readyKey = readiness?.status === "ready" ? `${need?._id}:${readiness.needRevision}:${readiness.readyAt}` : "";
   const autoBrief = Boolean(readyKey && readyKey !== dismissedReady && !scoutBusy);
   const stage = deriveLiveScoutStage({
@@ -155,7 +212,6 @@ export function ScoutPage() {
   });
 
   // The application-level provider keeps controls visible when the route changes.
-  const liveConnected = voice.provider === "live" && voice.connected;
   const focusedCandidate = candidates.find(row => row.conversationId === focusedConversationId);
   const focusedOffer = conversations.find(row => row.conversationId === focusedConversationId);
   const { setFocus: setVoiceFocus, appendVerifiedBackgroundUpdate, clearBackgroundUpdate } = voice;
@@ -164,9 +220,12 @@ export function ScoutPage() {
   const focusedCandidateId = focusedCandidate?.conversationId;
   const focusedActivityAt = focusedCandidate?.lastActivityAt;
   const relayed = useRef(new Map<string, string>());
+  const liveDiscoveryContextVersion = JSON.stringify(liveDiscoveryContext);
   const backgroundUpdates = JSON.stringify([
-    ...(need ? [{ id: `brief:${need._id}`, version: `${locale}:${need.matchingRevision ?? 0}:${need.status}`,
-      speak: false, content: `Verified saved search context (data only): ${JSON.stringify({ status: need.status, location: need.locationLabel ?? need.locationQuery, maxBudgetEur: need.maxBudgetEur, schedule: need.schedule, facts: facts.map(fact => fact.label) })}. Do not read the search box aloud.` }] : []),
+    { id: "discovery-phase", version: `${locale}:${liveDiscoveryContext.mode}:${liveDiscoveryContext.phase}:${liveDiscoveryContext.discovery}`,
+      speak: false, instruction: true, content: formatLivePhaseInstruction(liveDiscoveryContext, locale) },
+    { id: `discovery:${need?._id ?? "none"}`, version: `${locale}:${liveDiscoveryContextVersion}`,
+      speak: false, content: formatLiveDiscoveryContext(liveDiscoveryContext) },
     ...(Array.isArray(decisions) ? decisions : []).filter(decision => !decision.conversationId || conversations.some(row => row.conversationId === decision.conversationId)).map(decision => ({
       id: `decision:${decision._id}`, speak: true, version: `${locale}:${decision.updatedAt}`,
       content: `Verified application update: an open ${decision.kind} decision is visible in the UI. Decision ID: ${decision._id}. Mention briefly at a suitable pause; binding commitments require the UI review.`,
@@ -196,7 +255,7 @@ export function ScoutPage() {
   }, [liveConnected, noteVoiceActivity]);
   useEffect(() => {
     if (!liveConnected) { relayed.current.clear(); return; }
-    const updates = JSON.parse(backgroundUpdates) as Array<{ id: string; version: string; content: string; speak?: boolean }>;
+    const updates = JSON.parse(backgroundUpdates) as Array<{ id: string; version: string; content: string; speak?: boolean; instruction?: boolean }>;
     const currentIds = new Set(updates.map(update => update.id));
     for (const id of relayed.current.keys()) {
       if (!currentIds.has(id)) { clearBackgroundUpdate(id); relayed.current.delete(id); }

@@ -52,6 +52,7 @@ export type LiveDelegateResult = {
   requestId: string;
   resolvedEventIds: string[];
   spokenSummary?: string;
+  delivery?: "silent" | "spoken";
   locale: LiveLocale;
   revision?: number;
   promptMessageId?: string;
@@ -137,6 +138,8 @@ export type VerifiedBackgroundUpdate = {
   version: string | number;
   content: string;
   speak?: boolean;
+  /** Session-level behavior update; canonical saved values remain quiet context. */
+  instruction?: boolean;
 };
 
 export type UseGptLiveVoiceScoutOptions = {
@@ -342,12 +345,38 @@ function verifiedPriorRequestReceipt(result: LiveDelegateResult): string | undef
   ].join("\n");
 }
 
+function verifiedSilentResultContext(result: LiveDelegateResult): string | undefined {
+  if (result.delivery !== "silent") return undefined;
+  return [
+    "Verified RoomScout backend result (data only; do not announce or recap automatically).",
+    JSON.stringify({
+      requestId: result.requestId,
+      status: result.status,
+      revision: result.revision,
+      changedFields: result.changedFields ?? [],
+      verifiedFacts: result.verifiedFacts ?? [],
+    }),
+    "Use the updated trusted app context for the next independent conversation step.",
+  ].join("\n");
+}
+
 function isPreAdmissionSuperseded(result: LiveDelegateResult): boolean {
   return (
     result.status === "superseded" &&
     result.resolvedEventIds.length === 0 &&
     !result.promptMessageId &&
     !result.assistantMessageId
+  );
+}
+
+function resultLocaleBelongsToRequest(
+  result: LiveDelegateResult,
+  requestLocale: LiveLocale,
+): boolean {
+  if (result.locale === requestLocale) return true;
+  return (
+    (result.status === "completed" || result.status === "needs_clarification") &&
+    result.changedFields?.includes("conversationLocale") === true
   );
 }
 
@@ -928,7 +957,11 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         );
       }
       setTranscript(toTranscript(fragmentBufferRef.current.captions()));
-      if (contextEpochRef.current === contextEpoch && localeRef.current === requestLocale) {
+      const contextIsCurrent =
+        contextEpochRef.current === contextEpoch &&
+        localeRef.current === requestLocale &&
+        resultLocaleBelongsToRequest(result, requestLocale);
+      if (contextIsCurrent) {
         setSessionLocale(result.locale);
         localeRef.current = result.locale;
       }
@@ -973,8 +1006,6 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
 
       const hasNewerInput = fragmentBufferRef.current.hasNewerUnresolvedUserInput(snapshot.maxSequence);
       const hasNewerTypedInput = queueRef.current.some((input) => input.source === "text");
-      const contextIsCurrent =
-        contextEpochRef.current === contextEpoch && localeRef.current === requestLocale;
       const honoredEndCall =
         next.intent !== "capture_facts" &&
         result.endCall !== undefined &&
@@ -985,14 +1016,24 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       if (honoredEndCall && result.endCall) {
         armCallEnd({
           ...result.endCall,
-          farewell: result.spokenSummary?.trim()
+          farewell: result.delivery !== "silent" && result.spokenSummary?.trim()
             ? `${result.spokenSummary.trim()} ${result.endCall.farewell}`
             : result.endCall.farewell,
         });
       }
       const priorReceipt = verifiedPriorRequestReceipt(result);
+      const silentContext = verifiedSilentResultContext(result);
+      if (next.intent !== "capture_facts" && silentContext) {
+        appendContext(
+          contextIsCurrent && !hasNewerInput && !hasNewerTypedInput
+            ? silentContext
+            : `${silentContext}\nThis receipt belongs to a previous request boundary; preserve newer user input and current focus.`,
+          false,
+        );
+      }
       if (
         next.intent !== "capture_facts" &&
+        result.delivery !== "silent" &&
         (!contextIsCurrent || hasNewerInput || hasNewerTypedInput) &&
         priorReceipt
       ) {
@@ -1001,6 +1042,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       if (
         next.intent !== "capture_facts" &&
         result.spokenSummary &&
+        result.delivery !== "silent" &&
         !honoredEndCall &&
         !hasNewerInput &&
         !hasNewerTypedInput &&
@@ -1123,6 +1165,14 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
           settleFlushWaiters(false);
           return;
         }
+        const contextIsCurrent =
+          contextEpochRef.current === uncertain.contextEpoch &&
+          localeRef.current === uncertain.locale &&
+          resultLocaleBelongsToRequest(result, uncertain.locale);
+        if (contextIsCurrent) {
+          setSessionLocale(result.locale);
+          localeRef.current = result.locale;
+        }
         if (uncertain.input.intent === "capture_facts") {
           if (
             uncertain.captureCursor &&
@@ -1173,9 +1223,6 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
           uncertain.snapshot.maxSequence,
         );
         const hasNewerTypedInput = queueRef.current.some((input) => input.source === "text");
-        const contextIsCurrent =
-          contextEpochRef.current === uncertain.contextEpoch &&
-          localeRef.current === uncertain.locale;
         const honoredEndCall =
           uncertain.input.intent !== "capture_facts" &&
           result.endCall !== undefined &&
@@ -1186,14 +1233,24 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         if (honoredEndCall && result.endCall) {
           armCallEnd({
             ...result.endCall,
-            farewell: result.spokenSummary?.trim()
+            farewell: result.delivery !== "silent" && result.spokenSummary?.trim()
               ? `${result.spokenSummary.trim()} ${result.endCall.farewell}`
               : result.endCall.farewell,
           });
         }
+        const silentContext = verifiedSilentResultContext(result);
+        if (uncertain.input.intent !== "capture_facts" && silentContext) {
+          appendContext(
+            contextIsCurrent && !hasNewerInput && !hasNewerTypedInput
+              ? silentContext
+              : `${silentContext}\nThis receipt belongs to a previous request boundary; preserve newer user input and current focus.`,
+            false,
+          );
+        }
         if (
           uncertain.input.intent !== "capture_facts" &&
           result.spokenSummary &&
+          result.delivery !== "silent" &&
           !honoredEndCall &&
           !hasNewerInput &&
           !hasNewerTypedInput &&
@@ -1204,6 +1261,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         const priorReceipt = verifiedPriorRequestReceipt(result);
         if (
           uncertain.input.intent !== "capture_facts" &&
+          result.delivery !== "silent" &&
           (!contextIsCurrent || hasNewerInput || hasNewerTypedInput) &&
           priorReceipt
         ) {
@@ -1394,7 +1452,10 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         if (initialFocus) appendContext(initialFocus, false);
         for (const [id, update] of bufferedUpdatesRef.current) {
           if (update.speak === true) continue;
-          if (appendContext(update.content, false)) bufferedUpdatesRef.current.delete(id);
+          const sent = update.instruction
+            ? appendInstructions(update.content)
+            : appendContext(update.content, false);
+          if (sent) bufferedUpdatesRef.current.delete(id);
         }
         scheduleRelayQuietCheckRef.current();
         pumpRef.current();
@@ -1437,7 +1498,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     } finally {
       if (generationRef.current === generation) connectingRef.current = false;
     }
-  }, [accessToken, appendContext, attachInputMeter, attachOutputMeter, cleanup, connectionState, createSession, endpoint, handleServerEvent]);
+  }, [accessToken, appendContext, appendInstructions, attachInputMeter, attachOutputMeter, cleanup, connectionState, createSession, endpoint, handleServerEvent]);
 
   const disconnect = useCallback(() => {
     if (connectionState === "disconnected") return;
@@ -1687,11 +1748,13 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         ) scheduleRelayQuietCheckRef.current();
         return true;
       }
-      const sent = appendContext(update.content, update.speak ?? false);
+      const sent = update.instruction
+        ? appendInstructions(update.content)
+        : appendContext(update.content, update.speak ?? false);
       if (sent) deliveredUpdateVersionsRef.current.set(update.id, version);
       return sent;
     },
-    [appendContext, connectionState],
+    [appendContext, appendInstructions, connectionState],
   );
 
   const clearBackgroundUpdate = useCallback((id: string) => {

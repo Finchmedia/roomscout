@@ -8,6 +8,17 @@ const runtime = vi.hoisted(() => ({
   stopped: vi.fn(),
   disconnect: vi.fn(),
   mute: vi.fn(),
+  config: { provider: "realtime" as "realtime" | "live", locale: "de" as "en" | "de" },
+  uiLocale: "de" as "en" | "de",
+  setUiLocale: vi.fn(),
+  live: {
+    connected: false,
+    muted: false,
+    sessionLocale: "de" as "en" | "de",
+    backendState: "idle" as "idle" | "queued" | "processing",
+    setLanguage: vi.fn(),
+    connect: vi.fn(),
+  },
 }));
 vi.mock("../../hooks/useRealtimeVoiceScout", async () => {
   const { useEffect } = await import("react");
@@ -27,21 +38,15 @@ vi.mock("../../hooks/useRealtimeVoiceScout", async () => {
   };
 });
 vi.mock("../../hooks/useGptLiveVoiceScout", () => ({
-  useGptLiveVoiceScout: () => ({
-    connected: false,
-    muted: false,
-    sessionLocale: "de",
-    setLanguage: vi.fn(),
-    connect: vi.fn(),
-  }),
+  useGptLiveVoiceScout: () => runtime.live,
 }));
 vi.mock("convex/react", () => ({
-  useQuery: () => ({ provider: "realtime", locale: "de" }),
+  useQuery: () => runtime.config,
 }));
 vi.mock("../../ui/copy", () => ({
   useCopy: () => ({
-    locale: "de",
-    setLocale: vi.fn(),
+    locale: runtime.uiLocale,
+    setLocale: runtime.setUiLocale,
     t: (key: string) => ({
       "liveScout.voice.ongoingCall": "Laufendes Scout-Gespräch",
       "liveScout.voice.returnToScout": "Gespräch läuft · Zum Scout",
@@ -52,7 +57,23 @@ vi.mock("../../ui/copy", () => ({
   }),
 }));
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  runtime.config = { provider: "realtime", locale: "de" };
+  runtime.uiLocale = "de";
+  runtime.live.connected = false;
+  runtime.live.muted = false;
+  runtime.live.sessionLocale = "de";
+  runtime.live.backendState = "idle";
+});
+
+function renderProvider() {
+  return render(
+    <MemoryRouter initialEntries={["/app/scout"]}>
+      <VoiceSessionProvider><p>Child</p></VoiceSessionProvider>
+    </MemoryRouter>,
+  );
+}
 
 it("keeps one session mounted across Scout, settings and the authenticated map", () => {
   const { unmount } = render(
@@ -96,4 +117,79 @@ it("keeps one session mounted across Scout, settings and the authenticated map",
   expect(runtime.disconnect).toHaveBeenCalledOnce();
   unmount();
   expect(runtime.stopped).toHaveBeenCalledOnce();
+});
+
+it("defers a config echo during processing and lets the request result drive the UI locale", () => {
+  runtime.config = { provider: "live", locale: "en" };
+  runtime.uiLocale = "en";
+  runtime.live.sessionLocale = "en";
+  runtime.live.backendState = "processing";
+  const view = renderProvider();
+  runtime.live.setLanguage.mockClear();
+  runtime.setUiLocale.mockClear();
+
+  // The backend persists the request-owned language change before the action
+  // result reaches the hook. This config update must not invalidate that turn.
+  runtime.config = { provider: "live", locale: "de" };
+  view.rerender(
+    <MemoryRouter initialEntries={["/app/scout"]}>
+      <VoiceSessionProvider><p>Child</p></VoiceSessionProvider>
+    </MemoryRouter>,
+  );
+  expect(runtime.live.setLanguage).not.toHaveBeenCalled();
+  expect(runtime.setUiLocale).not.toHaveBeenCalled();
+
+  runtime.live.sessionLocale = "de";
+  runtime.live.backendState = "idle";
+  view.rerender(
+    <MemoryRouter initialEntries={["/app/scout"]}>
+      <VoiceSessionProvider><p>Child</p></VoiceSessionProvider>
+    </MemoryRouter>,
+  );
+  expect(runtime.setUiLocale).toHaveBeenCalledWith("de");
+  expect(runtime.live.setLanguage).not.toHaveBeenCalled();
+});
+
+it("keeps an explicit UI language toggle immediate while a Live request is processing", () => {
+  runtime.config = { provider: "live", locale: "en" };
+  runtime.uiLocale = "en";
+  runtime.live.sessionLocale = "en";
+  runtime.live.backendState = "processing";
+  const view = renderProvider();
+  runtime.live.setLanguage.mockClear();
+
+  runtime.uiLocale = "de";
+  view.rerender(
+    <MemoryRouter initialEntries={["/app/scout"]}>
+      <VoiceSessionProvider><p>Child</p></VoiceSessionProvider>
+    </MemoryRouter>,
+  );
+  expect(runtime.live.setLanguage).toHaveBeenCalledWith("de");
+});
+
+it("adopts an independent config language change after pending work settles", () => {
+  runtime.config = { provider: "live", locale: "en" };
+  runtime.uiLocale = "en";
+  runtime.live.sessionLocale = "en";
+  runtime.live.backendState = "queued";
+  const view = renderProvider();
+  runtime.live.setLanguage.mockClear();
+  runtime.setUiLocale.mockClear();
+
+  runtime.config = { provider: "live", locale: "de" };
+  view.rerender(
+    <MemoryRouter initialEntries={["/app/scout"]}>
+      <VoiceSessionProvider><p>Child</p></VoiceSessionProvider>
+    </MemoryRouter>,
+  );
+  expect(runtime.live.setLanguage).not.toHaveBeenCalled();
+
+  runtime.live.backendState = "idle";
+  view.rerender(
+    <MemoryRouter initialEntries={["/app/scout"]}>
+      <VoiceSessionProvider><p>Child</p></VoiceSessionProvider>
+    </MemoryRouter>,
+  );
+  expect(runtime.live.setLanguage).toHaveBeenCalledWith("de");
+  expect(runtime.setUiLocale).toHaveBeenCalledWith("de");
 });

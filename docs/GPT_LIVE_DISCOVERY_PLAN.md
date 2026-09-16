@@ -1,6 +1,8 @@
 # RoomScout — Live-geführte Discovery mit Ripple
 
-Stand: 16.09.2026 · **Umsetzungsplan, noch nicht implementiert**
+Stand: 16.09.2026 · **Im isolierten GPT-Live-Branch umgesetzt und technisch geprüft**
+
+Abschnitte 1–8 dokumentieren den vereinbarten Entwurf; Abschnitt 9 hält Umsetzung und Grenzen fest.
 
 Basis: `codex/gpt-live-migration`, Commit `3e8b882`. Dieser Plan beschreibt den
 gezielten nächsten Schritt nach der funktionierenden GPT-Live-Migration:
@@ -318,3 +320,18 @@ Fragen. Ein langes Edge-Case- oder Performance-Projekt ist kein Abnahmebestandte
 vollständigen Backend-Turn. Die tatsächliche Speicherzeit kann zunächst ähnlich
 bleiben. Wenn der Gesprächsfluss damit überzeugt, ist Option B fertig; ein leichterer
 Extraktionspfad oder andere Modelle wären ein separat zu entscheidender Folgeschritt.
+
+
+## 9. Umgesetzt und geprüft
+
+- `ripple` ist Session-Default und in der isolierten Entwicklungsinstanz eingestellt.
+- Ein gemeinsamer EN-/DE-Persona-Block gibt Live und gesprochenen Scout-Ergebnissen den musikverständigen, aufmerksamen Ton mit gelegentlichem trockenem Humor.
+- Live führt Discovery-Fragen selbst. Der bestehende Terra-Turn speichert Fakten und Memory und liefert ein strukturiertes `silent`/`spoken`-Ergebnis. Interne Abschlussdaten erscheinen nicht als Chattext.
+- Stille abgeschlossene Turns erhalten einen unsichtbaren erfolgreichen Agent-Abschluss. Dadurch bleibt die Textansicht auch nach Auflegen oder Neuladen bedienbar.
+- Bootstrap und laufender Kontext verwenden dieselben gespeicherten Werte. Phasenwechsel kommen als Live-Instruktion; Werte als stiller Kontext. Die Suchbox zeigt weiterhin ausschließlich gespeicherte Fakten.
+- Sprachwechsel gehören zu ihrem auslösenden Auftrag und verwerfen dessen Sachantwort nicht. Reaktive Sprachkonfiguration wird während laufender Backend-Arbeit nicht als zusätzlicher Nutzerwechsel zurückgespiegelt.
+- Start-/Pausenbestätigungen stammen direkt aus dem tatsächlichen Tool-Ergebnis. Ein bestätigter Abschied genügt zum Auflegen auch ohne weitere Antwortzusammenfassung.
+
+**Prüfung:** 1.257 Tests bestanden, einer übersprungen; Typecheck, betroffene Lint-Dateien und Build bestanden. Im echten Ripple-/Gateway-Durchlauf begann die Radiusfrage 7,74 Sekunden vor Abschluss der vollständigen Backend-Delegation. Das ist ein einzelner Nachweis eigenständiger Gesprächsführung, kein allgemeiner Latenzwert. Kurze Radius-/Terminantworten, Budgetkorrektur, dauerhafte Memory, Pausenstatus, Sprachwechsel mit Sachfrage in beiden Richtungen und Auflegen wurden real geprüft. Details stehen im [Prüfstatus](GPT_LIVE_IMPLEMENTATION_STATUS.md).
+
+**Verbleibende Tonprüfung:** Live stellte in den Discovery-Proben gelegentlich bereits abgedeckte Fragen erneut. Der Prompt wurde gegen Wiederholungen und Wartefloskeln gestrafft; vollständige Wiederholungsfreiheit ist damit nicht nachgewiesen. Ein menschlicher Mikrofontest für Wärme, Timing und Humor bleibt sinnvoll. Native Delegation jeder einzelnen kurzen Antwort ist keine API-Garantie; der bestehende frühe Faktenpfad und die vollständige nächste Delegation bleiben relevant. Suchstart, Anbieterupdates und Angebotsprüfung haben frühere Integrationsnachweise; diese Änderung wiederholt keinen vollständigen externen Anbieterablauf.
