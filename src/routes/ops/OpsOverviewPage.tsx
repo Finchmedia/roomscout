@@ -113,7 +113,7 @@ export function OpsOverviewPage() {
             ))}
           </div>
         </LedgerCard>
-        <LedgerCard header={<><span className="type">Live activity</span><span className="mono">Firecrawl · AgentMail · Realtime</span></>}>
+        <LedgerCard header={<><span className="type">Live activity</span><span className="mono">Firecrawl · AgentMail · GPT-Live</span></>}>
           {overview.activity.length === 0 ? (
             <EmptyState body="Provider and workflow events will appear after the first controlled run." title="No operations events yet" />
           ) : (

@@ -20,7 +20,7 @@ function validHttpUrl(value: string | undefined) {
   }
 }
 
-function realtimeOrigins(value: string | undefined) {
+function voiceOrigins(value: string | undefined) {
   const origins = (value ?? "")
     .split(",")
     .map((origin) => origin.trim())
@@ -158,16 +158,16 @@ export function deriveProviderReadiness(readEnv: ReadEnv) {
     : "incomplete";
 
   const openaiApiKeyConfigured = present(readEnv("OPENAI_API_KEY"));
-  const origins = realtimeOrigins(readEnv("REALTIME_ALLOWED_ORIGINS"));
+  const origins = voiceOrigins(readEnv("VOICE_ALLOWED_ORIGINS"));
   const openaiReasons: string[] = [];
   if (!openaiApiKeyConfigured)
-    openaiReasons.push("Direct API key for embeddings and Realtime is missing.");
+    openaiReasons.push("Direct API key for embeddings and GPT-Live is missing.");
   if (!origins.configured)
-    openaiReasons.push("Realtime production origin allowlist is missing.");
+    openaiReasons.push("GPT-Live production origin allowlist is missing.");
   else if (!origins.valid)
-    openaiReasons.push("Realtime origin allowlist contains an invalid or wildcard origin.");
+    openaiReasons.push("GPT-Live origin allowlist contains an invalid or wildcard origin.");
   else if (!origins.productionOriginConfigured)
-    openaiReasons.push("Realtime origin allowlist has no explicit HTTPS production origin.");
+    openaiReasons.push("GPT-Live origin allowlist has no explicit HTTPS production origin.");
   const openaiStatus: ProviderReadinessStatus =
     openaiApiKeyConfigured && origins.valid && origins.productionOriginConfigured
       ? "configured"

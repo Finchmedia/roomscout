@@ -95,6 +95,7 @@ export const providerReadiness = action({
     openaiDirect: v.object({
       status: providerStatus,
       apiKeyConfigured: v.boolean(),
+      // Historical response keys retained for existing operator clients. Values use VOICE_ALLOWED_ORIGINS.
       realtimeOriginsConfigured: v.boolean(),
       realtimeOriginsValid: v.boolean(),
       productionOriginConfigured: v.boolean(),

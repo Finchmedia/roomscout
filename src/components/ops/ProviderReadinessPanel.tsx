@@ -89,7 +89,7 @@ export function ProviderReadinessPanel({
               readiness.openaiDirect.realtimeOriginsConfigured &&
                 readiness.openaiDirect.realtimeOriginsValid &&
                 readiness.openaiDirect.productionOriginConfigured,
-              "Realtime origins",
+              "GPT-Live origins",
             ),
           ],
           reasons: readiness.openaiDirect.reasons,

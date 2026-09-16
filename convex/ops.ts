@@ -780,7 +780,7 @@ export const listAudit = query({
     const voiceItems = voiceSessions.map((session) => ({
       id: `voice:${session._id}`,
       kind: "voice" as const,
-      title: "Realtime Scout session",
+      title: "Scout voice session",
       detail: `${session.model} · ${session.durationMs === undefined ? "duration pending" : `${Math.round(session.durationMs / 1000)}s`} · transcripts only`,
       status: session.status,
       at: session.startedAt,

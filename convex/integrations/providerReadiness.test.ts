@@ -21,7 +21,7 @@ describe("provider readiness", () => {
       BROWSERBASE_API_KEY: "secret-browserbase-sentinel",
       MAPBOX_SECRET_TOKEN: "secret-mapbox-sentinel",
       OPENAI_API_KEY: "secret-openai-sentinel",
-      REALTIME_ALLOWED_ORIGINS:
+      VOICE_ALLOWED_ORIGINS:
         "http://localhost:5173,https://roomscout.example",
     };
 
@@ -63,7 +63,7 @@ describe("provider readiness", () => {
     }
     expect(serialized).not.toContain(values.FIRECRAWL_WEBHOOK_URL);
     expect(serialized).not.toContain(values.AGENTMAIL_DOMAIN);
-    expect(serialized).not.toContain(values.REALTIME_ALLOWED_ORIGINS);
+    expect(serialized).not.toContain(values.VOICE_ALLOWED_ORIGINS);
   });
 
   it("keeps Firecrawl configured when only the native monitors are intentionally disabled", () => {
@@ -90,7 +90,7 @@ describe("provider readiness", () => {
     const result = deriveProviderReadiness(
       reader({
         FIRECRAWL_WEBHOOK_URL: "not-a-url",
-        REALTIME_ALLOWED_ORIGINS: "https://*.example.com",
+        VOICE_ALLOWED_ORIGINS: "https://*.example.com",
       }),
     );
 
@@ -144,7 +144,7 @@ describe("provider readiness", () => {
       AGENTMAIL_ADDRESS_SALT: "configured",
       MAPBOX_SECRET_TOKEN: "configured",
       OPENAI_API_KEY: "configured",
-      REALTIME_ALLOWED_ORIGINS: "https://roomscout.example",
+      VOICE_ALLOWED_ORIGINS: "https://roomscout.example",
     }));
     expect(result.portalBrowser).toMatchObject({
       status: "configured",
