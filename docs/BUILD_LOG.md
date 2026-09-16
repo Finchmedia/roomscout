@@ -1,5 +1,52 @@
 # RoomScout — Build Log
 
+## 2026-09-16 — Reliable hangup and proactive ready-brief handoff
+
+After the improved human voice test, two bounded follow-ups were completed. A
+validated end-call result for the current session now begins closure despite
+later speech; queued capture work cannot delay it, and the existing farewell
+fallback is capped at five seconds. Unsent typed input remains recoverable.
+Quiet discovery capture can reuse the claim-fenced readiness tool after saving
+a useful, unambiguous draft. The reactive relay offers a search start once the
+current saved revision is ready, at a conversation pause, and clears stale
+offers. Starting still requires explicit user intent. Marin and the approved
+tone remain unchanged. Evidence: [voice adapter](../convex/voiceLive.ts),
+[browser Live runtime](../src/hooks/useGptLiveVoiceScout.ts),
+[reactive Scout surface](../src/routes/musician/ScoutPage.tsx), and
+[Live prompt](../convex/prompts/roomScoutLive.ts).
+
+Targeted backend, prompt, hook and page tests passed, along with TypeScript,
+scoped ESLint, frontend build and diff check. Before these two follow-ups, the
+maintainer reported improved discovery, successful search activation and a later
+successful hangup, and considered that baseline ready for the demo. The earlier
+intermittent hangup and missing proactive next step motivated these final fixes.
+No new browser/audio run was part of their verification; they await the user's
+next microphone test. The earlier human result is qualitative product evidence,
+not an additional automated test count.
+
+## 2026-09-16 — Human discovery regressions corrected for retest
+
+A human test exposed late first-fact admission, pauses after short answers,
+incomplete voice-to-text history, an incorrect returning-user greeting and a
+conversation view that could not be closed. The isolated branch now records
+actual Live user and assistant speech in the existing Agent thread independently
+of tool turns, admits short contextual answers at conversation boundaries,
+binds quiet results to their delegation and explicitly triggers the opening.
+Blank drafts receive a first-call introduction. End-call and text-close controls
+return to the normal Scout surface. Marin is restored and the explicit
+Australian persona direction is removed. Evidence: [voice adapter](../convex/voiceLive.ts),
+[browser Live runtime](../src/hooks/useGptLiveVoiceScout.ts),
+[Scout surface](../src/routes/musician/ScoutPage.tsx),
+[Live prompt](../convex/prompts/roomScoutLive.ts), and
+[personality prompt](../convex/prompts/roomScoutPersonality.ts).
+
+The isolated backend was updated. Verification: 37 focused backend/prompt/chat
+tests and 86 frontend runtime/hook/page tests passed, along with the integrated
+TypeScript check and diff check. At this checkpoint, the user had chosen to run
+the next live microphone test themselves, so this correction did not yet claim
+a new passing live-audio result. The later entry above records the subsequent
+human result.
+
 ## 2026-09-16 — Live-led discovery, Ripple and quiet persistence
 
 Option B now lets GPT-Live choose independent discovery questions while the existing Terra Scout stores search facts and durable musician memory. A shared English/German persona provides a practical, attentive musician-facing tone with occasional dry humour. New Live calls use Ripple. Canonical saved values feed both session bootstrap and quiet updates; authoritative phase instructions stop discovery when the conversation moves to search, pause or a candidate.

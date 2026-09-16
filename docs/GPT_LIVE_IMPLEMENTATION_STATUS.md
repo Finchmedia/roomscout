@@ -1,10 +1,73 @@
 # GPT-Live: Implementierungs- und Prüfstatus
 
-Stand: 2026-09-16 · Isolierte Entwicklungsintegration. Die menschliche Demo-Abnahme steht noch aus.
+Stand: 2026-09-16 · Isolierte Entwicklungsintegration. Discovery und Suchstart wurden menschlich getestet; zwei abschließende Nachbesserungen sind zum erneuten Sprachtest bereit.
 
 Dieses Dokument unterscheidet implementiertes Verhalten, reale API-Nachweise und offene Prüfungen. Es enthält keine Zugangsdaten, Session-IDs oder Rohtranskripte. Umfang: [Migrationsplan](GPT_LIVE_MIGRATION_PLAN_2026-09-15.md). Einrichtung und menschliche Prüfung: [Review Guide](GPT_LIVE_REVIEW_GUIDE.md).
 
-## Update 16.09.2026 — Live-geführte Discovery mit Ripple
+## Update 16.09.2026 — Auflegen und proaktiver Suchstart-Vorschlag
+
+Der Nutzer bestätigte im erneuten Mikrofontest den verbesserten Gesprächsfluss,
+Suchstart und schließlich auch das Auflegen. Zwei beobachtete Schwächen wurden
+anschließend gezielt korrigiert:
+
+- Ein erfolgreich validierter Auflegeauftrag derselben laufenden Session wird
+  auch dann ausgeführt, wenn inzwischen weitere Sprache eingetroffen ist. Die
+  Verabschiedung beginnt direkt; wartende Faktenaufträge halten den Call nicht
+  offen. Der bestehende Abschied hat jetzt eine maximale Wartezeit von fünf
+  Sekunden vor dem Close-Request. Ungesendeter Text bleibt als Entwurf erhalten.
+- Die stille Faktenverarbeitung kann in einer Discovery mit Suchentwurf nach
+  dem Speichern die vorhandene Bereitschaftsprüfung aufrufen. Der Scout soll
+  dabei den gesamten sinnvollen Suchauftrag und offene Unklarheiten beurteilen;
+  Ort und Radius allein sind kein Auftrag, sofort fertig zu sein. Sobald die
+  reaktiven Daten die aktuelle gespeicherte Revision als bereit bestätigen,
+  erhält Live einen Startvorschlag für eine passende Gesprächspause. Veraltete
+  Vorschläge werden entfernt. Starten erfordert weiterhin eine ausdrückliche
+  Nutzerentscheidung.
+
+Marin und der zuletzt positiv getestete Ton bleiben erhalten. Gezielte
+Backend-, Prompt-, Hook- und Seitenprüfungen sowie TypeScript, scoped ESLint,
+Frontend-Build und Diff-Check bestanden. Für diese beiden Nachbesserungen wurde
+kein weiterer Browser- oder Audiotest ausgeführt; den Sprachtest übernimmt
+wie gewünscht der Nutzer.
+
+## Vorheriges Update 16.09.2026 — Korrektur nach menschlichem Discovery-Test
+
+Die menschliche Prüfung fand Regressionen, die die vorherigen synthetischen
+Nachweise nicht ausreichend erfasst hatten: fehlende Eröffnung, ausbleibende
+Anschlussfragen nach kurzen Antworten, verspätete Fakten, unvollständige
+Voice-Historie und eine nicht schließbare Textansicht. In einer betroffenen
+Session wurde der erste Backend-Auftrag erst 87,8 Sekunden nach dem Start
+angenommen; seine Verarbeitung dauerte anschließend 7,1 Sekunden. Das ist ein
+einzelner Diagnosefall, kein Latenzbenchmark.
+
+Die Korrektur behält Live als Gesprächsführung und Terra als zuständigen Scout
+bei. Nutzer- und Assistententranskript werden unabhängig von Tool-Turns in
+derselben Agent-Unterhaltung gespeichert. Die bestehende Transkript-Tabelle
+ordnet begrenzte, aktualisierbare Gesprächsabschnitte ihren Agent-Nachrichten
+zu. Gesprochene Backend-Zusammenfassungen erzeugen keine zweite Assistenten-
+Nachricht neben dem tatsächlichen Live-Transkript. Frühe Faktenverarbeitung
+lädt keinen unbenötigten Anbieter- oder semantischen Memory-Kontext.
+
+Neue Calls verwenden wieder `marin`. Ein leerer automatisch angelegter Entwurf
+gilt nicht als vorheriges Gespräch. Die Persona bleibt warm und musikverständig;
+die australische Vorgabe entfällt. Bei einem Rückschlag soll der Scout dessen
+Auswirkung kurz anerkennen, bevor er zur nächsten praktischen Frage übergeht.
+
+Die Client-Korrektur bindet stille Antworten an ihre Delegation, behandelt
+kurze Antworten an einer Sprechpause und speichert getrennte Sprecherabschnitte.
+Die Eröffnung erhält nach der Anweisungsbestätigung einen ausdrücklichen Start.
+Auflegen führt zur normalen Scout-Ansicht; der Textchat hat auch während
+Discovery eine Schließen-Schaltfläche.
+
+Backend-/Prompt-/Chat-Prüfungen: 37 gezielte Tests bestanden; Frontend: 86 Tests
+bestanden. Integrierter TypeScript-Check und Diff-Check bestanden. Das Backend wurde
+auf die isolierte Entwicklungsinstanz übertragen. Der Nutzer übernimmt auf
+ausdrücklichen Wunsch den nächsten zusammenhängenden Mikrofontest; für diese
+Korrektur wird noch kein neuer bestandener Live-Audiolauf behauptet.
+Die folgenden Abschnitte sind frühere Nachweise und beschreiben teilweise den
+inzwischen korrigierten Stand.
+
+## Vorheriger Stand 16.09.2026 — Live-geführte Discovery mit Ripple
 
 Option B aus dem [Discovery-Plan](GPT_LIVE_DISCOVERY_PLAN.md) ist umgesetzt. Live wählt selbst passende Discovery-Fragen; der bestehende Terra-Scout bleibt für Speicherung, Memory, Bereitschaft und Aktionen zuständig. Normale Speicherungen liefern stillen bestätigten Kontext. Explizite Antworten und Aktionsbelege bleiben gesprochen. Die bestehende Suchbox und Streaming-Captions bleiben die Oberfläche.
 

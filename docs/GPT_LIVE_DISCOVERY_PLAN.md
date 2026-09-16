@@ -1,8 +1,21 @@
-# RoomScout — Live-geführte Discovery mit Ripple
+# RoomScout — Live-geführte Discovery
 
 Stand: 16.09.2026 · **Im isolierten GPT-Live-Branch umgesetzt und technisch geprüft**
 
 Abschnitte 1–8 dokumentieren den vereinbarten Entwurf; Abschnitt 9 hält Umsetzung und Grenzen fest.
+
+**Korrektur nach menschlichem Test am 16.09.:** Die erste Umsetzung hatte
+Regressionen bei kurzen Antworten, früher Faktenübernahme, Gesprächspersistenz
+und dem Schließen der Gesprächsansicht. Die folgenden Ripple-Vorgaben sind
+historischer Entwurf; auf Nutzerwunsch wird wieder `marin` verwendet und der
+ausdrückliche australische Ton entfernt. Aktuelle Nachweise und Einschränkungen
+stehen in [GPT_LIVE_IMPLEMENTATION_STATUS.md](GPT_LIVE_IMPLEMENTATION_STATUS.md).
+
+**Abschließende Nachbesserungen:** Ein bestätigter Auflegeauftrag wird auch bei
+nachfolgender Sprache ausgeführt. Die stille Discovery-Verarbeitung darf nach
+gespeicherten Fakten die bestehende Bereitschaftsprüfung aufrufen; bestätigte
+Bereitschaft löst über den vorhandenen Relay einen Startvorschlag aus. Die
+Suche startet weiterhin erst nach ausdrücklicher Nutzerentscheidung.
 
 Basis: `codex/gpt-live-migration`, Commit `3e8b882`. Dieser Plan beschreibt den
 gezielten nächsten Schritt nach der funktionierenden GPT-Live-Migration:

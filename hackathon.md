@@ -1,47 +1,5 @@
 # Hackathon log
 
-## Latest: voice call closure
-
-The isolated GPT-Live branch adds explicit or farewell-driven hangup and a two-minute inactivity check followed by a thirty-second grace period. Closing the conversation leaves the domain search and provider work independent. Final verification is recorded in [BUILD_LOG.md](docs/BUILD_LOG.md).
-
-## Latest: human voice review follow-up
-
-A human test found that a missing search radius could leave the start button disabled despite a ready message. The isolated GPT-Live branch now shares one activation check across the Scout, voice action and UI, with a focused missing-radius question in English or German. The voice surface reuses the existing blob and streaming captions, with one visible conversation at a time. Follow-up verification is recorded in [BUILD_LOG.md](docs/BUILD_LOG.md).
-
-## Latest: GPT-Live is implemented in isolation; real conversation and UI proofs recorded
-
-RoomScout now connects GPT-Live browser WebRTC to its existing Convex Scout Brain through client delegation. Astra coordinated GPT-5.6-Sol implementation workstreams. The migration is isolated in `codex/gpt-live-migration` and its own cloud development deployment; the original checkout and production are unchanged. English is the default; an explicit spoken German switch persists. Realtime remains a deliberate fallback.
-
-Real API evidence includes canonical saved facts appearing 9–11 seconds into a 36.84-second English description, a 300→280 euro / Tuesday→Wednesday correction, EN→DE→EN, voice search start and pause, inline editing, candidate viewing, and a nonbinding decision answer while the call stays connected. The early-fact effect is application-owned work through the same Scout; native delegation was observed after speech ended. A synthetic incoming offer appeared during a 27-second utterance and was mentioned after the conversational pause. Voice acceptance stayed behind the UI-review boundary, with zero action requests, approvals or executions in the isolated proof.
-
-The latest measured results, final test totals and remaining human/external checks are in [GPT_LIVE_IMPLEMENTATION_STATUS.md](docs/GPT_LIVE_IMPLEMENTATION_STATUS.md). [GPT_LIVE_REVIEW_GUIDE.md](docs/GPT_LIVE_REVIEW_GUIDE.md) contains setup and the English demo script. These proofs use synthetic audio and inert provider fixtures with the real Live API and Scout/Gateway; they do not claim a human acoustic review or an external-provider end-to-end pass.
-
-## Latest: Autopilot policy, first production autopilot run, proven webhook chain
-
-The per-search mandate is gone. Each musician has one set of per-user autonomy
-rules (Autopilot by default, no daily limits) and one gate (release check)
-decides every outgoing action with a persisted outcome. The first production
-autopilot run reached the demo listing without a human step. The AgentMail
-account had no webhook for the Scout deployment; it exists now and a provider
-reply flows webhook, sync and assessment in about ninety seconds. The Scout's
-own question back to the musician (decisions in the chat) is being built.
-
-## Latest: autonomy settings fidelity
-
-Restored the designed mode cards, permission rows, limit control and commitment
-notice with actual mandate data and explicit draft/save behavior. Nine focused
-tests and build passed; live browser appearance verified without changing any
-standing permission.
-
-## Latest: sources settings fidelity
-
-Live sources now reuse the designed expandable rows with actual portal state,
-mailbox copy and separate connection management. Per-search exclusions also
-apply to existing-match visibility and new outreach under existing mandates.
-Dev-only backend deployment and signed-in browser check completed; eight UI
-and 23 backend focused tests passed. Global automatic source selection remains
-read-only. No production rollout or external messages in this verification.
-
 - **Project:** RoomScout
 - **Event:** Convex All Gas Hackathon
 - **What it does:** Indexes public rehearsal-room supply and demand and gives musicians a context-aware text/voice Scout that runs on Autopilot within per-user autonomy rules, checked by one gate (release check), with binding commitments left to the musician.
@@ -49,82 +7,30 @@ read-only. No production rollout or external messages in this verification.
 - **Repo:** https://github.com/Finchmedia/roomscout
 - **Frontend:** Convex static hosting
 - **Convex deployment:** https://fleet-jackal-83.eu-west-1.convex.cloud
-- **Components:** @convex-dev/agent, @convex-dev/auth, @convex-dev/static-hosting, @convex-dev/workpool, @agentmail/convex, local Firecrawl and Stagehand components
+- **Components:** @convex-dev/agent, @convex-dev/auth, @convex-dev/static-hosting, @convex-dev/workpool
 - **Convex features:** schema, tables, indexes, vector search, queries, mutations, actions, HTTP actions, crons, scheduled functions, realtime queries, paginated queries
 - **Auth:** Convex Auth
 - **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-live-1` in the isolated migration, `gpt-realtime-2.1` as the current fallback
 - **Started:** 2026-08-26T13:55:26Z
-- **Last updated:** 2026-09-16T00:16:00Z
+- **Last updated:** 2026-09-16T01:19:06Z
 
 ## Log
 
-### 2026-09-10 — live Settings, operator and landing design integration
-
-Three parallel Sol implementation slices connected the Claude Code UI port to
-the live routes. Settings uses the sidebar panel with real profile, mailbox,
-portal, memory and mandate operations. Operator uses the same ported panel
-anatomy with role-gated data, explicit provider configuration checks and links
-to existing operational tools. The public landing preserves the design and
-separates the synthetic demonstration from real signup.
-
-Unsupported billing, notification preferences and privacy self-service are
-identified rather than simulated. Added profile-menu navigation, safe route
-error recovery, auth/routing regressions and corrected legacy anchor colors
-that hid primary button labels. No messages, approvals or account changes were
-submitted during browser verification. See BUILD_LOG for validation details.
-
-### 2026-09-10 — live Scout design integration and explicit brief readiness
-
-Connected the Claude Code design primitives to the real Scout route, preserving
-Convex conversations, voice sessions and exact user-approved offer acceptance.
-The chat uses shadcn's message-scroller primitives with Markdown rendering,
-history loading and a multiline composer. Active searches retain access to chat
-and their brief without restoring the old diagnostic dashboard.
-
-Text and voice now have an explicit draft-readiness tool: the current search
-revision opens its brief for review; only the musician's activation click starts
-Autopilot. Activity queries are scoped to the chosen search before applying their
-result limit. Provider offers and confirmed acceptance take precedence over stale
-outreach status. The acceptance dialog uses the design system and German copy
-while retaining the existing snapshot, acknowledgement and send semantics.
-
-Development backend and static frontend updated. Verification: 678 tests passed,
-one opt-in test skipped; TypeScript, production build, scoped lint and diff check
-passed. The hosted development route serves the new built assets. Browser inspection used the existing signed-in
-session without sending a message or accepting an offer. This is UI integration
-evidence, not another fresh-account end-to-end run. Settings, Inbox and operator
-routes remain outside this first live design slice; their demo ports are not
-substitutes for live data. Desktop and 390px mobile offer/chat views were checked.
-
-### 2026-09-10 - first successful controlled end-to-end happy path
-
-Completed the first user-observed band-to-landlord flow on the controlled portal:
-conversational search, matching, browser outreach, provider replies, autonomous
-follow-up questions, a fully assessed offer, and a final acceptance message
-visible in the portal. This is a controlled demo, not a payment or signed contract.
-Removed obstructive app-level throttles and shortened due inbox scheduling;
-fixed match-assessment recovery and made current provider offers take precedence
-over stale listing questions and old outreach status in the Scout UI.
-
-The development frontend is deployed. Verification: 664 tests passed, one opt-in
-test skipped, TypeScript and production build passed. This is the first completed
-interactive run after fixes, not yet a repeatability claim for unattended fresh
-runs. This checkpoint preserves the parallel Claude Code design-port work;
-chat-UI simplification and further UI-port decisions remain for a separate review.
-Detailed evidence and limitations: `docs/BUILD_LOG.md`.
-
 ### 2026-08-26 - de10b22
+
 Defined RoomScout as a shared index of rehearsal-room supply and demand with
 approval-gated outreach. Captured the initial product and architecture evidence
 in `README.md`, `docs/PLAN.md`, and `docs/BUILD_LOG.md`.
 
 ### 2026-08-26 - 79b7e75
+
 Selected React and Vite for a SPA on Convex static hosting, with Convex as the
 realtime backend and OpenAI for in-product intelligence. Added repository-level
 agent guidance and kept deployment outside the setup task (`AGENTS.md`,
 `docs/PLAN.md`).
 
 ### 2026-08-28 - 31c9b82
+
 Built and deployed the musician and operator SPA with Convex Auth, reactive
 search and matching, a persistent Agent thread, structured memory with vector
 search, approval-gated mail, Firecrawl ingestion, Mapbox views, and Realtime
@@ -133,6 +39,7 @@ voice. Added the tested Structured Outputs adapter workaround for
 (`convex/convex.config.ts`, `convex/schema.ts`, `convex/scout.ts`, `src/`).
 
 ### 2026-08-31 - 6bb06a0
+
 Added a source-intelligence registry, bounded Firecrawl discovery and Interact
 flows, persistent Browserbase portal contexts, source preferences, external
 action approvals, and revocable standing mandates. Automated writes remain
@@ -141,6 +48,7 @@ contracts, bookings, or payments (`convex/sourceIntelligence.ts`,
 `convex/firecrawlInteract.ts`, `convex/browserbasePortal.ts`, `convex/mandates.ts`).
 
 ### 2026-08-31 - 91a8967
+
 Added operator-visible provider readiness without exposing environment values.
 Verified the public Bandnet contact-form contract read-only and recorded
 Kleinanzeigen as unavailable for automation under its documented access policy
@@ -148,6 +56,7 @@ Kleinanzeigen as unavailable for automation under its documented access policy
 `convex/migrations.ts`).
 
 ### 2026-08-31 - 31ef3aa
+
 Recorded the production Realtime WebRTC proof: authenticated session setup,
 synthetic microphone permission, real model connection, and clean teardown with
 no raw-audio persistence. Hardened the documented Firecrawl webhook and
@@ -155,6 +64,7 @@ Realtime endpoint configuration while keeping native monitors disabled pending
 reviewed activation (`docs/BUILD_LOG.md`).
 
 ### 2026-09-01 - be3ac9c
+
 Replaced direct provider SDK calls with Components. AgentMail now owns durable
 inbox transport, sending, status tracking, and signed webhook dispatch behind
 RoomScout's exact-content approval gate. Vendored the complete official
@@ -164,6 +74,7 @@ production; Health, Landing, and Explore returned HTTP 200
 (`convex/convex.config.ts`, `convex/components/`, `convex/agentmailComponent.ts`).
 
 ### 2026-09-01 - 27dca06
+
 Proved the deployed Firecrawl Component transport with one bounded, read-only
 Bandnet Hamburg scrape: HTTP 200, 3,647 Markdown characters, 23 links, and one
 credit. Deployed the separate controlled portal at `roomscout.dev` with Clerk,
@@ -180,6 +91,7 @@ without disclosure, and unsigned requests return HTTP 401; per-user Inbox
 creation still needs broader provider scope (`docs/BUILD_LOG.md`).
 
 ### 2026-09-02 - 2d23689
+
 Added and deployed an internal proof runner that accepts only the first-party
 `roomscout.dev` source and refuses to run beside an unrelated active source.
 One bounded Production monitor check produced one redacted public Signal; a
@@ -189,13 +101,15 @@ the monitor was paused again afterward. No message or browser action occurred
 `convex/controlledSourceProofActions.ts`, `docs/BUILD_LOG.md`).
 
 ### 2026-09-02 - bafc29e
+
 Made non-binding Autopilot the simple search default, moved detailed mandate
 controls into Advanced, and replaced the logo with a wordmark. Added portal
 signup authentication checks and thread-aware browser message handling, with
 authorization regressions. This records implemented paths, not a complete live
 provider round trip (`convex/mandates.ts`, `convex/browserbasePortal.ts`, `src/`).
 
-### 2026-09-08 - working tree
+### 2026-09-08 - 200c54c
+
 Fixed activation, paginated matching, and stale-result/first-contact guards.
 Added shared Convex Agent turns, private versioned offers, controlled-portal
 replies and exact receipt-based offer acceptance. Workpools coordinate semantic
@@ -222,7 +136,8 @@ shares the UI message/Resend path and passes 15 local portal tests, typechecks,
 lint and build; that portal change is not deployed yet.
 Production is unchanged. Details and remaining gates: `docs/BUILD_LOG.md`.
 
-### 2026-09-09 - working tree
+### 2026-09-09 - 200c54c
+
 Ported the supplied interactive design into the real React app: voice-first Scout,
 live fact cards, brief review, settings, operator styling and a labelled landing
 story (`src/routes/musician/ScoutPage.tsx`, `src/components/landing/`). Existing
@@ -243,7 +158,9 @@ build, backend typecheck and scoped lint; unrelated UI lint findings remain.
 Registration and the mail/browser round trip remain pending shared acceptance.
 Details, test evidence and remaining gates: `docs/BROWSERBASE_COMPONENT_MIGRATION.md`.
 
-### 2026-09-09 - deployable band acceptance flow
+### 2026-09-09 - 2c769b1
+
+**Deployable band acceptance flow.**
 
 The complete test path is deployed to production: readable personal AgentMail
 inboxes at signup, automatic controlled `roomscout.dev` connection bootstrap,
@@ -255,7 +172,85 @@ asset manifest. Local and deployment checks pass 581 tests, TypeScript and build
 The remaining item is user-driven acceptance with a fresh band account,
 including provider OTP, first portal message and landlord reply.
 
-### 2026-09-10 - working tree
+### 2026-09-10 - c2e802a
+
+**Live Settings, operator and landing design integration.**
+
+Three parallel Sol implementation slices connected the Claude Code UI port to
+the live routes. Settings uses the sidebar panel with real profile, mailbox,
+portal, memory and mandate operations. Operator uses the same ported panel
+anatomy with role-gated data, explicit provider configuration checks and links
+to existing operational tools. The public landing preserves the design and
+separates the synthetic demonstration from real signup.
+
+Unsupported billing, notification preferences and privacy self-service are
+identified rather than simulated. Added profile-menu navigation, safe route
+error recovery, auth/routing regressions and corrected legacy anchor colors
+that hid primary button labels. No messages, approvals or account changes were
+submitted during browser verification. See BUILD_LOG for validation details.
+
+**Autonomy settings verification at this checkpoint.**
+
+Restored the designed mode cards, permission rows, limit control and commitment
+notice with actual mandate data and explicit draft/save behavior. Nine focused
+tests and build passed; live browser appearance verified without changing any
+standing permission.
+
+**Sources settings verification at this checkpoint.**
+
+Live sources now reuse the designed expandable rows with actual portal state,
+mailbox copy and separate connection management. Per-search exclusions also
+apply to existing-match visibility and new outreach under existing mandates.
+Dev-only backend deployment and signed-in browser check completed; eight UI
+and 23 backend focused tests passed. Global automatic source selection remains
+read-only. No production rollout or external messages in this verification.
+
+### 2026-09-10 - c2e802a
+
+**Live Scout design integration and explicit brief readiness.**
+
+Connected the Claude Code design primitives to the real Scout route, preserving
+Convex conversations, voice sessions and exact user-approved offer acceptance.
+The chat uses shadcn's message-scroller primitives with Markdown rendering,
+history loading and a multiline composer. Active searches retain access to chat
+and their brief without restoring the old diagnostic dashboard.
+
+Text and voice now have an explicit draft-readiness tool: the current search
+revision opens its brief for review; only the musician's activation click starts
+Autopilot. Activity queries are scoped to the chosen search before applying their
+result limit. Provider offers and confirmed acceptance take precedence over stale
+outreach status. The acceptance dialog uses the design system and German copy
+while retaining the existing snapshot, acknowledgement and send semantics.
+
+Development backend and static frontend updated. Verification: 678 tests passed,
+one opt-in test skipped; TypeScript, production build, scoped lint and diff check
+passed. The hosted development route serves the new built assets. Browser inspection used the existing signed-in
+session without sending a message or accepting an offer. This is UI integration
+evidence, not another fresh-account end-to-end run. Settings, Inbox and operator
+routes remain outside this first live design slice; their demo ports are not
+substitutes for live data. Desktop and 390px mobile offer/chat views were checked.
+
+### 2026-09-10 - 2c769b1
+
+**First successful controlled end-to-end happy path.**
+
+Completed the first user-observed band-to-landlord flow on the controlled portal:
+conversational search, matching, browser outreach, provider replies, autonomous
+follow-up questions, a fully assessed offer, and a final acceptance message
+visible in the portal. This is a controlled demo, not a payment or signed contract.
+Removed obstructive app-level throttles and shortened due inbox scheduling;
+fixed match-assessment recovery and made current provider offers take precedence
+over stale listing questions and old outreach status in the Scout UI.
+
+The development frontend is deployed. Verification: 664 tests passed, one opt-in
+test skipped, TypeScript and production build passed. This is the first completed
+interactive run after fixes, not yet a repeatability claim for unattended fresh
+runs. This checkpoint preserves the parallel Claude Code design-port work;
+chat-UI simplification and further UI-port decisions remain for a separate review.
+Detailed evidence and limitations: `docs/BUILD_LOG.md`.
+
+### 2026-09-10 - 2c769b1
+
 Replaced the controlled portal's hosted REST execution with actual Stagehand v4
 Node actions; the local component retains session metadata only. Form fields
 are validated and read back together before submission. Both backend deployments,
@@ -265,14 +260,18 @@ passed. Added owner-initiated, once-per-day failed-start recovery and readable
 cooldowns. Live signup and the message round trip remain unproven
 (`docs/BROWSERBASE_COMPONENT_MIGRATION.md`).
 
-### 2026-09-10 — Account settings UI
+### 2026-09-10 - c2e802a
+
+**Account settings UI.**
 
 Implemented the billing and privacy design layouts in the live settings routes.
 Unavailable actions are visibly disabled; real navigation remains available.
 No invented usage figures, payment integration or account deletion. Twelve
 focused tests, scoped lint and frontend build pass; local change only.
 
-### 2026-09-10 — Operator UI alignment
+### 2026-09-10 - c2e802a
+
+**Operator UI alignment.**
 
 Aligned the live operator UI with the design reference across six sections.
 Real data remains operator-gated; unknown states and unavailable controls are
@@ -281,7 +280,9 @@ isolated fixture, not an authenticated admin session. All 27 focused tests,
 frontend build and scoped lint pass. Working-tree changes only; no deployment
 or role changes.
 
-### 2026-09-11 — Release verification
+### 2026-09-11 - c2e802a
+
+**Release verification.**
 
 Verified the combined Scout, settings, landing and operator UI changes with the
 backend compatibility updates: 753 tests pass, one opt-in test is skipped.
@@ -290,7 +291,9 @@ passes. Full-repository lint still reports pre-existing browser-script globals;
 these scripts are unchanged. Public-facing architecture and migration docs were
 sanitized before release. Production rollout follows this checkpoint.
 
-### 2026-09-11 — c2e802a production release
+### 2026-09-11 - c2e802a
+
+**Production release.**
 
 Pushed the combined UI and backend release to the ui-port branch. Deployed
 Convex functions and the production-built SPA through Convex Static Hosting.
@@ -298,7 +301,9 @@ Hosted landing, Scout, settings and operator routes return the current build;
 referenced entry assets are available. App/backend lint passes. This HTTP smoke
 does not replace authenticated operator checks or a fresh-band end-to-end run.
 
-### 2026-09-11 — working tree: exclusive portal-engine decision
+### 2026-09-11 - e7a0cee
+
+**Exclusive portal-engine decision.**
 
 Decided to evaluate Firecrawl as an alternative portal browser engine, motivated
 by its sponsor role. Each deployment selects Firecrawl OR Browserbase for the
@@ -313,7 +318,9 @@ locally verified; live acceptance remains open. A code-generation command attemp
 a subsequent read-only function listing showed no new portal-engine functions.
 No provider switch or live message was performed; this is not a proven live release.
 
-### 2026-09-13 — e7a0cee manual-test rollout
+### 2026-09-13 - e7a0cee
+
+**Manual-test rollout.**
 
 Pushed the exclusive portal engine to ui-port and deployed backend and frontend
 to dev and production at the maintainer's request. Both select Firecrawl without
@@ -323,7 +330,9 @@ exports show 132 non-hosting tables empty in each environment. The separate
 controlled portal and external provider accounts were not changed. Live
 registration and message round-trip acceptance remain for the manual test.
 
-### 2026-09-13 — working tree: portal runtime selection correction
+### 2026-09-13 - 255a820
+
+**Portal runtime selection correction.**
 
 The manual test exposed a stale Node environment reference: Browserbase ran
 while the database labelled the registration Firecrawl. Read the selector at
@@ -334,7 +343,9 @@ skipped; build and app/backend lint pass. Dev runtime selection confirms Firecra
 Existing provider sessions are not transferable; this is not a live Firecrawl
 registration or message round-trip proof.
 
-### 2026-09-13 — 255a820 runtime fix rollout
+### 2026-09-13 - 255a820
+
+**Runtime fix rollout.**
 
 Pushed the fix and deployed functions and frontend to dev and production.
 Both live Node probes select Firecrawl; hosted bundles point to their matching
@@ -342,7 +353,9 @@ backend and contain the recovery UI. Retried a failed production asset upload
 successfully. The maintainer will test with a fresh band; existing accounts and
 data remain unchanged, and no registration or message was sent during rollout.
 
-### 2026-09-13 — 5e12b5f Firecrawl registration diagnostics and progress
+### 2026-09-13 - 5e12b5f
+
+**Firecrawl registration diagnostics and progress.**
 
 Confirmed automatic registration was scheduled during the manual test. Fresh
 uncached browser sessions, bounded read-only retries and idempotent cleanup now
@@ -355,7 +368,9 @@ and progress UI are deployed; production preflight returned ready/sign_up using
 the final unchanged source. No new account or message was created by these
 diagnostics; complete registration acceptance remains open.
 
-### 2026-09-14 — d2a0356 Firecrawl rate limits and automatic source check
+### 2026-09-14 - d2a0356
+
+**Firecrawl rate limits and automatic source check.**
 
 Activating a search now schedules an automatic check of the controlled demo
 portal with a fifteen-minute cooldown, skipped when the portal is unconfigured
@@ -368,7 +383,9 @@ scheduled functions, internal mutations, internal actions
 `convex/integrations/firecrawlPortalRuntime.ts`,
 `convex/components/firecrawlRoomScout/api.ts`).
 
-### 2026-09-14 — 14804cf Autopilot policy: per-user autonomy rules, one gate, production run
+### 2026-09-14 - 14804cf
+
+**Autopilot policy: per-user autonomy rules, one gate, production run.**
 
 Groups 4fe7225 through 14804cf on branch autopilot-policy. Replaced the
 per-search mandate with per-user autonomy rules (Handlungsspielraum,
@@ -405,7 +422,9 @@ schema, indexes, mutations, internal actions, scheduled functions, HTTP actions
 `convex/portalNotifications.ts`, `convex/matches.ts`,
 `src/ui/settings/pages/AutonomyPage.tsx`).
 
-### 2026-09-14 — 2cfe436 Decisions in the chat
+### 2026-09-14 - 2cfe436
+
+**Decisions in the chat.**
 
 The Scout's questions to the musician now exist as data instead of dead ends.
 A `decisions` table holds one open decision per provider conversation
@@ -428,7 +447,9 @@ functions (`convex/schema.ts`, `convex/decisions.ts`, `convex/lib/decisions.ts`,
 `convex/providerActions.ts`, `convex/scout.ts`, `convex/voice.ts`,
 `src/components/scout/DecisionCard.tsx`, `src/ui/chat/ScoutChat.tsx`).
 
-### 2026-09-14 — 8fc8e2c Messages (Nachrichten) in the settings panel chrome
+### 2026-09-14 - 8fc8e2c
+
+**Messages (Nachrichten) in the settings panel chrome.**
 
 The musician inbox is its own menu item again, rebuilt as a two-column panel
 in the same chrome as the settings: conversation rows on the left with a
@@ -448,7 +469,9 @@ realtime queries (`convex/conversations.ts`, `convex/schema.ts`,
 `src/ui/inbox/ConversationThread.tsx`, `src/ui/chrome/PanelDialog.tsx`,
 `src/ui/chat/ChatComposer.tsx`).
 
-### 2026-09-14 — 9a0d507 Streaming Scout chat on Agent deltas, one bubble system
+### 2026-09-14 - 9a0d507
+
+**Streaming Scout chat on Agent deltas, one bubble system.**
 
 The live Scout chat now streams. The musician's message is saved by a
 mutation and answered by a scheduled action that streams the reply through the
@@ -469,7 +492,9 @@ internal actions, queries with stream sync, realtime queries, Agent component
 `src/routes/musician/ScoutPage.tsx`, `src/ui/chat/ScoutChat.tsx`,
 `src/ui/chat/ChatTurn.tsx`).
 
-### 2026-09-14 — 44fabad Stage in three columns, decisions answered on the stage, operator polish
+### 2026-09-14 - 44fabad
+
+**Stage in three columns, decisions answered on the stage, operator polish.**
 
 Groups c8534f2, 2db65d9 and 44fabad. The Scout stage now answers an open
 decision in place: option buttons under the question, free text through
@@ -489,7 +514,9 @@ features: realtime queries, mutations, scheduled functions
 `src/ui/scout/live/LiveScoutSurface.tsx`, `src/ui/scout/live/CandidateList.tsx`,
 `src/routes/musician/ScoutPage.tsx`, `src/ui/operator/live/LiveOperatorSurface.tsx`).
 
-### 2026-09-15 — 0631cc8 Firecrawl orchestration rebuilt in the shape of the local proof
+### 2026-09-15 - 0631cc8
+
+**Firecrawl orchestration rebuilt in the shape of the local proof.**
 
 After the acceptance message needed three attempts, the Firecrawl portal path
 was compared against the standalone scripts that had proven the flow on
@@ -512,7 +539,9 @@ mutations (`convex/firecrawlPortal.ts`, `convex/integrations/firecrawlPortalEngi
 `convex/components/firecrawlRoomScout/interact.ts`, `convex/portalConnections.ts`,
 `docs/FIRECRAWL_HARDENING_PLAN.md`).
 
-### 2026-09-15 — 03553ac Chat text stays with the Scout; the portal receipt proves delivery
+### 2026-09-15 - 03553ac
+
+**Chat text stays with the Scout; the portal receipt proves delivery.**
 
 A live test exposed a real hole: while a decision was open, the Scout chat
 also offered a "dictate to the provider" tool, and the model sent a musician's
@@ -531,7 +560,9 @@ actions, internal mutations, scheduled functions (`convex/scout.ts`,
 `convex/voice.ts`, `convex/scoutCaseCards.ts`,
 `convex/integrations/firecrawlPortalEngine.ts`, `convex/firecrawlPortal.ts`).
 
-### 2026-09-15 — 61797c3 Seven fixes from the first full live run
+### 2026-09-15 - 61797c3
+
+**Seven fixes from the first full live run.**
 
 The maintainer ran the loop end to end on production and listed what broke
 the illusion: a frozen "thinking" label, facts landing in the chat rather than
@@ -550,7 +581,9 @@ headless primitive. Convex features: actions and agent tools
 (`convex/scout.ts`, `convex/scoutCaseCards.ts`), mutations
 (`convex/decisions.ts`), reactive queries behind the stage and the inbox.
 
-### 2026-09-15 — Chat parts from the shadcn registry
+### 2026-09-15 - c9a1d02
+
+**Chat parts from the shadcn registry.**
 
 A check of the chat UI showed that only the message scroller was the real
 shadcn primitive; message, bubble and marker were short hand-written
@@ -563,7 +596,9 @@ files render their dark branch. The questionnaire item is published only
 under shadcn's v4 styles; it stays a labelled stand-in until the maintainer
 runs the CLI interactively. Frontend deployed to production and dev.
 
-### 2026-09-15 — Questionnaire from the registry
+### 2026-09-15 - 3184f73
+
+**Questionnaire from the registry.**
 
 The maintainer fetched the questionnaire through the shadcn CLI from the
 radix-nova registry URL in a terminal, keeping the project's own button. The
@@ -571,15 +606,53 @@ labelled stand-in is replaced by the registry's styled layer over the headless
 primitive; the decision card needed no change. Tests and build green, frontend
 deployed to production and dev.
 
-### 2026-09-15 — GPT-Live isolated integration checkpoint
+### 2026-09-15 - a2d193d
+
+**GPT-Live isolated integration checkpoint.**
 
 The migration branch now connects browser WebRTC and GPT-Live client delegation to the existing Convex Scout instead of introducing a second domain agent. Voice and text share the same Scout tools, Gateway model and saved search state; a small serial input path coordinates their turns. English is the default visible and spoken path, German remains an explicit persisted switch, and only canonical saved facts drive the search brief. A bounded app-owned early-capture intent is limited to reversible search facts and cannot perform search lifecycle, decision, provider or binding actions.
 
 The isolated cloud development deployment is necessary because the local Convex backend does not support the AI Gateway. There, an ordinary Scout text turn reached the real Gateway and returned ready. A real Live WebRTC session established successfully and delivered captions plus acknowledged events. The initial long-speech check received 95 transcript deltas during 36.84 seconds; its first native delegation followed about 1.0 second after audio ended, so mid-speech fact arrival is not claimed from native delegation. Early capture, an in-speech correction, language changes and the complete Live journey remain under test. The last full suite before the latest runtime changes passed 1,151 tests with one skip. The original checkout was untouched, no production rollout is claimed, the Realtime fallback remains available, and no provider message or acceptance was sent in this checkpoint.
 
+### 2026-09-15 - f9132a3
 
-### 2026-09-16 - working tree — Live-led discovery with Ripple
+Verified the isolated GPT-Live integration with real WebRTC, Live and the existing Scout/Gateway.
+Saved facts appeared during speech through application-owned capture; corrections, EN/DE switching,
+search start/pause, inline edits and a nonbinding decision answer worked in continuous calls.
+A synthetic offer was mentioned after a conversation pause; binding acceptance stayed in UI review.
+These checks used synthetic audio and inert provider fixtures, not a human or external-provider end-to-end run.
+Evidence: `convex/voiceLive.ts`, `src/hooks/useGptLiveVoiceScout.ts`; [proof](docs/GPT_LIVE_IMPLEMENTATION_STATUS.md), [demo guide](docs/GPT_LIVE_REVIEW_GUIDE.md).
 
-GPT-Live now leads discovery questions while the existing Convex Agent and Terra/Gateway persist search facts and musician memory. Ripple and a shared EN/DE musician-facing persona are active in the isolated migration environment. Quiet saved-state updates keep the search brief reactive; explicit answers and canonical action receipts remain spoken. The existing Agent thread records invisible completion boundaries for silent turns, and phase/language synchronization keeps voice and UI aligned.
+### 2026-09-15 - a1fc6ae
 
-Real API checks proved a discovery question before backend completion, persisted short answers and a correction, pause while connected, both language switches with a factual answer, and spoken hangup. The final suite passed 1,257 tests with one skip; typecheck, scoped lint and build passed. Occasional repeated discovery questions remain a human tone-review item. No production rollout or new external-provider end-to-end pass is claimed. Details: [implementation status](docs/GPT_LIVE_IMPLEMENTATION_STATUS.md).
+Unified readiness and activation checks so a missing location or radius triggers a focused EN/DE question.
+Reused the existing blob and streaming captions with one visible conversation during voice.
+Verified the missing-radius block and subsequent activation readiness in an isolated real Live check.
+Convex features: agent tools, mutations and realtime queries (`convex/scout.ts`, `convex/voiceLive.ts`, `src/routes/musician/ScoutPage.tsx`).
+Detailed test scope: [build log](docs/BUILD_LOG.md).
+
+### 2026-09-15 - 3e8b882
+
+Added explicit and farewell-driven voice hangup, plus a two-minute inactivity check and thirty-second grace period.
+Closing voice leaves search and provider work running independently.
+Real synthetic-audio checks exercised hangup and inactivity closure; later human testing exposed an intermittent hangup failure.
+Convex features: agent tools and session mutations (`convex/scout.ts`, `convex/voiceLive.ts`, `src/hooks/useGptLiveVoiceScout.ts`).
+Detailed test scope and timing limits: [build log](docs/BUILD_LOG.md).
+
+### 2026-09-16 - 5a4c002
+
+Let GPT-Live lead discovery while the existing Terra/Gateway Scout saved facts and memory.
+Used Ripple and a shared EN/DE persona at this checkpoint; later corrections restore Marin.
+Kept routine saves quiet and confirmed actions spoken through the existing Agent thread.
+Real synthetic-audio checks covered early questions, corrections, language changes and hangup.
+Verification: 1,257 tests passed with one skip, plus typecheck, scoped lint and build.
+Evidence: `convex/voiceLive.ts`, `convex/prompts/roomScoutLive.ts`; [proof and limits](docs/GPT_LIVE_IMPLEMENTATION_STATUS.md).
+
+### 2026-09-16 - working tree
+
+Restored Marin, first-call greetings, short-answer flow, timely facts and voice history in the existing Agent thread.
+Fixed return-to-Scout controls; a human retest confirmed improved discovery, search start and a later successful hangup.
+Then made validated hangup survive later speech and enabled a proactive start offer for a saved, ready brief; start still needs consent.
+Targeted tests, typecheck, scoped lint and build passed; the two final follow-ups await the user's microphone test.
+Convex features: agent tools, mutations and realtime queries (`convex/scout.ts`, `convex/voiceLive.ts`, `convex/schema.ts`).
+UI/prompt evidence: `src/hooks/useGptLiveVoiceScout.ts`, `src/routes/musician/ScoutPage.tsx`, `convex/prompts/roomScoutLive.ts`; [details](docs/BUILD_LOG.md).
