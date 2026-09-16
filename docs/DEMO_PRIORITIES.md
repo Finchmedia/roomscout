@@ -3,7 +3,13 @@
 Festgehalten aus dem Gespräch mit dem Maintainer nach dem Firecrawl-Umbau.
 Hackathon-Deadline 2026-09-22.
 
-> Ergänzung 2026-09-15, abends: Der Maintainer hat die isolierte Umsetzung der GPT-Live-Migration ausdrücklich beauftragt (Astra koordiniert, Sol-5.6-Subagents implementieren). Die damaligen Aussagen „nur geplant“ und „vor der Demo nicht anfassen“ unten beschreiben die Entscheidung vom frühen Morgen und sind für diesen isolierten Arbeitsauftrag überholt. Die laufende Implementierung ist noch keine Produktionsfreigabe und kein Ersatz für die Portal-/Raum-Demo. Verbindlicher Stand: [Migrationsplan](GPT_LIVE_MIGRATION_PLAN_2026-09-15.md) und [Implementierungs-/Prüfstatus](GPT_LIVE_IMPLEMENTATION_STATUS.md).
+> Aktualisierung 2026-09-16: GPT-Live und die aktuellen Demo-Dokumente sind im
+> Integrationsbranch zusammengeführt. Der Stand ist noch nicht in Produktion
+> veröffentlicht. Die technische Integration ersetzt weder den vollständigen
+> Portal-/Raum-Durchlauf noch die zehn aufeinanderfolgenden Durchläufe vor der
+> Aufnahme; diese reale Prüfung übernimmt der Maintainer. Verbindlicher Stand:
+> [Produktions-Umzugsplan](GPT_LIVE_PRODUCTION_MOVE_PLAN.md) und
+> [Implementierungs-/Prüfstatus](GPT_LIVE_IMPLEMENTATION_STATUS.md).
 
 ## Stand der drei Punkte
 
@@ -16,15 +22,14 @@ Hackathon-Deadline 2026-09-22.
 - **Demo-Portal:** Ein Listing, ein Vermieter, das ist der Maintainer. Der
   geskriptete Simulator im Portal (`controlledSimulation.ts`) kennt drei
   Szenarien, ist aber nur Betreiber-Werkzeug und kein LLM.
-- **GPT-Live:** Nur geplant. `docs/GPT_LIVE_VOICE_PLAN.md` sagt selbst „plan and
-  handoff only, nothing implemented“. Heute läuft Voice über OpenAI Realtime,
-  und das Realtime-Modell denkt selbst: es hat den vollen Werkzeugsatz (Suche
-  aktualisieren, Fakten merken, Entscheidung beantworten, Anbieter antworten).
-  Der Convex-Scout ist im Voice-Pfad nicht das Gehirn. Der geplante Umbau
-  (Realtime nur als Stimme, Scout entscheidet) ist ein eigener mehrtägiger
-  Umbau mit ungetesteter API. Eine Woche vor der Demo nicht anfassen. Voice
-  funktioniert, hat die Entscheidungs-Werkzeuge, dort wird nur gefixt, was
-  bricht.
+- **GPT-Live:** Der GPT-Live-Pfad ist implementiert und mit dem aktuellen
+  Demo-Stand zusammengeführt, aber noch nicht in Produktion veröffentlicht.
+  Live führt das natürliche Discovery-Gespräch; der bestehende Terra-Scout
+  speichert Fakten und Memory, prüft Bereitschaft und führt Aktionen aus.
+  Englisch ist Standard, ein ausdrücklicher Deutschwechsel bleibt gespeichert,
+  und `marin` ist die festgelegte Stimme. Synthetische API- und gezielte
+  menschliche Nachweise sind dokumentiert; der vollständige Anbieterweg und die
+  zehn stabilen Demo-Wiederholungen bleiben offen.
 
 ## Rangfolge für die Demo
 
@@ -44,9 +49,10 @@ Hackathon-Deadline 2026-09-22.
    Firecrawl-Showoff ist sichtbar (Suche, Scrape, Extraktion, Monitore).
    Anschreiben bleibt technisch auf roomscout.dev beschränkt; die
    Freigabeprüfung erzwingt das mit `controlled_portal_only`.
-4. **Englisch.** UI-Wörterbuch (rund 1.100 Strings, mechanisch), Sprache pro
-   Nutzer für die festen Backend-Texte, Vermieter-Bot auf Englisch. Der Scout
-   selbst folgt der Sprache der Band.
+4. **Englisch.** Das vollständige UI-Wörterbuch, Englisch als Standard und der
+   gespeicherte ausdrückliche Deutschwechsel sind umgesetzt. Für den Dreh bleiben
+   die englischen Portal-/Vermieter-Bot-Texte und der vollständige Durchlauf zu
+   prüfen.
 5. **Evalite reparieren und Scorecard erzeugen.** Kleiner Fix (Mandat raus,
    Regeln rein, Musiker-Rolle im Simulator), dann läuft die Offline-Suite
    wieder, plus die Live-Suite aus Punkt 2. Für die Demo zweitrangig, als
@@ -56,5 +62,6 @@ Hackathon-Deadline 2026-09-22.
 
 ## Bewusst nicht
 
-GPT-Live-Umbau, Browserbase-Rückweg, Kandidaten D bis J der Architektur-Liste.
-Sie tragen nichts zur Demo bei, was nicht schon läuft.
+Ein weiteres Voice-/Persona-Redesign, Modellvergleiche, Browserbase-Rückweg und
+Kandidaten D bis J der Architektur-Liste. Sie tragen nichts zur Demo bei, was
+nicht schon läuft.

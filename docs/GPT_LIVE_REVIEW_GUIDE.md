@@ -1,78 +1,62 @@
 # GPT-Live Review Guide
 
-Status: isolated development review on 2026-09-15. This guide is a reproducible review path, not a production release claim. Final automated checks: 1,204 tests passed, one skipped; typecheck and build passed; lint has zero errors and 29 existing UI warnings. The detailed evidence record remains in [GPT_LIVE_IMPLEMENTATION_STATUS.md](GPT_LIVE_IMPLEMENTATION_STATUS.md).
+Status: production integration in progress on 2026-09-16; not deployed. The
+isolated development evidence below remains reproducible context, not a
+production release claim. The integrated Live-only code `b19d12b` passed 1,260
+tests (one skipped), generated API typechecking and the production build. Global
+lint has zero errors and 29 existing UI warnings. Detailed evidence is in
+[GPT_LIVE_IMPLEMENTATION_STATUS.md](GPT_LIVE_IMPLEMENTATION_STATUS.md).
 
-## Review environment
+## Current integration review
 
 | Layer | Review target |
 |---|---|
-| Source | Branch `codex/gpt-live-migration` in `/Users/danielfinke/Documents/STARTUPS/ROOMSCOUT/roomscout-gpt-live` |
-| Frontend | `http://localhost:5174` |
-| Convex branch | `dev/gpt-live-migration-20260915` |
-| Convex cloud development deployment | `descriptive-kookabura-886` in `eu-west-1` |
+| Source | Integrated branch in `/Users/danielfinke/Documents/STARTUPS/ROOMSCOUT/roomscout-gpt-live`; merge checkpoint `d37a465` before Live-only cleanup |
+| Production | Not deployed by this integration step |
+| Real voice review | Performed later by the user; not part of migration execution |
 | Known working CLI runtime | Bundled Node `v24.19.0`, Convex CLI `1.45.0` |
 
-The frontend on port `5174` uses the isolated cloud development deployment for the real Scout Brain. A local Convex deployment can establish the direct Live handshake, but it cannot issue the AI Gateway service token used by the Scout. Do not count a localhost frontend as proof that the Brain ran locally.
-
-The starting code commit is `3184f73`; plan documents and the four pre-existing Firecrawl helper scripts were checkpointed separately before implementation.
-
-The original checkout at `/Users/danielfinke/Documents/STARTUPS/ROOMSCOUT/roomscout`, its branch, the existing personal development deployment, and production are outside this review. They were not switched to GPT-Live. Do not copy deployment configuration between those checkouts.
-
-## Reproduce the isolated app
-
-The following command syntax was checked against the installed Vite `8.2.2` and Convex CLI `1.45.0` help before this guide was written.
+Run the final automated checks from the integrated checkout after Live-only
+cleanup. They verify source integration; they do not prove a deployment, a real
+microphone path or the ten consecutive demo runs.
 
 ```bash
 export PATH="/Users/danielfinke/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH"
 cd /Users/danielfinke/Documents/STARTUPS/ROOMSCOUT/roomscout-gpt-live
 node --version
-npx convex dev --help
-npm run dev -- --help
-```
-
-`node --version` should print `v24.19.0`. This is the runtime used by the successful cloud-development watch and pushes. A different host Node version may also print CLI help, but that alone does not prove it can run the same deployment workflow.
-
-Run the checks from the isolated worktree:
-
-```bash
 npm test
 npm run typecheck
 npm run build
+npm run lint
 ```
 
-Start the already-configured cloud-development watch in one terminal. Confirm that its startup output names `descriptive-kookabura-886`; stop if it names another deployment. This command writes code only to the configured development deployment.
+Do not copy `.env.local` between worktrees. Deployment configuration remains
+specific to its target. The production move and deployment sequence is recorded
+in [GPT_LIVE_PRODUCTION_MOVE_PLAN.md](GPT_LIVE_PRODUCTION_MOVE_PLAN.md).
 
-```bash
-npx convex dev --typecheck enable --tail-logs disable
-```
+## Historical isolated evidence environment
 
-Start the frontend in a second terminal:
+The real API and synthetic-audio evidence was collected before production
+integration from branch `codex/gpt-live-migration`, frontend
+`http://localhost:5174`, and isolated Convex development deployment
+`descriptive-kookabura-886` (`dev/gpt-live-migration-20260915`, `eu-west-1`).
+The starting code commit was `3184f73`. A local Convex deployment could establish
+the direct Live handshake but could not issue the AI Gateway service token used
+by the Scout, so full Brain proofs used that isolated cloud development target.
 
-```bash
-npm run dev -- --host 127.0.0.1 --port 5174 --strictPort
-```
+These details establish provenance only. Do not push code or configuration to
+that target merely to repeat the migration. The production handoff is complete
+only with one GPT-Live path and no selectable Realtime fallback. A
+network/provider failure ends the call and offers a manual restart from current
+saved state.
 
-Open `http://localhost:5174`. Create a musician account in this isolated app, or use a reviewer account you already created there. Keep the existing local configuration. Do not paste passwords, API keys, session IDs, raw transcripts, or environment-file contents into commands, screenshots, logs, or this repository.
+## Post-migration manual English demo
 
-## Provider selection and manual fallback
-
-`VOICE_PROVIDER` is a server-side choice for a newly connected call:
-
-```bash
-npx convex env set --deployment descriptive-kookabura-886 VOICE_PROVIDER live
-```
-
-To exercise the existing fallback deliberately:
-
-```bash
-npx convex env set --deployment descriptive-kookabura-886 VOICE_PROVIDER realtime
-```
-
-After either change, end the current call and start a new one. An active call keeps the provider selected when it connected. There is no automatic provider switch, reconnect, retry chain, or replay. A network/provider failure ends the old call and offers a manual restart from current saved state. Never add `--prod` to these review commands.
-
-## Manual English demo
-
-Use a fresh isolated reviewer profile with no stored language choice to verify that English is the default. If the profile was used for the German-switch check, select English explicitly before repeating the default-language review.
+The user performs this section after migration; it is not a migration gate or
+an instruction for an agent to run audio. Use a fresh reviewer profile with no
+stored language choice to verify that English is the default. If the profile
+was used for the German-switch check, select English explicitly before repeating
+the default-language review.
 
 ### 1. Long brief and visible saved facts
 
@@ -111,7 +95,7 @@ The voice answer and live UI should switch to German and answer from the saved `
 
 ### 4. Voice beside editing, search, and offer review
 
-Keep the call active while opening inline budget/schedule editing, candidate details, and the prepared isolated offer. The same voice session and controls should remain mounted and usable on desktop and mobile; long facts, chat history, and detail content should scroll without covering their composers or buttons.
+Keep the call active while opening inline budget/schedule editing, candidate details, and a prepared controlled offer. The same voice session and controls should remain mounted and usable on desktop and mobile; long facts, chat history, and detail content should scroll without covering their composers or buttons.
 
 With the prepared offer still open, say:
 
@@ -131,7 +115,7 @@ Voice may explain or open the current review, but it must not accept. Verify tha
 
 ### 5. Important update at a suitable pause
 
-Use an already-prepared, verified provider-update record in the isolated development data. While the musician is speaking, make that record current for the open candidate/decision.
+Use an already-prepared, verified provider-update record in the chosen review environment. While the musician is speaking, make that record current for the open candidate/decision.
 
 - The verified update should appear in the UI immediately.
 - Voice should wait for a suitable pause before mentioning an important update.

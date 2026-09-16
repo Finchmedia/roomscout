@@ -60,14 +60,14 @@ The application is a React + Vite + TypeScript SPA prepared for deployment with
 Convex Static Hosting to `convex.site`. It uses Convex Auth v2 Alpha, the Agent,
 Rate Limiter, and Static Hosting components, and the Convex AI Gateway with
 `openai/gpt-5.6-terra`. Direct OpenAI calls are limited to embeddings and the
-Realtime WebRTC session endpoint.
+GPT-Live WebRTC session endpoint.
 
 | Sponsor | Intended role |
 |---|---|
 | **Convex** | Source Registry, canonical market state, webhooks, realtime search, matching, approvals, rate limits, and reconciliation jobs |
 | **Firecrawl** | bounded Germany source discovery, Native Monitoring, public-page extraction, and reviewed public-form execution with Interact |
 | **AgentMail** | personal user inboxes, approved outreach, delivery events, and replies |
-| **OpenAI** | `gpt-5.6-terra` generation through Convex AI Gateway, `text-embedding-3-small` semantic retrieval, and `gpt-realtime-2.1` voice through WebRTC |
+| **OpenAI** | `gpt-5.6-terra` generation through Convex AI Gateway, `text-embedding-3-small` semantic retrieval, and `gpt-live-1` voice through WebRTC |
 | **Mapbox** | cached server-side geocoding and the public rehearsal-room globe/map |
 | **Browserbase** | isolated persistent user/portal login contexts, short-lived human Live Views, reviewed recon/Inbox sync, and code-owned approved portal actions |
 
@@ -83,7 +83,7 @@ strategy and private project data are not part of this repository.
 The authenticated Scout conversation, reactive search card, durable musician
 memory, reviewed context import, semantic retrieval, and exact outreach approval
 run against Convex. The backend now includes Firecrawl Native Monitor ingestion,
-canonical signal matching, personal AgentMail inboxes, Realtime Voice session
+canonical signal matching, personal AgentMail inboxes, GPT-Live Voice session
 setup, Mapbox geocoding, Germany source discovery, Firecrawl Interact execution,
 per-portal Browserbase contexts, read-only source probes, source preferences,
 standing-mandate orchestration, unified communications, portal verification
@@ -92,8 +92,9 @@ writes pass the same final policy/adapter/approval/mandate gate; unknown
 post-click outcomes are never retried automatically. No broad crawl or real
 provider-backed portal action has been run; those remain controlled live proofs.
 Only the reviewed Bandnet public-form workflow is production-shaped today;
-authenticated portal writes still require a reviewed real-source adapter.
-Translation is a later step.
+authenticated portal writes still require a reviewed real-source adapter. The
+app and Voice Scout default to English; an explicit German selection is stored
+for later conversations.
 
 The Ops cockpit includes a provider-readiness preflight that never returns
 environment values. Known sources may also be explicitly restricted: for
@@ -123,7 +124,7 @@ Firecrawl monitors are inert unless `FIRECRAWL_MONITORS_ENABLED=true`. Keep the
 flag off until the listed pilot sources pass policy review. AgentMail provisions
 a personal inbox lazily at the first outreach draft; it does not use a shared
 global inbox. Voice session setup is handled by the authenticated
-`POST /api/realtime/session` endpoint and never stores raw audio.
+`POST /api/live/session` endpoint and never stores raw audio.
 Browserbase uses only `BROWSERBASE_API_KEY`; do not configure a project ID or
 store credentials/cookies in Convex. Rotate any credential ever pasted into a
 chat before enabling a live proof.
@@ -135,4 +136,7 @@ chat before enabling a live proof.
 - [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) — provisional phased build plan and exit gates
 - [`docs/BUILD_LOG.md`](docs/BUILD_LOG.md) — narrative build log
 - [`hackathon.md`](hackathon.md) — concise evidence-based hackathon history
+- [`docs/GPT_LIVE_PRODUCTION_MOVE_PLAN.md`](docs/GPT_LIVE_PRODUCTION_MOVE_PLAN.md) — production integration and deployment plan
+- [`docs/GPT_LIVE_IMPLEMENTATION_STATUS.md`](docs/GPT_LIVE_IMPLEMENTATION_STATUS.md) — implemented GPT-Live behavior and evidence boundaries
+- [`docs/GPT_LIVE_REVIEW_GUIDE.md`](docs/GPT_LIVE_REVIEW_GUIDE.md) — automated and human review guide
 - [`docs/KICKOFF_CONVERSATION.md`](docs/KICKOFF_CONVERSATION.md) — historical discovery context

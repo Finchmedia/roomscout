@@ -1,8 +1,11 @@
 # RoomScout — Live-geführte Discovery
 
-Stand: 16.09.2026 · **Im isolierten GPT-Live-Branch umgesetzt und technisch geprüft**
+Stand: 16.09.2026 · **Historischer Entwurf und Nachweis der Discovery-Umsetzung**
 
-Abschnitte 1–8 dokumentieren den vereinbarten Entwurf; Abschnitt 9 hält Umsetzung und Grenzen fest.
+Abschnitte 1–8 dokumentieren den damaligen Entwurf; Abschnitt 9 hält dessen
+Umsetzung und Grenzen fest. Der aktuelle Integrationsstand verwendet `marin`,
+ist noch nicht in Produktion veröffentlicht und wird im
+[Implementierungs-/Prüfstatus](GPT_LIVE_IMPLEMENTATION_STATUS.md) geführt.
 
 **Korrektur nach menschlichem Test am 16.09.:** Die erste Umsetzung hatte
 Regressionen bei kurzen Antworten, früher Faktenübernahme, Gesprächspersistenz
@@ -17,7 +20,7 @@ gespeicherten Fakten die bestehende Bereitschaftsprüfung aufrufen; bestätigte
 Bereitschaft löst über den vorhandenen Relay einen Startvorschlag aus. Die
 Suche startet weiterhin erst nach ausdrücklicher Nutzerentscheidung.
 
-Basis: `codex/gpt-live-migration`, Commit `3e8b882`. Dieser Plan beschreibt den
+Historische Basis: `codex/gpt-live-migration`, Commit `3e8b882`. Dieser Plan beschreibt den
 gezielten nächsten Schritt nach der funktionierenden GPT-Live-Migration:
 Option B, eine eigenständigere Discovery-Gesprächsführung und die Stimme `ripple`.
 Er ersetzt für Discovery die frühere Vorgabe, dass sämtliche Fragen vom Backend
@@ -81,7 +84,7 @@ Backend-Ergebnissen. Es gibt dafür keinen neuen Markdown-Loader oder Agenten.
 Die Persönlichkeit ist eine konsistente Schreib- und Sprechweise; RoomScout
 behauptet keine menschliche Identität oder persönliche Freundschaft.
 
-## 3. Stimme und Sprache
+## 3. Historischer Stimmenentwurf und Sprache
 
 **Festgelegte Live-Stimme: `ripple`.** OpenAI beschreibt sie als Englisch,
 australische Prägung, maskuline Präsentation und natürliche Quelle. Die regionale
@@ -305,7 +308,7 @@ Paket 1 wird zuerst kurz festgelegt; Paket 2 und 3 können anschließend paralle
 umgesetzt werden. Allgemeine Text-/Provider-Verfahren bleiben außerhalb der
 Voice-Discovery-Anpassung. Kein neuer dauerhafter Datenbestand ist erforderlich.
 
-## 8. Abnahme: ein kurzer echter Durchlauf
+## 8. Historisch vorgesehene Abnahme: ein kurzer echter Durchlauf
 
 Gezielte Regressionen für stille Speicherung, gesprochene Aktionsantworten,
 Delivery im Cache und kanonischen Kontext; danach Typecheck, betroffene Lint-Dateien
@@ -337,7 +340,9 @@ Extraktionspfad oder andere Modelle wären ein separat zu entscheidender Folgesc
 
 ## 9. Umgesetzt und geprüft
 
-- `ripple` ist Session-Default und in der isolierten Entwicklungsinstanz eingestellt.
+- Der erste isolierte Option-B-Nachweis verwendete `ripple`. Nach menschlichem
+  Test wurde der Session-Default wieder auf `marin` gesetzt; diese Entscheidung
+  gilt für den aktuellen Integrationsstand.
 - Ein gemeinsamer EN-/DE-Persona-Block gibt Live und gesprochenen Scout-Ergebnissen den musikverständigen, aufmerksamen Ton mit gelegentlichem trockenem Humor.
 - Live führt Discovery-Fragen selbst. Der bestehende Terra-Turn speichert Fakten und Memory und liefert ein strukturiertes `silent`/`spoken`-Ergebnis. Interne Abschlussdaten erscheinen nicht als Chattext.
 - Stille abgeschlossene Turns erhalten einen unsichtbaren erfolgreichen Agent-Abschluss. Dadurch bleibt die Textansicht auch nach Auflegen oder Neuladen bedienbar.
@@ -345,6 +350,13 @@ Extraktionspfad oder andere Modelle wären ein separat zu entscheidender Folgesc
 - Sprachwechsel gehören zu ihrem auslösenden Auftrag und verwerfen dessen Sachantwort nicht. Reaktive Sprachkonfiguration wird während laufender Backend-Arbeit nicht als zusätzlicher Nutzerwechsel zurückgespiegelt.
 - Start-/Pausenbestätigungen stammen direkt aus dem tatsächlichen Tool-Ergebnis. Ein bestätigter Abschied genügt zum Auflegen auch ohne weitere Antwortzusammenfassung.
 
-**Prüfung:** 1.257 Tests bestanden, einer übersprungen; Typecheck, betroffene Lint-Dateien und Build bestanden. Im echten Ripple-/Gateway-Durchlauf begann die Radiusfrage 7,74 Sekunden vor Abschluss der vollständigen Backend-Delegation. Das ist ein einzelner Nachweis eigenständiger Gesprächsführung, kein allgemeiner Latenzwert. Kurze Radius-/Terminantworten, Budgetkorrektur, dauerhafte Memory, Pausenstatus, Sprachwechsel mit Sachfrage in beiden Richtungen und Auflegen wurden real geprüft. Details stehen im [Prüfstatus](GPT_LIVE_IMPLEMENTATION_STATUS.md).
+**Historische Prüfung:** 1.257 Tests bestanden, einer übersprungen; Typecheck,
+betroffene Lint-Dateien und Build bestanden. Im damaligen echten
+Ripple-/Gateway-Durchlauf begann die Radiusfrage 7,74 Sekunden vor Abschluss der
+vollständigen Backend-Delegation. Das ist ein einzelner Nachweis eigenständiger
+Gesprächsführung, kein allgemeiner Latenzwert. Kurze Radius-/Terminantworten,
+Budgetkorrektur, dauerhafte Memory, Pausenstatus, Sprachwechsel mit Sachfrage in
+beiden Richtungen und Auflegen wurden real geprüft. Details stehen im
+[Prüfstatus](GPT_LIVE_IMPLEMENTATION_STATUS.md).
 
 **Verbleibende Tonprüfung:** Live stellte in den Discovery-Proben gelegentlich bereits abgedeckte Fragen erneut. Der Prompt wurde gegen Wiederholungen und Wartefloskeln gestrafft; vollständige Wiederholungsfreiheit ist damit nicht nachgewiesen. Ein menschlicher Mikrofontest für Wärme, Timing und Humor bleibt sinnvoll. Native Delegation jeder einzelnen kurzen Antwort ist keine API-Garantie; der bestehende frühe Faktenpfad und die vollständige nächste Delegation bleiben relevant. Suchstart, Anbieterupdates und Angebotsprüfung haben frühere Integrationsnachweise; diese Änderung wiederholt keinen vollständigen externen Anbieterablauf.

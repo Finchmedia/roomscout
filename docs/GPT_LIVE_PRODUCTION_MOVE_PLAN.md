@@ -1,6 +1,16 @@
 # GPT-Live: Umzug in Haupt-Checkout und Produktion
 
-Stand: 16.09.2026 · Revision 2 nach Code-Review. **Nur Plan; nichts davon wurde ausgeführt.**
+Stand: 16.09.2026 · Revision 3 mit Ausführungsstand. Die folgenden Abschnitte bleiben das beschlossene Vorgehen; der tatsächliche Stand steht hier.
+
+## Ausführungsstand
+
+- Remote-Sicherung beider Branches und annotierter Tag `prod-pre-gpt-live` auf `e55092b` bestätigt.
+- Code-Checkpoint `aca88c8`, Dokumentations-Checkpoint `ba023e7`; Merge **M = `d37a46555e64399085e333219e2833e24673e1a0`** ist remote gesichert.
+- Gemeinsamer typisierter Vertrag `25c0163`, Readiness `1eeb4d7`, vollständiger Live-only-Ausbau `b19d12b`.
+- Codegen, Typecheck und Produktionsbuild bestanden; 155 Testdateien mit **1.260 Tests bestanden**, eine Datei/ein Test übersprungen. Globales Lint: keine Fehler, 29 bestehende UI-Warnungen.
+- Produktionskonfiguration für Live, Marin und exakte Site-Origin vorbereitet; bestehende Firecrawl-/Mapbox-Konfiguration geprüft, alte Variablen unverändert erhalten.
+- Haupt-Checkout-Fast-forward, Deployment und Nicht-Voice-Nachprüfung stehen als nächste Schritte aus. Kein Datenreset und kein realer Voice-Test durchgeführt.
+- Nutzerprüfung und zehn Demo-Durchläufe bleiben separat offen.
 
 ## 1. Ziel und verbindliche Vorgaben
 

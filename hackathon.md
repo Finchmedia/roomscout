@@ -10,9 +10,9 @@
 - **Components:** @convex-dev/agent, @convex-dev/auth, @convex-dev/static-hosting, @convex-dev/workpool
 - **Convex features:** schema, tables, indexes, vector search, queries, mutations, actions, HTTP actions, crons, scheduled functions, realtime queries, paginated queries
 - **Auth:** Convex Auth
-- **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-live-1` in the isolated migration, `gpt-realtime-2.1` as the current fallback
+- **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-live-1` for voice (Live-only integration checked; production deployment pending)
 - **Started:** 2026-08-26T13:55:26Z
-- **Last updated:** 2026-09-16T01:19:06Z
+- **Last updated:** 2026-09-16T06:47:37Z
 
 ## Log
 
@@ -648,7 +648,7 @@ Real synthetic-audio checks covered early questions, corrections, language chang
 Verification: 1,257 tests passed with one skip, plus typecheck, scoped lint and build.
 Evidence: `convex/voiceLive.ts`, `convex/prompts/roomScoutLive.ts`; [proof and limits](docs/GPT_LIVE_IMPLEMENTATION_STATUS.md).
 
-### 2026-09-16 - working tree
+### 2026-09-16 - aca88c8
 
 Restored Marin, first-call greetings, short-answer flow, timely facts and voice history in the existing Agent thread.
 Fixed return-to-Scout controls; a human retest confirmed improved discovery, search start and a later successful hangup.
@@ -656,3 +656,12 @@ Then made validated hangup survive later speech and enabled a proactive start of
 Targeted tests, typecheck, scoped lint and build passed; the two final follow-ups await the user's microphone test.
 Convex features: agent tools, mutations and realtime queries (`convex/scout.ts`, `convex/voiceLive.ts`, `convex/schema.ts`).
 UI/prompt evidence: `src/hooks/useGptLiveVoiceScout.ts`, `src/routes/musician/ScoutPage.tsx`, `convex/prompts/roomScoutLive.ts`; [details](docs/BUILD_LOG.md).
+
+### 2026-09-16 - b19d12b
+
+Integrated the current demo documents and removed Realtime transport, routes and provider selection.
+Kept historical session schemas readable and the shared Agent thread intact; duplicate transcript markers no longer break chat.
+Typed Live contracts preserve route continuity, language changes and the production endpoint over a stale sandbox override.
+Verification: 1,260 tests passed, one skipped; codegen, typecheck and production build passed; lint has zero errors.
+Production configuration is prepared; deployment and user voice acceptance remain outstanding.
+Evidence: `convex/http.ts`, `convex/voiceLive.ts`, `convex/scout.ts`, `src/components/voice/VoiceSessionProvider.tsx`; [move plan](docs/GPT_LIVE_PRODUCTION_MOVE_PLAN.md).

@@ -1,8 +1,19 @@
 # GPT-Live: Implementierungs- und Prüfstatus
 
-Stand: 2026-09-16 · Isolierte Entwicklungsintegration. Discovery und Suchstart wurden menschlich getestet; zwei abschließende Nachbesserungen sind zum erneuten Sprachtest bereit.
+Stand: 2026-09-16 · Der GPT-Live-Stand und die aktuellen Demo-Dokumente sind im
+Integrationsbranch zusammengeführt (`d37a465`), aber noch nicht in Produktion
+veröffentlicht. Discovery und Suchstart wurden menschlich getestet; die reale
+Prüfung der zwei abschließenden Nachbesserungen übernimmt der Nutzer.
 
-Dieses Dokument unterscheidet implementiertes Verhalten, reale API-Nachweise und offene Prüfungen. Es enthält keine Zugangsdaten, Session-IDs oder Rohtranskripte. Umfang: [Migrationsplan](GPT_LIVE_MIGRATION_PLAN_2026-09-15.md). Einrichtung und menschliche Prüfung: [Review Guide](GPT_LIVE_REVIEW_GUIDE.md).
+Dieses Dokument unterscheidet implementiertes Verhalten, reale API-Nachweise und offene Prüfungen. Es enthält keine Zugangsdaten, Session-IDs oder Rohtranskripte. Umfang: [Migrationsplan](GPT_LIVE_MIGRATION_PLAN_2026-09-15.md). Aktueller Umzug: [Produktions-Umzugsplan](GPT_LIVE_PRODUCTION_MOVE_PLAN.md). Einrichtung und menschliche Prüfung: [Review Guide](GPT_LIVE_REVIEW_GUIDE.md).
+
+**Technischer Integrationsstand:** Live-only-Ausbau `b19d12b` abgeschlossen.
+155 Testdateien / 1.260 Tests bestanden, eine Datei/ein Test übersprungen;
+Codegen, Typecheck und Produktionsbuild bestanden. Globales Lint: keine Fehler,
+29 bestehende UI-Warnungen. Getypte API-Referenzen verbinden Frontend und Backend;
+Realtime-Endpunkt, Transport und Provider-Auswahl sind entfernt. Historische
+Session-Felder bleiben schema-kompatibel. Fast-forward und Deployment folgen;
+reale Voice-Abnahme und zehn Demo-Durchläufe bleiben beim Nutzer.
 
 ## Update 16.09.2026 — Auflegen und proaktiver Suchstart-Vorschlag
 
@@ -71,7 +82,13 @@ inzwischen korrigierten Stand.
 
 Option B aus dem [Discovery-Plan](GPT_LIVE_DISCOVERY_PLAN.md) ist umgesetzt. Live wählt selbst passende Discovery-Fragen; der bestehende Terra-Scout bleibt für Speicherung, Memory, Bereitschaft und Aktionen zuständig. Normale Speicherungen liefern stillen bestätigten Kontext. Explizite Antworten und Aktionsbelege bleiben gesprochen. Die bestehende Suchbox und Streaming-Captions bleiben die Oberfläche.
 
-Die gemeinsame EN-/DE-Persona ist musikverständig, aufmerksam und zurückhaltend trocken-humorig. Neue Sessions verwenden `ripple`; die echte API meldete diese Stimme. Bootstrap und laufende Updates enthalten tatsächliche gespeicherte Werte einschließlich Radius und Facets. Wechsel zu Suche, Pause oder Kandidatenansicht ändern die Live-Verhaltensanweisung ausdrücklich.
+In diesem damaligen Stand war die gemeinsame EN-/DE-Persona musikverständig,
+aufmerksam und zurückhaltend trocken-humorig. Die damaligen neuen Sessions
+verwendeten `ripple`; die echte API meldete diese Stimme. Der aktuelle Stand
+verwendet wieder `marin`, wie im Update oben festgehalten. Bootstrap und laufende
+Updates enthalten tatsächliche gespeicherte Werte einschließlich Radius und
+Facets. Wechsel zu Suche, Pause oder Kandidatenansicht ändern die
+Live-Verhaltensanweisung ausdrücklich.
 
 ### Neue reale Nachweise
 
@@ -89,13 +106,16 @@ Stille Ergebnisse schließen den Agent-Turn unsichtbar ab, damit die spätere Te
 
 Dauerhaft gespeichert werden konsolidierte Nutzereingaben, sichtbare Backend-Sachantworten und leere erfolgreiche Abschlussmarkierungen für stille Turns. Lives eigenständige Gesprächsbeiträge bleiben in den bisherigen lokalen Streaming-Captions; es wurde keine zusätzliche Transkript-Persistenz eingeführt.
 
-**Finaler Prüfstand:** 159 Testdateien bestanden, eine übersprungen; **1.257 Tests bestanden, einer übersprungen**. Typecheck, Lint der betroffenen Dateien und Produktionsbuild bestanden. Die folgenden Abschnitte dokumentieren die früheren Migrationsnachweise und deren damaligen Prüfstand.
+**Prüfstand dieser Entwicklungsphase:** 159 Testdateien bestanden, eine übersprungen; **1.257 Tests bestanden, einer übersprungen**. Typecheck, Lint der betroffenen Dateien und Produktionsbuild bestanden. Die folgenden Abschnitte dokumentieren die früheren Migrationsnachweise und deren damaligen Prüfstand.
 
-## Umgebung und Isolation
+## Historische Umgebung und Isolation
 
 - Branch `codex/gpt-live-migration`, Worktree `roomscout-gpt-live`, Frontend auf Port `5174`.
 - Eigene Convex-Cloud-Entwicklungsinstanz: Branch `dev/gpt-live-migration-20260915`, Deployment `descriptive-kookabura-886` in `eu-west-1`, beim Anlegen mit 14 Tagen Ablaufzeit.
-- Ursprünglicher Checkout, bisheriger persönlicher Dev-Standard und Produktion wurden nicht auf GPT-Live umgestellt. Kein Push oder Merge in den bisherigen Arbeitsbranch.
+- Zum Zeitpunkt dieser isolierten Nachweise waren ursprünglicher Checkout,
+  persönlicher Dev-Standard und Produktion nicht auf GPT-Live umgestellt. Der
+  spätere Git-Integrationsstand ändert nichts an dieser historischen
+  Evidenzgrenze; eine Produktionsveröffentlichung ist weiterhin nicht belegt.
 - Der erste Spike lief mit lokalem Convex auf `3220`/`3221`. Direkter Live-Handshake funktionierte; der lokale Backend-Runtime fehlt aber der AI-Gateway-Service-Token des Scout. Deshalb liefen die vollständigen Brain-Nachweise in der getrennten Cloud-Entwicklung.
 - Firecrawl-Monitoring ist in dieser Instanz deaktiviert. Anbieter-/Angebotsnachweise verwenden ausschließlich inert angelegte synthetische Datensätze mit deaktiviertem Connector. Kein Anbieter wurde angeschrieben.
 
@@ -114,7 +134,7 @@ Dauerhaft gespeichert werden konsolidierte Nutzereingaben, sichtbare Backend-Sac
 | Ton | Warm, aufmerksam und musikverständlich; kurze Antworten, keine Vollrecaps, keine erfundene Ausstattung oder Anbieterbestätigung |
 | Lebensdauer | Voice bleibt bei Suchstart/Pause, Inline-Bearbeitung, Textansicht und Kandidatenansicht verbunden |
 | Verbindliches | Annahme bleibt im bestehenden exakten UI-Review; Voice kann keine verbindliche Zusage ausführen |
-| Fallback | Alter Realtime-Pfad bleibt per Provider-Schalter verfügbar; kein automatischer Wechsel mitten im Gespräch |
+| Übergang | Im dokumentierten Entwicklungscheckpoint blieb der alte Realtime-Pfad noch per Provider-Schalter verfügbar. Im geprüften Integrationsstand `b19d12b` sind dieser Pfad und der Schalter entfernt. |
 
 Keine neue persistente Voice-Outbox, kein allgemeiner Event-Koordinator und kein persistiertes Rohtranskript-Protokoll. Dauerhafte Nachrichten sind konsolidierte Nutzereingaben und Scout-Antworten. Frühe Faktenläufe speichern keine zusätzlichen Chat-Nachrichten.
 
@@ -169,7 +189,7 @@ Native Delegation während beliebig langer laufender Sprache ist weiterhin **kei
 - Der mobile Ruhe-/Pausenzustand wurde als echte App in einem 390-Pixel-Iframe angesehen: Einstiege für Voice, Text, Kandidaten und Suchauftrag sind sichtbar. Das ist eine Responsive-Sichtprüfung und kein bestandener mobiler Audio-Test.
 - Für Antworten, deren Auftrag durch eine neuere Spracheingabe oder getippten Auftrag überholt wurde, bleibt der bestätigte Backend-Beleg erhalten; die alte Sprachzusammenfassung wird unterdrückt. Diese letzte Reihenfolgenregel ist durch gezielte Runtime-Regressionen abgedeckt.
 
-## Automatisierte Prüfung
+## Frühere vollständige automatisierte Prüfung
 
 Abschließender vollständiger Lauf auf dem integrierten Code-Stand `fb2a340` samt den danach mitgesicherten generierten Deklarationen und Prompt-Testanpassungen:
 
@@ -188,4 +208,7 @@ Die globale Lint-Konfiguration ignoriert erzeugte Proof-Artefakte und kennt die 
 - Portal-/Anbieterantwort von tatsächlicher Ingestion bis zur gesprochenen Erwähnung als verbundener Gesamtablauf. Der synthetische Fixture ersetzt diesen Nachweis nicht.
 - Manuelle Netzunterbrechung, erneuter Einstieg und längere Gespräche unter realen Netzbedingungen. Unit- und Integrationstests decken die Fehlerzustände ab, sind aber kein Akustik-/Netztest.
 
-Es wird weder eine Produktionsfreigabe noch eine bestandene menschliche Hackathon-Demo behauptet. Die isolierte Implementierung ist der Gegenstand des Reviews.
+Es wird weder eine Produktionsfreigabe noch eine bestandene menschliche
+Hackathon-Demo behauptet. Die isolierten Nachweise bleiben als Evidenz erhalten;
+der aktuelle Live-only-Integrationsstand wurde mit den oben genannten 1.260 Tests geprüft. Alle realen Voice- und
+Zehn-Durchläufe führt der Nutzer nach der Migration aus.

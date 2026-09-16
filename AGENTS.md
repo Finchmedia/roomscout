@@ -51,7 +51,7 @@ says to lock them in or asks for a file update.
 - **Text generation uses OpenAI through the Convex AI Gateway.**
   `openai/gpt-5.6-terra` is the shared text-generation model. The regular OpenAI
   endpoint may use `OPENAI_API_KEY` only for semantic embeddings, the approved
-  Realtime WebRTC voice flow, and browser interpretation inside the Stagehand
+  GPT-Live WebRTC voice flow, and browser interpretation inside the Stagehand
   v4 Node runtime. Scout text and normalization stay on the Gateway; do not
   use that key for a second Scout chat or normalization path.
 - **Firecrawl handles web discovery and crawling; AgentMail handles email.** Each

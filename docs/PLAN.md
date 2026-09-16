@@ -27,7 +27,7 @@ in conversation are not requirements until explicitly adopted.
   fingerprint-pinned free-account terms and may use Browserbase's native
   CAPTCHA solver; changed/unknown terms, costs, and commitments stop.
 - OpenAI is the only in-product model provider. Scout text and normalization use
-  the Convex AI Gateway with `openai/gpt-5.6-terra`; embeddings, Realtime WebRTC,
+  the Convex AI Gateway with `openai/gpt-5.6-terra`; embeddings, GPT-Live WebRTC,
   and browser interpretation in the Stagehand v4 Node runtime may use the direct
   OpenAI endpoint because the Gateway does not provide those paths.
 - Firecrawl performs web discovery and crawling; AgentMail handles approved

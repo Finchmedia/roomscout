@@ -140,7 +140,7 @@ yours to sign."
 | 1 | Frühe Fakten während des Sprechens | Bewiesen (Codex-Branch, erste Fakten nach ~10 s) |
 | 1 | Korrektur 300 → 280 | Bewiesen |
 | 1 | Verstehen bei Lärm | Vom Maintainer getestet, nicht als Aufnahme |
-| 1 | Umkreis-Rückfrage statt "bereit" | Codex, in Arbeit (Radius-Blocker) |
+| 1 | Umkreis-Rückfrage statt "bereit" | Implementiert; isolierter Discovery-Nachweis bestanden |
 | 2 | Suchstart per Stimme, Gespräch bleibt | Bewiesen (Codex-Fixture) |
 | 3 | Registrierung und Nachricht über Firecrawl ins Portal | Bewiesen (autopilot-policy, 4 Round Trips), nicht zusammen mit Voice |
 | 3 | Run-Ansicht mit Live-Schritten | Vorhanden |
@@ -151,16 +151,16 @@ yours to sign."
 
 ## Voraussetzungen vor dem Dreh
 
-1. Radius-Blocker und die eine Voice-Ansicht (Codex, in Arbeit).
-2. Voice und echter Anbieterweg auf einer Instanz: Fast-Forward von
-   autopilot-policy auf den Codex-Branch, Deploy auf Dev, Provider-Schalter auf
-   Live.
+1. Radius-Blocker und die eine Voice-Ansicht sind im Integrationsstand enthalten;
+   der Maintainer prüft sie im späteren vollständigen Durchlauf erneut.
+2. Voice und echter Anbieterweg auf einer Instanz veröffentlichen. Der
+   Integrationsbranch enthält beide Codepfade, ist aber noch nicht deployt.
 3. Vermieter-Bot im Portal, damit die Antwort in Szene 3 planbar kommt.
 4. Antwortlatenz messen: Die Hintergrundmeldung muss in der Pause landen, nicht
    im nächsten Satz.
 5. Zehn Durchläufe am Stück, bevor die Kamera läuft.
-6. Englische Bühnen-Texte durchgehend (das EN-Wörterbuch liegt auf dem
-   Codex-Branch).
+6. Englische Bühnen-Texte durchgehend. Das EN-Wörterbuch ist integriert; der
+   vollständige Drehdurchlauf bleibt zu prüfen.
 
 ## Produktionsregeln
 

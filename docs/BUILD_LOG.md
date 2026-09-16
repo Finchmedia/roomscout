@@ -1,5 +1,25 @@
 # RoomScout — Build Log
 
+## 2026-09-16 — Live-only production integration prepared
+
+Secured both branches and the annotated `prod-pre-gpt-live` tag remotely before
+merging the latest production demo documents. Merge `d37a465` is the additive,
+schema-compatible recovery checkpoint. Subsequent commits share typed Live
+contracts, update operator readiness, and remove Realtime transport, routes,
+provider selection and isolated seed fixtures. Session lifecycle functions and
+historical optional schema fields remain compatible. Canonical transcript
+lookups tolerate duplicate markers; frontend endpoint selection derives the
+production Site URL from its Cloud URL before considering an explicit override.
+
+The integrated code `b19d12b` passed 1,260 tests in 155 files, with one skipped
+file/test, codegen, TypeScript and production build. Global lint has no errors
+and 29 pre-existing UI directive warnings. Production Live model, Marin and the
+exact production origin are configured; existing provider credentials were
+checked by presence without exposing values. Old environment values remain for
+the manual recovery checkpoint until user acceptance. Deployment and the
+non-voice production checks are the next step. No data reset, import, or real
+voice/audio test was performed. See [move plan](GPT_LIVE_PRODUCTION_MOVE_PLAN.md).
+
 ## 2026-09-16 — Reliable hangup and proactive ready-brief handoff
 
 After the improved human voice test, two bounded follow-ups were completed. A
