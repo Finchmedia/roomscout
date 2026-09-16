@@ -295,6 +295,35 @@ export function createSearchDraftTool(
   });
 }
 
+/** Shared claim-fenced readiness tool for normal Scout turns and quiet Live capture. */
+export function createMarkSearchBriefReadyTool(
+  ctx: Parameters<typeof runScoutTurn>[0],
+  args: {
+    ownerId: Id<"users">;
+    threadId: string;
+    needId: Id<"savedNeeds">;
+    voiceClaim?: VoiceClaimRef;
+    onReady?: (result: { needRevision: number; readyAt?: number }) => void;
+    onClarificationRequired?: () => void;
+  },
+) {
+  return createTool({
+    description: "Mark the current draft search ready for review only when the current canonical brief is useful enough to run and no material ambiguity remains. The server also confirms every activation field is present. This never activates the search. If readyForReview is false, ask exactly the returned clarificationQuestion naturally and do not claim the brief is ready.",
+    inputSchema: z.object({}),
+    execute: async () => {
+      const result = await ctx.runMutation(internal.scout.markBriefReady, {
+        ownerId: args.ownerId,
+        threadId: args.threadId,
+        needId: args.needId,
+        ...(args.voiceClaim ? { voiceClaim: args.voiceClaim } : {}),
+      });
+      if (result.readyForReview) args.onReady?.(result);
+      else args.onClarificationRequired?.();
+      return { ...result, activationRequired: true };
+    },
+  });
+}
+
 const contextValidator = v.object({
   threadId: v.string(),
   mode: modeValidator,
@@ -635,6 +664,7 @@ export const listMessages = query({
           v.literal("assistant"),
         ),
         text: v.string(),
+        source: v.optional(v.literal("voice_transcript")),
         status: v.union(
           v.literal("streaming"),
           v.literal("pending"),
@@ -666,23 +696,34 @@ export const listMessages = query({
       throw new ConvexError({ code: "THREAD_NOT_FOUND" });
     }
     const result = await listUIMessages(ctx, components.agent, args);
+    const transcriptMessageIds = new Set((await Promise.all(result.page.map(async (message) => {
+      const transcript = await ctx.db.query("voiceTranscriptEvents")
+        .withIndex("by_agent_message_id", (q) => q.eq("agentMessageId", message.id))
+        .unique();
+      return transcript?.ownerId === ownerId ? message.id : undefined;
+    }))).filter((messageId): messageId is string => messageId !== undefined));
     const streams = await syncStreams(ctx, components.agent, {
       threadId: args.threadId,
       streamArgs: args.streamArgs,
     });
     return {
       ...result,
-      page: result.page.map((message) => ({
-        key: message.key,
-        role: message.role,
-        text: message.text,
-        status: message.status,
-        order: message.order,
-        stepOrder: message.stepOrder,
-        parts: visibleParts(message.parts),
-        _creationTime: message._creationTime,
-        createdAt: message._creationTime,
-      })),
+      page: result.page.map((message) => {
+        return {
+          key: message.key,
+          role: message.role,
+          text: message.text,
+          ...(transcriptMessageIds.has(message.id) || message.agentName === "RoomScout Live Transcript"
+            ? { source: "voice_transcript" as const }
+            : {}),
+          status: message.status,
+          order: message.order,
+          stepOrder: message.stepOrder,
+          parts: visibleParts(message.parts),
+          _creationTime: message._creationTime,
+          createdAt: message._creationTime,
+        };
+      }),
       streams,
     };
   },
@@ -873,20 +914,13 @@ export function buildScoutTools(
       voiceClaim: args.voiceClaim,
       onUpdated: (result) => args.onEffect?.("search", result.changedFields),
     });
-    const markSearchBriefReady = createTool({
-      description: "Mark the current draft search ready for review only when the server confirms every activation field is present. This never activates the search. If readyForReview is false, ask exactly the returned clarificationQuestion naturally and do not claim the brief is ready.",
-      inputSchema: z.object({}),
-      execute: async () => {
-        const result = await ctx.runMutation(internal.scout.markBriefReady, {
-          ownerId,
-          threadId: args.threadId,
-          needId,
-          ...(args.voiceClaim ? { voiceClaim: args.voiceClaim } : {}),
-        });
-        if (result.readyForReview) args.onEffect?.("brief", ["briefReadiness"]);
-        else args.onClarificationRequired?.();
-        return { ...result, activationRequired: true };
-      },
+    const markSearchBriefReady = createMarkSearchBriefReadyTool(ctx, {
+      ownerId,
+      threadId: args.threadId,
+      needId,
+      voiceClaim: args.voiceClaim,
+      onReady: () => args.onEffect?.("brief", ["briefReadiness"]),
+      onClarificationRequired: args.onClarificationRequired,
     });
     return { ...currentSearchToolSet, updateSearchDraft, markSearchBriefReady, rememberFact, ...decisionToolSet, ...voiceOnlyTools };
   }

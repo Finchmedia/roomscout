@@ -8,7 +8,12 @@ import { api, components } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { scoutAgent } from "./scoutRuntime";
-import { composeVoiceInput, resolveLiveDelivery } from "./voiceLive";
+import {
+  captureFactsCapabilities,
+  composeVoiceInput,
+  hasMeaningfulSavedNeed,
+  resolveLiveDelivery,
+} from "./voiceLive";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -20,6 +25,7 @@ type ClaimArgs = {
   source: "voice" | "text";
   intent?: "capture_facts";
   delegationId?: string;
+  transcriptSegmentId?: string;
   eventIds: string[];
   prompt: string;
   focusedSignalId?: Id<"signals">;
@@ -94,6 +100,16 @@ const changeNeedStatus = makeFunctionReference<"mutation", {
   missingFields: Array<"location" | "radiusKm">;
   clarificationQuestion?: string;
 }>("voiceLive:changeNeedStatus");
+const recordTranscriptSegment = makeFunctionReference<"mutation", {
+  voiceSessionId: Id<"voiceSessions">;
+  segmentId: string;
+  revision: number;
+  role: "user" | "assistant";
+  transcript: string;
+  sourceEventIds: string[];
+  startMs: number;
+  endMs: number;
+}, { status: "created" | "updated" | "unchanged" | "stale"; messageId: string }>("voiceLive:recordTranscriptSegment");
 
 async function fixture() {
   const t = convexTest(schema, modules);
@@ -231,9 +247,9 @@ it("claims once, reports active duplicates and caches terminal results", async (
   expect(stored?.activeClaim).toBeUndefined();
 });
 
-it("persists a hidden completion marker for silent turns and only clean prose for spoken turns", async () => {
+it("uses a hidden marker only for silent typed turns and leaves spoken persistence to Live captions", async () => {
   const f = await fixture();
-  const silentClaim = await f.t.mutation(claimRequest, claimArgs(f, "silent"));
+  const silentClaim = await f.t.mutation(claimRequest, { ...claimArgs(f, "silent"), source: "text" });
   if (silentClaim.kind !== "accepted") throw new Error("claim not accepted");
   const silent = await f.t.mutation(finishRequest, {
     ownerId: f.ownerId,
@@ -251,7 +267,7 @@ it("persists a hidden completion marker for silent turns and only clean prose fo
     },
   });
   expect(silent.assistantMessageId).toBeTruthy();
-  expect(await f.t.mutation(claimRequest, claimArgs(f, "silent"))).toMatchObject({
+  expect(await f.t.mutation(claimRequest, { ...claimArgs(f, "silent"), source: "text" })).toMatchObject({
     kind: "result",
     result: {
       requestId: "silent",
@@ -278,7 +294,7 @@ it("persists a hidden completion marker for silent turns and only clean prose fo
       promptMessageId: spokenClaim.promptMessageId,
     },
   });
-  expect(spoken.assistantMessageId).toBeTruthy();
+  expect(spoken.assistantMessageId).toBeUndefined();
 
   const messages = await f.t.run((ctx) => listMessages(ctx, components.agent, {
     threadId: f.threadId,
@@ -290,7 +306,6 @@ it("persists a hidden completion marker for silent turns and only clean prose fo
     { role: "user", text: "Request silent" },
     { role: "assistant", text: "" },
     { role: "user", text: "Request spoken" },
-    { role: "assistant", text: "Your search is active." },
   ]);
   expect(JSON.stringify(messages.page)).not.toContain("responseKind");
 
@@ -304,8 +319,104 @@ it("persists a hidden completion marker for silent turns and only clean prose fo
     { role: "user", text: "Request silent" },
     { role: "assistant", text: "" },
     { role: "user", text: "Request spoken" },
-    { role: "assistant", text: "Your search is active." },
   ]);
+});
+
+it("upserts coalesced Live captions, rejects stale snapshots, and anchors delegation without a duplicate user row", async () => {
+  const f = await fixture();
+  const created = await f.owner.mutation(recordTranscriptSegment, {
+    voiceSessionId: f.voiceSessionId,
+    segmentId: "live:user:event-1",
+    revision: 1,
+    role: "user",
+    transcript: "We rehearse",
+    sourceEventIds: ["event-1"],
+    startMs: 100,
+    endMs: 300,
+  });
+  expect(created.status).toBe("created");
+  await expect(f.owner.mutation(recordTranscriptSegment, {
+    voiceSessionId: f.voiceSessionId,
+    segmentId: "live:user:event-1",
+    revision: 2,
+    role: "user",
+    transcript: "We rehearse on Wednesday.",
+    sourceEventIds: ["event-1", "event-2"],
+    startMs: 100,
+    endMs: 700,
+  })).resolves.toEqual({ status: "updated", messageId: created.messageId });
+  await expect(f.owner.mutation(recordTranscriptSegment, {
+    voiceSessionId: f.voiceSessionId,
+    segmentId: "live:user:event-1",
+    revision: 1,
+    role: "user",
+    transcript: "We rehearse",
+    sourceEventIds: ["event-1"],
+    startMs: 100,
+    endMs: 300,
+  })).resolves.toEqual({ status: "stale", messageId: created.messageId });
+
+  const claim = await f.t.mutation(claimRequest, {
+    ...claimArgs(f, "caption-anchored"),
+    transcriptSegmentId: "live:user:event-1",
+    eventIds: ["event-1", "event-2"],
+    prompt: "We rehearse on Wednesday.",
+  });
+  expect(claim).toMatchObject({ kind: "accepted", promptMessageId: created.messageId });
+  if (claim.kind !== "accepted") throw new Error("claim not accepted");
+  const finished = await f.t.mutation(finishRequest, {
+    ownerId: f.ownerId,
+    voiceSessionId: f.voiceSessionId,
+    requestId: "caption-anchored",
+    generation: claim.generation,
+    expectedLocale: "en",
+    result: {
+      status: "completed",
+      requestId: "caption-anchored",
+      resolvedEventIds: ["event-1", "event-2"],
+      locale: "en",
+      delivery: "spoken",
+      spokenSummary: "Wednesday is saved.",
+      promptMessageId: created.messageId,
+    },
+  });
+  expect(finished.assistantMessageId).toBeUndefined();
+  await expect(f.owner.mutation(recordTranscriptSegment, {
+    voiceSessionId: f.voiceSessionId,
+    segmentId: "live:assistant:event-3",
+    revision: 1,
+    role: "assistant",
+    transcript: "What time on Wednesday works?",
+    sourceEventIds: ["event-3"],
+    startMs: 800,
+    endMs: 1_100,
+  })).resolves.toMatchObject({ status: "created" });
+
+  const projected = await f.owner.query(api.scout.listMessages, {
+    threadId: f.threadId,
+    paginationOpts: { cursor: null, numItems: 20 },
+  });
+  const projectedInOrder = [...projected.page].sort((left, right) =>
+    left.order - right.order || left.stepOrder - right.stepOrder);
+  expect(projectedInOrder.map((message) => ({
+    role: message.role,
+    text: message.text,
+    source: message.source,
+  }))).toEqual([
+    { role: "user", text: "We rehearse on Wednesday.", source: "voice_transcript" },
+    { role: "assistant", text: "What time on Wednesday works?", source: "voice_transcript" },
+  ]);
+  const stored = await f.t.run(async (ctx) => ctx.db
+    .query("voiceTranscriptEvents")
+    .withIndex("by_voice_session_and_provider_event_id", (q) =>
+      q.eq("voiceSessionId", f.voiceSessionId).eq("providerEventId", "live:user:event-1"))
+    .unique());
+  expect(stored).toMatchObject({
+    transcript: "We rehearse on Wednesday.",
+    sourceEventIds: ["event-1", "event-2"],
+    segmentRevision: 2,
+    agentMessageId: created.messageId,
+  });
 });
 
 it("preserves provider delta spacing and keeps assistant context separate", () => {
@@ -324,6 +435,20 @@ it("preserves provider delta spacing and keeps assistant context separate", () =
     userPrompt: "Berlin, Kreuzberg or Neukölln\nYes, after 7.",
     assistantContext: "Would Wednesday work?",
   });
+});
+
+it("does not treat an auto-created blank draft as prior musician context", () => {
+  expect(hasMeaningfulSavedNeed({
+    arrangement: [],
+    schedule: [],
+    requirements: [],
+  })).toBe(false);
+  expect(hasMeaningfulSavedNeed({
+    locationQuery: "Berlin",
+    arrangement: [],
+    schedule: [],
+    requirements: [],
+  })).toBe(true);
 });
 
 it("uses the same-turn semantic envelope with action and clarification guards", () => {
@@ -454,6 +579,28 @@ it("claims fact capture without adding a technical message to the Scout thread",
     paginationOpts: { cursor: null, numItems: 20 },
   }));
   expect(messages.page).toHaveLength(0);
+});
+
+it("limits quiet fact capture readiness to a draft discovery search", () => {
+  expect(captureFactsCapabilities({
+    mode: "search_discovery",
+    hasActiveNeed: true,
+    needStatus: "draft",
+  })).toEqual({ updateSearchDraft: true, markSearchBriefReady: true });
+  expect(captureFactsCapabilities({
+    mode: "search_discovery",
+    hasActiveNeed: true,
+    needStatus: "active",
+  })).toEqual({ updateSearchDraft: true, markSearchBriefReady: false });
+  expect(captureFactsCapabilities({
+    mode: "signal_advisor",
+    hasActiveNeed: true,
+    needStatus: "draft",
+  })).toEqual({ updateSearchDraft: true, markSearchBriefReady: false });
+  expect(captureFactsCapabilities({
+    mode: "search_discovery",
+    hasActiveNeed: false,
+  })).toEqual({ updateSearchDraft: false, markSearchBriefReady: false });
 });
 
 it("retains request tombstones after the bounded result cache evicts them", async () => {
@@ -587,7 +734,7 @@ it("preserves a spoken answer in the new locale after the claimed language tool 
     delivery: "spoken",
     spokenSummary: "Der Lagerwunsch ist gespeichert; ob das Schlagzeug dort bleiben kann, muss für den ausgewählten Raum geprüft werden.",
   });
-  expect(result.assistantMessageId).toBeTruthy();
+  expect(result.assistantMessageId).toBeUndefined();
 });
 
 it("denies a binding decision even when it was explicitly bound to the claim", async () => {

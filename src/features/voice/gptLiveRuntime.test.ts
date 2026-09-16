@@ -187,6 +187,18 @@ describe("GptLiveFragmentBuffer", () => {
     ]);
   });
 
+  it("keeps persisted transcript segments separate across speaker turns", () => {
+    const buffer = new GptLiveFragmentBuffer();
+    buffer.append({ type: "session.input_transcript.delta", event_id: "user-a", delta: "Berlin", start_ms: 0, end_ms: 100 });
+    buffer.append({ type: "session.output_transcript.delta", event_id: "assistant-q", delta: "Which radius?", start_ms: 110, end_ms: 200 });
+    buffer.append({ type: "session.input_transcript.delta", event_id: "user-b", delta: "5 km", start_ms: 210, end_ms: 300 });
+    expect(buffer.transcriptSegments()).toEqual([
+      expect.objectContaining({ segmentId: "live:user:user-a", role: "user", text: "Berlin" }),
+      expect.objectContaining({ segmentId: "live:assistant:assistant-q", role: "assistant", text: "Which radius?" }),
+      expect.objectContaining({ segmentId: "live:user:user-b", role: "user", text: "5 km" }),
+    ]);
+  });
+
   it("selects only complete, substantive fact statements for early capture", () => {
     const buffer = new GptLiveFragmentBuffer();
     buffer.append({
@@ -313,6 +325,70 @@ describe("GptLiveFragmentBuffer", () => {
       end_ms: 500,
     });
     expect(buffer.captureCandidate({ sequence: 0, characterOffset: 0 })).toBeUndefined();
+  });
+
+  it("captures a short contextual answer at the assistant turn boundary with its question", () => {
+    const buffer = new GptLiveFragmentBuffer();
+    buffer.append({
+      type: "session.output_transcript.delta",
+      event_id: "radius-question",
+      delta: "How far outside Berlin should I look?",
+      start_ms: 0,
+      end_ms: 250,
+    });
+    buffer.append({
+      type: "session.input_transcript.delta",
+      event_id: "radius-answer",
+      delta: "5 km",
+      start_ms: 260,
+      end_ms: 400,
+    });
+    expect(buffer.captureCandidate({ sequence: 0, characterOffset: 0 })).toBeUndefined();
+    buffer.append({
+      type: "session.output_transcript.delta",
+      event_id: "next-question",
+      delta: "Which day works?",
+      start_ms: 410,
+      end_ms: 600,
+    });
+    expect(buffer.captureCandidate({ sequence: 0, characterOffset: 0 })).toEqual(
+      expect.objectContaining({
+        text: "5 km",
+        fragments: [
+          expect.objectContaining({ eventId: "radius-question", role: "assistant" }),
+          expect.objectContaining({ eventId: "radius-answer", role: "user" }),
+        ],
+      }),
+    );
+  });
+
+  it("captures a quiet standalone fact or numeric answer without a following Scout turn", () => {
+    for (const [eventId, text] of [["city-answer", "Berlin"], ["budget-answer", "300."]] as const) {
+      const buffer = new GptLiveFragmentBuffer();
+      buffer.append({
+        type: "session.input_transcript.delta",
+        event_id: eventId,
+        delta: text,
+        start_ms: 0,
+        end_ms: 200,
+      });
+      expect(buffer.captureCandidate({ sequence: 0, characterOffset: 0 })).toBeUndefined();
+      expect(buffer.captureCandidate({ sequence: 0, characterOffset: 0 }, true)).toEqual(
+        expect.objectContaining({ text }),
+      );
+    }
+  });
+
+  it("does not capture a quiet greeting as a saved fact", () => {
+    const buffer = new GptLiveFragmentBuffer();
+    buffer.append({
+      type: "session.input_transcript.delta",
+      event_id: "hello-only",
+      delta: "Hello!",
+      start_ms: 0,
+      end_ms: 200,
+    });
+    expect(buffer.captureCandidate({ sequence: 0, characterOffset: 0 }, true)).toBeUndefined();
   });
 
   it("never drops the beginning of a long unresolved monologue", () => {

@@ -89,6 +89,7 @@ type LiveDelegateArgs = {
   delegationId?: string;
   source: "voice" | "text";
   intent?: "capture_facts";
+  transcriptSegmentId?: string;
   fragments: Array<{
     eventId: string;
     role: "user" | "assistant";
@@ -119,6 +120,21 @@ const endVoiceSessionReference = makeFunctionReference<
   { voiceSessionId: Id<"voiceSessions"> },
   null
 >("voice:endMine");
+type RecordTranscriptSegmentArgs = {
+  voiceSessionId: Id<"voiceSessions">;
+  segmentId: string;
+  revision: number;
+  role: "user" | "assistant";
+  transcript: string;
+  sourceEventIds: string[];
+  startMs: number;
+  endMs: number;
+};
+const recordTranscriptSegmentReference = makeFunctionReference<
+  "mutation",
+  RecordTranscriptSegmentArgs,
+  { status: "created" | "updated" | "unchanged" | "stale"; messageId: string }
+>("voiceLive:recordTranscriptSegment");
 
 export type LiveSessionAnswer = {
   answerSdp: string;
@@ -190,6 +206,7 @@ type QueuedInput = {
   delegationId?: string;
   text?: string;
   intent?: "capture_facts";
+  allowQuietStreamEdgeCapture?: boolean;
   /** User transcript boundary owned by this request, fixed before later speech arrives. */
   throughSequence?: number;
 };
@@ -385,6 +402,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   const runDelegate = useAction(delegateReference);
   const persistLanguage = useMutation(setLanguageReference);
   const endVoiceSession = useMutation(endVoiceSessionReference);
+  const recordTranscriptSegment = useMutation(recordTranscriptSegmentReference);
   const endpoint = options.sessionEndpoint ?? defaultLiveSessionEndpoint();
   const delegate = options.delegate ?? runDelegate;
   const [connectionState, setConnectionState] = useState<LiveConnectionState>("disconnected");
@@ -408,7 +426,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   const idleTimeoutMs = options.idleTimeoutMs ?? 120_000;
   const idleGraceMs = options.idleGraceMs ?? 30_000;
   const farewellOutputQuietMs = options.farewellOutputQuietMs ?? 1_500;
-  const farewellMaxWaitMs = options.farewellMaxWaitMs ?? 12_000;
+  const farewellMaxWaitMs = options.farewellMaxWaitMs ?? 5_000;
   const closeAckTimeoutMs = options.closeAckTimeoutMs ?? 1_000;
   const idleCopy = options.idleCopy ?? DEFAULT_IDLE_COPY;
 
@@ -439,6 +457,10 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   const microphoneStateRef = useRef<LiveMicrophoneState>("off");
   const backendStateRef = useRef<LiveBackendState>("idle");
   const captureTimerRef = useRef<number | undefined>(undefined);
+  const transcriptCaptureQuietTimerRef = useRef<number | undefined>(undefined);
+  const transcriptPersistTimersRef = useRef<{ user?: number; assistant?: number }>({});
+  const persistedSegmentRevisionsRef = useRef(new Map<string, number>());
+  const lastTranscriptRoleRef = useRef<"user" | "assistant" | undefined>(undefined);
   const captureCursorRef = useRef<LiveCaptureCursor>({ sequence: 0, characterOffset: 0 });
   const lastCaptureQueuedAtRef = useRef(0);
   const fragmentBufferRef = useRef(new GptLiveFragmentBuffer());
@@ -457,6 +479,9 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   const waitingForServerIdleRef = useRef(false);
   const blockedByUnknownRef = useRef(false);
   const greetedGenerationRef = useRef(0);
+  const openingInstructionEventRef = useRef<string | undefined>(undefined);
+  const parkedDelegationRef = useRef<QueuedInput | undefined>(undefined);
+  const settledDelegationIdsRef = useRef(new Set<string>());
   const focusRef = useRef<LiveFocus>({});
   const contextEpochRef = useRef(0);
   const pendingAppendIdsRef = useRef(new Set<string>());
@@ -473,7 +498,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   const onEventRef = useRef(options.onEvent);
   const localeRef = useRef(sessionLocale);
   const pumpRef = useRef<() => void>(() => undefined);
-  const scheduleCaptureRef = useRef<() => void>(() => undefined);
+  const scheduleCaptureRef = useRef<(allowQuietStreamEdge?: boolean) => void>(() => undefined);
   const flushSpokenUpdatesRef = useRef<() => void>(() => undefined);
   const scheduleRelayQuietCheckRef = useRef<() => void>(() => undefined);
   const scheduleIdleRef = useRef<() => void>(() => undefined);
@@ -570,6 +595,46 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     [sendEvent],
   );
 
+  const persistTranscriptSegments = useCallback(async (
+    role?: "user" | "assistant",
+    targetEventIds?: readonly string[],
+  ): Promise<string | undefined> => {
+    const sessionId = voiceSessionIdRef.current;
+    if (!sessionId) return undefined;
+    const segments = fragmentBufferRef.current
+      .transcriptSegments()
+      .filter((segment) => role === undefined || segment.role === role);
+    for (const segment of segments) {
+      if ((persistedSegmentRevisionsRef.current.get(segment.segmentId) ?? 0) >= segment.revision) {
+        continue;
+      }
+      try {
+        await recordTranscriptSegment({
+          voiceSessionId: sessionId,
+          segmentId: segment.segmentId,
+          revision: segment.revision,
+          role: segment.role,
+          transcript: segment.text,
+          sourceEventIds: segment.sourceEventIds,
+          startMs: segment.startMs,
+          endMs: segment.endMs,
+        });
+        persistedSegmentRevisionsRef.current.set(segment.segmentId, segment.revision);
+      } catch {
+        // Transcript persistence must not block the provider conversation. A
+        // later role boundary or close flush retries the full segment.
+      }
+    }
+    const targetIds = targetEventIds ? new Set(targetEventIds) : undefined;
+    const latestUserSegment = segments.filter((segment) =>
+      segment.role === "user" &&
+      (!targetIds || segment.sourceEventIds.some((eventId) => targetIds.has(eventId)))
+    ).at(-1);
+    return latestUserSegment && persistedSegmentRevisionsRef.current.has(latestUserSegment.segmentId)
+      ? latestUserSegment.segmentId
+      : undefined;
+  }, [recordTranscriptSegment]);
+
   const cleanup = useCallback(
     (preservePendingText = true) => {
       persistSessionEnd();
@@ -580,10 +645,17 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       if (farewellQuietTimerRef.current !== undefined) window.clearTimeout(farewellQuietTimerRef.current);
       if (farewellMaxTimerRef.current !== undefined) window.clearTimeout(farewellMaxTimerRef.current);
       if (captureTimerRef.current !== undefined) window.clearTimeout(captureTimerRef.current);
+      if (transcriptCaptureQuietTimerRef.current !== undefined) {
+        window.clearTimeout(transcriptCaptureQuietTimerRef.current);
+      }
       if (relayQuietTimerRef.current !== undefined) window.clearTimeout(relayQuietTimerRef.current);
       for (const timer of Object.values(speechTimersRef.current)) {
         if (timer !== undefined) window.clearTimeout(timer);
       }
+      for (const timer of Object.values(transcriptPersistTimersRef.current)) {
+        if (timer !== undefined) window.clearTimeout(timer);
+      }
+      void persistTranscriptSegments();
       const channel = channelRef.current;
       const peer = peerRef.current;
       if (channel) {
@@ -633,10 +705,17 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       automaticCloseRef.current = false;
       idleGraceActiveRef.current = false;
       pendingAppendIdsRef.current.clear();
+      openingInstructionEventRef.current = undefined;
+      parkedDelegationRef.current = undefined;
+      settledDelegationIdsRef.current.clear();
       bufferedUpdatesRef.current.clear();
       deliveredUpdateVersionsRef.current.clear();
       fragmentBufferRef.current.clear();
+      persistedSegmentRevisionsRef.current.clear();
+      transcriptPersistTimersRef.current = {};
+      lastTranscriptRoleRef.current = undefined;
       captureTimerRef.current = undefined;
+      transcriptCaptureQuietTimerRef.current = undefined;
       captureCursorRef.current = { sequence: 0, characterOffset: 0 };
       lastCaptureQueuedAtRef.current = 0;
       settleFlushWaiters(false);
@@ -661,7 +740,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       detachInputMeter();
       detachOutputMeter();
     },
-    [detachInputMeter, detachOutputMeter, persistSessionEnd, settleFlushWaiters],
+    [detachInputMeter, detachOutputMeter, persistSessionEnd, persistTranscriptSegments, settleFlushWaiters],
   );
 
   const finalizeDisconnect = useCallback((automatic: boolean) => {
@@ -676,7 +755,10 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   }, [finalizeDisconnect]);
 
   const requestSessionClose = useCallback((automatic: boolean) => {
-    if (connectionStateRef.current === "disconnected") return;
+    if (
+      connectionStateRef.current === "disconnected" ||
+      connectionStateRef.current === "closing"
+    ) return;
     automaticCloseRef.current = automatic;
     localStreamRef.current?.getAudioTracks().forEach((track) => {
       track.enabled = false;
@@ -685,6 +767,10 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     setMicrophoneState("off");
     connectionStateRef.current = "closing";
     setConnectionState("closing");
+    // Snapshot the complete captions before cleanup. The mutation is allowed
+    // to finish after the voice session ends, so transport closure never waits
+    // on network persistence and the last words are still retained.
+    void persistTranscriptSegments();
     const sent = sendEvent({ type: "session.close", event_id: newRequestId("close") });
     if (!sent) {
       finalizeDisconnectRef.current(automatic);
@@ -694,7 +780,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     closingTimerRef.current = window.setTimeout(() => {
       finalizeDisconnectRef.current(automatic);
     }, closeAckTimeoutMs);
-  }, [closeAckTimeoutMs, sendEvent]);
+  }, [closeAckTimeoutMs, persistTranscriptSegments, sendEvent]);
   useEffect(() => {
     requestSessionCloseRef.current = requestSessionClose;
   }, [requestSessionClose]);
@@ -833,6 +919,8 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       failedInputRef.current ||
       waitingForServerIdleRef.current ||
       blockedByUnknownRef.current ||
+      pendingCallEndRef.current ||
+      farewellActiveRef.current ||
       connectionState !== "active" ||
       !voiceSessionIdRef.current
     )
@@ -845,7 +933,10 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       return;
     }
     const captureCandidate = next.intent === "capture_facts"
-      ? fragmentBufferRef.current.captureCandidate(captureCursorRef.current)
+      ? fragmentBufferRef.current.captureCandidate(
+          captureCursorRef.current,
+          next.allowQuietStreamEdgeCapture,
+        )
       : undefined;
     if (next.intent === "capture_facts" && !captureCandidate) {
       queueRef.current.shift();
@@ -893,6 +984,16 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       return;
     }
     if (next.source === "voice" && snapshot.unresolvedUserEventIds.length === 0) {
+      queueRef.current.shift();
+      if (next.delegationId && !settledDelegationIdsRef.current.has(next.delegationId)) {
+        parkedDelegationRef.current = next;
+      }
+      setPendingInputCount(queueRef.current.length);
+      if (queueRef.current.length === 0) {
+        setBackendState("idle");
+        settleFlushWaiters(true);
+      }
+      pumpRef.current();
       return;
     }
 
@@ -908,12 +1009,17 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     const contextEpoch = contextEpochRef.current;
     const requestLocale = localeRef.current;
     try {
+      const transcriptSegmentId = next.intent === "capture_facts" || next.source !== "voice"
+        ? undefined
+        : await persistTranscriptSegments("user", snapshot.unresolvedUserEventIds);
+      if (generationRef.current !== generation || voiceSessionIdRef.current !== sessionId) return;
       const result = await delegate({
         voiceSessionId: sessionId,
         requestId: next.requestId,
         ...(next.delegationId ? { delegationId: next.delegationId } : {}),
         source: next.source,
         ...(next.intent ? { intent: next.intent } : {}),
+        ...(transcriptSegmentId ? { transcriptSegmentId } : {}),
         fragments: toDelegateFragments(snapshot.fragments),
         ...(next.text ? { text: next.text } : {}),
         ...(focusRef.current.focusedSignalId
@@ -948,6 +1054,9 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         }
       } else {
         fragmentBufferRef.current.resolve(result.resolvedEventIds);
+        if (next.delegationId && !["busy", "in_progress", "outcome_unknown"].includes(result.status)) {
+          settledDelegationIdsRef.current.add(next.delegationId);
+        }
         captureCursorRef.current = laterCaptureCursor(
           captureCursorRef.current,
           {
@@ -1009,10 +1118,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       const honoredEndCall =
         next.intent !== "capture_facts" &&
         result.endCall !== undefined &&
-        (result.status === "completed" || result.status === "needs_clarification") &&
-        !hasNewerInput &&
-        !hasNewerTypedInput &&
-        contextIsCurrent;
+        (result.status === "completed" || result.status === "needs_clarification");
       if (honoredEndCall && result.endCall) {
         armCallEnd({
           ...result.endCall,
@@ -1020,6 +1126,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
             ? `${result.spokenSummary.trim()} ${result.endCall.farewell}`
             : result.endCall.farewell,
         });
+        beginFarewellRef.current();
       }
       const priorReceipt = verifiedPriorRequestReceipt(result);
       const silentContext = verifiedSilentResultContext(result);
@@ -1029,6 +1136,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
             ? silentContext
             : `${silentContext}\nThis receipt belongs to a previous request boundary; preserve newer user input and current focus.`,
           false,
+          next.delegationId ?? null,
         );
       }
       if (
@@ -1091,12 +1199,12 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         scheduleCaptureRef.current();
       }
     }
-  }, [appendContext, armCallEnd, connectionState, delegate, settleFlushWaiters]);
+  }, [appendContext, armCallEnd, connectionState, delegate, persistTranscriptSegments, settleFlushWaiters]);
   useEffect(() => {
     pumpRef.current = () => void pumpQueue();
   }, [pumpQueue]);
 
-  const scheduleEarlyCapture = useCallback(() => {
+  const scheduleEarlyCapture = useCallback((allowQuietStreamEdge = false) => {
     if (
       !earlyCaptureEnabled ||
       connectionState !== "active" ||
@@ -1104,7 +1212,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       queueRef.current.some((input) => input.intent === "capture_facts") ||
       pendingCallEndRef.current !== undefined ||
       farewellActiveRef.current ||
-      !fragmentBufferRef.current.captureCandidate(captureCursorRef.current)
+      !fragmentBufferRef.current.captureCandidate(captureCursorRef.current, allowQuietStreamEdge)
     )
       return;
     const elapsed = Date.now() - lastCaptureQueuedAtRef.current;
@@ -1123,6 +1231,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       requestId: newRequestId("capture"),
       source: "voice",
       intent: "capture_facts",
+      ...(allowQuietStreamEdge ? { allowQuietStreamEdgeCapture: true } : {}),
     });
     setPendingInputCount(queueRef.current.length);
     if (!activeInputRef.current) setBackendState("queued");
@@ -1185,6 +1294,10 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
           }
         } else {
           fragmentBufferRef.current.resolve(result.resolvedEventIds);
+          if (
+            uncertain.input.delegationId &&
+            !["busy", "in_progress", "outcome_unknown"].includes(result.status)
+          ) settledDelegationIdsRef.current.add(uncertain.input.delegationId);
         }
         uncertainInputRef.current = undefined;
         waitingForServerIdleRef.current = false;
@@ -1226,10 +1339,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         const honoredEndCall =
           uncertain.input.intent !== "capture_facts" &&
           result.endCall !== undefined &&
-          (result.status === "completed" || result.status === "needs_clarification") &&
-          !hasNewerInput &&
-          !hasNewerTypedInput &&
-          contextIsCurrent;
+          (result.status === "completed" || result.status === "needs_clarification");
         if (honoredEndCall && result.endCall) {
           armCallEnd({
             ...result.endCall,
@@ -1237,6 +1347,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
               ? `${result.spokenSummary.trim()} ${result.endCall.farewell}`
               : result.endCall.farewell,
           });
+          beginFarewellRef.current();
         }
         const silentContext = verifiedSilentResultContext(result);
         if (uncertain.input.intent !== "capture_facts" && silentContext) {
@@ -1245,6 +1356,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
               ? silentContext
               : `${silentContext}\nThis receipt belongs to a previous request boundary; preserve newer user input and current focus.`,
             false,
+            uncertain.input.delegationId ?? null,
           );
         }
         if (
@@ -1305,6 +1417,26 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     }, 750);
   }, []);
 
+  const scheduleTranscriptPersistence = useCallback((role: "user" | "assistant") => {
+    const priorTimer = transcriptPersistTimersRef.current[role];
+    if (priorTimer !== undefined) window.clearTimeout(priorTimer);
+    transcriptPersistTimersRef.current[role] = window.setTimeout(() => {
+      transcriptPersistTimersRef.current[role] = undefined;
+      void persistTranscriptSegments(role);
+    }, 750);
+  }, [persistTranscriptSegments]);
+
+  const activateParkedDelegation = useCallback(() => {
+    const parked = parkedDelegationRef.current;
+    if (!parked || settledDelegationIdsRef.current.has(parked.requestId)) return;
+    parkedDelegationRef.current = undefined;
+    parked.throughSequence = fragmentBufferRef.current.latestSequence();
+    queueRef.current.unshift(parked);
+    setPendingInputCount(queueRef.current.length);
+    setBackendState("queued");
+    pumpRef.current();
+  }, []);
+
   const handleServerEvent = useCallback(
     (event: LiveServerEvent) => {
       onEventRef.current?.(event);
@@ -1313,22 +1445,47 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
           // Transcript delivery can lead or lag audio playback. The output
           // meter below owns playback completion; the max timer is the fallback.
         }
+        const priorRole = lastTranscriptRoleRef.current;
         const fragment = fragmentBufferRef.current.append(event);
         if (!fragment) return;
+        lastTranscriptRoleRef.current = fragment.role;
         setTranscript(toTranscript(fragmentBufferRef.current.captions()));
         noteSpeaking(fragment.role);
-        if (fragment.role === "user") pumpRef.current();
-        if (fragment.role === "user") scheduleCaptureRef.current();
+        if (priorRole && priorRole !== fragment.role) void persistTranscriptSegments(priorRole);
+        scheduleTranscriptPersistence(fragment.role);
+        if (fragment.role === "user") {
+          pumpRef.current();
+          scheduleCaptureRef.current();
+          if (transcriptCaptureQuietTimerRef.current !== undefined) {
+            window.clearTimeout(transcriptCaptureQuietTimerRef.current);
+          }
+          transcriptCaptureQuietTimerRef.current = window.setTimeout(() => {
+            transcriptCaptureQuietTimerRef.current = undefined;
+            activateParkedDelegation();
+            scheduleCaptureRef.current(true);
+          }, 900);
+        } else {
+          if (transcriptCaptureQuietTimerRef.current !== undefined) {
+            window.clearTimeout(transcriptCaptureQuietTimerRef.current);
+            transcriptCaptureQuietTimerRef.current = undefined;
+          }
+          activateParkedDelegation();
+          scheduleCaptureRef.current(true);
+        }
         return;
       }
       if (isClientDelegationEvent(event)) {
         if (pendingCallEndRef.current || farewellActiveRef.current) return;
         if (
+          settledDelegationIdsRef.current.has(event.delegation.id) ||
           activeInputRef.current?.requestId === event.delegation.id ||
           queueRef.current.some((input) => input.requestId === event.delegation.id)
         )
           return;
         const captureIndex = queueRef.current.findIndex((input) => input.intent === "capture_facts");
+        if (fragmentBufferRef.current.unresolvedUserFragments().length > 0) {
+          parkedDelegationRef.current = undefined;
+        }
         const delegationInput: QueuedInput = {
           requestId: event.delegation.id,
           delegationId: event.delegation.id,
@@ -1346,6 +1503,15 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       }
       if (event.type.endsWith(".appended") && event.client_event_id) {
         pendingAppendIdsRef.current.delete(event.client_event_id);
+        if (openingInstructionEventRef.current === event.client_event_id) {
+          openingInstructionEventRef.current = undefined;
+          appendContext(
+            localeRef.current === "en"
+              ? "Begin the SESSION OPENING welcome now."
+              : "Beginne jetzt die Begrüßung nach der Regel SESSION OPENING.",
+            true,
+          );
+        }
         return;
       }
       if (event.type === "session.input_audio.muted") {
@@ -1356,11 +1522,18 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         const generation = generationRef.current;
         if (greetedGenerationRef.current !== generation) {
           greetedGenerationRef.current = generation;
-          appendInstructions(
-            localeRef.current === "en"
-              ? "Apply the existing SESSION OPENING rule now in English. Follow it exactly."
-              : "Wende jetzt die bestehende Regel SESSION OPENING auf Deutsch an. Befolge sie genau.",
-          );
+          const eventId = newRequestId("opening-instructions");
+          if (sendEvent({
+            type: "session.instructions.append",
+            event_id: eventId,
+            delegation_id: null,
+            content: localeRef.current === "en"
+              ? "Apply SESSION OPENING exactly once now. Welcome the musician in English with a brief, genuine RoomScout introduction. Speak first, then listen."
+              : "Wende SESSION OPENING jetzt genau einmal an. Begrüße die Musikerin oder den Musiker auf Deutsch mit einer kurzen, echten RoomScout-Vorstellung. Sprich zuerst und höre dann zu.",
+          })) {
+            pendingAppendIdsRef.current.add(eventId);
+            openingInstructionEventRef.current = eventId;
+          }
         }
         return;
       }
@@ -1378,7 +1551,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         setError(safeLiveProviderError(event));
       }
     },
-    [appendInstructions, noteSpeaking],
+    [activateParkedDelegation, appendContext, noteSpeaking, persistTranscriptSegments, scheduleTranscriptPersistence, sendEvent],
   );
 
   const connect = useCallback(async () => {

@@ -1065,10 +1065,16 @@ export default defineSchema({
     itemId: v.optional(v.string()),
     role: v.union(v.literal("user"), v.literal("assistant")),
     transcript: v.string(),
+    sourceEventIds: v.optional(v.array(v.string())),
+    segmentRevision: v.optional(v.number()),
+    startMs: v.optional(v.number()),
+    endMs: v.optional(v.number()),
+    agentMessageId: v.optional(v.string()),
     finalizedAt: v.number(),
   })
     .index("by_voice_session_and_provider_event_id", ["voiceSessionId", "providerEventId"])
-    .index("by_owner_and_finalized_at", ["ownerId", "finalizedAt"]),
+    .index("by_owner_and_finalized_at", ["ownerId", "finalizedAt"])
+    .index("by_agent_message_id", ["agentMessageId"]),
 
   notifications: defineTable({
     ownerId: v.id("users"),

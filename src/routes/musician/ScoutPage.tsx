@@ -115,6 +115,7 @@ export function ScoutPage() {
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
   const [textOpen, setTextOpen] = useState(false);
+  const [textDismissed, setTextDismissed] = useState(false);
   // One Entscheidung is answered at a time; the buttons on the stage go quiet
   // while the mutation is in flight.
   const [answeringDecision, setAnsweringDecision] = useState(false);
@@ -176,13 +177,15 @@ export function ScoutPage() {
     .map(row => ({
       id: row.key, author: row.role === "assistant" ? "scout" as const : row.role, body: row.text,
       status: row.status, parts: row.parts,
+      source: (row as typeof row & { source?: "voice_transcript" }).source,
     }));
   // The turn in flight, read off the thread: a musician message the Scout has
   // not answered yet, or a reply that is still pending or streaming. Nothing
   // here survives a reload that the server does not also know about.
   const newestMessage = messages.at(-1);
   const threadBusy = newestMessage !== undefined && newestMessage.status !== "failed" &&
-    (newestMessage.author === "user" || newestMessage.status === "pending" || newestMessage.status === "streaming");
+    ((newestMessage.author === "user" && newestMessage.source !== "voice_transcript") ||
+      newestMessage.status === "pending" || newestMessage.status === "streaming");
   // Silent Live turns intentionally persist no fabricated assistant message.
   // Their authoritative completion state is the voice request state, so a
   // successful saved user turn must not leave the text surface busy forever.
@@ -226,6 +229,14 @@ export function ScoutPage() {
       speak: false, instruction: true, content: formatLivePhaseInstruction(liveDiscoveryContext, locale) },
     { id: `discovery:${need?._id ?? "none"}`, version: `${locale}:${liveDiscoveryContextVersion}`,
       speak: false, content: formatLiveDiscoveryContext(liveDiscoveryContext) },
+    ...(liveDiscoveryContext.discovery && liveDiscoveryContext.search?.brief.readyForReview ? [{
+      id: `brief-ready:${liveDiscoveryContext.search.id}`,
+      version: `${locale}:${liveDiscoveryContext.search.brief.needRevision}`,
+      speak: true,
+      content: locale === "de"
+        ? "Dein Suchauftrag ist bereit. Soll ich mit der Suche beginnen?"
+        : "Your brief is ready. Shall I start looking?",
+    }] : []),
     ...(Array.isArray(decisions) ? decisions : []).filter(decision => !decision.conversationId || conversations.some(row => row.conversationId === decision.conversationId)).map(decision => ({
       id: `decision:${decision._id}`, speak: true, version: `${locale}:${decision.updatedAt}`,
       content: `Verified application update: an open ${decision.kind} decision is visible in the UI. Decision ID: ${decision._id}. Mention briefly at a suitable pause; binding commitments require the UI review.`,
@@ -306,12 +317,17 @@ export function ScoutPage() {
   }
   function openChat() {
     setTextOpen(true);
+    setTextDismissed(false);
     setManualBrief(false); setDismissedReady(readyKey);
   }
   function openVoice() {
     setTextOpen(false);
     setVoiceOpen(true);
     if (!voice.connected) void voice.connect();
+  }
+  function closeChat() {
+    setTextOpen(false);
+    setTextDismissed(true);
   }
   async function openCandidate(conversationId?: Id<"providerConversations">) {
     if (!need || !threadId || changingFocus.current) return;
@@ -482,7 +498,7 @@ export function ScoutPage() {
     </div>
   </FactList>;
   const showScoutChat =
-    (!voiceOpen && stage === "discovery") ||
+    (!voiceOpen && stage === "discovery" && !textDismissed) ||
     (chatOpen && (voiceOpen || stage !== "brief")) ||
     (!voiceOpen && Boolean(voice.pendingTextDraft));
   const focusedThreadShowsDecision = Boolean(openDecision && focusedThread?.items.some(item =>
@@ -493,6 +509,10 @@ export function ScoutPage() {
   const surfaceDecisionSlot = showScoutChat || focusedThreadShowsDecision ? undefined : decisionSlot;
   const voicePrimary = voiceOpen && !showScoutChat && !focusedConversationId && !offerSlot && !openDecision;
   const voiceCompact = voiceOpen && (voice.connected || !voicePrimary);
+  const chatSlot = showScoutChat ? <div className="relative h-full min-h-0">
+    {stage === "discovery" ? <Button className="absolute right-2 top-2 z-10" variant="ghost" size="sm" aria-label={t("common.close")} onClick={closeChat}>×</Button> : null}
+    <ScoutChat key={threadId ?? "loading"} className={voiceOpen ? "h-full max-h-full min-h-[18rem]" : undefined} messages={messages.length ? messages : [{ id: "intro", author: "scout", body: t("liveScout.intro") }]} onSend={send} replying={(!liveConnected && scoutBusy) || !threadId} restoredDraft={voice.pendingTextDraft || undefined} onDraftRestored={voice.clearPendingTextDraft} onActivity={voice.noteActivity} labels={chatLabels} error={error} onVoice={openVoice} autoFocus decision={openDecision} decisionOfferHash={decisionOfferHash} onAnswerDecision={async (decisionId, choice, text) => { voice.noteActivity(); await answerOpenDecision(decisionId, choice, text); }} decisionAnsweredText={t("liveScout.decisionAnswered")} hasMoreHistory={history.status === "CanLoadMore"} historyBusy={history.status === "LoadingMore"} onLoadHistory={() => history.loadMore(60)} />
+  </div> : undefined;
   return <LiveScoutSurface stage={stage} band={{ displayName: currentUser?.displayName ?? currentUser?.username ?? "" }}
     profileMenuSlot={<LiveProfileMenu name={currentUser?.displayName ?? currentUser?.username ?? ""} operator={currentUser?.role === "operator"} />}
     copy={{
@@ -513,13 +533,13 @@ export function ScoutPage() {
     }}
     briefReviewSlot={brief}
     briefExpanded={manualBrief}
-    chatSlot={showScoutChat ? <ScoutChat key={threadId ?? "loading"} className={voiceOpen ? "h-full max-h-full min-h-[18rem]" : undefined} messages={messages.length ? messages : [{ id: "intro", author: "scout", body: t("liveScout.intro") }]} onSend={send} replying={(!liveConnected && scoutBusy) || !threadId} restoredDraft={voice.pendingTextDraft || undefined} onDraftRestored={voice.clearPendingTextDraft} onActivity={voice.noteActivity} labels={chatLabels} error={error} onVoice={openVoice} autoFocus decision={openDecision} decisionOfferHash={decisionOfferHash} onAnswerDecision={async (decisionId, choice, text) => { voice.noteActivity(); await answerOpenDecision(decisionId, choice, text); }} decisionAnsweredText={t("liveScout.decisionAnswered")} hasMoreHistory={history.status === "CanLoadMore"} historyBusy={history.status === "LoadingMore"} onLoadHistory={() => history.loadMore(60)} /> : undefined}
-    voiceSlot={voiceOpen ? <LiveVoiceChat compact={voiceCompact} primary={voicePrimary} showTranscript={!showScoutChat} onText={openChat} onEnd={() => { setVoiceOpen(false); setTextOpen(true); }} /> : undefined}
+    chatSlot={chatSlot}
+    voiceSlot={voiceOpen ? <LiveVoiceChat compact={voiceCompact} primary={voicePrimary} showTranscript={!showScoutChat} onText={openChat} onEnd={() => { setVoiceOpen(false); setTextOpen(false); setTextDismissed(true); }} /> : undefined}
     providerUpdateSlot={offerSlot} offerSlot={offerSlot} detailSlot={detailSlot}
     decisionSlot={surfaceDecisionSlot} railSlot={railSlot} asideSlot={asideSlot}
     completeSlot={<Link className="text-rs-ink-2 underline underline-offset-4" to="/app/inbox">{t("liveScout.viewMessages")}</Link>}
     errorSlot={error ? <p role="alert">{error}</p> : undefined}
-    onChat={openChat} onCloseChat={() => setTextOpen(false)} onVoice={openVoice} onReviewBrief={() => setManualBrief(value => !value)}
+    onChat={openChat} onCloseChat={closeChat} onVoice={openVoice} onReviewBrief={() => setManualBrief(value => !value)}
     onActivate={activateSearch}
     onPause={() => { if (need) void run(() => setStatus({ needId: need._id, status: "paused" })); }}
     onResume={() => { if (need) void run(() => setStatus({ needId: need._id, status: "active" })); }}

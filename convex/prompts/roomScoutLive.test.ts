@@ -4,12 +4,13 @@ import { liveInstructions, scoutVoiceInstructions } from "./roomScoutLive";
 
 describe("RoomScout personality", () => {
   it.each([
-    ["en", "dry Australian humour", "automatic praise"],
-    ["de", "trockenen Humor", "Begeisterung"],
-  ] as const)("keeps the %s persona warm without forced performance", (locale, humour, restraint) => {
+    ["en", "Use light humour only when it arises naturally", "briefly acknowledge its impact", "do not joke"],
+    ["de", "Nutze leichten Humor nur, wenn er sich natürlich ergibt", "erkenne die Belastung kurz an", "mache keinen Witz"],
+  ] as const)("keeps the %s persona warm without forced performance", (locale, humour, empathy, restraint) => {
     const persona = roomScoutPersonality(locale);
 
     expect(persona).toContain(humour);
+    expect(persona).toContain(empathy);
     expect(persona).toContain(restraint);
     expect(persona).toContain(locale === "de" ? "erfinde keine eigenen Erfahrungen" : "never invent personal experiences");
   });
@@ -20,7 +21,7 @@ describe("RoomScout Live prompts", () => {
     const prompt = liveInstructions(
       "en",
       "phase=discovery; status=draft; saved location=Berlin; missing activation field=radiusKm",
-      { hasSavedNeed: true, discovery: true },
+      { hasPriorContext: true, discovery: true },
     );
 
     expect(prompt).toContain("DISCOVERY: You lead the conversation");
@@ -29,7 +30,8 @@ describe("RoomScout Live prompts", () => {
     expect(prompt).toContain("Hearing an answer does not prove it was saved");
     expect(prompt).toContain("Skip any criterion already answered or clearly covered in meaning");
     expect(prompt).toContain("even when phrased differently or a related optional saved field is null");
-    expect(prompt).toContain("without progress filler, waiting language or commentary about backend work");
+    expect(prompt).toContain("move straight to the next useful unanswered question in the same turn");
+    expect(prompt).toContain("Do not reply with a backchannel alone");
     expect(prompt).toContain("never recap or list it");
     expect(prompt).toContain("A completed substantive turn adds or corrects facts");
     expect(prompt).toContain("Delegate the whole completed turn even when quiet context already reflects some clauses");
@@ -39,8 +41,13 @@ describe("RoomScout Live prompts", () => {
     expect(prompt).toContain("Backend tools:");
     expect(prompt).toContain("Delegate to the backend when:");
     expect(prompt).toContain("Do not delegate to the backend when:");
-    expect(prompt).toContain("Confirmed readiness permits you to offer the search start when it fits");
-    expect(prompt).toContain("it does not end discovery or require an immediate offer");
+    expect(prompt).toContain("saved brief is ready for review and the current question is resolved");
+    expect(prompt).toContain("proactively ask whether the musician wants to start the search");
+    expect(prompt).toContain("unless one clearly useful unanswered topic should come first");
+    expect(prompt).toContain("Do not merely thank them, recap the brief, end discovery without their choice or start automatically");
+    expect(prompt).toContain("give no readiness verdict until the backend result arrives");
+    expect(prompt).toContain("never infer not-ready from an earlier collecting or absent-ready state");
+    expect(prompt).toContain("latest result overrides earlier readiness context");
     expect(prompt).toContain("Always delegate a direct request to end this voice call");
     expect(prompt).toContain("A negated, quoted, reported or hypothetical goodbye does not end the call");
     expect(prompt).not.toContain("sole source of domain reasoning and discovery questions");
@@ -51,7 +58,7 @@ describe("RoomScout Live prompts", () => {
     const prompt = liveInstructions(
       "de",
       "phase=discovery; status=draft; gespeicherte Anforderung=Lagerung; kein Raum ausgewählt",
-      { hasSavedNeed: true, discovery: true },
+      { hasPriorContext: true, discovery: true },
     );
 
     expect(prompt).toContain("DISCOVERY: Du führst das Gespräch");
@@ -60,7 +67,8 @@ describe("RoomScout Live prompts", () => {
     expect(prompt).toContain("Gehört bedeutet nicht gespeichert");
     expect(prompt).toContain("Überspringe jedes bereits beantwortete oder inhaltlich eindeutig abgedeckte Kriterium");
     expect(prompt).toContain("ein zugehöriges optionales gespeichertes Feld null ist");
-    expect(prompt).toContain("ohne Fortschrittsfloskeln, Warteformulierungen oder Kommentare zur Backend-Arbeit");
+    expect(prompt).toContain("im selben Beitrag direkt zur nächsten nützlichen offenen Frage über");
+    expect(prompt).toContain("Antworte nicht nur mit einer Floskel");
     expect(prompt).toContain("Fasse ihn nie zusammen und liste ihn nicht auf");
     expect(prompt).toContain("Eine gespeicherte Anforderung beschreibt, was er braucht, nicht was ein Raum bietet");
     expect(prompt).toContain("Ein abgeschlossener inhaltlicher Beitrag ergänzt oder korrigiert Fakten");
@@ -70,14 +78,19 @@ describe("RoomScout Live prompts", () => {
     expect(prompt).toContain("Backend tools:");
     expect(prompt).toContain("Delegate to the backend when:");
     expect(prompt).toContain("Do not delegate to the backend when:");
-    expect(prompt).toContain("Bestätigte Bereitschaft erlaubt dir, den Suchstart anzubieten, wenn es passt");
-    expect(prompt).toContain("sie beendet Discovery nicht und verlangt kein sofortiges Angebot");
+    expect(prompt).toContain("gespeicherte Suchauftrag zur Prüfung bereit ist und die aktuelle Frage geklärt wurde");
+    expect(prompt).toContain("frage von dir aus, ob die Suche gestartet werden soll");
+    expect(prompt).toContain("außer ein eindeutig nützliches offenes Thema sollte zuerst geklärt werden");
+    expect(prompt).toContain("Bedanke dich nicht nur, fasse den Suchauftrag nicht zusammen");
+    expect(prompt).toContain("gib kein Bereitschaftsurteil ab, bevor das Backend-Ergebnis vorliegt");
+    expect(prompt).toContain("leite aus einem früheren Sammelstatus oder fehlender Bereitschaft nie ab");
+    expect(prompt).toContain("neueste Ergebnis überschreibt früheren Bereitschaftskontext");
     expect(prompt).toContain("Delegiere immer eine direkte Bitte, diesen Sprachanruf zu beenden");
   });
 
   it.each(["en", "de"] as const)("does not restart %s discovery outside a trusted discovery phase", (locale) => {
     const prompt = liveInstructions(locale, "phase=offer; focused candidate=East Room", {
-      hasSavedNeed: true,
+      hasPriorContext: true,
       discovery: false,
     });
 
@@ -97,11 +110,24 @@ describe("RoomScout Live prompts", () => {
     expect(discovery).toContain("VOICE DISCOVERY PROCESSING");
     expect(discovery).toContain("Save explicit search details with updateSearchDraft");
     expect(discovery).toContain("durable band or musician context with rememberFact");
+    expect(discovery).toContain("proactively assess whether the draft has its required fields");
+    expect(discovery).toContain("call markSearchBriefReady in the same turn without waiting for the musician to ask what comes next");
+    expect(discovery).toContain("A successful readiness mark stays quiet; Live offers the search start");
     expect(discovery).toContain("ask no follow-up, give no recap and create no visible conversation continuation");
     expect(discovery).toContain("Live chooses the next discovery question");
     expect(discovery).toContain("requested backend action or readiness depends on a required field");
     expect(currentTask).not.toContain("VOICE DISCOVERY PROCESSING");
+    expect(currentTask).not.toContain("markSearchBriefReady");
     expect(currentTask).toContain("follow the trusted current task");
+  });
+
+  it("gives German discovery the same proactive quiet readiness handoff", () => {
+    const discovery = scoutVoiceInstructions("de", { discovery: true });
+
+    expect(discovery).toContain("Prüfe nach den Aktualisierungen von dir aus");
+    expect(discovery).toContain("rufe dann im selben Turn markSearchBriefReady auf");
+    expect(discovery).toContain("ohne darauf zu warten, dass der Musiker nach dem nächsten Schritt fragt");
+    expect(discovery).toContain("erfolgreiche Bereitschaftsmarkierung bleibt still; Live bietet den Suchstart an");
   });
 
   it("keeps capability and action proof rules in concise Scout results", () => {
@@ -118,11 +144,14 @@ describe("GPT Live session opening", () => {
     ["de", "Hey, willkommen zurück. Womit möchtest du weitermachen?"],
   ] as const)("continues an existing %s search without recapping it", (locale, greeting) => {
     const prompt = liveInstructions(locale, "phase=discovery; saved facts exist", {
-      hasSavedNeed: true,
+      hasPriorContext: true,
       discovery: true,
     });
 
     expect(prompt).toContain(greeting);
+    expect(prompt).toContain(locale === "de"
+      ? "Sprich beim Sitzungsstart genau einmal zuerst"
+      : "Speak first exactly once when the session starts");
     expect(prompt).toContain(locale === "de"
       ? "Fasse den Suchauftrag nicht zusammen"
       : "Do not recap the search brief");
@@ -130,13 +159,19 @@ describe("GPT Live session opening", () => {
 
   it.each(["en", "de"] as const)("keeps the fresh %s opening in discovery", (locale) => {
     const prompt = liveInstructions(locale, "phase=discovery; no saved search", {
-      hasSavedNeed: false,
+      hasPriorContext: false,
       discovery: true,
     });
 
     expect(prompt).toContain(locale === "de"
-      ? "frage, was für einen Proberaum er sucht"
-      : "ask what they are looking for in a rehearsal room");
+      ? "Stell dich in einem kurzen Satz als RoomScout vor"
+      : "Introduce yourself as RoomScout in one brief sentence");
+    expect(prompt).toContain(locale === "de"
+      ? "lade den Musiker ein zu erzählen, was ihn herführt"
+      : "invite the musician to share what brought them here");
+    expect(prompt).toContain(locale === "de"
+      ? "Wiederhole diese Eröffnung nach der Antwort nicht"
+      : "Do not repeat this opening after they answer");
     expect(prompt).not.toContain("welcome back");
     expect(prompt).not.toContain("willkommen zurück");
   });

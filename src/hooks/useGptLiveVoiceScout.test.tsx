@@ -177,8 +177,8 @@ describe("useGptLiveVoiceScout", () => {
 
   it("triggers the server-owned session opening without imposing a client question", async () => {
     for (const [locale, expected] of [
-      ["en", "Apply the existing SESSION OPENING rule now in English. Follow it exactly."],
-      ["de", "Wende jetzt die bestehende Regel SESSION OPENING auf Deutsch an. Befolge sie genau."],
+      ["en", /Welcome the musician in English.*Speak first, then listen/],
+      ["de", /Begrüße die Musikerin oder den Musiker auf Deutsch.*Sprich zuerst und höre dann zu/],
     ] as const) {
       const hook = await connect(
         vi.fn().mockResolvedValue(completed("none", [])) as never,
@@ -186,15 +186,34 @@ describe("useGptLiveVoiceScout", () => {
       );
       act(() => serverEvent(hook.channel, { type: "session.started" }));
       const opening = hook.sent.find((event) => event.type === "session.instructions.append");
-      expect(opening).toEqual(expect.objectContaining({ content: expected }));
+      expect(String(opening?.content)).toMatch(expected);
       expect(String(opening?.content)).not.toMatch(/ask what matters|frage, was/i);
+      expect(hook.sent.some((event) => event.type === "session.commentary.append")).toBe(false);
+      act(() => serverEvent(hook.channel, {
+        type: "session.instructions.appended",
+        client_event_id: opening?.event_id,
+      }));
+      expect(hook.sent).toContainEqual(expect.objectContaining({
+        type: "session.commentary.append",
+        content: expect.stringContaining("SESSION OPENING"),
+      }));
+      act(() => serverEvent(hook.channel, {
+        type: "session.instructions.appended",
+        client_event_id: opening?.event_id,
+      }));
+      expect(hook.sent.filter((event) => event.type === "session.commentary.append")).toHaveLength(1);
       hook.unmount();
     }
   });
 
   it("retains an early delegation until a user fragment arrives", async () => {
-    const delegate = vi.fn().mockImplementation(async (args: { requestId: string }) =>
-      completed(args.requestId, ["user-fragment"]),
+    const delegate = vi.fn().mockImplementation(async (args: {
+      requestId: string;
+      fragments: Array<{ eventId: string; role: string }>;
+    }) => completed(
+      args.requestId,
+      args.fragments.filter((fragment) => fragment.role === "user").map((fragment) => fragment.eventId),
+    ),
     );
     const { channel, result } = await connect(delegate as never);
     act(() => {
@@ -204,15 +223,29 @@ describe("useGptLiveVoiceScout", () => {
       });
     });
     expect(delegate).not.toHaveBeenCalled();
-    expect(result.current.pendingInputCount).toBe(1);
+    expect(result.current.pendingInputCount).toBe(0);
 
     act(() => {
       serverEvent(channel, {
         type: "session.input_transcript.delta",
         event_id: "user-fragment",
-        delta: "Wednesday instead",
+        delta: "Wednesday ",
         start_ms: 100,
+        end_ms: 300,
+      });
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "user-fragment-2",
+        delta: "instead",
+        start_ms: 310,
         end_ms: 500,
+      });
+      serverEvent(channel, {
+        type: "session.output_transcript.delta",
+        event_id: "assistant-after-answer",
+        delta: "Got it.",
+        start_ms: 510,
+        end_ms: 650,
       });
     });
     await waitFor(() => expect(delegate).toHaveBeenCalledOnce());
@@ -222,11 +255,90 @@ describe("useGptLiveVoiceScout", () => {
         requestId: "delegation-1",
         delegationId: "delegation-1",
         source: "voice",
-        fragments: [
-          expect.objectContaining({ eventId: "user-fragment", role: "user", text: "Wednesday instead" }),
-        ],
+        fragments: expect.arrayContaining([
+          expect.objectContaining({ eventId: "user-fragment", role: "user", text: "Wednesday " }),
+          expect.objectContaining({ eventId: "user-fragment-2", role: "user", text: "instead" }),
+        ]),
       }),
     );
+    await waitFor(() => expect(result.current.pendingInputCount).toBe(0));
+    act(() => serverEvent(channel, {
+      type: "session.delegation.created",
+      delegation: { id: "delegation-1", type: "delegation", target: "client" },
+    }));
+    expect(delegate).toHaveBeenCalledOnce();
+    expect(result.current.pendingInputCount).toBe(0);
+  });
+
+  it("persists the coalesced user caption and anchors its native delegation", async () => {
+    const delegate = vi.fn().mockImplementation(async (args: {
+      requestId: string;
+      fragments: Array<{ eventId: string }>;
+    }) => completed(args.requestId, args.fragments.map((fragment) => fragment.eventId)));
+    const { channel } = await connect(delegate as never);
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "persist-a",
+        delta: "We need a room ",
+        start_ms: 0,
+        end_ms: 200,
+      });
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "persist-b",
+        delta: "in Berlin",
+        start_ms: 210,
+        end_ms: 400,
+      });
+      serverEvent(channel, {
+        type: "session.delegation.created",
+        delegation: { id: "persist-delegation", type: "delegation", target: "client" },
+      });
+    });
+    await waitFor(() => expect(delegate).toHaveBeenCalledOnce());
+    const persisted = convexMocks.mutation.mock.calls.find(([args]) =>
+      (args as { segmentId?: string }).segmentId === "live:user:persist-a"
+    )?.[0];
+    expect(persisted).toEqual(expect.objectContaining({
+      voiceSessionId: "voice-1",
+      revision: 2,
+      role: "user",
+      transcript: "We need a room in Berlin",
+      sourceEventIds: ["persist-a", "persist-b"],
+    }));
+    expect(delegate).toHaveBeenCalledWith(expect.objectContaining({
+      transcriptSegmentId: "live:user:persist-a",
+    }));
+  });
+
+  it("captures a quiet standalone fact without waiting for the Scout to speak", async () => {
+    const delegate = vi.fn().mockImplementation(async (args: { requestId: string }) => ({
+      ...completed(args.requestId, []),
+      spokenSummary: undefined,
+    }));
+    const hook = await connect(delegate as never, {
+      enableEarlyFactCapture: true,
+      earlyFactCaptureCadenceMs: 0,
+    });
+    vi.useFakeTimers();
+    try {
+      act(() => serverEvent(hook.channel, {
+        type: "session.input_transcript.delta",
+        event_id: "quiet-city",
+        delta: "Berlin",
+        start_ms: 0,
+        end_ms: 200,
+      }));
+      expect(delegate).not.toHaveBeenCalled();
+      await act(async () => vi.advanceTimersByTimeAsync(900));
+      expect(delegate).toHaveBeenCalledWith(expect.objectContaining({
+        intent: "capture_facts",
+        fragments: [expect.objectContaining({ eventId: "quiet-city", text: "Berlin" })],
+      }));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("suppresses a stale spoken result when a newer correction arrives", async () => {
@@ -393,7 +505,8 @@ describe("useGptLiveVoiceScout", () => {
     });
     await waitFor(() => expect(sent.some((event) =>
       event.type === "session.thinking.append" &&
-      String(event.content).includes("Band size: 4"),
+      String(event.content).includes("Band size: 4") &&
+      event.delegation_id === "silent-request",
     )).toBe(true));
     expect(sent.some((event) =>
       event.type === "session.commentary.append" &&
@@ -442,9 +555,69 @@ describe("useGptLiveVoiceScout", () => {
     hook.rerender();
     await waitFor(() => expect(hook.sent.some((event) =>
       event.type === "session.thinking.append" &&
-      String(event.content).includes("Radius: 20 km"),
+      String(event.content).includes("Radius: 20 km") &&
+      event.delegation_id === "cached-request",
     )).toBe(true));
     expect(hook.sent.some((event) => event.content === "Your radius is saved.")).toBe(false);
+  });
+
+  it("honors a cached validated end-call despite newer queued voice", async () => {
+    const delegate = vi.fn().mockImplementation(async (args: { requestId: string }) => ({
+      status: "in_progress" as const,
+      requestId: args.requestId,
+      resolvedEventIds: [],
+      locale: "en" as const,
+    }));
+    const hook = await connect(delegate as never);
+    act(() => {
+      serverEvent(hook.channel, {
+        type: "session.input_transcript.delta",
+        event_id: "cached-bye",
+        delta: "Please hang up",
+        start_ms: 0,
+        end_ms: 250,
+      });
+      serverEvent(hook.channel, {
+        type: "session.delegation.created",
+        delegation: { id: "cached-bye-request", type: "delegation", target: "client" },
+      });
+    });
+    await waitFor(() => expect(delegate).toHaveBeenCalledOnce());
+    act(() => {
+      serverEvent(hook.channel, {
+        type: "session.input_transcript.delta",
+        event_id: "cached-filler",
+        delta: "Uh",
+        start_ms: 260,
+        end_ms: 320,
+      });
+      serverEvent(hook.channel, {
+        type: "session.delegation.created",
+        delegation: { id: "cached-filler-request", type: "delegation", target: "client" },
+      });
+    });
+    convexMocks.query = {
+      voiceSessionId: "voice-1",
+      status: "active",
+      provider: "live",
+      locale: "en",
+      languageRevision: 1,
+      activeRequest: undefined,
+      lastResult: {
+        ...completed("cached-bye-request", ["cached-bye"]),
+        delivery: "silent",
+        spokenSummary: undefined,
+        endCall: { reason: "user_request", farewell: "Okay, I’ll end the call now." },
+      },
+      current: {},
+    };
+    hook.rerender();
+    await waitFor(() => expect(hook.sent).toContainEqual(expect.objectContaining({
+      type: "session.commentary.append",
+      content: "Okay, I’ll end the call now.",
+    })));
+    expect(delegate).toHaveBeenCalledOnce();
+    expect(hook.result.current.microphoneState).toBe("off");
   });
 
   it("speaks a cached mixed language result after reconciling its own locale change", async () => {
@@ -1391,23 +1564,16 @@ describe("useGptLiveVoiceScout", () => {
       act(() => serverEvent(hook.channel, { type: "session.closed" }));
       expect(hook.result.current.connectionState).toBe("disconnected");
       expect(hook.result.current.automaticEndToken).toBe(1);
-      expect(convexMocks.mutation).toHaveBeenCalledTimes(1);
+      expect(convexMocks.mutation).toHaveBeenCalledWith({ voiceSessionId: "voice-1" });
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("ignores stale and failed end-call directives", async () => {
+  it("honors a validated end-call despite newer voice and preserves queued typed draft", async () => {
     let finishFirst!: (result: LiveDelegateResult) => void;
     const delegate = vi.fn()
-      .mockImplementationOnce(() => new Promise<LiveDelegateResult>((resolve) => { finishFirst = resolve; }))
-      .mockImplementationOnce(async (args: { requestId: string; fragments: Array<{ eventId: string }> }) =>
-        completed(args.requestId, args.fragments.map((fragment) => fragment.eventId)))
-      .mockImplementationOnce(async (args: { requestId: string }) => ({
-        ...completed(args.requestId, []),
-        status: "failed" as const,
-        endCall: { reason: "farewell" as const, farewell: "Should not play." },
-      }));
+      .mockImplementationOnce(() => new Promise<LiveDelegateResult>((resolve) => { finishFirst = resolve; }));
     const hook = await connect(delegate as never, { idleTimeoutMs: 60_000 });
     act(() => {
       serverEvent(hook.channel, { type: "session.input_transcript.delta", event_id: "bye-a", delta: "Goodbye", start_ms: 0, end_ms: 100 });
@@ -1415,19 +1581,34 @@ describe("useGptLiveVoiceScout", () => {
     });
     await waitFor(() => expect(delegate).toHaveBeenCalledOnce());
     act(() => {
-      serverEvent(hook.channel, { type: "session.input_transcript.delta", event_id: "wait-b", delta: "Actually wait", start_ms: 110, end_ms: 250 });
-      serverEvent(hook.channel, { type: "session.delegation.created", delegation: { id: "wait-b-request", type: "delegation", target: "client" } });
+      serverEvent(hook.channel, { type: "session.input_transcript.delta", event_id: "filler-b", delta: "Uh", start_ms: 110, end_ms: 250 });
+      serverEvent(hook.channel, { type: "session.delegation.created", delegation: { id: "filler-b-request", type: "delegation", target: "client" } });
+      expect(hook.result.current.sendText("Keep this typed draft")).toBe(true);
     });
     await act(async () => finishFirst({
       ...completed("bye-a-request", ["bye-a"]),
-      endCall: { reason: "farewell", farewell: "Should be stale." },
+      endCall: { reason: "farewell", farewell: "Goodbye now." },
     }));
-    await waitFor(() => expect(delegate).toHaveBeenCalledTimes(2));
-    expect(hook.sent.some((event) => event.content === "Should be stale.")).toBe(false);
-    expect(hook.result.current.microphoneState).toBe("on");
+    await waitFor(() => expect(hook.sent).toContainEqual(expect.objectContaining({
+      type: "session.commentary.append",
+      content: "Wednesday is saved. Goodbye now.",
+    })));
+    expect(delegate).toHaveBeenCalledOnce();
+    expect(hook.result.current.microphoneState).toBe("off");
+    expect(hook.result.current.pendingTextDraft).toBe("Keep this typed draft");
+    act(() => serverEvent(hook.channel, { type: "session.closed" }));
+    expect(hook.result.current.pendingTextDraft).toBe("Keep this typed draft");
+  });
 
+  it("ignores an end-call directive on a failed result", async () => {
+    const delegate = vi.fn().mockImplementation(async (args: { requestId: string }) => ({
+      ...completed(args.requestId, []),
+      status: "failed" as const,
+      endCall: { reason: "farewell" as const, farewell: "Should not play." },
+    }));
+    const hook = await connect(delegate as never, { idleTimeoutMs: 60_000 });
     act(() => expect(hook.result.current.sendText("test failed ending")).toBe(true));
-    await waitFor(() => expect(delegate).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(delegate).toHaveBeenCalledOnce());
     await waitFor(() => expect(hook.result.current.backendState).toBe("failed"));
     expect(hook.sent.some((event) => event.content === "Should not play.")).toBe(false);
     expect(hook.result.current.microphoneState).toBe("on");

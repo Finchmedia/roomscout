@@ -51,25 +51,34 @@ export async function runScoutTurn(ctx: ActionCtx, args: {
   saveMessages?: "all" | "none" | "promptAndOutput";
   /** Voice delegates can request a semantic delivery envelope from this same model turn. */
   responseMode?: "voice_delivery";
+  /** Early search-fact capture skips unrelated memory/provider context. */
+  contextMode?: "full" | "search_facts";
   /** Musician chat turns stream: the reply is written to the thread as deltas while it is generated. */
   stream?: boolean;
-} & ({ prompt: string; promptMessageId?: never } | { promptMessageId: string; prompt?: never })) {
-  const memoryContext: string = await ctx.runQuery(internal.memory.getPromptContext, {
-    ownerId: args.ownerId,
-  });
+} & ({ prompt: string; promptMessageId?: never } | { promptMessageId: string; prompt?: string })) {
+  const searchFactsOnly = args.contextMode === "search_facts";
+  const memoryContext: string = searchFactsOnly
+    ? ""
+    : await ctx.runQuery(internal.memory.getPromptContext, {
+        ownerId: args.ownerId,
+      });
   let relevantMemory = "";
-  const progress = args.origin === "musician" || args.origin === "scout" ? await ctx.runQuery(internal.providerConversations.getProgressContext, {
-    ownerId: args.ownerId, savedNeedId: args.savedNeedId,
-  }) : "";
+  const progress = !searchFactsOnly && (args.origin === "musician" || args.origin === "scout")
+    ? await ctx.runQuery(internal.providerConversations.getProgressContext, {
+        ownerId: args.ownerId, savedNeedId: args.savedNeedId,
+      })
+    : "";
   let semanticRecallAvailable = true;
-  try {
-    relevantMemory = await ctx.runAction(internal.memory.searchRelevant, {
-      ownerId: args.ownerId, query: args.memoryQuery.slice(0, 4_000),
-    });
-  } catch {
-    // The structured facts and compressed memory remain available even when
-    // the independent embedding provider is temporarily unavailable.
-    semanticRecallAvailable = false;
+  if (!searchFactsOnly) {
+    try {
+      relevantMemory = await ctx.runAction(internal.memory.searchRelevant, {
+        ownerId: args.ownerId, query: args.memoryQuery.slice(0, 4_000),
+      });
+    } catch {
+      // The structured facts and compressed memory remain available even when
+      // the independent embedding provider is temporarily unavailable.
+      semanticRecallAvailable = false;
+    }
   }
   const currentNeed = args.savedNeedId
     ? await ctx.runQuery(internal.savedNeeds.getOwnedInternal, {
@@ -88,7 +97,9 @@ export async function runScoutTurn(ctx: ActionCtx, args: {
     ? `VOICE DELIVERY OUTPUT: Return the required structured envelope after all tool work. Choose delivery semantically from the musician's current request and verified tool results. Use silent only for routine fact/memory saves, corrections, or successful brief-readiness updates that need no backend answer. Use spoken for an explicit information or status question, a requested action or decision, or a required clarification. A turn that combines a correction with an action is spoken. If setConversationLanguage succeeds, write any spokenSummary in that newly selected language. For silent output set responseKind=routine_update and spokenSummary to the empty string. Never place internal ids, tool metadata, or raw structured completion data in spokenSummary.`
     : "";
   const generationArgs = {
-    ...(args.promptMessageId ? { promptMessageId: args.promptMessageId } : { prompt: args.prompt! }),
+    ...(args.promptMessageId
+      ? { promptMessageId: args.promptMessageId, ...(args.prompt !== undefined ? { prompt: args.prompt } : {}) }
+      : { prompt: args.prompt! }),
     instructions: [scoutBaseInstructions, originInstructions, memoryContext, relevantMemory, progress, args.caseCard,
       !semanticRecallAvailable ? "Semantic memory retrieval is temporarily unavailable. Use the supplied durable context; do not claim exhaustive recall." : "",
       latestSearch,

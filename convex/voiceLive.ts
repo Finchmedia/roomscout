@@ -21,7 +21,12 @@ import {
 } from "./lib/savedNeedLocation";
 import { activateNeed } from "./savedNeeds";
 import { assertVoiceClaim, voiceNeedSnapshot } from "./lib/voiceClaim";
-import { buildScoutTools, briefReadinessFor, createSearchDraftTool } from "./scout";
+import {
+  buildScoutTools,
+  briefReadinessFor,
+  createMarkSearchBriefReadyTool,
+  createSearchDraftTool,
+} from "./scout";
 import { runScoutTurn, scoutAgent } from "./scoutRuntime";
 import { liveInstructions, scoutVoiceInstructions, type ConversationLocale } from "./prompts/roomScoutLive";
 import { voiceEndFarewell, type VoiceEndReason } from "./lib/voiceEndIntent";
@@ -35,8 +40,10 @@ const MAX_FRAGMENT_CHARS = 2_000;
 const MAX_PROMPT_CHARS = 64_000;
 const MAX_REQUEST_ID_CHARS = 160;
 const MAX_EVENT_ID_CHARS = 240;
+const MAX_TRANSCRIPT_SEGMENT_CHARS = 8_000;
+const MAX_TRANSCRIPT_SOURCE_EVENTS = 1_024;
 const DEFAULT_MODEL = "gpt-live-1";
-const DEFAULT_VOICE = "ripple";
+const DEFAULT_VOICE = "marin";
 
 const localeValidator = v.union(v.literal("en"), v.literal("de"));
 const activationMissingFieldValidator = v.union(v.literal("location"), v.literal("radiusKm"));
@@ -113,6 +120,53 @@ function configuredProvider(): "realtime" | "live" {
   return liveEnv.VOICE_PROVIDER === "live" ? "live" : "realtime";
 }
 
+export function hasMeaningfulSavedNeed(need: {
+  locationQuery?: string;
+  locationLabel?: string;
+  city?: string;
+  radiusKm?: number;
+  maxBudgetEur?: number;
+  arrangement: string[];
+  schedule: string[];
+  requirements: string[];
+  openToSharing?: boolean;
+  genres?: string[];
+  instruments?: string[];
+  collaborationOpen?: boolean;
+  facets?: unknown[];
+} | null): boolean {
+  return Boolean(need && (
+    need.locationQuery?.trim() ||
+    need.locationLabel?.trim() ||
+    need.city?.trim() ||
+    need.radiusKm !== undefined ||
+    need.maxBudgetEur !== undefined ||
+    need.arrangement.length > 0 ||
+    need.schedule.length > 0 ||
+    need.requirements.length > 0 ||
+    need.openToSharing !== undefined ||
+    (need.genres?.length ?? 0) > 0 ||
+    (need.instruments?.length ?? 0) > 0 ||
+    need.collaborationOpen !== undefined ||
+    (need.facets?.length ?? 0) > 0
+  ));
+}
+
+export function captureFactsCapabilities(args: {
+  mode: "search_discovery" | "signal_advisor" | "outreach_drafting";
+  hasActiveNeed: boolean;
+  needStatus?: "draft" | "active" | "paused" | "archived";
+}) {
+  const updateSearchDraft = args.hasActiveNeed &&
+    (args.mode === "search_discovery" || args.mode === "signal_advisor");
+  return {
+    updateSearchDraft,
+    markSearchBriefReady: updateSearchDraft &&
+      args.mode === "search_discovery" &&
+      args.needStatus === "draft",
+  };
+}
+
 function cleanLocale(value: string | null | undefined): ConversationLocale | null {
   return value === "en" || value === "de" ? value : null;
 }
@@ -179,6 +233,116 @@ export const setLanguage = mutation({
   },
 });
 
+export const recordTranscriptSegment = mutation({
+  args: {
+    voiceSessionId: v.id("voiceSessions"),
+    segmentId: v.string(),
+    revision: v.number(),
+    role: v.union(v.literal("user"), v.literal("assistant")),
+    transcript: v.string(),
+    sourceEventIds: v.array(v.string()),
+    startMs: v.number(),
+    endMs: v.number(),
+  },
+  returns: v.object({
+    status: v.union(
+      v.literal("created"),
+      v.literal("updated"),
+      v.literal("unchanged"),
+      v.literal("stale"),
+    ),
+    messageId: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const ownerId = await requireUserId(ctx);
+    const session = await ctx.db.get(args.voiceSessionId);
+    if (!session || session.ownerId !== ownerId || session.provider !== "live") {
+      throw new ConvexError({ code: "VOICE_SESSION_NOT_FOUND" });
+    }
+    const transcript = args.transcript.trim();
+    const uniqueSourceIds = [...new Set(args.sourceEventIds)];
+    if (
+      !args.segmentId.trim() ||
+      args.segmentId.length > MAX_EVENT_ID_CHARS ||
+      !Number.isSafeInteger(args.revision) ||
+      args.revision < 1 ||
+      !transcript ||
+      transcript.length > MAX_TRANSCRIPT_SEGMENT_CHARS ||
+      uniqueSourceIds.length !== args.sourceEventIds.length ||
+      uniqueSourceIds.length < 1 ||
+      uniqueSourceIds.length > MAX_TRANSCRIPT_SOURCE_EVENTS ||
+      uniqueSourceIds.some((eventId) => !eventId || eventId.length > MAX_EVENT_ID_CHARS) ||
+      !Number.isFinite(args.startMs) ||
+      !Number.isFinite(args.endMs) ||
+      args.startMs < 0 ||
+      args.endMs < args.startMs
+    ) {
+      throw new ConvexError({ code: "INVALID_VOICE_TRANSCRIPT_SEGMENT" });
+    }
+    const existing = await ctx.db
+      .query("voiceTranscriptEvents")
+      .withIndex("by_voice_session_and_provider_event_id", (q) =>
+        q.eq("voiceSessionId", args.voiceSessionId).eq("providerEventId", args.segmentId))
+      .unique();
+    if (existing) {
+      if (existing.ownerId !== ownerId || existing.role !== args.role || !existing.agentMessageId) {
+        throw new ConvexError({ code: "VOICE_TRANSCRIPT_SEGMENT_CONFLICT" });
+      }
+      const existingRevision = existing.segmentRevision ?? 1;
+      if (args.revision < existingRevision) {
+        return { status: "stale" as const, messageId: existing.agentMessageId };
+      }
+      const unchanged = args.revision === existingRevision &&
+        existing.transcript === transcript &&
+        existing.startMs === args.startMs &&
+        existing.endMs === args.endMs &&
+        JSON.stringify(existing.sourceEventIds ?? []) === JSON.stringify(uniqueSourceIds);
+      if (unchanged) {
+        return { status: "unchanged" as const, messageId: existing.agentMessageId };
+      }
+      if (args.revision === existingRevision) {
+        return { status: "stale" as const, messageId: existing.agentMessageId };
+      }
+      await scoutAgent.updateMessage(ctx, {
+        messageId: existing.agentMessageId,
+        patch: {
+          message: { role: args.role, content: transcript },
+          status: "success",
+        },
+      });
+      await ctx.db.patch(existing._id, {
+        transcript,
+        sourceEventIds: uniqueSourceIds,
+        segmentRevision: args.revision,
+        startMs: args.startMs,
+        endMs: args.endMs,
+        finalizedAt: Date.now(),
+      });
+      return { status: "updated" as const, messageId: existing.agentMessageId };
+    }
+    const saved = await saveMessage(ctx, components.agent, {
+      threadId: session.threadId,
+      userId: ownerId,
+      message: { role: args.role, content: transcript },
+      agentName: "RoomScout Live Transcript",
+    });
+    await ctx.db.insert("voiceTranscriptEvents", {
+      ownerId,
+      voiceSessionId: args.voiceSessionId,
+      providerEventId: args.segmentId,
+      role: args.role,
+      transcript,
+      sourceEventIds: uniqueSourceIds,
+      segmentRevision: args.revision,
+      startMs: args.startMs,
+      endMs: args.endMs,
+      agentMessageId: saved.messageId,
+      finalizedAt: Date.now(),
+    });
+    return { status: "created" as const, messageId: saved.messageId };
+  },
+});
+
 export const setLanguageFromClaim = internalMutation({
   args: {
     ownerId: v.id("users"),
@@ -216,7 +380,7 @@ export const getSessionBootstrap = internalQuery({
     discoveryContext: v.string(),
     discovery: v.boolean(),
     locale: localeValidator,
-    hasSavedNeed: v.boolean(),
+    hasPriorContext: v.boolean(),
   }), v.null()),
   handler: async (ctx, args) => {
     const [user, context] = await Promise.all([
@@ -224,8 +388,15 @@ export const getSessionBootstrap = internalQuery({
       ctx.db.query("scoutContexts").withIndex("by_owner", (q) => q.eq("ownerId", args.ownerId)).unique(),
     ]);
     if (!user || !context) return null;
-    const loadedNeed = context.activeNeedId ? await ctx.db.get(context.activeNeedId) : null;
+    const [loadedNeed, priorVoiceTranscript] = await Promise.all([
+      context.activeNeedId ? ctx.db.get(context.activeNeedId) : null,
+      ctx.db.query("voiceTranscriptEvents")
+        .withIndex("by_owner_and_finalized_at", (q) => q.eq("ownerId", args.ownerId))
+        .order("desc")
+        .first(),
+    ]);
     const need = loadedNeed?.ownerId === args.ownerId ? loadedNeed : null;
+    const hasMeaningfulNeed = hasMeaningfulSavedNeed(need);
     const discoveryContext = buildLiveDiscoveryContext({
       need,
       mode: context.mode,
@@ -238,7 +409,7 @@ export const getSessionBootstrap = internalQuery({
       discoveryContext: JSON.stringify(discoveryContext),
       discovery: discoveryContext.discovery,
       locale: user.conversationLocale ?? "en",
-      hasSavedNeed: need !== null,
+      hasPriorContext: hasMeaningfulNeed || priorVoiceTranscript !== null,
     };
   },
 });
@@ -355,7 +526,7 @@ export const sessionHttp = httpAction(async (ctx, request) => {
           },
           delegation: { type: "client" },
           instructions: liveInstructions(locale, bootstrap.discoveryContext, {
-            hasSavedNeed: bootstrap.hasSavedNeed,
+            hasPriorContext: bootstrap.hasPriorContext,
             discovery: bootstrap.discovery,
           }),
           store: false,
@@ -418,6 +589,7 @@ export const claimRequest = internalMutation({
     source: sourceValidator,
     intent: v.optional(v.literal("capture_facts")),
     delegationId: v.optional(v.string()),
+    transcriptSegmentId: v.optional(v.string()),
     eventIds: v.array(v.string()),
     prompt: v.string(),
     focusedSignalId: v.optional(v.id("signals")),
@@ -501,8 +673,25 @@ export const claimRequest = internalMutation({
       decisionUpdatedAt = decision.updatedAt;
     }
     const need = context.activeNeedId ? await ctx.db.get(context.activeNeedId) : null;
+    const transcriptSegment = args.transcriptSegmentId
+      ? await ctx.db
+          .query("voiceTranscriptEvents")
+          .withIndex("by_voice_session_and_provider_event_id", (q) =>
+            q.eq("voiceSessionId", args.voiceSessionId).eq("providerEventId", args.transcriptSegmentId!))
+          .unique()
+      : null;
+    if (args.transcriptSegmentId && (
+      !transcriptSegment ||
+      transcriptSegment.ownerId !== args.ownerId ||
+      transcriptSegment.role !== "user" ||
+      !transcriptSegment.agentMessageId
+    )) {
+      throw new ConvexError({ code: "VOICE_TRANSCRIPT_SEGMENT_NOT_FOUND" });
+    }
     const messageId = args.intent === "capture_facts"
       ? undefined
+      : transcriptSegment?.agentMessageId
+        ? transcriptSegment.agentMessageId
       : (await saveMessage(ctx, components.agent, {
           threadId: session.threadId,
           userId: args.ownerId,
@@ -575,11 +764,15 @@ export const finishRequest = internalMutation({
         ? { status: "superseded", delivery: "silent", spokenSummary: undefined, endCall: undefined }
         : {}),
     };
-    const assistantCompletion = result.delivery === "spoken"
-      ? result.spokenSummary?.trim()
-      : result.delivery === "silent" && result.status === "completed" && claim.promptMessageId
-        ? ""
-        : undefined;
+    // Spoken Live output is persisted from the provider transcript, which is
+    // the actual conversation. Only a silent typed turn needs an invisible
+    // completion marker so the text composer does not remain pending.
+    const assistantCompletion = result.delivery === "silent" &&
+      result.status === "completed" &&
+      claim.source === "text" &&
+      claim.promptMessageId
+      ? ""
+      : undefined;
     if (assistantCompletion !== undefined && !result.assistantMessageId) {
       const saved = await scoutAgent.saveMessage(ctx, {
         threadId: session.threadId,
@@ -833,6 +1026,7 @@ export const delegate = action({
     intent: v.optional(v.literal("capture_facts")),
     fragments: v.array(fragmentValidator),
     text: v.optional(v.string()),
+    transcriptSegmentId: v.optional(v.string()),
     focusedSignalId: v.optional(v.id("signals")),
     decisionId: v.optional(v.id("decisions")),
   },
@@ -840,7 +1034,13 @@ export const delegate = action({
   handler: async (ctx, args): Promise<DelegateResult> => {
     const ownerId = await requireActionUserId(ctx);
     const requestId = args.requestId.trim();
-    if (!requestId || requestId.length > MAX_REQUEST_ID_CHARS || args.fragments.length > MAX_FRAGMENTS) {
+    if (
+      !requestId ||
+      requestId.length > MAX_REQUEST_ID_CHARS ||
+      args.fragments.length > MAX_FRAGMENTS ||
+      (args.transcriptSegmentId !== undefined &&
+        (!args.transcriptSegmentId || args.transcriptSegmentId.length > MAX_EVENT_ID_CHARS))
+    ) {
       throw new ConvexError({ code: "INVALID_VOICE_REQUEST" });
     }
     const seen = new Set<string>();
@@ -862,7 +1062,7 @@ export const delegate = action({
     const state = await ctx.runQuery(internal.voiceLive.getOwnedSessionForDelegate, { ownerId, voiceSessionId: args.voiceSessionId });
     if (!state) throw new ConvexError({ code: "VOICE_SESSION_NOT_FOUND" });
     const { userPrompt, assistantContext } = composeVoiceInput({ source: args.source, fragments: args.fragments, text: args.text, locale: state.locale });
-    const inputFingerprint = await fingerprint({ intent: args.intent ?? null, source: args.source, delegationId: args.delegationId ?? null, fragments: args.fragments, text: args.text ?? null, focusedSignalId: args.focusedSignalId ?? null, decisionId: args.decisionId ?? null });
+    const inputFingerprint = await fingerprint({ intent: args.intent ?? null, source: args.source, delegationId: args.delegationId ?? null, transcriptSegmentId: args.transcriptSegmentId ?? null, fragments: args.fragments, text: args.text ?? null, focusedSignalId: args.focusedSignalId ?? null, decisionId: args.decisionId ?? null });
     const claimed = await ctx.runMutation(internal.voiceLive.claimRequest, {
       ownerId,
       voiceSessionId: args.voiceSessionId,
@@ -871,6 +1071,7 @@ export const delegate = action({
       source: args.source,
       intent: args.intent,
       delegationId: args.delegationId,
+      transcriptSegmentId: args.transcriptSegmentId,
       eventIds: args.fragments.map((fragment) => fragment.eventId),
       prompt: userPrompt,
       focusedSignalId: args.focusedSignalId,
@@ -912,8 +1113,19 @@ export const delegate = action({
     };
     const searchCanChange = context.activeNeedId !== undefined &&
       (context.mode === "search_discovery" || context.mode === "signal_advisor");
+    const needBeforeTurn = context.activeNeedId
+      ? await ctx.runQuery(internal.savedNeeds.getOwnedInternal, {
+          ownerId,
+          needId: context.activeNeedId,
+        })
+      : null;
+    const captureCapabilities = captureFactsCapabilities({
+      mode: context.mode,
+      hasActiveNeed: context.activeNeedId !== undefined,
+      needStatus: needBeforeTurn?.status,
+    });
     const tools: ToolSet = captureFacts
-      ? searchCanChange && context.activeNeedId
+      ? captureCapabilities.updateSearchDraft && context.activeNeedId
         ? {
             updateSearchDraft: createSearchDraftTool(ctx, {
               ownerId,
@@ -921,6 +1133,20 @@ export const delegate = action({
               voiceClaim: claimRef,
               onUpdated: (result) => onEffect("search", result.changedFields),
             }),
+            ...(captureCapabilities.markSearchBriefReady
+              ? {
+                  markSearchBriefReady: createMarkSearchBriefReadyTool(ctx, {
+                    ownerId,
+                    threadId: state.threadId,
+                    needId: context.activeNeedId,
+                    voiceClaim: claimRef,
+                    onReady: () => {
+                      onEffect("brief", ["briefReadiness"]);
+                      verifiedFacts.add("search.briefReadiness=ready");
+                    },
+                  }),
+                }
+              : {}),
           }
         : {}
       : buildScoutTools(ctx, {
@@ -958,19 +1184,17 @@ export const delegate = action({
     }
     try {
       const captureInstruction = claimed.locale === "de"
-        ? "FRÜHE FAKTENERFASSUNG: Prüfe nur abgeschlossene, ausdrückliche Aussagen des Musikers. Speichere ausschließlich klare Suchfakten mit updateSearchDraft. Ignoriere Fragen, unvollständige Werte, Handlungswünsche und mehrdeutige Aussagen. Keine anderen Wirkungen. Dein Text wird nicht angezeigt oder gesprochen."
-        : "EARLY FACT CAPTURE: Inspect only complete, explicit musician statements. Save only clear search facts with updateSearchDraft. Ignore questions, incomplete values, action requests and ambiguous statements. Cause no other effects. Your prose is neither shown nor spoken.";
+        ? captureCapabilities.markSearchBriefReady
+          ? "FRÜHE FAKTENERFASSUNG: Prüfe nur abgeschlossene, ausdrückliche Aussagen des Musikers. Speichere zuerst ausschließlich klare Suchfakten mit updateSearchDraft. Ignoriere Fragen, unvollständige Werte, Handlungswünsche und mehrdeutige Aussagen. Wenn und nur wenn der gesamte aktuelle kanonische Entwurf danach nützlich genug für eine Suche ist und keine wesentliche Unklarheit bleibt, rufe markSearchBriefReady auf. Markiere nicht allein deshalb als bereit, weil Ort und Radius vorhanden sind, und nicht mitten in einer erkennbar fortgesetzten Beschreibung. markSearchBriefReady startet keine Suche. Nutze keine anderen Wirkungen. Dein Text wird nicht angezeigt oder gesprochen."
+          : "FRÜHE FAKTENERFASSUNG: Prüfe nur abgeschlossene, ausdrückliche Aussagen des Musikers. Speichere ausschließlich klare Suchfakten mit updateSearchDraft. Ignoriere Fragen, unvollständige Werte, Handlungswünsche und mehrdeutige Aussagen. Keine anderen Wirkungen. Dein Text wird nicht angezeigt oder gesprochen."
+        : captureCapabilities.markSearchBriefReady
+          ? "EARLY FACT CAPTURE: Inspect only complete, explicit musician statements. First save only clear search facts with updateSearchDraft. Ignore questions, incomplete values, action requests and ambiguous statements. If and only if the whole current canonical draft is then useful enough to run and no material ambiguity remains, call markSearchBriefReady. Do not mark it ready merely because location and radius exist, or while the musician is evidently still describing the brief. markSearchBriefReady never starts the search. Cause no other effects. Your prose is neither shown nor spoken."
+          : "EARLY FACT CAPTURE: Inspect only complete, explicit musician statements. Save only clear search facts with updateSearchDraft. Ignore questions, incomplete values, action requests and ambiguous statements. Cause no other effects. Your prose is neither shown nor spoken.";
       const assistantInstruction = assistantContext
         ? claimed.locale === "de"
           ? `VOICE-ASSISTENT-KONTEXT (keine Musikerangabe und keine Grundlage für Suchänderungen):\n${assistantContext}`
           : `VOICE ASSISTANT CONTEXT (not a musician statement and never a basis for search changes):\n${assistantContext}`
         : "";
-      const needBeforeTurn = context.activeNeedId
-        ? await ctx.runQuery(internal.savedNeeds.getOwnedInternal, {
-            ownerId,
-            needId: context.activeNeedId,
-          })
-        : null;
       const discovery = context.mode === "search_discovery" && needBeforeTurn?.status === "draft";
       const turn = await runScoutTurn(ctx, {
         ownerId,
@@ -984,9 +1208,14 @@ export const delegate = action({
         ].filter(Boolean).join("\n\n"),
         memoryQuery: userPrompt,
         ...(captureFacts
-          ? { prompt: userPrompt, saveMessages: "none" as const }
+          ? {
+              prompt: userPrompt,
+              saveMessages: "none" as const,
+              contextMode: "search_facts" as const,
+            }
           : {
               promptMessageId: claimed.promptMessageId!,
+              prompt: userPrompt,
               saveMessages: "none" as const,
               responseMode: "voice_delivery" as const,
             }),

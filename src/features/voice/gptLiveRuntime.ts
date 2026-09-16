@@ -45,6 +45,12 @@ export type LiveCaptionRow = {
   endMs: number;
 };
 
+export type LiveTranscriptSegment = LiveCaptionRow & {
+  segmentId: string;
+  revision: number;
+  sourceEventIds: string[];
+};
+
 export type LiveDelegationSnapshot = {
   delegationId: string;
   maxSequence: number;
@@ -67,8 +73,11 @@ export type LiveCaptureCursor = {
 const FACT_SIGNAL = /\b(?:rehearsal|practice|proberaum|probe|room|raum|studio|location|city|stadt|near|nähe|radius|kilomet|\bkm\b|budget|euro|month|monat|week|woche|monday|tuesday|wednesday|thursday|friday|saturday|sunday|montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag|morning|afternoon|evening|morgen|nachmittag|abend|band|member|mitglied|people|person|piece|musician|musiker|drum|schlagzeug|equipment|gear|verstärker|amp|storage|lager|leave|stehen lassen|noise|laut|accessible|barriere|parking|parkplatz)\b|€/iu;
 const COMPLETE_CLAUSE = /[.!?](?:["')\]]*)\s*$/u;
 const CONFIRMED_SENTENCE_BOUNDARY = /[.!?](?:["')\]]*)?(?=\s+["'([]*\p{Lu})/gu;
+const NON_FACT_SHORT_REPLY = /^(?:hi|hello|hey|hallo|hey there|good (?:morning|afternoon|evening)|guten (?:morgen|tag|abend)|thanks?|thank you|danke|okay|ok|cool|great|bye|goodbye|tsch(?:u|ü)ss)[.!?\s]*$/iu;
 const MAX_DELEGATE_FRAGMENTS = 1_024;
 const MAX_DELEGATE_CHARACTERS = 64_000;
+const MAX_TRANSCRIPT_SEGMENT_EVENTS = 1_024;
+const MAX_TRANSCRIPT_SEGMENT_CHARACTERS = 8_000;
 
 export class GptLiveContextOverflowError extends Error {
   constructor() {
@@ -152,26 +161,52 @@ export class GptLiveFragmentBuffer {
     };
   }
 
-  captureCandidate(after: LiveCaptureCursor): LiveCaptureCandidate | undefined {
-    const sourceSlices = this.#fragments.flatMap((fragment) => {
-      if (fragment.role !== "user" || fragment.sequence < after.sequence) return [];
+  captureCandidate(
+    after: LiveCaptureCursor,
+    allowQuietStreamEdge = false,
+  ): LiveCaptureCandidate | undefined {
+    let sawUser = false;
+    let completedByAssistantTurn = false;
+    const sourceSlices: Array<{
+      fragment: LiveTranscriptFragment;
+      startOffset: number;
+      text: string;
+    }> = [];
+    for (const fragment of this.#fragments) {
+      if (fragment.sequence < after.sequence) continue;
+      if (fragment.role === "assistant") {
+        if (sawUser) {
+          completedByAssistantTurn = true;
+          break;
+        }
+        continue;
+      }
       const startOffset = fragment.sequence === after.sequence
         ? Math.min(after.characterOffset, fragment.text.length)
         : 0;
       const text = fragment.text.slice(startOffset);
-      return text ? [{ fragment, startOffset, text }] : [];
-    });
+      if (!text) continue;
+      sawUser = true;
+      sourceSlices.push({ fragment, startOffset, text });
+    }
     const availableText = sourceSlices.map((slice) => slice.text).join("");
-    let boundaryEnd = -1;
-    for (const match of availableText.matchAll(CONFIRMED_SENTENCE_BOUNDARY)) {
-      boundaryEnd = (match.index ?? 0) + match[0].length;
+    let boundaryEnd = completedByAssistantTurn || allowQuietStreamEdge ? availableText.length : -1;
+    if (!completedByAssistantTurn) {
+      for (const match of availableText.matchAll(CONFIRMED_SENTENCE_BOUNDARY)) {
+        boundaryEnd = (match.index ?? 0) + match[0].length;
+      }
     }
     // A terminator at the current stream edge is ambiguous: the next delta may
     // continue a number such as `300.` + `50`. Wait for the next sentence's
     // capitalized start rather than capturing a phantom value.
     if (boundaryEnd < 1) return undefined;
     const completedText = availableText.slice(0, boundaryEnd);
-    if (!isConservativeFactStatement(completedText)) return undefined;
+    const normalizedText = completedText.trim();
+    if (
+      !isConservativeFactStatement(completedText) &&
+      (!(completedByAssistantTurn || allowQuietStreamEdge) ||
+        NON_FACT_SHORT_REPLY.test(normalizedText))
+    ) return undefined;
     const fragments: LiveTranscriptFragment[] = [];
     let remainingCharacters = boundaryEnd;
     let nextCursor = after;
@@ -187,6 +222,17 @@ export class GptLiveFragmentBuffer {
         characterOffset: slice.startOffset + consumedCharacters,
       };
       remainingCharacters -= consumedCharacters;
+    }
+    if ((completedByAssistantTurn || allowQuietStreamEdge) && fragments.length > 0) {
+      const firstUserSequence = fragments[0]!.sequence;
+      const precedingAssistant: LiveTranscriptFragment[] = [];
+      for (let index = this.#fragments.length - 1; index >= 0; index -= 1) {
+        const fragment = this.#fragments[index]!;
+        if (fragment.sequence >= firstUserSequence) continue;
+        if (fragment.role === "user") break;
+        precedingAssistant.unshift(fragment);
+      }
+      fragments.unshift(...precedingAssistant);
     }
     return {
       fragments,
@@ -233,12 +279,9 @@ export class GptLiveFragmentBuffer {
     for (const fragment of [...this.#fragments].sort(
       (left, right) => left.startMs - right.startMs || left.sequence - right.sequence,
     )) {
-      const row = [...rows]
-        .reverse()
-        .find(
-          (candidate) =>
-            candidate.role === fragment.role && fragment.startMs - candidate.endMs <= gapMs,
-        );
+      const row = [...rows].reverse().find(
+        (candidate) => candidate.role === fragment.role && fragment.startMs - candidate.endMs <= gapMs,
+      );
       if (row) {
         row.text += fragment.text;
         row.startMs = Math.min(row.startMs, fragment.startMs);
@@ -254,6 +297,83 @@ export class GptLiveFragmentBuffer {
       }
     }
     return rows.sort((left, right) => left.startMs - right.startMs);
+  }
+
+  transcriptSegments(gapMs = 900): LiveTranscriptSegment[] {
+    const rows: Array<LiveCaptionRow & { fragments: LiveTranscriptFragment[] }> = [];
+    for (const fragment of [...this.#fragments].sort(
+      (left, right) => left.startMs - right.startMs || left.sequence - right.sequence,
+    )) {
+      const row = rows.at(-1);
+      if (row && row.role === fragment.role && fragment.startMs - row.endMs <= gapMs) {
+        row.text += fragment.text;
+        row.startMs = Math.min(row.startMs, fragment.startMs);
+        row.endMs = Math.max(row.endMs, fragment.endMs);
+        row.fragments.push(fragment);
+      } else {
+        rows.push({
+          id: `caption-${fragment.sequence}`,
+          role: fragment.role,
+          text: fragment.text,
+          startMs: fragment.startMs,
+          endMs: fragment.endMs,
+          fragments: [fragment],
+        });
+      }
+    }
+    return rows
+      .sort((left, right) => left.startMs - right.startMs)
+      .flatMap(({ fragments, ...row }) => {
+        const chunks: Array<{
+          text: string;
+          fragments: LiveTranscriptFragment[];
+          startMs: number;
+          endMs: number;
+        }> = [];
+        for (const fragment of fragments) {
+          let remaining = fragment.text;
+          while (remaining) {
+            let chunk = chunks.at(-1);
+            const eventAlreadyPresent = chunk?.fragments.some(
+              (candidate) => candidate.eventId === fragment.eventId,
+            ) ?? false;
+            if (
+              !chunk ||
+              chunk.text.length >= MAX_TRANSCRIPT_SEGMENT_CHARACTERS ||
+              (!eventAlreadyPresent && chunk.fragments.length >= MAX_TRANSCRIPT_SEGMENT_EVENTS)
+            ) {
+              chunk = {
+                text: "",
+                fragments: [],
+                startMs: fragment.startMs,
+                endMs: fragment.endMs,
+              };
+              chunks.push(chunk);
+            }
+            const room = MAX_TRANSCRIPT_SEGMENT_CHARACTERS - chunk.text.length;
+            const slice = remaining.slice(0, room);
+            chunk.text += slice;
+            if (!eventAlreadyPresent) chunk.fragments.push(fragment);
+            chunk.startMs = Math.min(chunk.startMs, fragment.startMs);
+            chunk.endMs = Math.max(chunk.endMs, fragment.endMs);
+            remaining = remaining.slice(slice.length);
+          }
+        }
+        return chunks.map((chunk, chunkIndex) => {
+          const stableFirst = [...chunk.fragments]
+            .sort((left, right) => left.sequence - right.sequence)[0]!;
+          return {
+            ...row,
+            id: chunkIndex === 0 ? row.id : `${row.id}-${chunkIndex}`,
+            text: chunk.text,
+            startMs: chunk.startMs,
+            endMs: chunk.endMs,
+            segmentId: `live:${row.role}:${stableFirst.eventId}${chunkIndex ? `:${chunkIndex}` : ""}`,
+            revision: Math.max(...chunk.fragments.map((fragment) => fragment.sequence)),
+            sourceEventIds: [...new Set(chunk.fragments.map((fragment) => fragment.eventId))],
+          };
+        });
+      });
   }
 
   clear(): void {

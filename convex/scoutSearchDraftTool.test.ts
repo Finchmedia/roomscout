@@ -4,6 +4,7 @@ import type { Id } from "./_generated/dataModel";
 import { currentSearchAuthority } from "./lib/currentSearchTruth";
 import {
   buildScoutTools,
+  createMarkSearchBriefReadyTool,
   createSearchDraftTool,
   currentSearchTruth,
   materializeSearchDraftChanges,
@@ -146,6 +147,45 @@ describe("Scout search equipment extraction contract", () => {
     ]));
     expect(tools).not.toHaveProperty("markSearchBriefReady");
     expect(tools.getCurrentSearch?.description).toContain("overrides earlier chat messages");
+  });
+
+  it("shares the claim-fenced readiness marker without activating the search", async () => {
+    const runMutation = vi.fn().mockResolvedValue({
+      readyForReview: true,
+      needRevision: 4,
+      readyAt: 2_000,
+      missingFields: [],
+    });
+    const onReady = vi.fn();
+    const voiceClaim = {
+      voiceSessionId: "voice" as Id<"voiceSessions">,
+      requestId: "capture",
+      generation: 1,
+    };
+    const tool = createMarkSearchBriefReadyTool({ runMutation } as never, {
+      ownerId: "owner" as Id<"users">,
+      threadId: "thread",
+      needId: "need" as Id<"savedNeeds">,
+      voiceClaim,
+      onReady,
+    });
+    if (!tool.execute) throw new Error("markSearchBriefReady is not executable");
+
+    await expect(tool.execute.call({ ...tool, ctx: {} } as never, {}, {} as never))
+      .resolves.toMatchObject({
+        readyForReview: true,
+        needRevision: 4,
+        activationRequired: true,
+      });
+    expect(runMutation).toHaveBeenCalledWith(expect.anything(), {
+      ownerId: "owner",
+      threadId: "thread",
+      needId: "need",
+      voiceClaim,
+    });
+    expect(onReady).toHaveBeenCalledWith(expect.objectContaining({ needRevision: 4 }));
+    expect(tool.description).toContain("useful enough to run");
+    expect(tool.description).toContain("never activates the search");
   });
 
   it.each(["search_discovery", "signal_advisor", "outreach_drafting"] as const)(

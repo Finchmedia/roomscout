@@ -42,12 +42,13 @@ function message(options: {
   status?: "streaming" | "pending" | "success" | "failed";
   order: number;
   parts?: Array<Record<string, unknown>>;
+  source?: "voice_transcript";
 }) {
-  const { role, text = "", status = "success", order, parts } = options;
+  const { role, text = "", status = "success", order, parts, source } = options;
   return {
     key: `thread-${order}-0`, role, text, status, order, stepOrder: 0,
     parts: parts ?? (text ? [{ type: "text", text }] : []),
-    _creationTime: order, createdAt: order,
+    _creationTime: order, createdAt: order, source,
   };
 }
 
@@ -149,9 +150,9 @@ vi.mock("@convex-dev/agent/react", () => ({
 }));
 
 vi.mock("../../ui/chat/LiveVoiceChat", () => ({
-  LiveVoiceChat: ({ compact, primary, showTranscript, onText }: { compact?: boolean; primary?: boolean; showTranscript?: boolean; onText?: () => void }) => (
+  LiveVoiceChat: ({ compact, primary, showTranscript, onText, onEnd }: { compact?: boolean; primary?: boolean; showTranscript?: boolean; onText?: () => void; onEnd?: () => void }) => (
     <div data-compact={compact || undefined} data-primary={primary || undefined} data-show-transcript={showTranscript} data-testid="voice-session">
-      Voice Scout session<button onClick={onText}>Zum Schreiben wechseln</button>
+      Voice Scout session<button onClick={onText}>Zum Schreiben wechseln</button><button onClick={onEnd}>Anruf beenden</button>
     </div>
   ),
 }));
@@ -219,6 +220,17 @@ describe("live Scout route", () => {
     expect(screen.queryByText("Dein Scout denkt nach …")).not.toBeInTheDocument();
   });
 
+  it("treats a persisted Live user transcript as conversation history, not pending work", () => {
+    fixtures.needs = [{ ...need(), matchingRevision: 3 }];
+    fixtures.context.briefReadiness = { status: "ready", needRevision: 3, readyAt: 100 };
+    fixtures.messages = [
+      message({ role: "user", text: "Twenty kilometres is fine.", source: "voice_transcript", order: 0 }),
+    ];
+    renderPage();
+    expect(screen.getByRole("button", { name: "Scout losschicken" })).toBeEnabled();
+    expect(screen.queryByText("Dein Scout denkt nach …")).not.toBeInTheDocument();
+  });
+
   it("dismisses the current ready event for editing but opens a later ready revision", () => {
     fixtures.context.briefReadiness = { status: "ready", needRevision: 3, readyAt: 100 };
     const view = renderPage();
@@ -256,12 +268,25 @@ describe("live Scout route", () => {
     expect(fixtures.voice.setMuted).not.toHaveBeenCalled();
     expect(screen.getByTestId("voice-session")).toHaveAttribute("data-show-transcript", "false");
     expect(screen.getByRole("region", { name: "Scout-Chat" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Schließen" }));
+    expect(screen.queryByRole("region", { name: "Scout-Chat" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("voice-session")).toHaveAttribute("data-show-transcript", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Zum Schreiben wechseln" }));
     fireEvent.click(screen.getByRole("button", { name: "Mit Scout sprechen" }));
     expect(screen.getByTestId("voice-session")).toBeInTheDocument();
     expect(screen.getByTestId("voice-session")).toHaveAttribute("data-show-transcript", "true");
     expect(screen.queryByRole("region", { name: "Scout-Chat" })).not.toBeInTheDocument();
     view.unmount();
     expect(fixtures.voice.disconnect).not.toHaveBeenCalled();
+  });
+
+  it("returns to the normal Scout when the voice call ends", () => {
+    fixtures.voice.connected = true;
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Anruf beenden" }));
+    expect(screen.queryByTestId("voice-session")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Scout-Chat" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mit Scout sprechen" })).toBeInTheDocument();
   });
 
   it("keeps the discovery voice presentation spacious until connection, then compacts beside saved facts", () => {
@@ -401,6 +426,14 @@ describe("live Scout route", () => {
         content: expect.stringContaining("mode search_discovery, phase discovery"),
       }),
     )
+    expect(fixtures.voice.appendVerifiedBackgroundUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "brief-ready:need-current",
+        version: "en:3",
+        speak: true,
+        content: "Your brief is ready. Shall I start looking?",
+      }),
+    );
 
     fixtures.needs = [{ ...fixtures.needs[0]!, status: "active" }];
     view.rerender(<MemoryRouter><ScoutPage /></MemoryRouter>);
@@ -420,6 +453,7 @@ describe("live Scout route", () => {
         content: expect.stringContaining("phase search_active"),
       }),
     );
+    expect(fixtures.voice.clearBackgroundUpdate).toHaveBeenCalledWith("brief-ready:need-current");
   });
 
   it("keeps the conversation mounted when the search starts", async () => {
