@@ -49,8 +49,8 @@ Hackathon-Deadline 2026-09-22.
    selbst folgt der Sprache der Band.
 5. **Evalite reparieren und Scorecard erzeugen.** Kleiner Fix (Mandat raus,
    Regeln rein, Musiker-Rolle im Simulator), dann läuft die Offline-Suite
-   wieder, plus die Live-Suite aus Punkt 2. Für die Demo zweitrangig, für
-   SynTwin erstrangig.
+   wieder, plus die Live-Suite aus Punkt 2. Für die Demo zweitrangig, als
+   Qualitätsnachweis erstrangig.
 6. **Aufräumen:** Branch mergen und pushen, alte Ops-Seiten aus der
    Navigation, „Mandat“ aus Docs und Landing.
 
