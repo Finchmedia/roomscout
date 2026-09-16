@@ -201,12 +201,12 @@ function errorResponse(origin: string | null, status: number, message: string): 
 
 export const getConfig = query({
   args: {},
-  returns: v.object({ provider: v.union(v.literal("live"), v.literal("realtime")), locale: localeValidator }),
+  returns: v.object({ locale: localeValidator }),
   handler: async (ctx) => {
     const ownerId = await requireUserId(ctx);
     const user = await ctx.db.get(ownerId);
     if (!user) throw new ConvexError({ code: "USER_NOT_FOUND" });
-    return { provider: configuredProvider(), locale: user.conversationLocale ?? "en" };
+    return { locale: user.conversationLocale ?? "en" };
   },
 });
 
@@ -853,7 +853,6 @@ export const getSessionState = query({
   returns: v.object({
     voiceSessionId: v.id("voiceSessions"),
     status: sessionStatusValidator,
-    provider: v.union(v.literal("live"), v.literal("realtime")),
     locale: localeValidator,
     languageRevision: v.number(),
     activeRequest: v.optional(v.object({ requestId: v.string(), source: sourceValidator, startedAt: v.number() })),
@@ -894,7 +893,6 @@ export const getSessionState = query({
     return {
       voiceSessionId: session._id,
       status: session.status,
-      provider: session.provider ?? "realtime",
       locale: session.conversationLocale ?? "en",
       languageRevision: session.languageRevision ?? 0,
       activeRequest: session.activeClaim ? { requestId: session.activeClaim.requestId, source: session.activeClaim.source, startedAt: session.activeClaim.startedAt } : undefined,

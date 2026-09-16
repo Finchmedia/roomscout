@@ -8,38 +8,32 @@ const runtime = vi.hoisted(() => ({
   stopped: vi.fn(),
   disconnect: vi.fn(),
   mute: vi.fn(),
-  config: { provider: "realtime" as "realtime" | "live", locale: "de" as "en" | "de" },
+  config: { locale: "de" as "en" | "de" },
   uiLocale: "de" as "en" | "de",
   setUiLocale: vi.fn(),
   live: {
-    connected: false,
+    connected: true,
     muted: false,
     sessionLocale: "de" as "en" | "de",
     backendState: "idle" as "idle" | "queued" | "processing",
     setLanguage: vi.fn(),
     connect: vi.fn(),
+    disconnect: vi.fn(),
+    setMuted: vi.fn(),
   },
 }));
-vi.mock("../../hooks/useRealtimeVoiceScout", async () => {
+vi.mock("../../hooks/useGptLiveVoiceScout", async () => {
   const { useEffect } = await import("react");
   return {
-    useRealtimeVoiceScout: () => {
+    useGptLiveVoiceScout: () => {
       useEffect(() => {
         runtime.started();
         return () => runtime.stopped();
       }, []);
-      return {
-        connected: true,
-        muted: false,
-        disconnect: runtime.disconnect,
-        setMuted: runtime.mute,
-      };
+      return { ...runtime.live, disconnect: runtime.disconnect, setMuted: runtime.mute };
     },
   };
 });
-vi.mock("../../hooks/useGptLiveVoiceScout", () => ({
-  useGptLiveVoiceScout: () => runtime.live,
-}));
 vi.mock("convex/react", () => ({
   useQuery: () => runtime.config,
 }));
@@ -59,9 +53,9 @@ vi.mock("../../ui/copy", () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
-  runtime.config = { provider: "realtime", locale: "de" };
+  runtime.config = { locale: "de" };
   runtime.uiLocale = "de";
-  runtime.live.connected = false;
+  runtime.live.connected = true;
   runtime.live.muted = false;
   runtime.live.sessionLocale = "de";
   runtime.live.backendState = "idle";
@@ -120,7 +114,7 @@ it("keeps one session mounted across Scout, settings and the authenticated map",
 });
 
 it("defers a config echo during processing and lets the request result drive the UI locale", () => {
-  runtime.config = { provider: "live", locale: "en" };
+  runtime.config = { locale: "en" };
   runtime.uiLocale = "en";
   runtime.live.sessionLocale = "en";
   runtime.live.backendState = "processing";
@@ -130,7 +124,7 @@ it("defers a config echo during processing and lets the request result drive the
 
   // The backend persists the request-owned language change before the action
   // result reaches the hook. This config update must not invalidate that turn.
-  runtime.config = { provider: "live", locale: "de" };
+  runtime.config = { locale: "de" };
   view.rerender(
     <MemoryRouter initialEntries={["/app/scout"]}>
       <VoiceSessionProvider><p>Child</p></VoiceSessionProvider>
@@ -151,7 +145,7 @@ it("defers a config echo during processing and lets the request result drive the
 });
 
 it("keeps an explicit UI language toggle immediate while a Live request is processing", () => {
-  runtime.config = { provider: "live", locale: "en" };
+  runtime.config = { locale: "en" };
   runtime.uiLocale = "en";
   runtime.live.sessionLocale = "en";
   runtime.live.backendState = "processing";
@@ -168,7 +162,7 @@ it("keeps an explicit UI language toggle immediate while a Live request is proce
 });
 
 it("adopts an independent config language change after pending work settles", () => {
-  runtime.config = { provider: "live", locale: "en" };
+  runtime.config = { locale: "en" };
   runtime.uiLocale = "en";
   runtime.live.sessionLocale = "en";
   runtime.live.backendState = "queued";
@@ -176,7 +170,7 @@ it("adopts an independent config language change after pending work settles", ()
   runtime.live.setLanguage.mockClear();
   runtime.setUiLocale.mockClear();
 
-  runtime.config = { provider: "live", locale: "de" };
+  runtime.config = { locale: "de" };
   view.rerender(
     <MemoryRouter initialEntries={["/app/scout"]}>
       <VoiceSessionProvider><p>Child</p></VoiceSessionProvider>

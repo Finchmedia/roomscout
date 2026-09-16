@@ -539,7 +539,6 @@ describe("useGptLiveVoiceScout", () => {
     convexMocks.query = {
       voiceSessionId: "voice-1",
       status: "active",
-      provider: "live",
       locale: "en",
       languageRevision: 1,
       activeRequest: undefined,
@@ -599,7 +598,6 @@ describe("useGptLiveVoiceScout", () => {
     convexMocks.query = {
       voiceSessionId: "voice-1",
       status: "active",
-      provider: "live",
       locale: "en",
       languageRevision: 1,
       activeRequest: undefined,
@@ -645,7 +643,6 @@ describe("useGptLiveVoiceScout", () => {
     convexMocks.query = {
       voiceSessionId: "voice-1",
       status: "active",
-      provider: "live",
       locale: "de",
       languageRevision: 2,
       activeRequest: undefined,

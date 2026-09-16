@@ -1,6 +1,6 @@
 import { useAuthToken } from "@convex-dev/auth/react";
 import { useAction, useMutation, useQuery } from "convex/react";
-import { makeFunctionReference } from "convex/server";
+import { api } from "../../convex/_generated/api";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Id } from "../../convex/_generated/dataModel";
 import {
@@ -68,7 +68,6 @@ export type LiveDelegateResult = {
 export type LiveSessionState = {
   voiceSessionId: Id<"voiceSessions">;
   status: "connecting" | "active" | "ended" | "error";
-  provider: "live" | "realtime";
   locale: LiveLocale;
   languageRevision: number;
   activeRequest?: { requestId: string; source: "voice" | "text"; startedAt: number };
@@ -102,39 +101,11 @@ type LiveDelegateArgs = {
   decisionId?: Id<"decisions">;
 };
 
-const delegateReference = makeFunctionReference<"action", LiveDelegateArgs, LiveDelegateResult>(
-  "voiceLive:delegate",
-);
-const sessionStateReference = makeFunctionReference<
-  "query",
-  { voiceSessionId: Id<"voiceSessions"> },
-  LiveSessionState | null
->("voiceLive:getSessionState");
-const setLanguageReference = makeFunctionReference<
-  "mutation",
-  { locale: LiveLocale; voiceSessionId?: Id<"voiceSessions"> },
-  { locale: LiveLocale; languageRevision: number }
->("voiceLive:setLanguage");
-const endVoiceSessionReference = makeFunctionReference<
-  "mutation",
-  { voiceSessionId: Id<"voiceSessions"> },
-  null
->("voice:endMine");
-type RecordTranscriptSegmentArgs = {
-  voiceSessionId: Id<"voiceSessions">;
-  segmentId: string;
-  revision: number;
-  role: "user" | "assistant";
-  transcript: string;
-  sourceEventIds: string[];
-  startMs: number;
-  endMs: number;
-};
-const recordTranscriptSegmentReference = makeFunctionReference<
-  "mutation",
-  RecordTranscriptSegmentArgs,
-  { status: "created" | "updated" | "unchanged" | "stale"; messageId: string }
->("voiceLive:recordTranscriptSegment");
+const delegateReference = api.voiceLive.delegate;
+const sessionStateReference = api.voiceLive.getSessionState;
+const setLanguageReference = api.voiceLive.setLanguage;
+const endVoiceSessionReference = api.voice.endMine;
+const recordTranscriptSegmentReference = api.voiceLive.recordTranscriptSegment;
 
 export type LiveSessionAnswer = {
   answerSdp: string;

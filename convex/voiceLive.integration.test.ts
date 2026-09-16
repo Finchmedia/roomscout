@@ -68,7 +68,6 @@ const setLanguage = makeFunctionReference<"mutation", {
   voiceSessionId?: Id<"voiceSessions">;
 }, { locale: "en" | "de"; languageRevision: number }>("voiceLive:setLanguage");
 const getConfig = makeFunctionReference<"query", Record<string, never>, {
-  provider: "live" | "realtime";
   locale: "en" | "de";
 }>("voiceLive:getConfig");
 const answerNonbindingFromVoice = makeFunctionReference<"mutation", {
@@ -672,13 +671,13 @@ it("allows independent UI and voice fields but rejects a stale overlapping voice
 
 it("persists explicit EN/DE changes and suppresses a result in the old language", async () => {
   const f = await fixture();
-  expect(await f.owner.query(getConfig, {})).toMatchObject({ locale: "en" });
+  expect(await f.owner.query(getConfig, {})).toEqual({ locale: "en" });
   const claim = await f.t.mutation(claimRequest, claimArgs(f, "language"));
   if (claim.kind !== "accepted") throw new Error("claim not accepted");
 
   expect(await f.owner.mutation(setLanguage, { voiceSessionId: f.voiceSessionId, locale: "de" }))
     .toEqual({ locale: "de", languageRevision: 1 });
-  expect(await f.owner.query(getConfig, {})).toMatchObject({ locale: "de" });
+  expect(await f.owner.query(getConfig, {})).toEqual({ locale: "de" });
   const result = await f.t.mutation(finishRequest, {
     ownerId: f.ownerId,
     voiceSessionId: f.voiceSessionId,
@@ -980,4 +979,18 @@ it("lets an accepted claim finish after audio ends and never reruns an uncertain
   expect(await f.t.mutation(claimRequest, claimArgs(f, "partial"))).toEqual({ kind: "result", result: terminal });
   const need = await f.t.run((ctx) => ctx.db.get(f.needId));
   expect(need).toMatchObject({ maxBudgetEur: 300, matchingRevision: 1 });
+});
+
+
+it("returns the Live-only session contract while keeping historical rows readable", async () => {
+  const f = await fixture();
+  for (const provider of [undefined, "realtime", "live"] as const) {
+    await f.t.run(async (ctx) => { await ctx.db.patch(f.voiceSessionId, { provider }); });
+    const state = await f.owner.query(api.voiceLive.getSessionState, { voiceSessionId: f.voiceSessionId });
+    expect(state.voiceSessionId).toBe(f.voiceSessionId);
+    expect(state.locale).toBe("en");
+    expect(state).not.toHaveProperty("provider");
+  }
+  await f.owner.mutation(api.voice.endMine, { voiceSessionId: f.voiceSessionId });
+  expect((await f.owner.query(api.voiceLive.getSessionState, { voiceSessionId: f.voiceSessionId })).status).toBe("ended");
 });

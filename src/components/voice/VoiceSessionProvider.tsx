@@ -1,32 +1,21 @@
 import type { PropsWithChildren } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "convex/react";
-import { makeFunctionReference } from "convex/server";
+import { api } from "../../../convex/_generated/api";
 import { Link, useLocation } from "react-router-dom";
 import { Mic, MicOff, PhoneOff } from "lucide-react";
 import {
   useGptLiveVoiceScout,
   type UseGptLiveVoiceScoutOptions,
 } from "../../hooks/useGptLiveVoiceScout";
-import {
-  useRealtimeVoiceScout,
-  type UseRealtimeVoiceScoutOptions,
-} from "../../hooks/useRealtimeVoiceScout";
 import { useCopy } from "../../ui/copy";
 import {
   VoiceSessionContext,
-  type VoiceProvider,
   type VoiceSessionValue,
 } from "./VoiceSessionContext";
 
-type VoiceConfig = { provider: VoiceProvider; locale: "en" | "de" };
-const configReference = makeFunctionReference<"query", Record<string, never>, VoiceConfig>(
-  "voiceLive:getConfig",
-);
-
 export type VoiceSessionProviderOptions = {
   live?: UseGptLiveVoiceScoutOptions;
-  realtime?: UseRealtimeVoiceScoutOptions;
 };
 
 /** Owns the connection above individual Scout views. */
@@ -34,35 +23,24 @@ export function VoiceSessionProvider({
   children,
   options,
 }: PropsWithChildren<{ options?: VoiceSessionProviderOptions }>) {
-  const config = useQuery(configReference, {});
+  const config = useQuery(api.voiceLive.getConfig, {});
   const { locale: uiLocale, setLocale: setUiLocale, t } = useCopy();
   const live = useGptLiveVoiceScout({
     ...options?.live,
     initialLocale: config?.locale ?? uiLocale,
   });
-  const realtime = useRealtimeVoiceScout(options?.realtime);
   const liveSetLanguage = live.setLanguage;
   const liveSessionLocale = live.sessionLocale;
   const liveBackendBusy = live.backendState === "queued" || live.backendState === "processing";
   const synchronizedLocaleRef = useRef<"en" | "de">(uiLocale);
-  const [activeProvider, setActiveProvider] = useState<VoiceProvider>();
   const location = useLocation();
-  const configuredProvider = config?.provider ?? "realtime";
-  // Freeze the provider once connect begins. A config change applies next time.
-  const selectedProvider = activeProvider ?? configuredProvider;
-  const selected = selectedProvider === "live" ? live : realtime;
   const voiceCopy = (key: string) => t(key as Parameters<typeof t>[0]);
 
   const connect = useCallback(async () => {
     if (!config) return;
-    setActiveProvider(config.provider);
-    if (config.provider === "live") {
-      live.setLanguage(config.locale);
-      await live.connect();
-    } else {
-      await realtime.connect();
-    }
-  }, [config, live, realtime]);
+    live.setLanguage(config.locale);
+    await live.connect();
+  }, [config, live]);
 
   const setLanguage = useCallback(
     (locale: "en" | "de") => {
@@ -94,45 +72,12 @@ export function VoiceSessionProvider({
     }
   }, [config?.locale, liveBackendBusy, liveSessionLocale, liveSetLanguage, setUiLocale, uiLocale]);
 
-  const value = useMemo<VoiceSessionValue>(() => {
-    if (selectedProvider === "live") return { ...live, connect, setLanguage };
-    const connected = realtime.connected;
-    const muted = realtime.muted;
-    return {
-      ...realtime,
-      provider: "realtime",
-      connect,
-      providerMuted: muted,
-      connectionState:
-        realtime.status === "error"
-          ? "error"
-          : connected
-            ? "active"
-            : ["requesting_microphone", "connecting", "creating_session"].includes(realtime.status)
-              ? "connecting"
-              : "disconnected",
-      microphoneState: connected ? (muted ? "locally_muted" : "on") : "off",
-      userSpeaking: connected && realtime.status === "listening",
-      scoutSpeaking: connected && realtime.status === "speaking",
-      backendState: realtime.status === "thinking" ? "processing" : "idle",
-      pendingInputCount: 0,
-      pendingTextDraft: "",
-      automaticEndToken: 0,
-      sessionLocale: uiLocale,
-      flushPendingInputs: async () => true,
-      retryFailedInput: () => false,
-      clearPendingTextDraft: () => undefined,
-      noteActivity: () => undefined,
-      stopSpeaking: realtime.interrupt,
-      setLanguage,
-      setFocus: () => undefined,
-      appendVerifiedBackgroundUpdate: () => false,
-      clearBackgroundUpdate: () => undefined,
-      clearBackgroundUpdates: () => undefined,
-    };
-  }, [connect, live, realtime, selectedProvider, setLanguage, uiLocale]);
+  const value = useMemo<VoiceSessionValue>(
+    () => ({ ...live, connect, setLanguage }),
+    [connect, live, setLanguage],
+  );
 
-  const showOngoingCall = selected.connected && location.pathname !== "/app/scout";
+  const showOngoingCall = live.connected && location.pathname !== "/app/scout";
   return (
     <VoiceSessionContext.Provider value={value}>
       {children}
@@ -144,12 +89,12 @@ export function VoiceSessionProvider({
           </Link>
           <button
             type="button"
-            aria-label={voiceCopy(selected.muted ? "liveScout.voice.microphoneOn" : "liveScout.voice.microphoneOff")}
-            onClick={() => selected.setMuted(!selected.muted)}
+            aria-label={voiceCopy(live.muted ? "liveScout.voice.microphoneOn" : "liveScout.voice.microphoneOff")}
+            onClick={() => live.setMuted(!live.muted)}
           >
-            {selected.muted ? <MicOff size={18} /> : <Mic size={18} />}
+            {live.muted ? <MicOff size={18} /> : <Mic size={18} />}
           </button>
-          <button type="button" aria-label={voiceCopy("liveScout.voice.end")} onClick={selected.disconnect}>
+          <button type="button" aria-label={voiceCopy("liveScout.voice.end")} onClick={live.disconnect}>
             <PhoneOff size={18} />
           </button>
         </aside>
