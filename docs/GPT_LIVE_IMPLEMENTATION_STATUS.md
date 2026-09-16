@@ -1,9 +1,9 @@
 # GPT-Live: Implementierungs- und Prüfstatus
 
-Stand: 2026-09-16 · Der GPT-Live-Stand und die aktuellen Demo-Dokumente sind im
-Integrationsbranch zusammengeführt (`d37a465`), aber noch nicht in Produktion
-veröffentlicht. Discovery und Suchstart wurden menschlich getestet; die reale
-Prüfung der zwei abschließenden Nachbesserungen übernimmt der Nutzer.
+Stand: 2026-09-16 · GPT-Live ist mit Release `415f27d` im Haupt-Checkout und auf
+Produktion veröffentlicht. Marin ist konfiguriert; Realtime-Endpunkt, Transport
+und Provider-Auswahl sind entfernt. Reale Voice-Abnahme und zehn Demo-Durchläufe
+bleiben beim Nutzer. Die kontrollierte Portal-Nachprüfung ist separat offen.
 
 Dieses Dokument unterscheidet implementiertes Verhalten, reale API-Nachweise und offene Prüfungen. Es enthält keine Zugangsdaten, Session-IDs oder Rohtranskripte. Umfang: [Migrationsplan](GPT_LIVE_MIGRATION_PLAN_2026-09-15.md). Aktueller Umzug: [Produktions-Umzugsplan](GPT_LIVE_PRODUCTION_MOVE_PLAN.md). Einrichtung und menschliche Prüfung: [Review Guide](GPT_LIVE_REVIEW_GUIDE.md).
 
@@ -12,8 +12,28 @@ Dieses Dokument unterscheidet implementiertes Verhalten, reale API-Nachweise und
 Codegen, Typecheck und Produktionsbuild bestanden. Globales Lint: keine Fehler,
 29 bestehende UI-Warnungen. Getypte API-Referenzen verbinden Frontend und Backend;
 Realtime-Endpunkt, Transport und Provider-Auswahl sind entfernt. Historische
-Session-Felder bleiben schema-kompatibel. Fast-forward und Deployment folgen;
+Session-Felder bleiben schema-kompatibel. Fast-forward und Deployment auf `fleet-jackal-83` sind abgeschlossen;
 reale Voice-Abnahme und zehn Demo-Durchläufe bleiben beim Nutzer.
+
+## Produktions-Nachprüfung am 16.09.2026
+
+Health und direkte App-Routen antworten mit 200, der entfernte Realtime-POST mit
+404. Live-OPTIONS erlaubt die Produktions-Site (204) und lehnt eine fremde Origin
+ab (403). Das ausgelieferte App-Bundle enthält das Produktionsziel und keine
+Sandbox-Endpunkte. Die Readiness-Action bestätigt fünf konfigurierte Dienste.
+Ein bestehender Account lädt seine Suche, die englische Oberfläche und den
+vorhandenen Chat; eine neue Textantwort benennt korrekt den gespeicherten Ort
+und Radius. Schließen des Chats und Budgeteditor funktionieren.
+
+Die vorhandene Portal-Verbindung des Testaccounts ist seit dem 14.09. deaktiviert;
+ihr Firecrawl-Kontext wurde nach `VERIFICATION_TIMEOUT` gelöscht. Der Zustand
+bestand vor diesem Release. Die Simulator-Funktionen sind vorhanden, aber es
+gibt keinen aktiven kontrollierten Lauf. Daher bleibt der neue kontrollierte
+Anfrage-/Antwort-Rundlauf offen; er benötigt eine wieder eingerichtete
+Testverbindung oder einen frischen Testaccount. Es gab
+keinen Datenreset, keinen Sandbox-Import und keinen Voice-Call durch Agenten.
+Alte Umgebungsvariablen bleiben bis zur Nutzerabnahme für den manuellen
+Wiederherstellungspunkt erhalten; der Live-only-Code verwendet sie nicht.
 
 ## Update 16.09.2026 — Auflegen und proaktiver Suchstart-Vorschlag
 
@@ -115,7 +135,7 @@ Dauerhaft gespeichert werden konsolidierte Nutzereingaben, sichtbare Backend-Sac
 - Zum Zeitpunkt dieser isolierten Nachweise waren ursprünglicher Checkout,
   persönlicher Dev-Standard und Produktion nicht auf GPT-Live umgestellt. Der
   spätere Git-Integrationsstand ändert nichts an dieser historischen
-  Evidenzgrenze; eine Produktionsveröffentlichung ist weiterhin nicht belegt.
+  Evidenzgrenze; die spätere Veröffentlichung ist im aktuellen Kopf dieses Dokuments verzeichnet.
 - Der erste Spike lief mit lokalem Convex auf `3220`/`3221`. Direkter Live-Handshake funktionierte; der lokale Backend-Runtime fehlt aber der AI-Gateway-Service-Token des Scout. Deshalb liefen die vollständigen Brain-Nachweise in der getrennten Cloud-Entwicklung.
 - Firecrawl-Monitoring ist in dieser Instanz deaktiviert. Anbieter-/Angebotsnachweise verwenden ausschließlich inert angelegte synthetische Datensätze mit deaktiviertem Connector. Kein Anbieter wurde angeschrieben.
 
@@ -208,7 +228,7 @@ Die globale Lint-Konfiguration ignoriert erzeugte Proof-Artefakte und kennt die 
 - Portal-/Anbieterantwort von tatsächlicher Ingestion bis zur gesprochenen Erwähnung als verbundener Gesamtablauf. Der synthetische Fixture ersetzt diesen Nachweis nicht.
 - Manuelle Netzunterbrechung, erneuter Einstieg und längere Gespräche unter realen Netzbedingungen. Unit- und Integrationstests decken die Fehlerzustände ab, sind aber kein Akustik-/Netztest.
 
-Es wird weder eine Produktionsfreigabe noch eine bestandene menschliche
-Hackathon-Demo behauptet. Die isolierten Nachweise bleiben als Evidenz erhalten;
+Der technische Produktionsdeploy ist belegt; eine vollständig geprüfte
+Portal-/Voice-Demo wird nicht behauptet. Die isolierten Nachweise bleiben als Evidenz erhalten;
 der aktuelle Live-only-Integrationsstand wurde mit den oben genannten 1.260 Tests geprüft. Alle realen Voice- und
 Zehn-Durchläufe führt der Nutzer nach der Migration aus.

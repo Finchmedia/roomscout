@@ -10,9 +10,9 @@
 - **Components:** @convex-dev/agent, @convex-dev/auth, @convex-dev/static-hosting, @convex-dev/workpool
 - **Convex features:** schema, tables, indexes, vector search, queries, mutations, actions, HTTP actions, crons, scheduled functions, realtime queries, paginated queries
 - **Auth:** Convex Auth
-- **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-live-1` for voice (Live-only integration checked; production deployment pending)
+- **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-live-1` for voice
 - **Started:** 2026-08-26T13:55:26Z
-- **Last updated:** 2026-09-16T06:47:37Z
+- **Last updated:** 2026-09-16T06:53:48Z
 
 ## Log
 
@@ -665,3 +665,12 @@ Typed Live contracts preserve route continuity, language changes and the product
 Verification: 1,260 tests passed, one skipped; codegen, typecheck and production build passed; lint has zero errors.
 Production configuration is prepared; deployment and user voice acceptance remain outstanding.
 Evidence: `convex/http.ts`, `convex/voiceLive.ts`, `convex/scout.ts`, `src/components/voice/VoiceSessionProvider.tsx`; [move plan](docs/GPT_LIVE_PRODUCTION_MOVE_PLAN.md).
+
+### 2026-09-16 - 415f27d
+
+Published the integrated Live-only backend and static frontend to the existing production deployment.
+Verified the removed Realtime route, exact Live-origin CORS, production-only bundle target and operator readiness.
+An existing account retained its saved search and chat; the English text Scout answered from those saved facts.
+No production data was reset or imported, and agents did not start a voice call.
+A portal registration failure from September 14 blocks the new controlled round trip; user voice/demo acceptance remains open.
+Evidence: `convex/http.ts`, `convex/integrations/providerReadiness.ts`; [release checks](docs/GPT_LIVE_PRODUCTION_MOVE_PLAN.md).

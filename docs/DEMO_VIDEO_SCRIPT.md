@@ -153,8 +153,9 @@ yours to sign."
 
 1. Radius-Blocker und die eine Voice-Ansicht sind im Integrationsstand enthalten;
    der Maintainer prüft sie im späteren vollständigen Durchlauf erneut.
-2. Voice und echter Anbieterweg auf einer Instanz veröffentlichen. Der
-   Integrationsbranch enthält beide Codepfade, ist aber noch nicht deployt.
+2. Voice und Anbieter-Code sind mit `415f27d` auf Produktion veröffentlicht.
+   Der gemeinsame echte Rundlauf ist noch offen; die vorhandene Testverbindung
+   zum Portal meldet derzeit einen Registrierungsfehler.
 3. Vermieter-Bot im Portal, damit die Antwort in Szene 3 planbar kommt.
 4. Antwortlatenz messen: Die Hintergrundmeldung muss in der Pause landen, nicht
    im nächsten Satz.

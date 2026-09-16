@@ -1,5 +1,28 @@
 # RoomScout — Build Log
 
+## 2026-09-16 — GPT-Live deployed to the existing production app
+
+Release `415f27d` now runs on the existing Fleet production deployment and is
+on both remotely secured branches. The six untracked main-checkout collisions
+were backed up before fast-forward. Static Hosting published 23 files after
+the backend accepted the additive schema and transcript index. A first
+noninteractive deploy stopped at the CLI confirmation before modifying the
+backend; the retry used the same checked build with `--skip-build` and an
+explicitly confirmed production target.
+
+Post-deploy checks: Health and direct Scout/Settings routes return 200;
+Realtime POST returns 404; Live preflight returns 204 for the exact production
+origin and 403 for an unrelated origin. The served application script points
+to Fleet, without sandbox URLs. The operator action reports 5/5 providers
+configured. An existing authenticated account retained its search and chat;
+the new English text reply read the correct saved location and radius. Chat
+closure and budget-editor controls worked. The existing test account's portal
+connection reports failed registration, so the new controlled portal round trip
+has not passed. No inquiry was sent to an uncontrolled provider and no data was
+reset. User-owned voice tests and the ten full demo runs remain open. Old env
+settings are retained for checkpoint M until user acceptance; the Live-only
+code does not consult them.
+
 ## 2026-09-16 — Live-only production integration prepared
 
 Secured both branches and the annotated `prod-pre-gpt-live` tag remotely before

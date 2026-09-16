@@ -1,8 +1,9 @@
 # GPT-Live Review Guide
 
-Status: production integration in progress on 2026-09-16; not deployed. The
-isolated development evidence below remains reproducible context, not a
-production release claim. The integrated Live-only code `b19d12b` passed 1,260
+Status: release `415f27d` deployed to production on 2026-09-16. The isolated
+development evidence below remains historical; the real voice review belongs
+to the user. The controlled portal round trip remains open because the existing
+test account reports a failed portal registration. The integrated Live-only code `b19d12b` passed 1,260
 tests (one skipped), generated API typechecking and the production build. Global
 lint has zero errors and 29 existing UI warnings. Detailed evidence is in
 [GPT_LIVE_IMPLEMENTATION_STATUS.md](GPT_LIVE_IMPLEMENTATION_STATUS.md).
@@ -11,18 +12,17 @@ lint has zero errors and 29 existing UI warnings. Detailed evidence is in
 
 | Layer | Review target |
 |---|---|
-| Source | Integrated branch in `/Users/danielfinke/Documents/STARTUPS/ROOMSCOUT/roomscout-gpt-live`; merge checkpoint `d37a465` before Live-only cleanup |
-| Production | Not deployed by this integration step |
+| Source | Main checkout `/Users/danielfinke/Documents/STARTUPS/ROOMSCOUT/roomscout`, branch `autopilot-policy`; merge checkpoint `d37a465` before Live-only cleanup |
+| Production | `https://fleet-jackal-83.eu-west-1.convex.site/app/scout`, release `415f27d` |
 | Real voice review | Performed later by the user; not part of migration execution |
 | Known working CLI runtime | Bundled Node `v24.19.0`, Convex CLI `1.45.0` |
 
-Run the final automated checks from the integrated checkout after Live-only
-cleanup. They verify source integration; they do not prove a deployment, a real
+The final automated checks passed on the integrated Live-only code. To repeat them deliberately, use the main checkout. They verify source integration; they do not prove a deployment, a real
 microphone path or the ten consecutive demo runs.
 
 ```bash
 export PATH="/Users/danielfinke/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH"
-cd /Users/danielfinke/Documents/STARTUPS/ROOMSCOUT/roomscout-gpt-live
+cd /Users/danielfinke/Documents/STARTUPS/ROOMSCOUT/roomscout
 node --version
 npm test
 npm run typecheck
@@ -49,6 +49,10 @@ that target merely to repeat the migration. The production handoff is complete
 only with one GPT-Live path and no selectable Realtime fallback. A
 network/provider failure ends the call and offers a manual restart from current
 saved state.
+
+For user testing, open the production URL and reload old tabs. Local Vite uses
+its checkout-specific development deployment; the personal development backend
+was not silently replaced or rebound by this production release.
 
 ## Post-migration manual English demo
 

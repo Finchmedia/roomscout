@@ -9,7 +9,12 @@ Stand: 16.09.2026 · Revision 3 mit Ausführungsstand. Die folgenden Abschnitte 
 - Gemeinsamer typisierter Vertrag `25c0163`, Readiness `1eeb4d7`, vollständiger Live-only-Ausbau `b19d12b`.
 - Codegen, Typecheck und Produktionsbuild bestanden; 155 Testdateien mit **1.260 Tests bestanden**, eine Datei/ein Test übersprungen. Globales Lint: keine Fehler, 29 bestehende UI-Warnungen.
 - Produktionskonfiguration für Live, Marin und exakte Site-Origin vorbereitet; bestehende Firecrawl-/Mapbox-Konfiguration geprüft, alte Variablen unverändert erhalten.
-- Haupt-Checkout-Fast-forward, Deployment und Nicht-Voice-Nachprüfung stehen als nächste Schritte aus. Kein Datenreset und kein realer Voice-Test durchgeführt.
+- Haupt-Checkout `autopilot-policy` auf `415f27d` fast-forwarded und mit dem Live-Branch auf GitHub gesichert. Alle sechs unversionierten Kollisionsdateien außerhalb des Checkouts gesichert.
+- Backend samt additivem Index und 23 statischen Dateien erfolgreich auf `fleet-jackal-83` veröffentlicht. Der erste nichtinteraktive Aufruf stoppte vor dem Backend-Upload; der Wiederholungsaufruf verwendete den unveränderten geprüften Build mit `--skip-build` und bestätigtem Produktionsziel.
+- GET Health/Scout/Settings: 200; alter Realtime-POST: 404; Live-OPTIONS: 204 für die Site, 403 für fremde Origin. Ausgeliefertes Bundle zeigt nur auf das Produktionsziel. Operator-Readiness: 5/5 konfiguriert.
+- Bestehender Account, gespeicherter Suchauftrag, englische Oberfläche, Textantwort auf den bestehenden Suchzustand sowie Öffnen/Schließen von Chat und Budgeteditor erfolgreich geprüft.
+- Kontrollierter Portal-Rundlauf noch nicht nachgewiesen: Der bestehende Testaccount hat seit dem 14.09. eine deaktivierte Portal-Verbindung und einen gelöschten Firecrawl-Kontext nach `VERIFICATION_TIMEOUT`. Dieser Zustand bestand vor dem Umzug. Die Simulator-Funktionen sind deployt, aber es gibt keinen aktiven kontrollierten Lauf. Andere Nutzerverbindungen werden nicht übernommen. Kein Anbieter angeschrieben, keine Freigabe des vollständigen Demo-Flows.
+- Kein Datenreset, kein Sandbox-Import und kein realer Voice-Test durchgeführt.
 - Nutzerprüfung und zehn Demo-Durchläufe bleiben separat offen.
 
 ## 1. Ziel und verbindliche Vorgaben
