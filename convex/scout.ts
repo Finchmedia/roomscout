@@ -699,7 +699,7 @@ export const listMessages = query({
     const transcriptMessageIds = new Set((await Promise.all(result.page.map(async (message) => {
       const transcript = await ctx.db.query("voiceTranscriptEvents")
         .withIndex("by_agent_message_id", (q) => q.eq("agentMessageId", message.id))
-        .unique();
+        .first();
       return transcript?.ownerId === ownerId ? message.id : undefined;
     }))).filter((messageId): messageId is string => messageId !== undefined));
     const streams = await syncStreams(ctx, components.agent, {

@@ -11,13 +11,10 @@ import type {
   VoiceScoutModality,
   VoiceScoutStatus,
   VoiceTranscriptItem,
-} from "../../hooks/useRealtimeVoiceScout";
+} from "../../features/voice/voiceTypes";
 import type { LiveLocale } from "../../features/voice/gptLiveRuntime";
 
-export type VoiceProvider = "live" | "realtime";
-
 export type VoiceSessionValue = {
-  provider: VoiceProvider;
   status: VoiceScoutStatus;
   modality: VoiceScoutModality;
   muted: boolean;

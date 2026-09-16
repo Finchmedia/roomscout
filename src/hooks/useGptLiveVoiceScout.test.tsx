@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LiveDelegateResult } from "./useGptLiveVoiceScout";
 import {
   createGptLiveSession,
+  resolveLiveSessionEndpoint,
   splitLiveAppendContent,
   useGptLiveVoiceScout,
 } from "./useGptLiveVoiceScout";
@@ -138,6 +139,26 @@ it("requires the explicit Live provider and app session headers", async () => {
   await expect(createGptLiveSession("/api/live/session", "offer", "token", "en")).rejects.toThrow(
     "Live voice session request failed",
   );
+});
+
+it("resolves the Live endpoint from the active Convex deployment before stale overrides", () => {
+  expect(resolveLiveSessionEndpoint(
+    " https://fleet-jackal-83.convex.cloud/ ",
+    "https://stale-sandbox.convex.site",
+  )).toBe("https://fleet-jackal-83.convex.site/api/live/session");
+  expect(resolveLiveSessionEndpoint(
+    "https://fleet-jackal-83.convex.cloud",
+    undefined,
+  )).toBe("https://fleet-jackal-83.convex.site/api/live/session");
+  expect(resolveLiveSessionEndpoint(
+    "http://127.0.0.1:3220",
+    "http://127.0.0.1:3221/",
+  )).toBe("http://127.0.0.1:3221/api/live/session");
+  expect(resolveLiveSessionEndpoint(
+    "https://api.roomscout.example",
+    "https://voice.roomscout.example/",
+  )).toBe("https://voice.roomscout.example/api/live/session");
+  expect(resolveLiveSessionEndpoint(undefined, undefined)).toBe("/api/live/session");
 });
 
 describe("useGptLiveVoiceScout", () => {

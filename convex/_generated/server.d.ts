@@ -46,7 +46,6 @@ type Env = {
   readonly OPENAI_LIVE_VOICE: string | undefined;
   readonly PORTAL_BROWSER_ENGINE: "firecrawl" | "browserbase" | undefined;
   readonly VOICE_ALLOWED_ORIGINS: string | undefined;
-  readonly VOICE_PROVIDER: "realtime" | "live" | undefined;
 };
 
 /**

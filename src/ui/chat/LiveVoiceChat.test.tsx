@@ -11,7 +11,6 @@ vi.mock("@/components/voice/VoiceSessionContext", () => ({
 
 function session(overrides: Partial<VoiceSessionValue> = {}): VoiceSessionValue {
   return {
-    provider: "realtime",
     status: "idle",
     modality: "voice",
     muted: false,

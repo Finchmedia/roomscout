@@ -87,7 +87,7 @@ export function ScoutPage() {
   const { t, locale } = useCopy();
   const voice = useVoiceSession();
   const noteVoiceActivity = voice.noteActivity;
-  const liveConnected = voice.provider === "live" && voice.connected;
+  const liveConnected = voice.connected;
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const currentUser = useQuery(api.users.current);

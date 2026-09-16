@@ -573,7 +573,7 @@ export function ProfilePage() {
               Convex stores application state. Firecrawl performs public-web
               discovery and monitoring. AgentMail handles approved email.
               Browserbase provides isolated portal contexts. OpenAI performs
-              text reasoning, embeddings, and the approved realtime voice flow.
+              text reasoning, embeddings, and the approved GPT-Live voice flow.
             </p>
           </div>
         </div>

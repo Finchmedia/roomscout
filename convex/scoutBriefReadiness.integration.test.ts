@@ -47,17 +47,7 @@ async function fixture() {
       mode: "search_discovery",
       updatedAt: now,
     });
-    const voiceSessionId = await ctx.db.insert("voiceSessions", {
-      ownerId,
-      threadId: "brief-thread",
-      model: "test-realtime",
-      voice: "test-voice",
-      status: "active",
-      activeNeedId: needId,
-      startedAt: now,
-      updatedAt: now,
-    });
-    return { ownerId, otherOwnerId, needId, voiceSessionId };
+    return { ownerId, otherOwnerId, needId };
   });
   return { t, owner: t.withIdentity({ subject: ids.ownerId }), ...ids };
 }
@@ -65,23 +55,22 @@ async function fixture() {
 it("persists readiness for one exact draft revision without activating it", async () => {
   const f = await fixture();
 
-  const voiceResult = await f.owner.action(api.voice.executeTool, {
-    voiceSessionId: f.voiceSessionId,
-    name: "mark_search_brief_ready",
-    argumentsJson: "{}",
+  const readyResult = await f.t.mutation(internal.scout.markBriefReady, {
+    ownerId: f.ownerId,
+    threadId: "brief-thread",
+    needId: f.needId,
   });
-  expect(JSON.parse(voiceResult.outputJson)).toMatchObject({
+  expect(readyResult).toMatchObject({
     readyForReview: true,
     needRevision: 0,
     missingFields: [],
-    activationRequired: true,
   });
 
   expect(await f.owner.query(api.scout.getMine, {})).toMatchObject({
     activeNeedId: f.needId,
     briefReadiness: { status: "ready", needRevision: 0 },
   });
-  const firstReadyAt = JSON.parse(voiceResult.outputJson).readyAt;
+  const firstReadyAt = readyResult.readyAt;
   expect((await f.t.mutation(internal.scout.markBriefReady, {
     ownerId: f.ownerId,
     threadId: "brief-thread",

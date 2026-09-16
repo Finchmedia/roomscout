@@ -109,16 +109,11 @@ type DelegateResult = {
 
 type LiveEnvironment = {
   OPENAI_API_KEY: string;
-  VOICE_PROVIDER?: "realtime" | "live";
   OPENAI_LIVE_MODEL?: string;
   OPENAI_LIVE_VOICE?: string;
   VOICE_ALLOWED_ORIGINS?: string;
 };
 const liveEnv = env as unknown as LiveEnvironment;
-
-function configuredProvider(): "realtime" | "live" {
-  return liveEnv.VOICE_PROVIDER === "live" ? "live" : "realtime";
-}
 
 export function hasMeaningfulSavedNeed(need: {
   locationQuery?: string;
@@ -174,7 +169,7 @@ function cleanLocale(value: string | null | undefined): ConversationLocale | nul
 function allowedOrigin(request: Request): string | null {
   const origin = request.headers.get("Origin");
   if (!origin) return null;
-  const configured = (liveEnv.VOICE_ALLOWED_ORIGINS ?? process.env.REALTIME_ALLOWED_ORIGINS ?? "")
+  const configured = (liveEnv.VOICE_ALLOWED_ORIGINS ?? "")
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
@@ -466,7 +461,6 @@ export const optionsHttp = httpAction(async (_ctx, request) => {
 export const sessionHttp = httpAction(async (ctx, request) => {
   const origin = allowedOrigin(request);
   if (request.headers.get("Origin") && !origin) return new Response("Origin not allowed", { status: 403 });
-  if (configuredProvider() !== "live") return errorResponse(origin, 409, "Live voice is not enabled");
   let ownerId: Id<"users">;
   try {
     ownerId = await requireActionUserId(ctx);

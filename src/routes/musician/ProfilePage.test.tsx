@@ -205,5 +205,6 @@ describe("ProfilePage settings routes", () => {
       screen.getByRole("heading", { name: "Privacy" }),
     ).toBeInTheDocument();
     expect(screen.getByText(/Raw voice audio/)).toBeInTheDocument();
+    expect(screen.getByText(/approved GPT-Live voice flow/)).toBeInTheDocument();
   });
 });

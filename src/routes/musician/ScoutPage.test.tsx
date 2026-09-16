@@ -18,7 +18,7 @@ const fixtures = vi.hoisted(() => ({
   queries: vi.fn(),
   mutations: new Map<string, ReturnType<typeof vi.fn>>(),
   actionFns: new Map<string, ReturnType<typeof vi.fn>>(),
-  voice: { connected: false, provider: "realtime" as "realtime" | "live", muted: false, connect: vi.fn().mockResolvedValue(undefined), disconnect: vi.fn(), setMuted: vi.fn(),
+  voice: { connected: false, muted: false, connect: vi.fn().mockResolvedValue(undefined), disconnect: vi.fn(), setMuted: vi.fn(),
     sendText: vi.fn().mockReturnValue(true), setFocus: vi.fn(), appendVerifiedBackgroundUpdate: vi.fn(), clearBackgroundUpdate: vi.fn(),
     pendingTextDraft: "", clearPendingTextDraft: vi.fn(), noteActivity: vi.fn(),
     backendState: "idle" as "idle" | "queued" | "processing" },
@@ -167,7 +167,7 @@ beforeEach(() => {
   fixtures.context = { threadId: "thread", activeNeedId: "need-current", mode: "search_discovery" };
   fixtures.matches = []; fixtures.conversations = []; fixtures.focusedThread = null; fixtures.inbox = []; fixtures.actions = []; fixtures.messages = []; fixtures.decisions = [];
   fixtures.queries.mockClear(); fixtures.mutations.clear(); fixtures.actionFns.clear();
-  fixtures.voice.connected = false; fixtures.voice.provider = "realtime";
+  fixtures.voice.connected = false;
   fixtures.voice.backendState = "idle";
   fixtures.voice.muted = false;
   fixtures.voice.connect.mockClear(); fixtures.voice.disconnect.mockClear(); fixtures.voice.sendText.mockClear();
@@ -196,7 +196,6 @@ describe("live Scout route", () => {
 
   it("does not leave a completed silent Live turn busy without an assistant message", () => {
     fixtures.voice.connected = true;
-    fixtures.voice.provider = "live";
     fixtures.voice.backendState = "idle";
     fixtures.needs = [{ ...need(), matchingRevision: 3 }];
     fixtures.context.briefReadiness = { status: "ready", needRevision: 3, readyAt: 100 };
@@ -396,7 +395,6 @@ describe("live Scout route", () => {
 
   it("relays canonical saved discovery values and authoritative phase quietly", async () => {
     fixtures.voice.connected = true;
-    fixtures.voice.provider = "live";
     fixtures.needs = [{
       ...need(),
       matchingRevision: 3,
@@ -463,7 +461,10 @@ describe("live Scout route", () => {
     expect(screen.getByText("Voice Scout session")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Scout losschicken" }));
-    await waitFor(() => expect(mutation("savedNeeds:activate")).toHaveBeenCalledWith({ savedNeedId: "need-current" }));
+    expect(fixtures.voice.sendText).toHaveBeenCalledWith(
+      "Start the search now using my current requirements.",
+    );
+    expect(mutation("savedNeeds:activate")).not.toHaveBeenCalled();
     expect(fixtures.voice.disconnect).not.toHaveBeenCalled();
 
     fixtures.needs = [need("active")];
@@ -597,7 +598,6 @@ describe("live Scout route", () => {
     const decision = reviewDecision();
     fixtures.needs = [need("active")];
     fixtures.voice.connected = true;
-    fixtures.voice.provider = "live";
     fixtures.decisions = [decision];
     fixtures.inbox = [candidate({ id: "conversation-2", title: "Raum West", openDecision: true })];
     fixtures.focusedThread = {
@@ -670,7 +670,7 @@ describe("live Scout route", () => {
     expect(screen.queryByRole("heading", { name: "Eure Suche macht eine Pause." })).not.toBeInTheDocument();
   });
   it("queues Live search start behind pending speech instead of racing the domain mutation", () => {
-    fixtures.voice.connected = true; fixtures.voice.provider = "live";
+    fixtures.voice.connected = true;
     renderPage();
     fireEvent.click(screen.getByRole("button", { name: "Scout losschicken" }));
     expect(fixtures.voice.sendText).toHaveBeenCalledWith("Start the search now using my current requirements.");
@@ -679,7 +679,7 @@ describe("live Scout route", () => {
   });
 
   it("saves a versioned inline edit and displays only the committed query value", async () => {
-    fixtures.voice.connected = true; fixtures.voice.provider = "live";
+    fixtures.voice.connected = true;
     fixtures.needs = [{ ...need(), matchingRevision: 7 }];
     const view = renderPage();
     fireEvent.click(screen.getByRole("button", { name: "Budget bearbeiten" }));
@@ -695,7 +695,7 @@ describe("live Scout route", () => {
   });
 
   it("binds server focus before opening a candidate beside voice", async () => {
-    fixtures.voice.connected = true; fixtures.voice.provider = "live";
+    fixtures.voice.connected = true;
     fixtures.needs = [need("active")];
     fixtures.inbox = [candidate({ id: "c-west", title: "Raum West" })];
     let finishFocus: (() => void) | undefined;

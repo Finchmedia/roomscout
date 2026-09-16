@@ -6,7 +6,7 @@ import { Icon } from "@/components/ui/icon"
 import { IconButton } from "@/components/ui/icon-button"
 import { ScoutBlob, type ScoutBlobState } from "@/components/ui/scout-blob"
 import { VoiceControl } from "@/components/ui/voice-control"
-import type { VoiceScoutStatus } from "@/hooks/useRealtimeVoiceScout"
+import type { VoiceScoutStatus } from "@/features/voice/voiceTypes"
 import { cn } from "@/lib/utils"
 import { useCopy } from "@/ui/copy"
 
@@ -144,15 +144,13 @@ function LiveVoiceChat({
               ? labels.error
               : labels.status
   )
-  const backendStatusCopy = voice.provider === "live"
-    ? voice.backendState === "outcome_unknown"
-      ? t("liveScout.voice.outcomeUnknown")
-      : voice.pendingInputCount > 0
-        ? t("liveScout.voice.queued")
-        : voice.backendState === "processing"
-          ? t("liveScout.voice.updating")
-          : undefined
-    : undefined
+  const backendStatusCopy = voice.backendState === "outcome_unknown"
+    ? t("liveScout.voice.outcomeUnknown")
+    : voice.pendingInputCount > 0
+      ? t("liveScout.voice.queued")
+      : voice.backendState === "processing"
+        ? t("liveScout.voice.updating")
+        : undefined
 
   const end = () => {
     voice.disconnect()
@@ -195,7 +193,7 @@ function LiveVoiceChat({
         </div>
       </div>
 
-      {voice.provider === "live" && voice.backendState === "failed" ? (
+      {voice.backendState === "failed" ? (
         <div role="alert" className={cn("flex items-center gap-3 text-sm text-rs-red-text", compact && "text-[length:var(--text-micro-size)]")}>
           <span>{t("liveScout.failed")}</span>
           <button type="button" className="underline underline-offset-4" onClick={() => voice.retryFailedInput()}>{t("liveScout.retry")}</button>

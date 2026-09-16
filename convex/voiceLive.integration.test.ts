@@ -17,6 +17,41 @@ import {
 
 const modules = import.meta.glob("./**/*.ts");
 
+it("routes only the authenticated Live session surface with exact-origin CORS", async () => {
+  const t = convexTest(schema, modules);
+  const allowed = await t.fetch("/api/live/session", {
+    method: "OPTIONS",
+    headers: { Origin: "http://localhost:5173" },
+  });
+  expect(allowed.status).toBe(204);
+  expect(allowed.headers.get("access-control-allow-origin")).toBe("http://localhost:5173");
+  expect(allowed.headers.get("access-control-expose-headers"))
+    .toContain("X-RoomScout-Voice-Session");
+
+  const rejectedOrigin = await t.fetch("/api/live/session", {
+    method: "OPTIONS",
+    headers: { Origin: "https://not-roomscout.example" },
+  });
+  expect(rejectedOrigin.status).toBe(403);
+
+  const unauthenticated = await t.fetch("/api/live/session", {
+    method: "POST",
+    headers: {
+      Origin: "http://localhost:5173",
+      "Content-Type": "application/sdp",
+    },
+    body: "v=0\r\n",
+  });
+  expect(unauthenticated.status).toBe(401);
+
+  const removedRealtime = await t.fetch("/api/realtime/session", {
+    method: "POST",
+    headers: { "Content-Type": "application/sdp" },
+    body: "v=0\r\n",
+  });
+  expect(removedRealtime.status).toBe(404);
+});
+
 type ClaimArgs = {
   ownerId: Id<"users">;
   voiceSessionId: Id<"voiceSessions">;
@@ -390,6 +425,20 @@ it("upserts coalesced Live captions, rejects stale snapshots, and anchors delega
     startMs: 800,
     endMs: 1_100,
   })).resolves.toMatchObject({ status: "created" });
+
+  // Source projection is an existence check, not a uniqueness boundary. A
+  // duplicate historical marker must not make the whole Scout thread fail.
+  await f.t.run(async (ctx) => {
+    await ctx.db.insert("voiceTranscriptEvents", {
+      ownerId: f.ownerId,
+      voiceSessionId: f.voiceSessionId,
+      providerEventId: "duplicate:user:event-1",
+      role: "user",
+      transcript: "We rehearse on Wednesday.",
+      agentMessageId: created.messageId,
+      finalizedAt: 1_200,
+    });
+  });
 
   const projected = await f.owner.query(api.scout.listMessages, {
     threadId: f.threadId,

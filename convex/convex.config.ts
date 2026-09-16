@@ -26,9 +26,6 @@ const app = defineApp({
       v.union(v.literal("firecrawl"), v.literal("browserbase")),
     ),
     OPENAI_API_KEY: v.string(),
-    VOICE_PROVIDER: v.optional(
-      v.union(v.literal("realtime"), v.literal("live")),
-    ),
     OPENAI_LIVE_MODEL: v.optional(v.string()),
     OPENAI_LIVE_VOICE: v.optional(v.string()),
     VOICE_ALLOWED_ORIGINS: v.optional(v.string()),

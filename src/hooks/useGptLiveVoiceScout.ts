@@ -22,7 +22,7 @@ import type {
   VoiceScoutModality,
   VoiceScoutStatus,
   VoiceTranscriptItem,
-} from "./useRealtimeVoiceScout";
+} from "../features/voice/voiceTypes";
 import { useAudioVolume } from "./useAudioVolume";
 
 export type LiveConnectionState =
@@ -241,14 +241,24 @@ export function splitLiveAppendContent(content: string): string[] {
   return chunks;
 }
 
-function defaultLiveSessionEndpoint(): string {
-  const cloudUrl = import.meta.env.VITE_CONVEX_URL as string | undefined;
-  const explicitSiteUrl = import.meta.env.VITE_CONVEX_SITE_URL as string | undefined;
-  const derivedSiteUrl = cloudUrl?.endsWith(".convex.cloud")
-    ? cloudUrl.replace(/\.convex\.cloud$/, ".convex.site")
+export function resolveLiveSessionEndpoint(
+  cloudUrl: string | undefined,
+  explicitSiteUrl: string | undefined,
+): string {
+  const normalizedCloudUrl = cloudUrl?.trim().replace(/\/+$/, "") || undefined;
+  const normalizedExplicitSiteUrl = explicitSiteUrl?.trim().replace(/\/+$/, "") || undefined;
+  const derivedSiteUrl = normalizedCloudUrl?.endsWith(".convex.cloud")
+    ? normalizedCloudUrl.replace(/\.convex\.cloud$/, ".convex.site")
     : undefined;
-  const siteUrl = explicitSiteUrl ?? derivedSiteUrl;
-  return siteUrl ? `${siteUrl.replace(/\/$/, "")}/api/live/session` : "/api/live/session";
+  const siteUrl = derivedSiteUrl ?? normalizedExplicitSiteUrl;
+  return siteUrl ? `${siteUrl}/api/live/session` : "/api/live/session";
+}
+
+function defaultLiveSessionEndpoint(): string {
+  return resolveLiveSessionEndpoint(
+    import.meta.env.VITE_CONVEX_URL as string | undefined,
+    import.meta.env.VITE_CONVEX_SITE_URL as string | undefined,
+  );
 }
 
 export async function createGptLiveSession(
@@ -1953,7 +1963,6 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
   );
 
   return {
-    provider: "live" as const,
     status,
     modality,
     muted,
