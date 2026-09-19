@@ -56,6 +56,7 @@ async function enqueueGeneration(ctx: MutationCtx, input: SyncGeneration) {
     connectionId: input.connectionId,
     generation: input.generation,
   }, {
+    retry: true,
     onComplete: internal.portalInboxSync.syncCompleted,
     context: input,
   });

@@ -1,5 +1,422 @@
 # RoomScout — Build Log
 
+## 2026-09-19 — Browser Workpool cutover (trimmed)
+
+Approved controlled-portal writes now enter the existing `browserWorkpool`
+(concurrency 1) through one admission helper, `enqueueApprovedPortalWrite`,
+instead of being scheduled beside the inbox reads. The pool no longer retries
+by default: inbox reads opt in with `retry: true`, writes pass `retry: false`
+so a browser write is never replayed automatically, and the write completion
+hook only logs a failed or canceled pool result because that result does not
+prove the message was not sent. `dispatchApproved`, `redispatchApproved`
+(now carrying `busyAttempt`) and the exact acceptance path all use the helper;
+the worker busy chains re-enter the pool through `redispatchApproved` rather
+than scheduling the worker directly. Verified by the new
+`portalWriteQueue.integration.test.ts`, which reads the pool component's
+`work` table and asserts nothing for the worker lands in `_scheduled_functions`.
+
+The production incident left a request stuck in `executing` with its
+connection write-locked for eight minutes after the Firecrawl worker threw
+between the transactional claim and the first provider call; the reaper then
+marked it unknown. `executeWriteForOwner` now wraps that pre-provider region
+and hands a stranded fresh claim to `releaseUnstartedClaim`, which closes the
+execution under a rewritten idempotency key, returns the request to `approved`
+with its gate intact, clears the connection lock and writes an
+`action.execution_released` audit event; it refuses once a provider id or a
+write proof generation is attached. The release reason stays on
+`request.error` (`EXECUTION_RELEASED_BEFORE_PROVIDER:<code>`) so a parked
+approved request is distinguishable from a fresh one, and the next fresh claim
+clears it; the claimed audit key now carries the execution id because a
+released request is re-claimed under the same content version. Only
+`BROWSER_CONTEXT_BUSY` is rescheduled, and only when that release succeeded;
+any other pre-provider code parks the request as approved with its reason
+until it is re-dispatched. The exact production error code was not
+recoverable from the logs. Verified by the release, refusal, re-claim and
+non-busy (`PORTAL_REAUTH_REQUIRED`) cases in the new integration test and the
+updated `firecrawlWriteWorker.test.ts`.
+
+Writes no longer wait on a merely queued inbox lease: `browserSessionBusy` and
+`claimWriteSession` drop the `inboxSyncActiveGeneration` condition because that
+lease is taken at enqueue time, a running read stays visible through its
+`browserRuns` row and `context.activeRunId`, and the pool serializes both. The
+gate's browser-busy wait dropped from two minutes to thirty seconds. The
+existing `autonomyGate` claim-time test that made the browser busy with an
+inbox lease now uses a running `browserRuns` row. The new test file runs on
+fake timers like its neighbours, because convex-test executes pool items
+through a real `setTimeout` and a leaked worker from an earlier case otherwise
+hits the shared provider spy. Verified with `npx convex codegen`, a clean
+`npx tsc -p convex/tsconfig.json --noEmit --pretty false`, and `npx vitest run`
+on the ten touched files (`firecrawlWriteWorker.test.ts`,
+`externalActions.integration.test.ts`, `autonomyGate.integration.test.ts`,
+`decisions.integration.test.ts`, `messageSafety.integration.test.ts`,
+`conversations.integration.test.ts`, `offerAcceptance.integration.test.ts`,
+`portalInboxSync.integration.test.ts`, `lib/autonomyGate.test.ts`,
+`portalWriteQueue.integration.test.ts`): 4, 11, 14, 22, 19, 12, 34, 11, 55 and
+11 tests passed respectively, 193 in total (182 on the nine baseline files that
+had 181 before, plus the new file, which passed 11/11 on three consecutive
+whole-file runs).
+
+## 2026-09-18 — Voice layout and provider follow-up corrections
+
+Centered the primary voice stage, enlarged its scrollable transcript and bounded
+question cards to 720 px. Widened candidate cards and added an EN/DE above-budget
+visibility switch; existing conversations and decisions remain visible. Removed
+per-listing simulation badges while retaining the central portal disclosure and
+real-listing contact restrictions. Known assistant delivery cues such as
+`[chuckle]` are omitted from captions and newly persisted voice transcripts.
+
+Production metadata identified two provider responses rejected before commit:
+one invalid price and one locale mismatch. The portal provider prompt now uses a
+natural provider role, exact locale and permitted prices; those validation
+failures receive bounded Workpool retries. Historical failed jobs were not
+replayed; the existing participant retry action remains available.
+
+Fixed Scout progress and background context to distinguish latest outbound
+questions from inbound replies, scope details to the selected room and stop
+showing a stale provider-replied stage. Decision questions/options now follow
+the saved conversation locale. Answering an accidentally wrong-language prompt
+does not authorize a language switch.
+
+A subsequent multi-room retest exposed a separate text-chat gap: the no-argument
+candidate inspector omitted persisted provider conversations, and typed chat
+inherited the single focused-room context. It now reads all bounded candidate
+conversations for the current search and requires a fresh inspection for status
+questions. A read-only production call returned both tested conversations as
+awaiting a new reply. Provider assessment also receives the last eight sent
+inquiries as context separate from provider evidence, preventing repeated
+questions and speaker confusion.
+
+Installed the official AI Elements Shimmer from the shadcn registry, including
+its Motion dependency. Text and voice now share one pending indicator in the
+conversation; active tool text replaces the thinking label. Voice initialization
+uses the same narrow transparent layout, the persistent discovery title is
+removed, and the blob wrapper no longer clips its glow. Scoped UI tests and
+TypeScript passed; microphone testing remains with the maintainer.
+
+Voice connection and active-call surfaces, text chat, candidate conversations,
+room details and question cards share the existing 720 px width token. Candidate
+threads keep their own tall scroll area. Scout updates use short, collapsible
+headings with wrapped details and hide internal next-action names. Answered
+Scout questions and their answers appear together as private Q&A; a persisted
+decision ID suppresses only the matching duplicate answer bubble.
+
+Candidate selection now opens the same photo-and-facts room card for indexed
+rooms and existing provider conversations. An explicit “Open conversation”
+action opens the thread, with a return action to the room card. Over-budget
+rooms retain the global budget action. Reading the room card alone does not
+mark provider messages read or send an inquiry.
+
+A multi-room retest exposed a schedule assessment whose satisfied verdict
+contradicted its own explanation. Explicit requested weekdays now require
+compatible weekday evidence before a satisfied result is accepted; changed
+prompt versions invalidate older assessment caches on recomputation. Initial
+listing-only declines or stops dismiss the candidate without staging contact.
+A separate staging check requires a real delivered exchange before a decline,
+and a recorded executed decline makes subsequent acknowledgments terminal.
+Automatic initial no-fit expires the opportunity rather than permanently
+dismissing it: a later eligible search/listing revision can reopen the untouched
+conversation. Same-revision retries and conversations with action or delivery
+history remain closed.
+
+Message-review questions now use the saved EN/DE locale. Existing code-owned
+questions are localized without rewriting model-authored questions or confusing
+unclear content with a binding commitment. Newly generated review details show
+the exact subject and body separately; legacy text preserves paragraph breaks.
+Safety review now receives the saved musical and typed search facts used by the
+initial inquiry and distinguishes requested topics from claims of availability.
+Unsupported assertions still require review. Focused regression tests passed;
+no model was switched, historical message was resent, or failed job replayed.
+
+A read-only check of the warning identified a candidate-specific concession in
+global memory conflicting with the active search. Provider-decision answers now
+stay in their own conversation and cannot run the global-memory absorption step,
+including previously queued jobs. Safety review treats the active search as the
+authority for current requirements and limits concessions to their own provider
+conversation. Existing historical memory was not deleted.
+
+Aligned candidate-thread contact hints with the actual message state. A staged
+first inquiry no longer appears beside a generic never-contacted message; the
+known delivery channel is visible before its remote thread is attached without
+enabling replies prematurely. Uncertain submit outcomes are exposed explicitly
+instead of appearing to send indefinitely. Targeted backend and UI checks,
+TypeScript and the production build passed. Published backend and frontend and
+verified the served bundle against the local build. Historical messages were not
+retried.
+
+Portal inbox reads now retain a completed batch under a unique key in the
+short-lived browser sandbox. If Interact returns an intermediate scalar, one
+read-only lookup can retrieve that completed batch without repeating the browser
+workflow; an absent or invalid result remains a failure. A read-only live probe
+successfully traversed multiple threads. Write preflight now expires stale
+browser runs, and the worker retries only contention detected before execution
+claim. Unknown submission outcomes and post-claim errors are not retried.
+Focused regressions and backend typechecking passed; backend deployed. The
+read-only live probe passed, while a post-deployment scheduled sync is still
+unobserved.
+
+Initial provider inquiries now focus on practical fit. Unconfirmed minor
+contract details can be deferred to a viewing decision without marking them
+confirmed or relaxing binding-offer checks. All 24 Berlin scenarios have private
+start, minimum-term, notice and viewing knowledge; the existing Stuttgart listing
+now has an idempotently bound provider scenario too (25 enabled providers).
+
+Both backends and the main static frontend were deployed. Scoped UI/backend
+tests, typechecking and the production build passed. The final served frontend
+bundle matches the checked build byte for byte. An earlier live browser check
+confirmed candidate rendering and the budget filter; browser timeouts prevented
+a second visual check of the final thread layout. No new microphone test or
+provider inquiry was initiated. Earlier conversation history was preserved.
+
+Provider clarification now collects independent choices as a persisted question
+round. The UI shows one question at a time, with progress, options and free text;
+each step is saved, but the provider conversation resumes only after the round
+is complete. Question IDs prevent a delayed answer from answering the next
+question, and changed offer/search revisions invalidate stale choices.
+
+Formulation receives the full per-constraint assessment instead of only a short
+summary. Every known conflicting non-budget constraint must be represented.
+Answers retain their question and room scope; accepting a schedule alternative
+does not waive equipment restrictions. Explicit keep-requirement options remain
+blockers even when another question for that same requirement was accepted.
+Free-text interpretation remains model-based. Existing budget approval rules
+and the original global search remain unchanged.
+
+Text and voice tools share this path; voice reports an incomplete round as open
+and needs a fresh claim for the next answer. The thread groups completed Q&A
+pairs privately. The question form remounts between steps so reused option IDs
+do not retain old selections. Targeted behavioral tests, frontend and backend
+TypeScript checks, scoped lint and production build passed. Backend and frontend
+are deployed, and the served frontend bundle matches the local build. Live
+microphone acceptance remains untested; historical provider jobs were not
+replayed.
+
+Switched bounded early voice fact capture, decision-question formulation,
+source/index/detail extraction, memory compression/import and simulated portal
+providers to `openai/gpt-5.6-luna` through the Convex AI Gateway. Core Scout
+conversation, full voice delegation, provider assessment, matching and outgoing
+message safety retain Terra. Model selection is per call on the existing Agent;
+it does not create another agent or change the shared context.
+
+Both production backends are deployed. Verification was deliberately limited:
+four focused local tests passed (model routing, question persistence, extraction,
+provider reply persistence), plus two real Luna calls with synthetic inputs.
+The live checks preserved a budget correction from 250 to 400 and returned
+separate schedule/drum questions. No full test suite, microphone test, provider
+inquiry or historical-job replay was run. The fixed internal smoke action is
+`convex/aiModelSmoke.ts`; it performs no database writes.
+
+Candidate navigation now separates rooms still in play, above-budget rooms and
+rooms that no longer fit, with group counts and reason-specific badges. Current
+structured assessment data controls exclusion, separately from message delivery
+progress. Confirmed unavailability and terminal incompatibility override an old
+reply label; pending musician alternatives remain active. Search/listing revision
+checks avoid treating outdated assessments as current decisions. The scoped
+query includes closed conversations, preserving their room details and history.
+The detail card also suppresses a stale positive-fit heading for excluded rooms.
+
+Four targeted functional tests passed, covering unavailable/current/stale states,
+private search access, grouping, closed history and the existing budget toggle.
+Frontend/backend typechecking, scoped lint and build passed. Both backend and
+frontend are deployed; a read-only authenticated production query verified the
+reported unavailable candidate's new disposition, and the served frontend bundle
+matches the local build. No new model call or provider message was needed.
+
+The [browser Workpool audit and plan](BROWSER_WORKPOOL_PLAN.md) distinguishes
+existing queued inbox reads from separately scheduled writes and direct manual
+refreshes. It proposes common admission per connection, explicit read/write
+retry policies, persisted WorkIds and reactive business status. The installed
+0.4.11 client uses `status(ctx, id)` and `state`, with no `statusTtl` option;
+completed work alone does not establish successful delivery. This is a
+documentation-only proposal, not a runtime change or deployment. No tests or
+provider actions were run for the audit.
+
+## 2026-09-17 — Self-service demo providers and Berlin catalog
+
+Deployed the [portal provider engine](DEMO_PROVIDER_ENGINE_PLAN.md) using the
+Convex Agent Component with an isolated thread per portal conversation. Seeded
+24 fictional Berlin listings idempotently and processed all 24 public detail
+pages through Firecrawl. A fresh account completed registration, an initial
+provider inquiry, a real AI reply, notification and RoomScout assessment.
+All 24 Berlin provider mappings are now enabled; the live round-trip proof
+covers BER01. English and German model responses were checked separately.
+
+Added the agreed musician onboarding and confirmed provider-facing identity.
+The orange Mapbox landing map is deployed, with no fabricated real-market pins.
+The listing seed now uses actual Berlin street names without house numbers and
+normal room descriptions; repeated demo disclaimers and visible coordinate
+pairs are removed. The portal discloses the simulation centrally.
+
+Published 25 distinct OpenAI-generated room photos (24 Berlin and the existing
+Stuttgart room), optimized to 1200×800 WebP at about 2.32 MB total. Literal
+public images and Open Graph metadata make the assets crawlable. Firecrawl's
+normal source refresh populated all 25 production signals with distinct image
+URLs; candidate previews, detail panels and provider offers consume that field.
+Both applications are deployed. Follow-up checks were scoped to the changed
+portal, image-ingestion and candidate UI paths, without another full-suite run.
+
+Earlier verification: main suite 1,323 passed with one skip; portal 57;
+coordinate checks 10. The subsequent portal listing update passed 19 focused
+checks and typecheck. Microphone acceptance, human binding acceptance and final
+recording/submission remain with the maintainer. Evalite remains deferred.
+
+## 2026-09-16 — Landing actions follow the signed-in session
+
+The public landing route previously supplied fixed sign-in and registration
+links despite the app-wide auth provider. It now reads the existing Convex
+session: authenticated visitors see the localized Scout link in the desktop
+header/mobile menu and closing CTA. Guests retain sign-in and registration.
+While session restoration is pending, the header does not flash a sign-in
+action and the closing link uses the neutral Scout destination. The synthetic
+demo links remain distinct from the real application entry.
+
+Verification: 17 targeted landing/routing tests and seven public desktop/mobile
+browser checks passed, with one mobile-only skip on desktop. Tests exercise
+loading → authenticated → guest and the signed-in mobile menu using an auth
+state stub; public browser checks use simulated transport. TypeScript,
+production build, scoped lint and diff checks passed. No account was created or
+signed into for verification.
+
+Published the checked build to Fleet; the landing URL returned 200 and its
+served application bundle matches the checked local build byte for byte.
+
+## 2026-09-16 — Scout as the musician entry point
+
+Removed Explore and Map from public and musician navigation, including mobile
+menus, the landing-page secondary action and the sign-in browsing escape.
+Old `/explore`, `/map`, `/app/explore` and `/app/map` links redirect to the
+authenticated Scout, preserving Scout as the destination through sign-in.
+Individual room evidence pages remain readable and link back to the Scout.
+The index, matching, geocoding and operator tools are unchanged.
+
+Removed the retired page exports from the application entry graph; the build
+no longer emits the browser globe or Mapbox chunks. Voice and text share the
+existing Scout flow. Historical implementation files remain outside production
+routing rather than deleting the backend capabilities they once presented.
+
+Verification: 19 targeted route/navigation/auth tests and seven isolated
+desktop/mobile browser checks passed; the mobile-only case is skipped on
+desktop. The retired-route tests failed before the redirects were added.
+TypeScript, production build, scoped lint and diff checks passed. Browser
+checks exercise real UI with simulated Convex transport; no user signup,
+microphone session or provider inquiry was initiated.
+
+Published to the existing Fleet deployment. Landing, the old Map URL, Scout
+and health return 200; the served SPA script is byte-identical to the verified
+production build. Client redirects are covered by the routing/browser checks.
+
+## 2026-09-16 — Consistent EN/DE settings and a bounded GT experiment
+
+Connected the live knowledge, account, privacy and import surfaces, plus the
+musician navigation and account menu, to the existing English/German copy
+catalogs. Derived search labels and dates follow the active locale; stored
+facts and original imported content keep their original text. Fixed the import
+review counters so selected facts, total facts and entity counts stay distinct.
+Settings route tests now render the real locale provider instead of a
+translation-key stub. Removed the unused old import-prompt module.
+
+Added `npm run test:gt`: the pinned General Translation CLI discovers a small
+public-copy JSON sample in a dry run, followed by placeholder/plural validation
+and a test through RoomScout's actual dictionary provider. EN → DE → EN retains
+the mounted conversation draft. This proves the local exchange and UI boundary,
+not hosted translation quality. The optional `--translate` mode requires locally
+configured GT credentials and tests fresh API output without substituting our
+existing German dictionary. No GT browser runtime, new language, market,
+subscription or account was added; no private content was sent to GT.
+
+Prepared the [demo/submission checklist](DEMO_SUBMISSION_READINESS.md) against
+the official event requirements, including a shorter English video outline and
+a repeatable controlled-portal path. Berlin and the Bay Area remain future
+validation cases. Video recording, public posting and final submission remain
+outstanding; the GT experiment is separate from the core demo.
+
+Verification: 1,273 Vitest cases passed with one skipped, plus the separate GT
+UI proof and CLI dry run. Typecheck, production build, scoped lint and diff
+checks passed. The earlier five public Playwright checks were not rerun for
+this copy change. Real microphone and provider acceptance remain with the user.
+See [GT scope and reproduction](GT_COMPATIBILITY.md).
+
+Published the checked build and backend to Fleet. Read-only post-deploy checks
+returned 200 for landing, Settings, Scout and health. The served application
+script is byte-identical to the checked production build, targets Fleet and
+contains neither sandbox deployment URL. No real voice call or provider inquiry
+was initiated during this change.
+
+## 2026-09-16 — Candidate recovery, budget review and Scout presentation
+
+The production listing was already indexed and became a candidate after the
+budget increase. Its first provider assessment failed because the generated
+evidence combined noncontiguous source excerpts; later attempts did not record
+a valid assessment. No first inquiry had been staged. This identifies the
+failed transition, but does not establish that the GPT-Live migration caused it.
+
+Kept strict evidence validation and added one bounded, structured repair
+attempt. Exhausted semantic failures now end with a truthful failure status
+instead of repeating the same turn. An eligible failed initial assessment can
+be retried from its candidate panel. Current need revisions re-evaluate known
+listings and can recover an eligible uncontacted opportunity; existing threads,
+action records and deduplication guards prevent duplicate initial inquiries.
+
+Otherwise plausible monthly listings over budget are retained with a visible
+overage and an action to edit the global search budget. They cannot trigger
+contact while over budget. Saving a higher budget re-evaluates the same
+candidate. The text and voice Scout can inspect indexed rooms and open a
+candidate panel; manual inquiry/retry starts only there, without forwarding
+general Scout-chat text. Existing automatic search orchestration remains.
+
+Conversation labels now distinguish assessment failure, first-message
+preparation, actual dispatch and actual inbound replies. Public listing cards
+expose stored capacity/equipment facts. Candidate and requirement rails are
+centered; the voice surface is narrower and transparent around the existing
+blob and bubbles. Navbars include the existing logo, and the login header no
+longer exposes Explore/Map. English/German Live prompts allow more room for
+hesitations, with a slightly longer quiet interval for background announcements;
+Marin is unchanged. This is prompt/relay tuning, not a new API VAD setting.
+
+Verification: 1,267 Vitest cases passed, one skipped; five public Playwright
+checks passed, with the mobile-only case skipped on desktop. Backend TypeScript,
+production build and scoped lint passed; full lint has zero errors and 29
+existing warnings. Desktop/mobile Scout states were visually checked with
+synthetic data and the real UI components. The final presentation adjustment
+also passed 40 targeted tests. The Fleet backend and 23-file static frontend
+were deployed together from this working tree. Real microphone acceptance and
+the provider round trip remain with the user; no live retry or inquiry was
+triggered during verification. Existing failed candidates need an explicit
+panel retry or an eligible subsequent search revision to resume.
+
+Post-deploy read-only checks: health, landing, login and direct Scout routes
+return 200; the removed Realtime endpoint returns 404. The served script matches
+the verified production build and contains the Fleet backend URL, without
+either sandbox deployment URL.
+
+## 2026-09-16 — Test cleanup and deterministic public browser checks
+
+Applied the test-quality review using Matt Pocock's TDD criteria: preserve
+observable behavior and remove checks tied to obsolete components or incidental
+implementation details. Deleted the two unimported ScoutConversation/ScoutFactList
+component bundles; moved Firecrawl test helpers out of the empty test file;
+removed historical dictionary-shape and duplicate landing assertions. Legacy
+profile tests now use the actual profile route. Voice UI checks retain captions,
+controls and session continuity while dropping exact CSS/pixel expectations;
+prompt-construction tests retain phase, locale, consent and evidence boundaries.
+Active application behavior and production prompts were not changed.
+
+The old public browser test first failed on its obsolete landing heading. The
+replacement uses the real app with fixed Convex transport responses and checks
+landing-to-explorer navigation, location changes and empty results, supply
+filtering, newest-first sorting, provenance details and mobile navigation.
+Playwright builds into a separate ignored cache directory with synthetic
+deployment URLs; external HTTP is blocked, all WebSockets are simulated, and
+unexpected queries or writes fail. These tests do not prove a deployed Convex
+backend or real provider compatibility.
+
+Verification: 1,240 Vitest cases passed in 152 files, with the existing provider
+proof skipped; five Playwright runs passed and the mobile-only navigation case
+was skipped on desktop. Project TypeScript, explicit browser-test TypeScript and
+production build passed. Lint has zero errors and 29 pre-existing warnings.
+No deployment, real audio call or live provider action was performed. Broader
+Voice-to-backend composition and additional public authorization coverage remain
+recommendations in the [review](reviews/test-quality-review-2026-09-16.md).
+
 ## 2026-09-16 — GPT-Live deployed to the existing production app
 
 Release `415f27d` now runs on the existing Fleet production deployment and is
@@ -1968,3 +2385,29 @@ exports the ten parts DecisionCard already used plus Next, Previous, Progress,
 Skip and ChoiceDescription, so no call site changed. Typecheck, 1116 tests and
 build green; frontend deployed to production and dev. Every shadcn part in
 the chat and the decision card is now CLI output.
+
+## 2026-09-17 — Fictional Berlin provider engine and controlled round trip
+
+The separate `roomscout.dev` frontend and `sensible-ladybug-38` backend now run
+one shared AI-provider engine with a distinct Convex Agent Component thread for
+each portal conversation. The guarded production seed inserted 24 fictional
+Berlin listings; its immediate replay reported 24 unchanged and preserved the
+older Stuttgart listing. The main app processed all 24 public detail pages
+through the normal Firecrawl path into distinct AI-simulated signals. A deployed
+coordinate correction then reconciled the public location facets for all 24.
+
+A fresh main-app account used normal authentication, profile and saved-need
+flows, completed Firecrawl portal registration, sent the BER01 initial message,
+received a real AI-provider reply through the portal notification path, and
+produced the resulting main-app assessment. This proves the controlled,
+non-binding BER01 round trip without a direct database shortcut. Separate EN
+and DE model threads answered in about 3.55 and 3.52 seconds; a follow-up took
+about 2.99 seconds. Only BER01 is enabled while the remaining scenario mappings
+are checked. No microphone acceptance or complete human binding acceptance is
+claimed.
+
+Verification: the main suite passed 1,323 tests with one skip, the portal suite
+passed 57 tests, and 10 focused coordinate checks passed. The deployed orange
+Mapbox landing was visually checked in EN and DE with no browser errors; its
+real-research layer truthfully contains zero pins. No broad real-market coverage
+is claimed.

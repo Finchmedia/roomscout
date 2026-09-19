@@ -619,7 +619,7 @@ export const pauseMine = mutation({
   },
 });
 
-async function expireStaleRunsForConnection(
+export async function expireStaleRunsForConnection(
   ctx: MutationCtx,
   connectionId: Id<"portalConnections">,
   now: number,
@@ -742,7 +742,9 @@ export const claimWriteSession = internalMutation({
       storedPortalBrowserProvider(execution.browserProvider) !== selectedProvider) return false;
     if (selectedProvider === "firecrawl" &&
       (!context || context.status !== "ready" || storedPortalBrowserProvider(context.browserProvider) !== selectedProvider)) return false;
-    if (connection.inboxSyncActiveGeneration !== undefined && (connection.inboxSyncDeadlineAt ?? 0) > now) return false;
+    // The inbox lease is taken at enqueue time and only marks a coalesced
+    // pending read; a RUNNING read is visible through context.activeRunId
+    // below, and the shared pool serializes reads and writes.
     if (context?.activeRunId) {
       const activeRun = await ctx.db.get(context.activeRunId);
       if (activeRun && ["queued", "running", "human_required"].includes(activeRun.status)) return false;

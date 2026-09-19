@@ -3,7 +3,7 @@ import { convexTest } from "convex-test";
 import agentTest from "@convex-dev/agent/test";
 import workpoolTest from "@convex-dev/workpool/test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import * as ai from "./ai";
@@ -33,9 +33,10 @@ async function fixture(rules: Partial<AutonomyRules> = {}) {
   const t = convexTest(schema, modules);
   agentTest.register(t);
   workpoolTest.register(t, "scoutWorkpool");
+  workpoolTest.register(t, "browserWorkpool");
   const f = await t.run(async (ctx) => {
     const now = Date.now();
-    const ownerId = await ctx.db.insert("users", { username: "inbox-musician", role: "musician", createdAt: now, lastSeenAt: now });
+    const ownerId = await ctx.db.insert("users", { username: "inbox-musician", firstName: "Mina", actKind: "band", actName: "Night Owls", providerIdentityConfirmedAt: now, role: "musician", createdAt: now, lastSeenAt: now });
     const otherId = await ctx.db.insert("users", { username: "inbox-other", role: "musician", createdAt: now, lastSeenAt: now });
     const needId = await ctx.db.insert("savedNeeds", { ownerId, title: "Band room", city: "Stuttgart", districts: [], arrangement: ["shared"], schedule: [], requirements: [], maxBudgetEur: 250, matchingRevision: 1, status: "active", createdAt: now, updatedAt: now });
     const platformId = await ctx.db.insert("sourcePlatforms", { slug: "controlled", name: "Controlled portal", canonicalDomain: "roomscout.dev", kind: "community", status: "active", firstSeenAt: now, lastObservedAt: now, createdAt: now, updatedAt: now });
@@ -104,17 +105,81 @@ async function fixture(rules: Partial<AutonomyRules> = {}) {
 }
 
 describe("Nachrichten list", () => {
+  it("separates unavailable rooms from pending choices and ignores stale fit assessments", async () => {
+    const f = await fixture();
+    const initialOffer = (await f.t.run(ctx => ctx.db.get(f.offerId)))!;
+    const read = async () => (await f.musician.query(api.conversations.listMine, { savedNeedId: f.needId, limit: 50 }))[0]!;
+    const setAssessment = (assessment: ProviderAssessment) => f.t.run(ctx => ctx.db.patch(f.offerId, { assessment }));
+    await setAssessment({ ...initialOffer.assessment, availability: { status: "unavailable", evidence: [] }, nextAction: "stop", suggestedReply: null });
+    expect(await read()).toMatchObject({ conversationId: f.conversationId, disposition: "not_fit", exclusionReason: "unavailable" });
+    const alternative = { ...initialOffer.assessment, constraints: [{ key: "schedule", verdict: "conflict" as const, explanation: "Wednesday only", evidence: [] }], nextAction: "ask_musician" as const, suggestedReply: null };
+    await setAssessment(alternative);
+    expect(await read()).toMatchObject({ disposition: "active" });
+    await setAssessment({ ...alternative, nextAction: "stop" });
+    expect(await read()).toMatchObject({ disposition: "not_fit", exclusionReason: "schedule" });
+    await setAssessment({ ...initialOffer.assessment, monthlyPrice: { ...initialOffer.assessment.monthlyPrice, totalEur: 350 } });
+    expect(await read()).toMatchObject({ disposition: "above_budget" });
+    await setAssessment({ ...alternative, nextAction: "stop" });
+    await f.t.run(ctx => ctx.db.patch(f.needId, { matchingRevision: 2 }));
+    expect(await read()).toMatchObject({ disposition: "active" });
+    expect((await read()).exclusionReason).toBeUndefined();
+    await f.t.run(ctx => ctx.db.patch(f.conversationId, { state: "closed" }));
+    expect(await read()).toMatchObject({ disposition: "not_fit", exclusionReason: "closed" });
+    expect(await f.musician.query(api.conversations.getMine, { conversationId: f.conversationId })).not.toBeNull();
+    await expect(f.stranger.query(api.conversations.listMine, { savedNeedId: f.needId })).rejects.toThrow("NEED_NOT_FOUND");
+  });
+
+  it("shows the intended channel before first delivery and exposes uncertain submission without claiming sent", async () => {
+    const f = await fixture();
+    await f.t.run(async ctx => {
+      await ctx.db.patch(f.conversationId, { platformThreadId: undefined });
+      await ctx.db.patch(f.pendingRequestId, { status: "queued", gate: undefined });
+    });
+    const queued = (await f.musician.query(api.conversations.getMine, { conversationId: f.conversationId }))!;
+    expect(queued.header).toMatchObject({ channel: "platform", progress: "preparing_inquiry",
+      composer: { enabled: false, reason: "channel_not_ready" } });
+    expect(queued.items.some(item => item.kind === "sent_message")).toBe(false);
+    expect(queued.items.find(item => item.kind === "pending_message" && item.id === f.pendingRequestId))
+      .toMatchObject({ status: "queued" });
+
+    await f.t.run(ctx => ctx.db.patch(f.pendingRequestId, { status: "executing", error: "SUBMIT_RESULT_UNKNOWN" }));
+    const uncertain = (await f.musician.query(api.conversations.getMine, { conversationId: f.conversationId }))!;
+    expect(uncertain.header.progress).toBe("needs_attention");
+    expect(uncertain.items.find(item => item.kind === "pending_message" && item.id === f.pendingRequestId))
+      .toMatchObject({ status: "executing", outcomeUnknown: true });
+    const [listed] = await f.musician.query(api.conversations.listMine, {});
+    expect(listed).toMatchObject({ channel: "platform", pending: { requestId: f.pendingRequestId, outcomeUnknown: true } });
+  });
+
+  it("shows an initial assessment failure without inventing a provider reply", async () => {
+    const f = await fixture();
+    await f.t.run(async (ctx) => {
+      await ctx.db.patch(f.conversationId, {
+        platformThreadId: undefined, currentOfferId: undefined,
+        state: "needs_attention", lastErrorCode: "SCOUT_ASSESSMENT_FAILED",
+      });
+      await ctx.db.patch(f.turnId, { kind: "opportunity", status: "failed" });
+    });
+    const rows = await f.musician.query(api.conversations.listMine, {});
+    expect(rows[0]).toMatchObject({ progress: "assessment_failed", hasProviderReply: false });
+    const thread = await f.musician.query(api.conversations.getMine, { conversationId: f.conversationId });
+    expect(thread?.header).toMatchObject({
+      progress: "assessment_failed", hasProviderReply: false,
+      composer: { enabled: false, reason: "channel_not_ready" },
+    });
+  });
   it("lists the conversation with title, preview and unread, and markRead clears it", async () => {
     const s = await fixture();
+    await s.t.run((ctx) => ctx.db.patch(s.pendingRequestId, { status: "rejected" }));
     const [row] = await s.musician.query(api.conversations.listMine, {});
     expect(row).toMatchObject({
       conversationId: s.conversationId, title: "Proberaum im Westen", subtitle: "Stuttgart",
       channel: "platform", state: "needs_attention", providerLabel: "Anna vom Proberaum", unread: true,
       preview: { author: "musician", text: MUSICIAN_TEXT },
-      pending: { requestId: s.pendingRequestId, status: "awaiting_approval", author: "scout", gateReason: "review_mode", gateText: "Du prüfst Nachrichten vor dem Versand." },
       offer: { offerId: s.offerId, ready: false },
     });
     expect(row?.lastActivityAt).toBe(s.now - 1_000);
+    expect(row?.progress).toBe("inquiry_sent");
     expect(row?.openDecision).toBeUndefined();
 
     expect(await s.musician.mutation(api.conversations.markRead, { conversationId: s.conversationId })).toBeNull();
@@ -125,6 +190,22 @@ describe("Nachrichten list", () => {
     const decisionId = await s.openReviewDecision();
     const [withDecision] = await s.musician.query(api.conversations.listMine, {});
     expect(withDecision?.openDecision).toEqual({ decisionId, kind: "review_message", question: "Soll ich diese Nachricht so senden?" });
+  });
+
+  it("does not present a later outbound follow-up as a fresh provider reply", async () => {
+    const s = await fixture();
+    const [boundary] = await s.musician.query(api.providerConversations.listMine, { savedNeedId: s.needId });
+    expect(boundary?.assessmentFromProviderReply).toBe(false);
+    const progress = await s.t.query(internal.providerConversations.getProgressContext, {
+      ownerId: s.ownerId,
+      savedNeedId: s.needId,
+      focusedSignalId: s.signalId,
+    });
+    expect(progress).toContain('"latestMessageDirection":"outbound"');
+    expect(progress).toContain('"awaitingProviderReply":true');
+    expect(progress).toContain('"currentAssessmentSource":"provider_reply"');
+    expect(progress).toContain('"outboundMessageStatus":"awaiting_approval"');
+    expect(progress).toContain("An outbound latest message is the musician/Scout asking the provider");
   });
 
   it("keeps another musician's conversation out of the list and out of reach", async () => {
@@ -160,7 +241,9 @@ describe("Nachrichten conversation", () => {
     expect(result.items[3]).toMatchObject({ kind: "sent_message", author: "musician", text: MUSICIAN_TEXT });
     expect(result.items[2]).toMatchObject({ kind: "scout_note", id: s.offerId, revision: 1, summary: "Der Anbieter bestätigt 220 Euro im Monat.", nextAction: "ask_provider" });
     expect(result.items[4]).toMatchObject({ kind: "decision", id: s.answeredDecisionId, decision: { status: "answered", question: "Wie viele Personen probt ihr?" } });
-    expect(result.items[5]).toMatchObject({ kind: "musician_input", id: s.inputTurnId, text: "Zu dritt" });
+    expect(result.items[5]).toMatchObject({
+      kind: "musician_input", id: s.inputTurnId, text: "Zu dritt", decisionId: s.answeredDecisionId,
+    });
     expect(result.items[6]).toMatchObject({
       kind: "pending_message", id: s.pendingRequestId, author: "scout", text: PENDING_TEXT,
       status: "awaiting_approval", gateReason: "review_mode", gateText: "Du prüfst Nachrichten vor dem Versand.",

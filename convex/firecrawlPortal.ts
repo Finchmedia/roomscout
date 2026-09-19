@@ -664,21 +664,42 @@ async function executeWriteForOwner(ctx: ActionCtx, ownerId: Id<"users">, reques
   if (claim.executionStatus === "succeeded") return { executionId: claim.executionId, status: "succeeded" as const, alreadyCompleted: true };
   if (["failed", "unknown"].includes(claim.executionStatus)) return { executionId: claim.executionId, status: "unknown" as const, alreadyCompleted: true };
   if (claim.executionStatus === "running" || claim.alreadyClaimed) return { executionId: claim.executionId, status: "in_progress" as const, alreadyCompleted: false };
-  if (claim.payload?.kind !== "platform_message" || !claim.connectionId) throw new ConvexError({ code: "FIRECRAWL_PAYLOAD_NOT_SUPPORTED" });
-  const connection = await connectionForFirecrawl(ctx, ownerId, claim.connectionId);
-  const existingThread = claim.payload.threadId ? await ctx.runQuery(internal.platformInbox.getThreadForWrite, {
-    ownerId, connectionId: connection.connectionId, threadId: claim.payload.threadId,
-  }) : null;
-  const locked = await ctx.runMutation(internal.portalConnections.claimWriteSession, {
-    ownerId, connectionId: connection.connectionId, executionId: claim.executionId, browserProvider: "firecrawl",
-  });
-  if (!locked) throw new ConvexError({ code: "BROWSER_CONTEXT_BUSY" });
+  let connection: WorkerConnection;
+  let existingThread: { providerThreadId: string; participants: string[] } | null;
+  let pendingProof: { contextId: Id<"browserContexts">; profileName: string; generation: number };
+  try {
+    if (claim.payload?.kind !== "platform_message" || !claim.connectionId) throw new ConvexError({ code: "FIRECRAWL_PAYLOAD_NOT_SUPPORTED" });
+    connection = await connectionForFirecrawl(ctx, ownerId, claim.connectionId);
+    existingThread = claim.payload.threadId ? await ctx.runQuery(internal.platformInbox.getThreadForWrite, {
+      ownerId, connectionId: connection.connectionId, threadId: claim.payload.threadId,
+    }) : null;
+    const locked = await ctx.runMutation(internal.portalConnections.claimWriteSession, {
+      ownerId, connectionId: connection.connectionId, executionId: claim.executionId, browserProvider: "firecrawl",
+    });
+    if (!locked) throw new ConvexError({ code: "BROWSER_CONTEXT_BUSY" });
+    pendingProof = await ctx.runMutation(
+      internal.portalConnections.markContextPendingAfterWrite,
+      { ownerId, connectionId: connection.connectionId, executionId: claim.executionId, browserProvider: "firecrawl" },
+    );
+  } catch (error) {
+    // Everything up to here is side-effect free on the portal (no Firecrawl
+    // session exists yet), so a stranded fresh claim is returned to the
+    // approved ledger instead of blocking the connection until the reaper.
+    // Only the busy case is re-admitted; any other code parks the request as
+    // approved with the reason on request.error until it is re-dispatched.
+    const code = error instanceof ConvexError && typeof error.data === "object" && error.data !== null &&
+      "code" in error.data && typeof error.data.code === "string" ? error.data.code : "UNKNOWN";
+    let released = false;
+    try {
+      released = await ctx.runMutation(internal.externalActions.releaseUnstartedClaim, { ownerId, requestId, executionId: claim.executionId, reason: code });
+    } catch {
+      console.error("PORTAL_WRITE_CLAIM_RELEASE_FAILED", { requestId, code });
+    }
+    if (code === "BROWSER_CONTEXT_BUSY") throw new ConvexError({ code: "BROWSER_CONTEXT_BUSY", released });
+    throw error;
+  }
   let deliveryConfirmed = false;
   let confirmedReceipt: { providerThreadId: string; providerMessageId: string } | undefined;
-  const pendingProof: { contextId: Id<"browserContexts">; profileName: string; generation: number } = await ctx.runMutation(
-    internal.portalConnections.markContextPendingAfterWrite,
-    { ownerId, connectionId: connection.connectionId, executionId: claim.executionId, browserProvider: "firecrawl" },
-  );
   let proofRecorded = false;
   /**
    * The profile proof no longer opens a second session (plan S3): the send
@@ -784,10 +805,45 @@ export const executeApprovedWriteForOwner = internalAction({
   handler: async (ctx, args) => await executeWriteForOwner(ctx, args.ownerId, args.requestId),
 });
 
+type WriteWorkerArgs = {
+  ownerId: Id<"users">;
+  requestId: Id<"actionRequests">;
+  busyAttempt?: number;
+};
+
+export async function runFirecrawlWriteWorker(
+  ctx: ActionCtx,
+  args: WriteWorkerArgs,
+  execute: typeof executeWriteForOwner = executeWriteForOwner,
+): Promise<WriteResult> {
+  try {
+    return await execute(ctx, args.ownerId, args.requestId);
+  } catch (error) {
+    const data = error instanceof ConvexError && typeof error.data === "object" && error.data !== null ? error.data as Record<string, unknown> : null;
+    // BROWSER_SESSION_BUSY is raised transactionally before an execution is
+    // inserted, and BROWSER_CONTEXT_BUSY only counts once its claim was
+    // released back to approved. Retrying either cannot replay a provider
+    // call or external write.
+    const busy = data?.code === "BROWSER_SESSION_BUSY" || (data?.code === "BROWSER_CONTEXT_BUSY" && data.released === true);
+    if (!busy) throw error;
+    // The busy chain must re-enter the shared pool through redispatchApproved,
+    // never run the worker beside it.
+    const attempt = Math.max(0, Math.floor(args.busyAttempt ?? 0));
+    if (attempt < 5) {
+      await ctx.scheduler.runAfter(
+        Math.min(60_000, 2_000 * 2 ** attempt),
+        internal.externalActions.redispatchApproved,
+        { ownerId: args.ownerId, requestId: args.requestId, busyAttempt: attempt + 1 },
+      );
+    }
+    throw error;
+  }
+}
+
 export const executeApprovedWriteWorker = internalAction({
   args: { ownerId: v.id("users"), requestId: v.id("actionRequests"), busyAttempt: v.optional(v.number()) },
   returns: writeResultValidator,
-  handler: async (ctx, args): Promise<WriteResult> => await executeWriteForOwner(ctx, args.ownerId, args.requestId),
+  handler: async (ctx, args): Promise<WriteResult> => await runFirecrawlWriteWorker(ctx, args),
 });
 
 export const executeApprovedWrite = action({

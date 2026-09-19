@@ -8,7 +8,7 @@ import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import { actionPayloadHash } from "./integrations/contentHash";
 import { signalMatchRevision } from "./lib/matchValidity";
-import { MESSAGE_SAFETY_VERSION, messageSafetyContext, messageSafetySchema } from "./lib/messageSafety";
+import { MESSAGE_SAFETY_VERSION, messageSafetyContext, messageSafetyInstructions, messageSafetySchema } from "./lib/messageSafety";
 import type { ProviderAssessment } from "./lib/providerAssessment";
 import * as ai from "./ai";
 
@@ -19,12 +19,12 @@ const clear = messageSafetySchema.parse({ classification: "non_binding", explana
 
 async function fixture(options?: { initial?: boolean }) {
   const t = convexTest(schema, modules);
-  agentTest.register(t); workpoolTest.register(t, "scoutWorkpool");
+  agentTest.register(t); workpoolTest.register(t, "scoutWorkpool"); workpoolTest.register(t, "browserWorkpool");
   const f = await t.run(async (ctx) => {
     const now = Date.now();
-    const ownerId = await ctx.db.insert("users", { username: "controlled-musician", role: "musician", createdAt: now, lastSeenAt: now });
+    const ownerId = await ctx.db.insert("users", { username: "controlled-musician", firstName: "Mina", actKind: "band", actName: "Night Owls", providerIdentityConfirmedAt: now, role: "musician", createdAt: now, lastSeenAt: now });
     const otherId = await ctx.db.insert("users", { username: "other-musician", role: "musician", createdAt: now, lastSeenAt: now });
-    const needId = await ctx.db.insert("savedNeeds", { ownerId, title: "Band room", city: "Stuttgart", districts: [], arrangement: ["shared"], schedule: [], requirements: [], maxBudgetEur: 250, matchingRevision: 1, status: "active", createdAt: now, updatedAt: now });
+    const needId = await ctx.db.insert("savedNeeds", { ownerId, title: "Band room", city: "Stuttgart", districts: [], arrangement: ["shared"], schedule: ["Wednesday evenings"], requirements: [], genres: ["Post-rock"], facets: [{ namespace: "band", key: "size", value: 4, confidence: 1 }], maxBudgetEur: 250, matchingRevision: 1, status: "active", createdAt: now, updatedAt: now });
     const platformId = await ctx.db.insert("sourcePlatforms", { slug: "controlled", name: "Controlled portal", canonicalDomain: "roomscout.dev", kind: "community", status: "active", firstSeenAt: now, lastObservedAt: now, createdAt: now, updatedAt: now });
     const sourceId = await ctx.db.insert("sources", { platformId, slug: "controlled", name: "Controlled listings", baseUrl: "https://roomscout.dev/listings", side: "supply", status: "active", health: "healthy", createdAt: now, updatedAt: now });
     const connectedSourceId = await ctx.db.insert("sources", { platformId, slug: "controlled-connected", name: "Controlled connected messaging", baseUrl: "https://roomscout.dev", side: "both", accessMode: "authenticated", status: "paused", health: "healthy", createdAt: now, updatedAt: now });
@@ -68,11 +68,35 @@ async function fixture(options?: { initial?: boolean }) {
 describe("semantic final-message gate and provider dispatch", () => {
   it("starts a conversation using the listing URL and the separate authenticated-source connection", async () => {
     const f = await fixture({ initial: true });
+    const request = await f.request();
+    expect(request?.personalDataScopes).toContain("band_name");
+    expect(request?.payload).toMatchObject({ senderLabel: "RoomScout for Night Owls" });
+    expect(request?.payload.kind === "platform_message" ? request.payload.body : "").toBe(
+      "Hello, I’m RoomScout, an AI assistant contacting you on behalf of Night Owls.\n\nWe are a 4-piece act.\n\nWe play Post-rock.\n\nIs the room still available?",
+    );
+    expect(request?.payload.kind === "platform_message" ? request.payload.body : "").not.toContain("250");
+    expect(JSON.stringify(request?.payload)).not.toContain("controlled-musician");
+    expect(JSON.parse(f.input.data).search).toMatchObject({
+      genres: ["Post-rock"],
+      facets: [{ namespace: "band", key: "size", value: 4, confidence: 1 }],
+    });
     await f.authorize();
     const claimed = await f.claim();
     expect(claimed.payload).toMatchObject({ targetPath: "/listings/room-1", recipients: ["Listing owner"] });
     expect(claimed.payload).not.toHaveProperty("threadId");
     expect(claimed.connectionId).toBe(f.connectionId);
+  });
+
+  it("invalidates the safety snapshot when the confirmed provider identity changes", async () => {
+    const f = await fixture();
+    await f.authorize();
+    const before = f.input.snapshotHash;
+    await f.t.run((ctx) => ctx.db.patch(f.ownerId, { actName: "Morning Static", providerIdentityConfirmedAt: Date.now() + 1 }));
+    const request = (await f.t.run((ctx) => ctx.db.get(f.requestId)))!;
+    const after = await f.t.run((ctx) => messageSafetyContext(ctx, request));
+    expect(after?.snapshotHash).not.toBe(before);
+    expect(after?.data).toContain('"representedName":"Morning Static"');
+    expect((await f.t.mutation(internal.externalActions.prepareClaim, { ownerId: f.ownerId, requestId: f.requestId, executor: "browserbase" })).outcome).not.toBe("proceed");
   });
   it("stages one exact server-resolved reply and authorizes it only after the semantic check", async () => {
     const f = await fixture();
@@ -203,6 +227,12 @@ describe("semantic final-message gate and provider dispatch", () => {
     expect(await actionPayloadHash({ a: [1, 2] })).not.toBe(await actionPayloadHash({ a: [2, 1] }));
     const f = await fixture();
     expect(await f.t.run(async (ctx) => (await messageSafetyContext(ctx, (await ctx.db.get(f.requestId))!))?.snapshotHash)).toBe(f.input.snapshotHash);
-    expect(MESSAGE_SAFETY_VERSION).toBe("final-message-v2");
+    expect(MESSAGE_SAFETY_VERSION).toBe("final-message-v5-search-scope");
+  });
+
+  it("keeps current-search requirements authoritative over room-specific memory", () => {
+    expect(messageSafetyInstructions).toContain("the current search is authoritative");
+    expect(messageSafetyInstructions).toContain("supports claims only in that conversation");
+    expect(messageSafetyInstructions).toContain("Still list any assertion about the provider, room or musician that the supplied data does not support");
   });
 });

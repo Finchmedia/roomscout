@@ -13,6 +13,7 @@ import { signalMatchRevision } from "./lib/matchValidity";
 import { messageSafetySchema } from "./lib/messageSafety";
 import { offerConstraints, type ProviderAssessment } from "./lib/providerAssessment";
 import { raiseDecision } from "./lib/decisions";
+import { pendingPortalWrites } from "./portalWriteQueue.testSupport";
 import { scoutAgent } from "./scoutRuntime";
 import * as ai from "./ai";
 
@@ -27,10 +28,10 @@ const usage = { inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite:
 /** Controlled-portal conversation (mirrors autonomyGate.integration.test.ts): stageReply drafts a portal reply. */
 async function portalScenario(rules: Partial<AutonomyRules>) {
   const t = convexTest(schema, modules);
-  agentTest.register(t); workpoolTest.register(t, "scoutWorkpool");
+  agentTest.register(t); workpoolTest.register(t, "scoutWorkpool"); workpoolTest.register(t, "browserWorkpool");
   const f = await t.run(async (ctx) => {
     const now = Date.now();
-    const ownerId = await ctx.db.insert("users", { username: "controlled-musician", role: "musician", createdAt: now, lastSeenAt: now });
+    const ownerId = await ctx.db.insert("users", { username: "controlled-musician", firstName: "Mina", actKind: "band", actName: "Night Owls", providerIdentityConfirmedAt: now, role: "musician", createdAt: now, lastSeenAt: now });
     const needId = await ctx.db.insert("savedNeeds", { ownerId, title: "Band room", city: "Stuttgart", districts: [], arrangement: ["shared"], schedule: [], requirements: [], maxBudgetEur: 250, matchingRevision: 1, status: "active", createdAt: now, updatedAt: now });
     const platformId = await ctx.db.insert("sourcePlatforms", { slug: "controlled", name: "Controlled portal", canonicalDomain: "roomscout.dev", kind: "community", status: "active", firstSeenAt: now, lastObservedAt: now, createdAt: now, updatedAt: now });
     const sourceId = await ctx.db.insert("sources", { platformId, slug: "controlled", name: "Controlled listings", baseUrl: "https://roomscout.dev/listings", side: "supply", status: "active", health: "healthy", createdAt: now, updatedAt: now });
@@ -70,7 +71,9 @@ async function portalScenario(rules: Partial<AutonomyRules>) {
     const page = await t.run((ctx) => listMessages(ctx, components.agent, { threadId: context.threadId, paginationOpts: { cursor: null, numItems: 20 } }));
     return page.page.map((row) => ({ role: row.message?.role, text: row.text }));
   };
-  return { t, musician, ...f, requestId, authorize, request, decisions, openDecisions, approvals, scheduledNames, scoutMessages };
+  // Approved portal writes enter the shared browser pool, not the root scheduler.
+  const pooledWriteNames = async () => (await pendingPortalWrites(t)).map((row) => row.fnName);
+  return { t, musician, ...f, requestId, authorize, request, decisions, openDecisions, approvals, scheduledNames, pooledWriteNames, scoutMessages };
 }
 
 describe("Entscheidung from the Freigabeprüfung (ask_user)", () => {
@@ -79,9 +82,9 @@ describe("Entscheidung from the Freigabeprüfung (ask_user)", () => {
     expect(await s.request()).toMatchObject({ status: "awaiting_approval", gate: { outcome: "ask_user", reason: "review_mode" } });
     const [first] = await s.openDecisions();
     expect(first).toMatchObject({
-      kind: "review_message", status: "open", question: "Soll ich diese Nachricht so senden?",
-      detail: "Room availability\n\nIs the room still available?",
-      options: [{ id: "yes", label: "Ja, so senden" }, { id: "no", label: "Nein, anders" }],
+      kind: "review_message", status: "open", question: "Should I send this message?",
+      detail: "Subject:\nRoom availability\n\nMessage:\nIs the room still available?",
+      options: [{ id: "yes", label: "Yes, send it" }, { id: "no", label: "No, change it" }],
       refs: { requestId: s.requestId, offerId: s.offerId }, conversationId: s.conversationId,
     });
     // The same conversation asks again (re-submit): exactly one open decision remains.
@@ -101,7 +104,7 @@ describe("Entscheidung from the Freigabeprüfung (ask_user)", () => {
     const s = await portalScenario({ mode: "autopilot", sharePrivate: false });
     expect(await s.authorize({ ...clear, personalDataScopes: ["phone"] })).toBe(false);
     const [decision] = await s.openDecisions();
-    expect(decision).toMatchObject({ kind: "private_data", detail: "Datenfelder: phone\n\nRoom availability\n\nIs the room still available?" });
+    expect(decision).toMatchObject({ kind: "private_data", detail: "Datenfelder: phone\n\nSubject:\nRoom availability\n\nMessage:\nIs the room still available?" });
   });
 
   it("answer yes approves like decide and dispatches to the executor", async () => {
@@ -112,7 +115,7 @@ describe("Entscheidung from the Freigabeprüfung (ask_user)", () => {
     expect(await s.request()).toMatchObject({ status: "approved" });
     const [approval] = await s.approvals();
     expect(approval).toMatchObject({ decision: "approved", contentVersion: 1, autonomyVersion: 1 });
-    expect(await s.scheduledNames()).toContain("browserbasePortal:executeApprovedWriteWorker");
+    expect(await s.pooledWriteNames()).toContain("browserbasePortal:executeApprovedWriteWorker");
     expect(await s.t.run((ctx) => ctx.db.get(decision!._id))).toMatchObject({ status: "answered", answer: { choice: "yes" } });
     expect(await s.openDecisions()).toEqual([]);
     // The claim-phase Freigabeprüfung honours the human's exact approval.
@@ -127,7 +130,7 @@ describe("Entscheidung from the Freigabeprüfung (ask_user)", () => {
     expect(await s.request()).toMatchObject({ status: "rejected" });
     expect((await s.approvals())[0]).toMatchObject({ decision: "rejected" });
     expect(await s.scoutMessages()).toEqual([{ role: "assistant", text: "Okay, ich sende das nicht. Was soll anders sein?" }]);
-    expect(await s.scheduledNames()).not.toContain("browserbasePortal:executeApprovedWriteWorker");
+    expect(await s.pooledWriteNames()).toEqual([]);
   });
 
   it("answer custom is an instruction for the next draft: the Scout's message is rejected and re-assessed, nothing is staged", async () => {
@@ -145,7 +148,7 @@ describe("Entscheidung from the Freigabeprüfung (ask_user)", () => {
     });
     // Nothing goes out: no second request, no dispatch.
     expect(await s.t.run((ctx) => ctx.db.query("actionRequests").collect())).toHaveLength(before.length);
-    expect(await s.scheduledNames()).not.toContain("browserbasePortal:executeApprovedWriteWorker");
+    expect(await s.pooledWriteNames()).toEqual([]);
     // Instead the instruction enters the conversation as a trusted musician turn.
     const turns = await s.t.run((ctx) => ctx.db.query("providerTurns").collect());
     const musicianTurn = turns.find((turn) => turn.kind === "musician_input")!;
@@ -173,7 +176,7 @@ describe("Entscheidung from the Freigabeprüfung (ask_user)", () => {
     // Rücksprache asks about every outgoing message — except the one the musician wrote.
     const [approval] = await s.approvals(result.requestId);
     expect(approval).toMatchObject({ decision: "approved", contentHash: custom.contentHash });
-    expect(await s.scheduledNames()).toContain("browserbasePortal:executeApprovedWriteWorker");
+    expect(await s.pooledWriteNames()).toContain("browserbasePortal:executeApprovedWriteWorker");
     expect(await s.t.mutation(internal.externalActions.prepareClaim, { ownerId: s.ownerId, requestId: result.requestId, executor: "browserbase" })).toEqual({ outcome: "proceed" });
     // The Scout's own reply for this offer is not staged again while the dictated one lives.
     expect(await s.t.mutation(internal.providerActions.stageReply, { offerId: s.offerId })).toBe(result.requestId);
@@ -211,7 +214,7 @@ describe("Entscheidung from the Freigabeprüfung (ask_user)", () => {
     const withOpen = (await s.t.query(internal.scout.getActionContext, { ownerId: s.ownerId, threadId: thread.threadId }))!;
     expect(withOpen.hasOpenDecision).toBe(true);
     expect(withOpen.caseCard).toContain("OPEN ENTSCHEIDUNGEN");
-    expect(withOpen.caseCard).toContain("Soll ich diese Nachricht so senden?");
+    expect(withOpen.caseCard).toContain("Should I send this message?");
     const [decision] = await s.openDecisions();
     await s.musician.mutation(api.decisions.answer, { decisionId: decision!._id, choice: "no" });
     const without = (await s.t.query(internal.scout.getActionContext, { ownerId: s.ownerId, threadId: thread.threadId }))!;
@@ -222,13 +225,14 @@ describe("Entscheidung from the Freigabeprüfung (ask_user)", () => {
 
 /** Mail-based provider conversation (mirrors providerConversations.integration.test.ts). */
 const body = "Room available. Monthly total including all charges: EUR 220. Drums and storage allowed, Monday evenings available.";
-async function mailFixture() {
+async function mailFixture(replyBody = body) {
   const t = convexTest(schema, modules);
   agentTest.register(t);
   workpoolTest.register(t, "scoutWorkpool");
+  workpoolTest.register(t, "browserWorkpool");
   const ids = await t.run(async (ctx) => {
     const now = Date.now();
-    const ownerId = await ctx.db.insert("users", { username: "offer-owner", role: "musician", createdAt: now, lastSeenAt: now });
+    const ownerId = await ctx.db.insert("users", { username: "offer-owner", firstName: "Mina", actKind: "band", actName: "Night Owls", providerIdentityConfirmedAt: now, role: "musician", createdAt: now, lastSeenAt: now });
     const savedNeedId = await ctx.db.insert("savedNeeds", {
       ownerId, title: "Band search", city: "Stuttgart", districts: [], arrangement: ["shared"],
       schedule: ["Monday evenings"], requirements: ["Drums and storage"], maxBudgetEur: 250,
@@ -253,11 +257,11 @@ async function mailFixture() {
   });
   const messageId = (await t.mutation(internal.inbox.storeInboundMessage, {
     mailboxId: ids.mailboxId, providerThreadId: "provider-thread", providerMessageId: "message-1", providerEventId: "event-1",
-    from: "provider@example.test", to: ["scout@example.test"], subject: "Room reply", body, htmlAvailable: false, receivedAt: Date.now(),
+    from: "provider@example.test", to: ["scout@example.test"], subject: "Room reply", body: replyBody, htmlAvailable: false, receivedAt: Date.now(),
   }))!;
   const eventId = (await t.mutation(internal.providerConversations.enqueueMailReply, { messageId }))!;
   const input = (await t.mutation(internal.providerConversations.prepareTurn, { eventId }))!;
-  const citation = { sourceId: `mail:${messageId}`, quote: body };
+  const citation = { sourceId: `mail:${messageId}`, quote: replyBody };
   const ready: ProviderAssessment = {
     summary: "Provider confirms the room matches the search.",
     availability: { status: "available", evidence: [citation] },
@@ -283,6 +287,71 @@ async function mailFixture() {
 }
 
 describe("Entscheidung from the provider assessment", () => {
+  it("collects separate slot and equipment answers before resuming the provider conversation", async () => {
+    const f = await mailFixture("Room available for EUR 220/month including charges. Wednesday 18:00–22:00 only. Acoustic drums prohibited; electronic kit with headphones available.");
+    const conflict: ProviderAssessment = {
+      ...f.ready, nextAction: "ask_musician",
+      constraints: f.ready.constraints.map((item) => item.key === "budget" ? item : {
+        ...item, verdict: "conflict", explanation: item.key === "schedule" ? "Wednesday only, instead of the requested day." : "Acoustic drums prohibited; electronic kit only.",
+      }),
+    };
+    await f.record(conflict);
+    await f.complete();
+    const [decision] = await f.musician.query(api.decisions.listOpenMine, {});
+    await expect(f.t.mutation(internal.decisions.recordDecisionQuestions, {
+      decisionId: decision!._id,
+      questions: [{ id: "slot", constraintKeys: ["schedule"], question: "Would Wednesday work?", options: [] }],
+    })).rejects.toThrow("MISSING_CLARIFICATION_CONSTRAINT");
+    await f.t.mutation(internal.decisions.recordDecisionQuestions, {
+      decisionId: decision!._id,
+      questions: [
+        { id: "slot", constraintKeys: ["schedule"], question: "Would Wednesday work for this room?", options: [{ id: "yes", label: "Wednesday works", constraintEffect: "accept_alternative" }] },
+        { id: "drums", constraintKeys: ["requirement:0"], question: "Acoustic drums are prohibited. Would an electronic kit work?", options: [{ id: "yes", label: "An electronic kit works", constraintEffect: "accept_alternative" }, { id: "no", label: "We need acoustic drums", constraintEffect: "keep_requirement" }] },
+      ],
+    });
+    expect(await f.musician.mutation(api.decisions.answer, { decisionId: decision!._id, questionId: "slot", choice: "yes" }))
+      .toMatchObject({ status: "open", action: "awaiting_answers", nextQuestionId: "drums" });
+    const [remaining] = await f.musician.query(api.decisions.listOpenMine, {});
+    expect(remaining).toMatchObject({ question: "Acoustic drums are prohibited. Would an electronic kit work?", questions: [{ answer: { choice: "yes" } }, { id: "drums" }] });
+    expect(await f.t.run((ctx) => ctx.db.query("providerTurns").collect())).not.toContainEqual(expect.objectContaining({ kind: "musician_input" }));
+    expect(await f.t.run((ctx) => ctx.db.query("actionRequests").collect())).toEqual([]);
+    // A stale UI/voice answer to question 1 must never become a yes to question 2.
+    await expect(f.musician.mutation(api.decisions.answer, { decisionId: decision!._id, questionId: "slot", choice: "yes" })).rejects.toThrow("DECISION_QUESTION_CHANGED");
+    await expect(f.musician.mutation(api.decisions.answer, { decisionId: decision!._id, choice: "yes" })).rejects.toThrow("DECISION_QUESTION_CHANGED");
+    expect(await f.musician.mutation(api.decisions.answer, { decisionId: decision!._id, questionId: "drums", choice: "no" }))
+      .toMatchObject({ status: "answered", action: "reassessing" });
+    expect(await f.musician.query(api.decisions.listOpenMine, {})).toEqual([]);
+    const turns = (await f.t.run((ctx) => ctx.db.query("providerTurns").collect())).filter((turn) => turn.kind === "musician_input");
+    expect(turns).toHaveLength(1);
+    const input = (await f.t.mutation(internal.providerConversations.prepareTurn, { eventId: turns[0]!._id }))!;
+    expect(input.musicianStatements.join("\n")).toContain("Wednesday works");
+    expect(input.musicianStatements.join("\n")).toContain("We need acoustic drums");
+    expect(input.musicianStatements.join("\n")).toContain("requirement:0");
+    expect(input.musicianStatements.join("\n")).toContain("Acoustic drums are prohibited");
+    expect(input.clarificationScope?.answeredConstraintKeys).toEqual(["schedule", "requirement:0"]);
+    expect(input.clarificationScope?.retainedConstraintKeys).toEqual(["requirement:0"]);
+    await expect(f.t.mutation(internal.providerConversations.recordAssessment, {
+      eventId: turns[0]!._id, needRevision: input.needRevision, signalRevision: input.signalRevision, assessment: f.ready,
+    })).rejects.toThrow("MUSICIANS_CONSTRAINT_RETAINED");
+    expect(await f.scheduledNames()).not.toContain("decisions:absorbMusicianAnswer");
+    expect(await f.t.run((ctx) => ctx.db.get(f.savedNeedId))).toMatchObject({ schedule: ["Monday evenings"], requirements: ["Drums and storage"] });
+  });
+
+  it("refuses answers to a round whose search constraints have changed", async () => {
+    const f = await mailFixture();
+    await f.record(f.asksMusician);
+    await f.complete();
+    const [decision] = await f.musician.query(api.decisions.listOpenMine, {});
+    await f.t.mutation(internal.decisions.recordDecisionQuestions, {
+      decisionId: decision!._id,
+      questions: [{ id: "room", constraintKeys: [], question: "Would this room work?", options: [{ id: "yes", label: "Yes" }] }],
+    });
+    await f.t.run((ctx) => ctx.db.patch(f.savedNeedId, { matchingRevision: 2 }));
+    await expect(f.musician.mutation(api.decisions.answer, { decisionId: decision!._id, questionId: "room", choice: "yes" }))
+      .rejects.toThrow("DECISION_CONTEXT_CHANGED");
+    expect(await f.t.run((ctx) => ctx.db.query("providerTurns").collect())).not.toContainEqual(expect.objectContaining({ kind: "musician_input" }));
+  });
+
   it("ask_musician raises an empty scout_question, schedules formulateQuestion and writes no notification", async () => {
     const f = await mailFixture();
     await f.record(f.asksMusician);
@@ -316,11 +385,11 @@ describe("Entscheidung from the provider assessment", () => {
     await f.complete();
     const [decision] = await f.decisions();
     const model = new MockLanguageModelV4({ doGenerate: [
-      { content: [{ type: "tool-call", toolCallId: "q-1", toolName: "recordDecisionQuestion", input: JSON.stringify({ decisionId: decision!._id, question: "Passt dir Stuttgart-West statt Zentrum?", options: [{ id: "yes", label: "Ja, passt" }, { id: "no", label: "Nein, nur Zentrum" }] }) }], finishReason: { unified: "tool-calls", raw: undefined }, usage, warnings: [] },
+      { content: [{ type: "tool-call", toolCallId: "q-1", toolName: "recordDecisionQuestion", input: JSON.stringify({ decisionId: decision!._id, questions: [{ id: "location", constraintKeys: [], question: "Passt dir Stuttgart-West statt Zentrum?", options: [{ id: "yes", label: "Ja, passt", constraintEffect: "none" }, { id: "no", label: "Nein, nur Zentrum", constraintEffect: "none" }] }] }) }], finishReason: { unified: "tool-calls", raw: undefined }, usage, warnings: [] },
       { content: [{ type: "text", text: "Kurze Frage: Der Raum liegt in Stuttgart-West statt im Zentrum. Passt dir das?" }], finishReason: { unified: "stop", raw: undefined }, usage, warnings: [] },
     ] });
-    scoutAgent.options.languageModel = model;
-    await f.t.finishAllScheduledFunctions(() => vi.runAllTimers());
+    await ai.withRoomScoutLanguageModelForTest(model, () =>
+      f.t.finishAllScheduledFunctions(() => vi.runAllTimers()));
     expect(model.doGenerateCalls).toHaveLength(2);
     expect(model.doGenerateCalls[0]?.tools?.map((tool) => tool.name)).toEqual(["recordDecisionQuestion"]);
     const formulated = (await f.t.run((ctx) => ctx.db.get(decision!._id)))!;
@@ -342,12 +411,13 @@ describe("Entscheidung from the provider assessment", () => {
     const f = await mailFixture();
     await f.record(f.asksMusician);
     await f.complete();
-    scoutAgent.options.languageModel = new MockLanguageModelV4({ doGenerate: [
+    const model = new MockLanguageModelV4({ doGenerate: [
       { content: [{ type: "text", text: "" }], finishReason: { unified: "stop", raw: undefined }, usage, warnings: [] },
     ] });
-    await f.t.finishAllScheduledFunctions(() => vi.runAllTimers());
+    await ai.withRoomScoutLanguageModelForTest(model, () =>
+      f.t.finishAllScheduledFunctions(() => vi.runAllTimers()));
     const [decision] = await f.decisions();
-    expect(decision).toMatchObject({ status: "open", question: "Ich brauche deine Einschätzung zu „Controlled room“: Is Stuttgart-West acceptable instead of the centre? — wie willst du damit umgehen?", options: [] });
+    expect(decision).toMatchObject({ status: "open", question: "I need your decision about “Controlled room”: Is Stuttgart-West acceptable instead of the centre? — how would you like to handle it?", options: [] });
     expect(decision!.threadMessageId).toBeTruthy();
   });
 
@@ -360,10 +430,11 @@ describe("Entscheidung from the provider assessment", () => {
     const result = await f.musician.mutation(api.decisions.answer, { decisionId: decision!._id, choice: "custom", text: "Stuttgart-West passt, wenn die S-Bahn nah ist." });
     expect(result).toMatchObject({ status: "answered", action: "reassessing" });
     expect(await f.t.run((ctx) => ctx.db.get(decision!._id))).toMatchObject({ status: "answered", answer: { choice: "custom", text: "Stuttgart-West passt, wenn die S-Bahn nah ist." } });
+    expect(await f.t.query(internal.decisions.getAbsorbInput, { decisionId: decision!._id })).toBeNull();
     const turns = await f.t.run((ctx) => ctx.db.query("providerTurns").collect());
     const musicianTurn = turns.find((turn) => turn.kind === "musician_input")!;
     expect(musicianTurn).toMatchObject({ input: "Stuttgart-West passt, wenn die S-Bahn nah ist.", decisionId: decision!._id, status: "processing", revision: 2, sourceKey: `decision:${decision!._id}` });
-    expect(await f.scheduledNames()).toContain("decisions:absorbMusicianAnswer");
+    expect(await f.scheduledNames()).not.toContain("decisions:absorbMusicianAnswer");
     const conversation = (await f.t.run((ctx) => ctx.db.get(f.conversationId)))!;
     expect(conversation).toMatchObject({ revision: 2, activeEventId: musicianTurn._id, state: "thinking" });
     const input = (await f.t.mutation(internal.providerConversations.prepareTurn, { eventId: musicianTurn._id }))!;
@@ -373,7 +444,7 @@ describe("Entscheidung from the provider assessment", () => {
     const offerId = await f.t.mutation(internal.providerConversations.recordAssessment, { eventId: musicianTurn._id, needRevision: input.needRevision, signalRevision: input.signalRevision, assessment: f.ready });
     expect(offerId).toBeTruthy();
     expect(await f.t.run((ctx) => ctx.db.get(f.conversationId))).toMatchObject({ currentOfferId: offerId, state: "offer_ready" });
-    // An option answer without text runs no extra chat round.
+    // A provider-specific answer never runs a global-memory chat round.
     const before = (await f.scheduledNames()).filter((name) => name === "decisions:absorbMusicianAnswer").length;
     const [ready] = (await f.decisions()).filter((row) => row.status === "open");
     expect(ready).toMatchObject({ kind: "offer_ready" });
@@ -417,7 +488,7 @@ describe("Entscheidung human_step for portal registration", () => {
     agentTest.register(t);
     const ids = await t.run(async (ctx) => {
       const now = Date.now();
-      const ownerId = await ctx.db.insert("users", { username: "registering", role: "musician", createdAt: now, lastSeenAt: now });
+      const ownerId = await ctx.db.insert("users", { username: "registering", firstName: "Mina", actKind: "band", actName: "Night Owls", providerIdentityConfirmedAt: now, role: "musician", createdAt: now, lastSeenAt: now });
       const platformId = await ctx.db.insert("sourcePlatforms", { slug: "controlled", name: "Controlled portal", canonicalDomain: "roomscout.dev", kind: "community", status: "active", firstSeenAt: now, lastObservedAt: now, createdAt: now, updatedAt: now });
       const sourceId = await ctx.db.insert("sources", { platformId, slug: "controlled-connected", name: "Controlled connected messaging", baseUrl: "https://roomscout.dev", side: "both", accessMode: "authenticated", status: "paused", health: "healthy", createdAt: now, updatedAt: now });
       const connectionId = await ctx.db.insert("portalConnections", { ownerId, sourceId, platformId, label: "Test connection", allowedDomains: ["roomscout.dev"], allowedPaths: ["/"], adapterKey: "roomscout-dev-v1", status: "needs_auth", policyDecision: "allowed", allowReadOnlyRecon: true, allowInboxPolling: false, pollIntervalMinutes: 30, failureCount: 0, browserProvider, createdAt: now, updatedAt: now });

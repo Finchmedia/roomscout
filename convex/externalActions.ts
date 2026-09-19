@@ -19,13 +19,17 @@ import {
 import { loadAutonomyForOwner } from "./autonomy";
 import {
   checkScoutAction,
+  controlledPortalOnly,
   gateOutcomeValidator,
   publicOutcome,
   recordOutcome,
   type PublicGateOutcome,
 } from "./autonomyGate";
-import { gateReasonText } from "./lib/autonomyGate";
+import { gateReasonText, isControlledDemoTarget } from "./lib/autonomyGate";
 import { answerDecisionsForRequest } from "./lib/decisions";
+import { resolveProviderIdentity } from "./lib/musicianIdentity";
+import { expireStaleRunsForConnection } from "./portalConnections";
+import { enqueueApprovedPortalWrite } from "./portalWriteQueue";
 
 const actionTypeValidator = v.union(
   v.literal("send_email"), v.literal("submit_webform"), v.literal("send_platform_dm"),
@@ -316,7 +320,9 @@ export const createContactFormFromScout = internalMutation({
     if (!binding || binding.adapterKey !== "bandnet-contact-form-v1") {
       throw new ConvexError({ code: "SCOUT_CONTACT_ADAPTER_NOT_REVIEWED" });
     }
-    const senderName = normalizeText(owner.displayName ?? owner.username).slice(0, 160);
+    const identity = resolveProviderIdentity(owner);
+    if (!identity.complete) throw new ConvexError({ code: "MUSICIAN_PROFILE_REQUIRED" });
+    const senderName = normalizeText(identity.providerDisplayName).slice(0, 160);
     const senderEmail = normalizeEmail(args.senderEmail);
     const subject = normalizeText(args.subject).slice(0, 200);
     const body = normalizeText(args.body).slice(0, 20_000);
@@ -346,7 +352,7 @@ export const createContactFormFromScout = internalMutation({
       policyVersionId: policy._id,
       automationMode: "autopilot",
       requestedActionType: "submit_webform",
-      personalDataScopes: ["reply_email"],
+      personalDataScopes: ["reply_email", ...identity.dataFields],
       payload,
       contentVersion: 1,
       contentHash: hash,
@@ -447,10 +453,12 @@ async function submitRequest(ctx: MutationCtx, ownerId: Id<"users">, requestId: 
 }
 
 /**
- * Enqueue exactly one provider attempt for an approved request. No AI
- * workpool retries enclose an external write or an ambiguous browser result.
+ * Enqueue exactly one provider attempt for an approved request. Controlled
+ * portal writes enter the shared browser pool (serialized with inbox reads,
+ * retry: false); the other executors keep the scheduler. No pool retry
+ * encloses an external write or an ambiguous browser result.
  */
-export async function dispatchApproved(ctx: MutationCtx, request: Doc<"actionRequests">): Promise<void> {
+export async function dispatchApproved(ctx: MutationCtx, request: Doc<"actionRequests">, options?: { busyAttempt?: number }): Promise<void> {
   const binding = request.adapterBindingId ? await ctx.db.get(request.adapterBindingId) : null;
   if (binding?.executor === "browserbase") {
     const connection = request.connectionId ? await ctx.db.get(request.connectionId) : null;
@@ -464,10 +472,9 @@ export async function dispatchApproved(ctx: MutationCtx, request: Doc<"actionReq
       });
       return;
     }
-    const worker = selectedProvider === "firecrawl"
-      ? internal.firecrawlPortal.executeApprovedWriteWorker
-      : internal.browserbasePortal.executeApprovedWriteWorker;
-    await ctx.scheduler.runAfter(0, worker, { ownerId: request.ownerId, requestId: request._id });
+    await enqueueApprovedPortalWrite(ctx, {
+      ownerId: request.ownerId, requestId: request._id, browserProvider: selectedProvider, busyAttempt: options?.busyAttempt,
+    });
   } else if (binding?.executor === "firecrawl") {
     await ctx.scheduler.runAfter(0, internal.firecrawlInteract.executeApprovedWorker, { ownerId: request.ownerId, requestId: request._id });
   } else if (binding?.executor === "agentmail" && binding.config.kind === "agentmail" && binding.config.purpose === "reply") {
@@ -475,15 +482,76 @@ export async function dispatchApproved(ctx: MutationCtx, request: Doc<"actionReq
   }
 }
 
-/** Scheduled by the gate after a claim-phase wait (browser busy, connection not ready). */
+/**
+ * Scheduled by the gate after a claim-phase wait (browser busy, connection not
+ * ready) and by the workers' bounded busy chain, which passes busyAttempt on.
+ */
 export const redispatchApproved = internalMutation({
-  args: { ownerId: v.id("users"), requestId: v.id("actionRequests") },
+  args: { ownerId: v.id("users"), requestId: v.id("actionRequests"), busyAttempt: v.optional(v.number()) },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const request = await ctx.db.get(args.requestId);
     if (request === null || request.ownerId !== args.ownerId || request.status !== "approved") return null;
-    await dispatchApproved(ctx, request);
+    await dispatchApproved(ctx, request, { busyAttempt: args.busyAttempt });
     return null;
+  },
+});
+
+/**
+ * Releases only a claim that provably never reached the provider; callers
+ * guarantee that by invoking it only from the pre-provider region of the
+ * worker (before any session exists). The stranded execution is closed under a
+ * rewritten idempotency key so the deterministic key is free for the next
+ * claim, and the request returns to the approved ledger with its gate intact.
+ * The release reason stays on `request.error` so a parked approved request is
+ * distinguishable from a fresh one; the next fresh claim clears it.
+ */
+export const releaseUnstartedClaim = internalMutation({
+  args: { ownerId: v.id("users"), requestId: v.id("actionRequests"), executionId: v.id("actionExecutions"), reason: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const [execution, request] = await Promise.all([ctx.db.get(args.executionId), ctx.db.get(args.requestId)]);
+    if (!execution || execution.ownerId !== args.ownerId || execution.requestId !== args.requestId || execution.status !== "claimed" ||
+      execution.providerActionId || execution.providerThreadId || execution.providerMessageId) return false;
+    if (!request || request.status !== "executing" || request.executionIdempotencyKey !== execution.idempotencyKey) return false;
+    const connection = execution.connectionId ? await ctx.db.get(execution.connectionId) : null;
+    if (execution.connectionId) {
+      const context = await ctx.db.query("browserContexts")
+        .withIndex("by_connection", (q) => q.eq("connectionId", execution.connectionId!))
+        .order("desc")
+        .first();
+      // A proof generation bound to this execution means a provider session may have been opened.
+      if (context?.pendingWriteExecutionId === execution._id && context.writeProofGeneration !== undefined) return false;
+    }
+    const now = Date.now();
+    await ctx.db.patch(execution._id, {
+      status: "failed",
+      error: `EXECUTION_RELEASED_BEFORE_PROVIDER:${args.reason}`,
+      idempotencyKey: `${execution.idempotencyKey}:released:${execution._id}`,
+      completedAt: now,
+      updatedAt: now,
+    });
+    await ctx.db.patch(request._id, {
+      status: "approved", executionIdempotencyKey: undefined, error: `EXECUTION_RELEASED_BEFORE_PROVIDER:${args.reason}`, updatedAt: now,
+    });
+    if (connection?.activeWriteExecutionId === execution._id) {
+      await ctx.db.patch(connection._id, { activeWriteExecutionId: undefined, activeWriteDeadlineAt: undefined, updatedAt: now });
+    }
+    await ctx.db.insert("auditEvents", {
+      eventKey: `action:${request._id}:released:${execution._id}`,
+      actorType: "system",
+      actorUserId: args.ownerId,
+      entityKey: `action:${request._id}`,
+      eventType: "action.execution_released",
+      correlationId: execution.idempotencyKey,
+      actionRequestId: request._id,
+      executionId: execution._id,
+      policyId: request.policyVersionId,
+      afterHash: request.contentHash,
+      summary: args.reason,
+      occurredAt: now,
+    });
+    return true;
   },
 });
 
@@ -690,10 +758,21 @@ const claimedActionValidator = v.object({
   browserProvider: v.optional(portalBrowserProviderValidator),
 });
 
-/** The three conditions under which the controlled portal browser is busy. */
+/**
+ * The conditions under which the controlled portal browser is busy for a write.
+ * The inbox lease (inboxSyncActiveGeneration) is deliberately not one of them:
+ * it is taken at enqueue time and only marks a coalesced pending read. A
+ * RUNNING read is visible through its browserRuns row, which is consulted
+ * below, and the shared pool serializes reads and writes. The remaining
+ * pre-provider race (read passed claimWorker, write claimed, read's reserveRun
+ * then sees the write lock) is handled by reserveRun's BROWSER_SESSION_BUSY.
+ */
 async function browserSessionBusy(ctx: MutationCtx, connection: Doc<"portalConnections">, now: number): Promise<boolean> {
-  if (connection.inboxSyncActiveGeneration !== undefined && (connection.inboxSyncDeadlineAt ?? 0) > now) return true;
   if (connection.activeWriteExecutionId && (connection.activeWriteDeadlineAt ?? 0) > now) return true;
+  // Terminalize expired runs and release their context ownership before deciding
+  // whether a provider session still blocks this write. Merely ignoring an
+  // expired row would leave stale operational state behind.
+  await expireStaleRunsForConnection(ctx, connection._id, now);
   const connectionRuns = await ctx.db.query("browserRuns").withIndex("by_connection", (q) =>
     q.eq("connectionId", connection._id),
   ).order("desc").take(20);
@@ -813,7 +892,7 @@ export const claimForExecutor = internalMutation({
         throw new ConvexError({ code: "ACTION_SIGNAL_CHANGED" });
       }
     }
-    const [approval, platform, policy, binding, connection] = await Promise.all([
+    const [approval, platform, policy, binding, connection, owner] = await Promise.all([
       ctx.db.query("actionApprovals").withIndex("by_request_and_content_version", (q) =>
         q.eq("requestId", request._id).eq("contentVersion", request.contentVersion),
       ).unique(),
@@ -821,6 +900,7 @@ export const claimForExecutor = internalMutation({
       ctx.db.get(request.policyVersionId),
       ctx.db.get(request.adapterBindingId),
       request.connectionId ? ctx.db.get(request.connectionId) : Promise.resolve(null),
+      ctx.db.get(args.ownerId),
     ]);
     const flow = actionFlow(request.requestedActionType, request.payload);
     const isPortalExecution = args.executor === "browserbase" && connection !== null;
@@ -855,6 +935,12 @@ export const claimForExecutor = internalMutation({
     }
     if (request.payload.kind === "contact_form" && !hostMatchesPlatform(request.payload.targetUrl, platform.canonicalDomain)) {
       throw new ConvexError({ code: "EXECUTION_DOMAIN_CHANGED" });
+    }
+    if (controlledPortalOnly() && !isControlledDemoTarget(request.requestedActionType, platform.canonicalDomain)) {
+      throw new ConvexError({ code: "CONTROLLED_PORTAL_ONLY" });
+    }
+    if (request.payload.kind !== "portal_account_operation" && (owner === null || !resolveProviderIdentity(owner).complete)) {
+      throw new ConvexError({ code: "MUSICIAN_PROFILE_REQUIRED" });
     }
     if (
       args.executor === "browserbase" &&
@@ -961,10 +1047,12 @@ export const claimForExecutor = internalMutation({
     await ctx.db.patch(request._id, {
       status: "executing",
       executionIdempotencyKey: idempotencyKey,
+      error: undefined, // a fresh claim supersedes a released claim's parked reason
       updatedAt: now,
     });
     await ctx.db.insert("auditEvents", {
-      eventKey: `action:${request._id}:claimed:${request.contentVersion}`,
+      // A released claim is re-claimed under the same content version, so the execution id keeps the key unique.
+      eventKey: `action:${request._id}:claimed:${request.contentVersion}:${executionId}`,
       actorType: approval.decision === "authorized_by_autonomy" ? "system" : "user",
       actorUserId: args.ownerId,
       entityKey: `action:${request._id}`,

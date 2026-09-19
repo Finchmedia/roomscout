@@ -84,12 +84,26 @@ export const CONNECTION_ACTIONS: ReadonlySet<ExternalActionType> = new Set<Exter
   "publish_listing",
 ]);
 
-/** The only portal autonomous communication may target while the controlled-portal rule is on. */
+/** The only portal communication may target while the controlled-demo rule is on. */
 export const CONTROLLED_PORTAL_DOMAIN = "roomscout.dev";
+
+/**
+ * Demo execution is confined to the reviewed portal transport. AgentMail is a
+ * real-world transport even when a misleading platform row names the demo
+ * domain, so it is never executable while this boundary is enabled.
+ */
+export function isControlledDemoTarget(
+  actionType: ExternalActionType,
+  platformDomain: string | null,
+): boolean {
+  return actionType !== "send_email" && platformDomain === CONTROLLED_PORTAL_DOMAIN;
+}
 
 export const SAFETY_RETRY_MS = 5 * 60_000;
 export const CONNECTION_RETRY_MS = 10 * 60_000;
-export const BROWSER_BUSY_RETRY_MS = 2 * 60_000;
+// The pool serializes the browser; this only paces re-admission behind a
+// running read or auth run.
+export const BROWSER_BUSY_RETRY_MS = 30_000;
 export const MAX_SAFETY_WAITS = 3;
 
 const REASON_TEXT: Record<GateReason, string> = {
@@ -122,8 +136,8 @@ function listDetail(items: readonly string[]): string | undefined {
 }
 
 /**
- * Fixed precedence: context_changed > binding_action > action_not_allowed >
- * controlled_portal_only > policy_not_executable > connection_not_ready >
+ * Fixed precedence: context_changed > controlled_portal_only > binding_action >
+ * action_not_allowed > policy_not_executable > connection_not_ready >
  * browser_busy (claim only) > verdict > private_data > review_mode > proceed.
  *
  * `userApproved` short-circuits every rule that only exists to ask the human —
@@ -135,18 +149,14 @@ export function decideGate(rules: AutonomyRules, facts: GateFacts): GateOutcome 
   if (!facts.contextValid) return { outcome: "stop", reason: "context_changed" };
   const humanDecided = facts.userApproved;
 
+  if (facts.controlledPortalOnly && !isControlledDemoTarget(facts.actionType, facts.platformDomain)) {
+    return { outcome: "stop", reason: "controlled_portal_only", detail: facts.platformDomain ?? undefined };
+  }
+
   if (facts.isAcceptance && !humanDecided) return { outcome: "ask_user", reason: "binding_action" };
 
   if (!humanDecided && !allowedActions(rules).includes(facts.actionType)) {
     return { outcome: "stop", reason: "action_not_allowed", detail: facts.actionType };
-  }
-
-  if (
-    facts.controlledPortalOnly && !humanDecided &&
-    !facts.isPortalAccountOperation && !facts.isOwnedMailReply &&
-    facts.platformDomain !== CONTROLLED_PORTAL_DOMAIN
-  ) {
-    return { outcome: "stop", reason: "controlled_portal_only", detail: facts.platformDomain ?? undefined };
   }
 
   if (!facts.policyExecutable) return { outcome: "stop", reason: "policy_not_executable" };

@@ -9,10 +9,12 @@ export const scoutWorkpool = new Workpool(components.scoutWorkpool, {
   defaultRetryBehavior: { maxAttempts: 3, initialBackoffMs: 2_000, base: 2 },
 });
 
-// Passive inbox reads are serialized independently. This pool must never carry
-// a browser write because automatic retries are enabled.
+// One execution queue for every controlled-portal browser operation: inbox
+// reads AND approved writes are serialized here. Retries are opt-in per
+// enqueue: reads pass retry: true (defaultRetryBehavior), writes pass
+// retry: false because a browser write must never be replayed automatically.
 export const browserWorkpool = new Workpool(components.browserWorkpool, {
   maxParallelism: 1,
-  retryActionsByDefault: true,
+  retryActionsByDefault: false,
   defaultRetryBehavior: { maxAttempts: 3, initialBackoffMs: 5_000, base: 2 },
 });

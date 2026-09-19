@@ -2685,9 +2685,11 @@ export const executeApprovedWriteWorker = internalAction({
       if (!busy) throw error;
       // prepareClaim normally parks a busy browser as a wait with re-dispatch;
       // this only covers the race between prepareClaim and the claim itself.
+      // The busy chain re-enters the shared pool through redispatchApproved,
+      // never running the worker beside it.
       const attempt = Math.max(0, Math.floor(args.busyAttempt ?? 0));
       if (attempt < 5) {
-        await ctx.scheduler.runAfter(Math.min(60_000, 2_000 * 2 ** attempt), internal.browserbasePortal.executeApprovedWriteWorker,
+        await ctx.scheduler.runAfter(Math.min(60_000, 2_000 * 2 ** attempt), internal.externalActions.redispatchApproved,
           { ownerId: args.ownerId, requestId: args.requestId, busyAttempt: attempt + 1 });
       }
       throw error;

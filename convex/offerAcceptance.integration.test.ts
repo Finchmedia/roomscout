@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import { signalMatchRevision } from "./lib/matchValidity";
+import { pendingPortalWrites } from "./portalWriteQueue.testSupport";
 import type { ProviderAssessment } from "./lib/providerAssessment";
 import * as ai from "./ai";
 
@@ -15,10 +16,10 @@ afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks();
 
 async function fixture() {
   const t = convexTest(schema, modules);
-  agentTest.register(t); workpoolTest.register(t, "scoutWorkpool");
+  agentTest.register(t); workpoolTest.register(t, "scoutWorkpool"); workpoolTest.register(t, "browserWorkpool");
   const f = await t.run(async (ctx) => {
     const now = Date.now();
-    const ownerId = await ctx.db.insert("users", { username: "accepting-musician", role: "musician", createdAt: now, lastSeenAt: now });
+    const ownerId = await ctx.db.insert("users", { username: "accepting-musician", firstName: "Mina", actKind: "band", actName: "Night Owls", providerIdentityConfirmedAt: now, role: "musician", createdAt: now, lastSeenAt: now });
     const otherId = await ctx.db.insert("users", { username: "other-musician", role: "musician", createdAt: now, lastSeenAt: now });
     const needId = await ctx.db.insert("savedNeeds", { ownerId, title: "Band room", city: "Stuttgart", districts: [], arrangement: ["shared"], schedule: ["Tuesday evenings"], requirements: ["Drums allowed"], maxBudgetEur: 250, matchingRevision: 1, status: "active", createdAt: now, updatedAt: now });
     const platformId = await ctx.db.insert("sourcePlatforms", { slug: "controlled", name: "Controlled portal", canonicalDomain: "roomscout.dev", kind: "community", status: "active", firstSeenAt: now, lastObservedAt: now, createdAt: now, updatedAt: now });
@@ -68,10 +69,19 @@ describe("exact offer acceptance", () => {
     const request = await f.t.run((ctx) => ctx.db.get(requestId));
     expect(request).toMatchObject({ ownerId: f.ownerId, providerOfferId: f.offerId, providerActionKind: "acceptance", automationMode: "exact_once", status: "awaiting_approval" });
     expect(request?.payload).toMatchObject({ kind: "platform_message", threadId: f.threadId, recipients: ["Test provider"] });
+    expect(request?.payload).toMatchObject({ senderLabel: "RoomScout for Night Owls" });
+    expect(request?.personalDataScopes).toContain("band_name");
     expect(await f.t.run((ctx) => ctx.db.query("actionApprovals").collect())).toEqual([]);
     expect(await f.t.run((ctx) => ctx.db.query("actionExecutions").collect())).toEqual([]);
     expect(await f.t.withIdentity({ subject: f.otherId }).query(api.offerAcceptance.getMine, { requestId })).toBeNull();
     await expect(f.t.withIdentity({ subject: f.otherId }).mutation(api.offerAcceptance.prepare, { offerId: f.offerId, expectedOfferHash: "offer-v1" })).rejects.toThrow("OFFER_NOT_FOUND");
+  });
+
+  it("requires the confirmed canonical identity before preparing acceptance", async () => {
+    const f = await fixture();
+    await f.t.run((ctx) => ctx.db.patch(f.ownerId, { providerIdentityConfirmedAt: undefined }));
+    await expect(f.prepare()).rejects.toThrow("MUSICIAN_PROFILE_REQUIRED");
+    expect(await f.t.run((ctx) => ctx.db.query("actionRequests").collect())).toEqual([]);
   });
 
   it("rejects mismatched offer, content, and context snapshots", async () => {
@@ -209,6 +219,10 @@ describe("exact offer acceptance", () => {
     expect(await f.approve(requestId)).toMatchObject({ requestId, status: "approved" });
     expect(await f.approve(requestId)).toMatchObject({ requestId, status: "approved" });
     expect(await f.t.run((ctx) => ctx.db.query("actionApprovals").collect())).toHaveLength(1);
+    // The write is admitted through the shared browser pool exactly once, not scheduled beside it.
+    expect((await pendingPortalWrites(f.t)).map((row) => ({ fnName: row.fnName, fnArgs: row.fnArgs })))
+      .toEqual([{ fnName: "browserbasePortal:executeApprovedWriteWorker", fnArgs: { ownerId: f.ownerId, requestId } }]);
+    expect((await f.t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect())).map((row) => row.name)).not.toContain("browserbasePortal:executeApprovedWriteWorker");
     const first = await f.claim(requestId); const repeated = await f.claim(requestId);
     expect(repeated.executionId).toBe(first.executionId);
     expect(repeated.alreadyClaimed).toBe(true);

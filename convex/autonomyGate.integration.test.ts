@@ -7,6 +7,7 @@ import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import { DEFAULT_AUTONOMY_RULES, autonomyHash, type AutonomyRules } from "./lib/autonomy";
 import { signalMatchRevision } from "./lib/matchValidity";
+import { BROWSER_BUSY_RETRY_MS } from "./lib/autonomyGate";
 import { messageSafetySchema } from "./lib/messageSafety";
 import type { ProviderAssessment } from "./lib/providerAssessment";
 import * as ai from "./ai";
@@ -25,10 +26,10 @@ const clear = messageSafetySchema.parse({ classification: "non_binding", explana
  */
 async function scenario(rules?: Partial<AutonomyRules>) {
   const t = convexTest(schema, modules);
-  agentTest.register(t); workpoolTest.register(t, "scoutWorkpool");
+  agentTest.register(t); workpoolTest.register(t, "scoutWorkpool"); workpoolTest.register(t, "browserWorkpool");
   const f = await t.run(async (ctx) => {
     const now = Date.now();
-    const ownerId = await ctx.db.insert("users", { username: "controlled-musician", role: "musician", createdAt: now, lastSeenAt: now });
+    const ownerId = await ctx.db.insert("users", { username: "controlled-musician", firstName: "Mina", actKind: "band", actName: "Night Owls", providerIdentityConfirmedAt: now, role: "musician", createdAt: now, lastSeenAt: now });
     const needId = await ctx.db.insert("savedNeeds", { ownerId, title: "Band room", city: "Stuttgart", districts: [], arrangement: ["shared"], schedule: [], requirements: [], maxBudgetEur: 250, matchingRevision: 1, status: "active", createdAt: now, updatedAt: now });
     const platformId = await ctx.db.insert("sourcePlatforms", { slug: "controlled", name: "Controlled portal", canonicalDomain: "roomscout.dev", kind: "community", status: "active", firstSeenAt: now, lastObservedAt: now, createdAt: now, updatedAt: now });
     const sourceId = await ctx.db.insert("sources", { platformId, slug: "controlled", name: "Controlled listings", baseUrl: "https://roomscout.dev/listings", side: "supply", status: "active", health: "healthy", createdAt: now, updatedAt: now });
@@ -161,13 +162,48 @@ describe("Freigabeprüfung at claim time", () => {
   it("busy browser -> wait browser_busy, the approval stands and a re-dispatch is scheduled", async () => {
     const s = await scenario({ mode: "autopilot" });
     expect(await s.authorize()).toBe(true);
-    await s.t.run((ctx) => ctx.db.patch(s.connectionId, { inboxSyncActiveGeneration: 1, inboxSyncDeadlineAt: Date.now() + 60_000 }));
-    expect(await s.prepareClaim()).toEqual({ outcome: "wait", reason: "browser_busy", retryAt: Date.now() + 2 * 60_000 });
-    expect(await s.request()).toMatchObject({ status: "approved", gate: { outcome: "wait", reason: "browser_busy", retryAt: Date.now() + 2 * 60_000 } });
+    // A RUNNING read (browserRuns row) is busy; a merely queued inbox lease no longer is (the pool serializes both).
+    await s.t.run((ctx) => ctx.db.insert("browserRuns", { connectionId: s.connectionId, ownerId: s.ownerId, kind: "inbox_sync", status: "running", expiresAt: Date.now() + 60_000, createdAt: Date.now(), updatedAt: Date.now() }));
+    expect(await s.prepareClaim()).toEqual({ outcome: "wait", reason: "browser_busy", retryAt: Date.now() + BROWSER_BUSY_RETRY_MS });
+    expect(await s.request()).toMatchObject({ status: "approved", gate: { outcome: "wait", reason: "browser_busy", retryAt: Date.now() + BROWSER_BUSY_RETRY_MS } });
     const scheduled = await s.scheduled();
     expect(scheduled.map((row) => row.name)).toContain("externalActions:redispatchApproved");
     expect(await s.t.run((ctx) => ctx.db.query("notifications").collect())).toEqual([]);
     await expect(s.t.mutation(internal.externalActions.claimForExecutor, { ownerId: s.ownerId, requestId: s.requestId, executor: "browserbase" })).rejects.toThrow("GATE_NOT_PASSED");
+  });
+
+  it("expires a stale browser run before evaluating browser_busy", async () => {
+    const s = await scenario({ mode: "autopilot" });
+    expect(await s.authorize()).toBe(true);
+    const { contextId, runId } = await s.t.run(async (ctx) => {
+      const contextId = await ctx.db.insert("browserContexts", {
+        connectionId: s.connectionId,
+        ownerId: s.ownerId,
+        providerContextId: "stale-context",
+        status: "ready",
+        createdAt: Date.now() - 60_000,
+        updatedAt: Date.now() - 60_000,
+      });
+      const runId = await ctx.db.insert("browserRuns", {
+        connectionId: s.connectionId,
+        ownerId: s.ownerId,
+        contextId,
+        kind: "inbox_sync",
+        status: "running",
+        expiresAt: Date.now() - 1,
+        createdAt: Date.now() - 60_000,
+        updatedAt: Date.now() - 60_000,
+      });
+      await ctx.db.patch(contextId, { activeRunId: runId });
+      return { contextId, runId };
+    });
+
+    expect(await s.prepareClaim()).toEqual({ outcome: "proceed" });
+    expect(await s.t.run((ctx) => ctx.db.get(runId))).toMatchObject({
+      status: "expired",
+      errorCode: "RUN_TTL_EXPIRED",
+    });
+    expect(await s.t.run((ctx) => ctx.db.get(contextId))).not.toHaveProperty("activeRunId");
   });
 
   it("free browser -> proceed, and the transactional claim follows", async () => {

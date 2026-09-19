@@ -1,5 +1,4 @@
 import { ConvexError, v } from "convex/values";
-import { internal } from "./_generated/api";
 import { mutation, query } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { requireUserId } from "./integrations/authz";
@@ -10,19 +9,24 @@ import { acceptanceMessage, assertAcceptanceCurrent, currentAcceptableOffer } fr
 import { portalDestinationHash, resolveControlledPortal } from "./lib/providerPortal";
 import { providerAssessmentValidator } from "./lib/providerAssessment";
 import { resolvePortalBrowserProvider, storedPortalBrowserProvider } from "./integrations/portalBrowserEngine";
+import { resolveProviderIdentity } from "./lib/musicianIdentity";
+import { enqueueApprovedPortalWrite } from "./portalWriteQueue";
 
 export const prepare = mutation({
   args: { offerId: v.id("offerRevisions"), expectedOfferHash: v.string() }, returns: v.id("actionRequests"),
   handler: async (ctx, args): Promise<Id<"actionRequests">> => {
     const ownerId = await requireUserId(ctx);
     const { offer, conversation, need, signal } = await currentAcceptableOffer(ctx, ownerId, args.offerId);
+    const owner = await ctx.db.get(ownerId);
+    const identity = owner ? resolveProviderIdentity(owner) : { complete: false as const };
+    if (!identity.complete) throw new ConvexError({ code: "MUSICIAN_PROFILE_REQUIRED" });
     if (offer.contentHash !== args.expectedOfferHash) throw new ConvexError({ code: "OFFER_CHANGED" });
     const now = Date.now();
     const target = await resolveControlledPortal(ctx, conversation, signal, now);
     if (!target?.thread) throw new ConvexError({ code: "CONTROLLED_PORTAL_THREAD_REQUIRED" });
     const payload: Doc<"actionRequests">["payload"] = {
       kind: "platform_message", threadId: target.thread._id, recipients: target.thread.participants,
-      senderLabel: "RoomScout musician", ...acceptanceMessage(offer, signal.title),
+      senderLabel: identity.providerDisplayName, ...acceptanceMessage(offer, signal.title),
     };
     const [payloadHash, destinationHash] = await Promise.all([
       actionPayloadHash(payload),
@@ -63,7 +67,8 @@ export const prepare = mutation({
         matchingSignalId: signal._id, matchingSignalRevision: offer.signalRevision,
         opportunityId: conversation.opportunityId, platformId: target.platform._id,
         connectionId: target.connection._id, adapterBindingId: target.binding._id,
-        policyVersionId: target.policy._id, payload, contentVersion, contentHash: payloadHash,
+        policyVersionId: target.policy._id, personalDataScopes: identity.dataFields,
+        payload, contentVersion, contentHash: payloadHash,
         reviewContextHash: undefined, reviewDestinationHash: destinationHash,
         status: "awaiting_approval", executionIdempotencyKey: undefined,
         expiresAt: now + 30 * 60_000, error: undefined, updatedAt: now,
@@ -83,7 +88,7 @@ export const prepare = mutation({
       matchingNeedRevision: offer.needRevision, matchingSignalId: signal._id, matchingSignalRevision: offer.signalRevision,
       opportunityId: conversation.opportunityId, platformId: target.platform._id, connectionId: target.connection._id,
       adapterBindingId: target.binding._id, policyVersionId: target.policy._id,
-      automationMode: "exact_once", requestedActionType: "send_platform_dm", personalDataScopes: [],
+      automationMode: "exact_once", requestedActionType: "send_platform_dm", personalDataScopes: identity.dataFields,
       payload, contentVersion: 1, contentHash: payloadHash, reviewDestinationHash: destinationHash, status: "awaiting_approval",
       expiresAt: now + 30 * 60_000, createdAt: now, updatedAt: now,
     });
@@ -165,10 +170,7 @@ export const approveAndSend = mutation({
     if (storedPortalBrowserProvider(target.connection.browserProvider) !== browserProvider) {
       throw new ConvexError({ code: "PORTAL_BROWSER_PROVIDER_RECONNECT_REQUIRED" });
     }
-    const worker = browserProvider === "firecrawl"
-      ? internal.firecrawlPortal.executeApprovedWriteWorker
-      : internal.browserbasePortal.executeApprovedWriteWorker;
-    await ctx.scheduler.runAfter(0, worker, { ownerId, requestId: request._id });
+    await enqueueApprovedPortalWrite(ctx, { ownerId, requestId: request._id, browserProvider });
     return { requestId: request._id, status: "approved" };
   },
 });

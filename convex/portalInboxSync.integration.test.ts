@@ -216,8 +216,17 @@ describe("portal inbox sync coordinator", () => {
   it("atomically excludes write-after-read and read-after-write on the same connection", async () => {
     const readFirst = await fixture(); const readConnectionId = readFirst.connectionIds[0]!;
     const readFirstExecution = await insertClaimedWrite(readFirst);
-    await readFirst.t.mutation(internal.portalInboxSync.requestSync, { ownerId: readFirst.ownerId, connectionId: readConnectionId, reason: "poll" });
-    expect(await readFirst.t.mutation(internal.portalConnections.claimWriteSession, { ownerId: readFirst.ownerId, connectionId: readConnectionId, executionId: readFirstExecution })).toBe(false);
+    const claimWrite = () => readFirst.t.mutation(internal.portalConnections.claimWriteSession, { ownerId: readFirst.ownerId, connectionId: readConnectionId, executionId: readFirstExecution });
+    // A merely queued read (inbox lease) no longer blocks the write: the shared pool serializes both.
+    expect(await readFirst.t.mutation(internal.portalInboxSync.requestSync, { ownerId: readFirst.ownerId, connectionId: readConnectionId, reason: "poll" })).toEqual({ status: "queued" });
+    expect(await claimWrite()).toBe(true);
+    // A read that actually started (its run owns the context) still does.
+    await readFirst.t.run(async (ctx) => {
+      const context = await ctx.db.query("browserContexts").withIndex("by_connection", (q) => q.eq("connectionId", readConnectionId)).unique();
+      const runId = await ctx.db.insert("browserRuns", { ownerId: readFirst.ownerId, connectionId: readConnectionId, contextId: context!._id, kind: "inbox_sync", status: "running", expiresAt: Date.now() + 60_000, createdAt: Date.now(), updatedAt: Date.now() });
+      await ctx.db.patch(context!._id, { activeRunId: runId });
+    });
+    expect(await claimWrite()).toBe(false);
 
     const writeFirst = await fixture(); const writeConnectionId = writeFirst.connectionIds[0]!;
     const writeFirstExecution = await insertClaimedWrite(writeFirst);
