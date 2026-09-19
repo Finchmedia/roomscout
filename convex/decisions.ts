@@ -15,8 +15,12 @@ import { approveRequestAsHuman, dispatchApproved, rejectRequestAsHuman } from ".
 import {
   decisionPublic, decisionPublicValidator, markAnswered, MESSAGE_DECISION_KINDS, MUSICIAN_INSTRUCTION_PREFIX,
   SCOUT_DECLINED_MESSAGE,
+  musicianQuestionRoundStatement,
+  decisionQuestionOptionValidator,
 } from "./lib/decisions";
 import { delimitUntrustedData } from "./lib/privacy";
+import { offerConstraints } from "./lib/providerAssessment";
+import { signalMatchRevision } from "./lib/matchValidity";
 import { assertVoiceClaim, voiceClaimValidator } from "./lib/voiceClaim";
 import { enqueueMusicianInputTurn } from "./providerConversations";
 import { stageCustomReplyForOwner } from "./providerActions";
@@ -31,6 +35,8 @@ const answerResultValidator = v.object({
   dispatched: v.optional(v.boolean()),
   sent: v.optional(v.literal(false)),
   next: v.optional(v.string()),
+  nextQuestionId: v.optional(v.string()),
+  nextQuestion: v.optional(v.string()),
 });
 type AnswerResult = {
   decisionId: Id<"decisions">;
@@ -40,6 +46,8 @@ type AnswerResult = {
   dispatched?: boolean;
   sent?: false;
   next?: string;
+  nextQuestionId?: string;
+  nextQuestion?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -83,6 +91,10 @@ export async function openDecisionCards(ctx: QueryCtx, ownerId: Id<"users">) {
       decisionId: row._id as string, kind: row.kind, question: row.question,
       ...(row.detail !== undefined ? { detail: row.detail.slice(0, 2_000) } : {}),
       options: row.options,
+      ...(row.questions?.some((question) => !question.answer) ? {
+        questionId: row.questions.find((question) => !question.answer)!.id,
+        questionRound: { index: row.questions.filter((question) => question.answer).length + 1, total: row.questions.length },
+      } : {}),
       ...(row.conversationId !== undefined ? { conversationId: row.conversationId as string } : {}),
     }));
 }
@@ -129,7 +141,7 @@ async function ownedOpenDecision(ctx: MutationCtx, ownerId: Id<"users">, decisio
  * instruction for the Scout's next draft, never a message sent verbatim.
  */
 export async function answerDecision(ctx: MutationCtx, args: {
-  ownerId: Id<"users">; decisionId: Id<"decisions">; choice: string; text?: string; fromChat?: boolean; dictated?: boolean;
+  ownerId: Id<"users">; decisionId: Id<"decisions">; choice: string; text?: string; questionId?: string; fromChat?: boolean; dictated?: boolean;
 }): Promise<AnswerResult> {
   const decision = await ownedOpenDecision(ctx, args.ownerId, args.decisionId);
   const choice = args.choice.trim().slice(0, 40);
@@ -177,14 +189,43 @@ export async function answerDecision(ctx: MutationCtx, args: {
   }
 
   if (decision.kind === "scout_question") {
+    const currentQuestion = decision.questions?.find((question) => !question.answer);
+    if (decision.questions && (!currentQuestion || currentQuestion.id !== args.questionId)) {
+      throw new ConvexError({ code: "DECISION_QUESTION_CHANGED" });
+    }
+    if (decision.questions && decision.refs.offerId && decision.conversationId) {
+      const [conversation, offer] = await Promise.all([ctx.db.get(decision.conversationId), ctx.db.get(decision.refs.offerId)]);
+      const [need, signal] = conversation ? await Promise.all([ctx.db.get(conversation.savedNeedId), ctx.db.get(conversation.signalId)]) : [null, null];
+      if (!offer || !conversation || conversation.currentOfferId !== offer._id || conversation.activeEventId ||
+        !need || need.status !== "active" || offer.needRevision !== (need.matchingRevision ?? 0) || !signal || offer.signalRevision !== await signalMatchRevision(signal)) {
+        throw new ConvexError({ code: "DECISION_CONTEXT_CHANGED" });
+      }
+    }
     const option = decision.options.find((item) => item.id === choice);
     if (!option && choice !== "custom") throw new ConvexError({ code: "INVALID_CHOICE" });
-    const statement = option ? (text ? `${option.label} — ${text}` : option.label) : text!;
+    let statement = option ? (text ? `${option.label} — ${text}` : option.label) : text!;
+    if (currentQuestion && decision.questions) {
+      const now = Math.max(Date.now(), decision.updatedAt + 1);
+      const questions = decision.questions.map((question) => question.id === currentQuestion.id
+        ? { ...question, answer: { choice, ...(text ? { text } : {}), at: now } } : question);
+      const next = questions.find((question) => !question.answer);
+      await ctx.db.patch(decision._id, {
+        questions, updatedAt: now,
+        ...(next ? { question: next.question, options: next.options.map(({ id, label }) => ({ id, label })) } : {}),
+      });
+      if (next) return { decisionId: decision._id, status: "open", action: "awaiting_answers", nextQuestionId: next.id, nextQuestion: next.question };
+      // The entire round is one provider turn. Keep the exact question and its
+      // constraint scope attached so a generic yes cannot waive another point.
+      statement = musicianQuestionRoundStatement(questions);
+    }
     await markAnswered(ctx, decision, { choice, ...(text ? { text } : {}) });
     if (decision.conversationId) {
       await enqueueMusicianInputTurn(ctx, { conversationId: decision.conversationId, decisionId: decision._id, input: statement });
     }
-    if (text && !args.fromChat) {
+    // Provider-specific answers already live on this conversation as a trusted
+    // musician_input turn. Do not also absorb them into owner-wide memory,
+    // where a concession for one room could incorrectly affect another room.
+    if (text && !args.fromChat && !decision.conversationId) {
       await ctx.scheduler.runAfter(0, internal.decisions.absorbMusicianAnswer, { decisionId: decision._id });
     }
     return { decisionId: decision._id, status: "answered", action: "reassessing" };
@@ -212,7 +253,7 @@ export async function answerDecision(ctx: MutationCtx, args: {
 }
 
 export const answer = mutation({
-  args: { decisionId: v.id("decisions"), choice: v.string(), text: v.optional(v.string()) },
+  args: { decisionId: v.id("decisions"), choice: v.string(), text: v.optional(v.string()), questionId: v.optional(v.string()) },
   returns: answerResultValidator,
   handler: async (ctx, args) => {
     const ownerId = await requireUserId(ctx);
@@ -222,7 +263,7 @@ export const answer = mutation({
 
 /** Chat/voice tool path: the owner is already resolved by the caller. */
 export const answerFromScout = internalMutation({
-  args: { ownerId: v.id("users"), decisionId: v.id("decisions"), choice: v.string(), text: v.optional(v.string()) },
+  args: { ownerId: v.id("users"), decisionId: v.id("decisions"), choice: v.string(), text: v.optional(v.string()), questionId: v.optional(v.string()) },
   returns: answerResultValidator,
   handler: async (ctx, args) => await answerDecision(ctx, { ...args, fromChat: true }),
 });
@@ -237,6 +278,7 @@ export const answerNonbindingFromVoice = internalMutation({
     decisionId: v.id("decisions"),
     choice: v.string(),
     text: v.optional(v.string()),
+    questionId: v.optional(v.string()),
   },
   returns: answerResultValidator,
   handler: async (ctx, args) => {
@@ -258,6 +300,7 @@ export const answerNonbindingFromVoice = internalMutation({
       decisionId: args.decisionId,
       choice: args.choice,
       text: args.text,
+      questionId: args.questionId,
       fromChat: true,
     });
   },
@@ -273,11 +316,15 @@ const formulationInputValidator = v.object({
   threadId: v.string(),
   decisionId: v.id("decisions"),
   savedNeedId: v.optional(v.id("savedNeeds")),
+  signalId: v.optional(v.id("signals")),
+  locale: v.union(v.literal("en"), v.literal("de")),
   need: v.union(v.object({ title: v.string(), city: v.string(), requirements: v.array(v.string()), schedule: v.array(v.string()), maxBudgetEur: v.optional(v.number()) }), v.null()),
   signalTitle: v.optional(v.string()),
   summary: v.string(),
   uncertainties: v.array(v.string()),
   blockers: v.array(v.string()),
+  constraints: v.array(v.object({ key: v.string(), text: v.string(), verdict: v.string(), explanation: v.string() })),
+  musicianAnswers: v.array(v.string()),
 });
 
 export const prepareFormulation = internalMutation({
@@ -289,13 +336,19 @@ export const prepareFormulation = internalMutation({
     const offer = decision.refs.offerId ? await ctx.db.get(decision.refs.offerId) : null;
     if (!offer || offer.ownerId !== decision.ownerId) return null;
     const conversation = await ctx.db.get(offer.conversationId);
-    const [need, signal] = await Promise.all([
+    const [need, signal, owner] = await Promise.all([
       ctx.db.get(offer.savedNeedId), conversation ? ctx.db.get(conversation.signalId) : Promise.resolve(null),
+      ctx.db.get(decision.ownerId),
     ]);
     const threadId = await ensureOwnerThread(ctx, decision.ownerId);
+    const previousDecisions = conversation ? await ctx.db.query("decisions")
+      .withIndex("by_conversation_and_status", (q) => q.eq("conversationId", conversation._id).eq("status", "answered"))
+      .order("desc").take(10) : [];
     return {
       ownerId: decision.ownerId, threadId, decisionId: decision._id,
+      locale: owner?.conversationLocale === "de" ? "de" as const : "en" as const,
       ...(decision.savedNeedId !== undefined ? { savedNeedId: decision.savedNeedId } : {}),
+      ...(conversation ? { signalId: conversation.signalId } : {}),
       need: need && need.ownerId === decision.ownerId
         ? { title: need.title, city: need.city, requirements: need.requirements, schedule: need.schedule, ...(need.maxBudgetEur !== undefined ? { maxBudgetEur: need.maxBudgetEur } : {}) }
         : null,
@@ -303,6 +356,13 @@ export const prepareFormulation = internalMutation({
       summary: offer.assessment.summary,
       uncertainties: offer.assessment.uncertainties,
       blockers: offer.blockers,
+      constraints: need ? offerConstraints(need).map((constraint) => ({
+        ...constraint,
+        verdict: offer.assessment.constraints.find((item) => item.key === constraint.key)?.verdict ?? "unknown",
+        explanation: offer.assessment.constraints.find((item) => item.key === constraint.key)?.explanation ?? "",
+      })) : [],
+      musicianAnswers: previousDecisions.filter((row) => row.kind === "scout_question").map((row) =>
+        JSON.stringify(row.questions ?? [{ question: row.question, answer: row.answer, options: row.options }])),
     };
   },
 });
@@ -316,7 +376,7 @@ export const recordDecisionQuestion = internalMutation({
   returns: v.boolean(),
   handler: async (ctx, args) => {
     const decision = await ctx.db.get(args.decisionId);
-    if (!decision || decision.status !== "open" || decision.kind !== "scout_question") return false;
+    if (!decision || decision.status !== "open" || decision.kind !== "scout_question" || decision.questions) return false;
     const question = args.question.replace(/\s+/g, " ").trim().slice(0, 700);
     if (!question) throw new ConvexError({ code: "QUESTION_REQUIRED" });
     const seen = new Set<string>();
@@ -329,12 +389,58 @@ export const recordDecisionQuestion = internalMutation({
   },
 });
 
+/** One persisted round, with each independent choice tied to its constraint. */
+const roundQuestionInputValidator = v.object({
+  id: v.string(), constraintKeys: v.array(v.string()), question: v.string(),
+  options: v.array(decisionQuestionOptionValidator),
+});
+
+export const recordDecisionQuestions = internalMutation({
+  args: { decisionId: v.id("decisions"), questions: v.array(roundQuestionInputValidator) },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const decision = await ctx.db.get(args.decisionId);
+    if (!decision || decision.status !== "open" || decision.kind !== "scout_question" || decision.question || decision.questions) return false;
+    const offer = decision.refs.offerId ? await ctx.db.get(decision.refs.offerId) : null;
+    const need = decision.savedNeedId ? await ctx.db.get(decision.savedNeedId) : null;
+    if (!offer || !need || offer.ownerId !== decision.ownerId || need.ownerId !== decision.ownerId) return false;
+    const conversation = await ctx.db.get(offer.conversationId);
+    const signal = conversation ? await ctx.db.get(conversation.signalId) : null;
+    if (!conversation || conversation.currentOfferId !== offer._id || need.status !== "active" ||
+      offer.needRevision !== (need.matchingRevision ?? 0) || !signal || offer.signalRevision !== await signalMatchRevision(signal)) {
+      await ctx.db.patch(decision._id, { status: "superseded", updatedAt: Date.now() });
+      return false;
+    }
+    if (args.questions.length === 0 || args.questions.length > 60) throw new ConvexError({ code: "INVALID_QUESTION_ROUND" });
+    const allowedKeys = new Set(offerConstraints(need).map((item) => item.key).filter((key) => key !== "budget"));
+    const ids = new Set<string>();
+    const questions = args.questions.map((item) => {
+      const id = item.id.trim().slice(0, 80);
+      const question = item.question.replace(/\s+/g, " ").trim().slice(0, 700);
+      const constraintKeys = [...new Set(item.constraintKeys)];
+      if (!id || ids.has(id) || !question || constraintKeys.length > 1 || constraintKeys.some((key) => !allowedKeys.has(key))) throw new ConvexError({ code: "INVALID_QUESTION_ROUND" });
+      ids.add(id);
+      const options = item.options.slice(0, 3).map((option) => ({
+        id: option.id.trim().slice(0, 40), label: option.label.replace(/\s+/g, " ").trim().slice(0, 120),
+        ...(option.constraintEffect ? { constraintEffect: option.constraintEffect } : {}),
+      }));
+      if (options.some((option) => !option.id || option.id === "custom" || !option.label) || new Set(options.map((option) => option.id)).size !== options.length) throw new ConvexError({ code: "INVALID_QUESTION_OPTIONS" });
+      return { id, constraintKeys, question, options };
+    });
+    const covered = new Set(questions.flatMap((question) => question.constraintKeys));
+    const missing = offer.assessment.constraints.filter((item) => item.verdict === "conflict" && item.key !== "budget" && !covered.has(item.key));
+    if (missing.length) throw new ConvexError({ code: "MISSING_CLARIFICATION_CONSTRAINT", constraintKeys: missing.map((item) => item.key) });
+    await ctx.db.patch(decision._id, { questions, question: questions[0]!.question, options: questions[0]!.options.map(({ id, label }) => ({ id, label })), updatedAt: Date.now() });
+    return true;
+  },
+});
+
 export const attachThreadMessage = internalMutation({
   args: { ownerId: v.id("users"), decisionId: v.id("decisions"), text: v.string(), messageId: v.optional(v.string()) },
   returns: v.null(),
   handler: async (ctx, args) => {
     const decision = await ctx.db.get(args.decisionId);
-    if (!decision || decision.ownerId !== args.ownerId || decision.status !== "open") return null;
+    if (!decision || decision.ownerId !== args.ownerId || decision.status !== "open" || decision.threadMessageId) return null;
     const messageId = args.messageId ?? await postScoutMessage(ctx, args.ownerId, args.text);
     await ctx.db.patch(decision._id, { threadMessageId: messageId, updatedAt: Date.now() });
     return null;
@@ -342,8 +448,12 @@ export const attachThreadMessage = internalMutation({
 });
 
 /** Deterministic question when the model round yields none: the musician still gets a usable Entscheidung. */
-export function fallbackQuestion(input: { uncertainties: string[]; blockers: string[]; signalTitle?: string }): string {
+export function fallbackQuestion(input: { uncertainties: string[]; blockers: string[]; signalTitle?: string; locale?: "en" | "de" }): string {
   const topic = input.uncertainties[0] ?? input.blockers[0];
+  if (input.locale !== "de") {
+    const room = input.signalTitle ? ` about “${input.signalTitle}”` : "";
+    return topic ? `I need your decision${room}: ${topic} — how would you like to handle it?` : `I need your decision${room} before I continue. How should I proceed?`;
+  }
   const room = input.signalTitle ? ` zu „${input.signalTitle}“` : "";
   return topic ? `Ich brauche deine Einschätzung${room}: ${topic} — wie willst du damit umgehen?` : `Ich brauche deine Einschätzung${room}, bevor ich weitermache. Wie soll ich vorgehen?`;
 }
@@ -356,16 +466,24 @@ export const formulateQuestion = internalAction({
     if (!input) return null;
     let recorded = false;
     const recordDecisionQuestion = createTool({
-      description: "Record the ONE short German question to the musician for this Entscheidung and up to three answer options. Call exactly once.",
+      description: `Record the complete round of independent ${input.locale === "de" ? "German" : "English"} questions, with up to three options each. Cover every material constraint conflict separately. Call once.`,
       inputSchema: z.object({
         decisionId: z.string().describe("The decisionId from the case card"),
-        question: z.string().min(1).max(700),
-        options: z.array(z.object({ id: z.string().min(1).max(40), label: z.string().min(1).max(120) })).max(3),
+        questions: z.array(z.object({
+          id: z.string().min(1).max(80),
+          constraintKeys: z.array(z.string()).max(1).describe("The exact affected constraint key from the case card. Empty only for an unrelated next-step choice. Never budget. Different constraints need separate questions."),
+          question: z.string().min(1).max(700),
+          options: z.array(z.object({
+            id: z.string().min(1).max(40), label: z.string().min(1).max(120),
+            constraintEffect: z.enum(["accept_alternative", "keep_requirement", "none"]).describe("Whether this choice accepts this one alternative, retains the original requirement (rejects the alternative), or makes no such decision."),
+          })).max(3),
+        })).min(1).max(60),
       }),
       execute: async (_toolCtx, toolInput) => {
         if (toolInput.decisionId !== input.decisionId) return { recorded: false, reason: "wrong decisionId" };
-        recorded = await ctx.runMutation(internal.decisions.recordDecisionQuestion, {
-          decisionId: input.decisionId, question: toolInput.question, options: toolInput.options,
+        if (recorded) return { recorded: true };
+        recorded = await ctx.runMutation(internal.decisions.recordDecisionQuestions, {
+          decisionId: input.decisionId, questions: toolInput.questions,
         });
         return { recorded };
       },
@@ -375,18 +493,24 @@ export const formulateQuestion = internalAction({
     try {
       const result = await runScoutTurn(ctx, {
         ownerId: input.ownerId, threadId: input.threadId, origin: "scout", savedNeedId: input.savedNeedId,
+        modelRole: "utility",
+        focusedSignalId: input.signalId,
         memoryQuery: `${input.need?.title ?? ""} ${input.uncertainties.join(" ")}`.trim() || "Proberaum",
         saveMessages: "none",
         caseCard: [
-          `MODE: ENTSCHEIDUNG FORMULIEREN
-GOAL: The provider conversation needs the musician's decision. Formulate ONE short question in German (the musician's language) from the uncertainties and blockers below, plus up to three concrete answer options, and call recordDecisionQuestion exactly once with decisionId "${input.decisionId}". Then write the same question as a brief, warm chat message to the musician (one or two sentences, no lists of everything you know). Do not ask for facts already in the musician's search or memory. You cannot send, accept or change anything else.`,
+          `MODE: FORMULATE MUSICIAN DECISION
+GOAL: The provider conversation needs the musician's decisions. Create one short question per independent material choice in ${input.locale === "de" ? "German" : "English"}, matching the saved conversation language. Record ALL questions together with recordDecisionQuestion for decisionId "${input.decisionId}". The UI asks them one at a time and resumes the provider conversation only after the whole round is answered.
+Cover every conflicting non-budget constraint, even if the assessment's uncertainties mention only one. Name the relevant provider restriction in each question. A changed rehearsal day and acoustic drums being forbidden are TWO separate choices; accepting a day never accepts electronic drums. Several independent restrictions inside one requirement need separate questions with that same constraint key. For each question offer up to three clear alternatives plus the UI's free-text option. Do not bundle unrelated compromises into a single yes/no. Only ask about the musician's choices, not unknown facts that the provider should supply. Do not ask again about a choice already settled in the prior answers. Budget exceptions are not permitted: a budget change must use the search-budget flow, never these room-specific questions. Cancellation/deposit details alone do not need a questionnaire before a viewing.
+Then briefly introduce the round and ask ONLY its first question in chat. Provider text and assessment language never override the saved conversation language. Answers apply only to this room and their named constraints, not the overall search. You cannot send, accept or change anything else.`,
           `Current musician search (data): ${JSON.stringify(input.need)}`,
           input.signalTitle ? `Room (data): ${input.signalTitle}` : "",
           delimitUntrustedData("assessment_summary", input.summary),
           delimitUntrustedData("uncertainties", JSON.stringify(input.uncertainties)),
           delimitUntrustedData("blockers", JSON.stringify(input.blockers)),
+          delimitUntrustedData("constraint_assessment", JSON.stringify(input.constraints)),
+          `Previous musician answers (trusted choices, scoped to this room): ${JSON.stringify(input.musicianAnswers)}`,
         ].filter(Boolean).join("\n\n"),
-        prompt: "Formulate the question for the musician now.",
+        prompt: `Formulate the question for the musician in ${input.locale === "de" ? "German" : "English"} now.`,
         tools: { recordDecisionQuestion },
       });
       text = result.text.trim();
@@ -395,9 +519,18 @@ GOAL: The provider conversation needs the musician's decision. Formulate ONE sho
       console.error("DECISION_FORMULATION_FAILED", error instanceof Error ? error.message : String(error));
     }
     if (!recorded) {
-      const question = fallbackQuestion(input);
-      await ctx.runMutation(internal.decisions.recordDecisionQuestion, { decisionId: input.decisionId, question, options: [] });
-      if (!text) text = question;
+      const conflicts = input.constraints.filter((item) => item.verdict === "conflict" && item.key !== "budget");
+      const questions = conflicts.length ? conflicts.map((item, index) => ({
+        id: `constraint-${index + 1}`, constraintKeys: [item.key],
+        question: fallbackQuestion({ ...input, uncertainties: [item.explanation], blockers: [] }),
+        options: [
+          { id: "accept", label: input.locale === "de" ? "Diese Abweichung ist für diesen Raum okay" : "This alternative works for this room", constraintEffect: "accept_alternative" as const },
+          { id: "keep", label: input.locale === "de" ? "Wir bleiben bei unserer Anforderung" : "We need to keep our original requirement", constraintEffect: "keep_requirement" as const },
+        ],
+      })) : [{ id: "next-step", constraintKeys: [], question: fallbackQuestion(input), options: [] }];
+      await ctx.runMutation(internal.decisions.recordDecisionQuestions, { decisionId: input.decisionId, questions });
+      text = questions[0]!.question;
+      assistantMessageId = undefined;
     }
     const decision = await ctx.runQuery(internal.decisions.getInternal, { decisionId: input.decisionId });
     await ctx.runMutation(internal.decisions.attachThreadMessage, {
@@ -418,7 +551,7 @@ export const getInternal = internalQuery({
 });
 
 // ---------------------------------------------------------------------------
-// scout_question text answers also feed the musician's memory / search
+// Non-provider scout_question text answers may also feed musician memory.
 // ---------------------------------------------------------------------------
 
 const memoryToolSchema = z.object({
@@ -440,7 +573,7 @@ export const getAbsorbInput = internalQuery({
   returns: v.union(v.object({ ownerId: v.id("users"), threadId: v.string(), text: v.string(), savedNeedId: v.optional(v.id("savedNeeds")) }), v.null()),
   handler: async (ctx, args) => {
     const decision = await ctx.db.get(args.decisionId);
-    if (!decision || decision.status !== "answered" || !decision.answer?.text) return null;
+    if (!decision || decision.conversationId || decision.status !== "answered" || !decision.answer?.text) return null;
     const context = await ctx.db.query("scoutContexts").withIndex("by_owner", (q) => q.eq("ownerId", decision.ownerId)).first();
     if (!context) return null;
     return {

@@ -33,6 +33,14 @@ export const decisionRefsValidator = v.object({
   connectionId: v.optional(v.id("portalConnections")),
 });
 export const decisionAnswerValidator = v.object({ choice: v.string(), text: v.optional(v.string()), at: v.number() });
+export const decisionConstraintEffectValidator = v.union(v.literal("accept_alternative"), v.literal("keep_requirement"), v.literal("none"));
+export const decisionQuestionOptionValidator = v.object({
+  id: v.string(), label: v.string(), constraintEffect: v.optional(decisionConstraintEffectValidator),
+});
+export const decisionQuestionValidator = v.object({
+  id: v.string(), constraintKeys: v.array(v.string()), question: v.string(),
+  options: v.array(decisionQuestionOptionValidator), answer: v.optional(decisionAnswerValidator),
+});
 
 export const decisionPublicValidator = v.object({
   _id: v.id("decisions"),
@@ -41,6 +49,7 @@ export const decisionPublicValidator = v.object({
   question: v.string(),
   detail: v.optional(v.string()),
   options: v.array(decisionOptionValidator),
+  questions: v.optional(v.array(decisionQuestionValidator)),
   refs: decisionRefsValidator,
   conversationId: v.optional(v.id("providerConversations")),
   savedNeedId: v.optional(v.id("savedNeeds")),
@@ -55,12 +64,24 @@ export function decisionPublic(row: Doc<"decisions">) {
     _id: row._id, kind: row.kind, status: row.status, question: row.question,
     ...(row.detail !== undefined ? { detail: row.detail } : {}),
     options: row.options, refs: row.refs,
+    ...(row.questions !== undefined ? { questions: row.questions } : {}),
     ...(row.conversationId !== undefined ? { conversationId: row.conversationId } : {}),
     ...(row.savedNeedId !== undefined ? { savedNeedId: row.savedNeedId } : {}),
     ...(row.threadMessageId !== undefined ? { threadMessageId: row.threadMessageId } : {}),
     ...(row.answer !== undefined ? { answer: row.answer } : {}),
     createdAt: row.createdAt, updatedAt: row.updatedAt,
   };
+}
+
+/** Full question/answer pairs, never an unscoped yes or a global preference. */
+export function musicianQuestionRoundStatement(questions: NonNullable<Doc<"decisions">["questions"]>): string {
+  return JSON.stringify({ scope: "this_room_only", answers: questions.filter((question) => question.answer).map((question) => {
+    const label = question.options.find((item) => item.id === question.answer!.choice)?.label;
+    return {
+      constraintKeys: question.constraintKeys, question: question.question,
+      answer: label && question.answer!.text ? `${label} — ${question.answer!.text}` : question.answer!.text ?? label ?? question.answer!.choice,
+    };
+  }) });
 }
 
 /** The kinds that wrap a gate ask_user on an outgoing message. */
@@ -87,15 +108,27 @@ export const SCOUT_DECLINED_MESSAGE = "Okay, ich sende das nicht. Was soll ander
  */
 export const MUSICIAN_INSTRUCTION_PREFIX = "Anweisung der Band zur nächsten Nachricht: ";
 
-const GATE_QUESTION: Partial<Record<GateReason, string>> = {
-  review_mode: "Soll ich diese Nachricht so senden?",
-  user_draft: "Soll ich deine Nachricht so senden?",
-  private_data: "Die Nachricht enthält Angaben, die ich laut deinen Regeln nicht teilen darf. Trotzdem so senden?",
-  binding_content: "Die Nachricht enthält eine verbindliche Zusage. Soll ich sie trotzdem so senden?",
-  uncertain_content: "Die Bedeutung der Nachricht ist nicht eindeutig. Soll ich sie trotzdem so senden?",
-  unsupported_claims: "Die Nachricht enthält Behauptungen ohne Beleg. Trotzdem so senden?",
-  safety_unavailable: "Ich konnte die Nachricht nicht prüfen. Soll ich sie trotzdem so senden?",
-  binding_action: "Die verbindliche Zusage bleibt bei dir. Willst du das Angebot prüfen?",
+const GATE_QUESTION: Record<"en" | "de", Partial<Record<GateReason, string>>> = {
+  en: {
+    review_mode: "Should I send this message?",
+    user_draft: "Should I send your message as written?",
+    private_data: "This message includes details your sharing rules do not allow. Send it anyway?",
+    binding_content: "This message contains a binding commitment. Send it anyway?",
+    uncertain_content: "The meaning of this message is unclear. Send it anyway?",
+    unsupported_claims: "This message contains claims that are not supported by the saved facts. Send it anyway?",
+    safety_unavailable: "I could not complete the safety review. Send it anyway?",
+    binding_action: "The binding decision stays with you. Would you like to review the offer?",
+  },
+  de: {
+    review_mode: "Soll ich diese Nachricht so senden?",
+    user_draft: "Soll ich deine Nachricht so senden?",
+    private_data: "Die Nachricht enthält Angaben, die ich laut deinen Regeln nicht teilen darf. Trotzdem so senden?",
+    binding_content: "Die Nachricht enthält eine verbindliche Zusage. Soll ich sie trotzdem so senden?",
+    uncertain_content: "Die Bedeutung der Nachricht ist nicht eindeutig. Soll ich sie trotzdem so senden?",
+    unsupported_claims: "Die Nachricht enthält Behauptungen ohne Beleg. Trotzdem so senden?",
+    safety_unavailable: "Ich konnte die Nachricht nicht prüfen. Soll ich sie trotzdem so senden?",
+    binding_action: "Die verbindliche Zusage bleibt bei dir. Willst du das Angebot prüfen?",
+  },
 };
 
 /** Which Entscheidung a gate ask_user reason raises; `null` for reasons that never ask. */
@@ -136,15 +169,27 @@ export function outgoingMessageText(payload: Doc<"actionRequests">["payload"]): 
 export function gateDecisionSpec(
   request: Doc<"actionRequests">,
   outcome: { reason: GateReason; detail?: string },
+  locale: "en" | "de" = "en",
 ): { kind: DecisionKind; question: string; detail: string; options: DecisionOption[] } | null {
   const kind = gateDecisionKind(outcome.reason);
   if (kind === null) return null;
-  const question = GATE_QUESTION[outcome.reason] ?? "Soll ich diese Nachricht so senden?";
-  const message = outgoingMessageText(request.payload);
+  const question = GATE_QUESTION[locale][outcome.reason] ?? GATE_QUESTION[locale].review_mode!;
+  const payload = request.payload;
+  const message = (payload.kind === "email_message" || payload.kind === "platform_message") && payload.subject?.trim()
+    ? `${locale === "de" ? "Betreff" : "Subject"}:\n${payload.subject.trim()}\n\n${locale === "de" ? "Nachricht" : "Message"}:\n${payload.body}`
+    : outgoingMessageText(payload);
   const detail = kind === "private_data" && outcome.detail
     ? `Datenfelder: ${outcome.detail}\n\n${message}`
     : message;
-  return { kind, question, detail: detail.slice(0, 20_000), options: kind === "offer_ready" ? OFFER_OPTIONS : MESSAGE_OPTIONS };
+  const messageOptions = locale === "de" ? MESSAGE_OPTIONS : [
+    { id: "yes", label: "Yes, send it" },
+    { id: "no", label: "No, change it" },
+  ];
+  const offerOptions = locale === "de" ? OFFER_OPTIONS : [
+    { id: "review", label: "Review offer" },
+    { id: "no", label: "Not this one" },
+  ];
+  return { kind, question, detail: detail.slice(0, 20_000), options: kind === "offer_ready" ? offerOptions : messageOptions };
 }
 
 async function openDecisionsFor(

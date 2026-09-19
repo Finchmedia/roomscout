@@ -13,6 +13,8 @@ afterEach(() => {
 describe("RoomScout local model override", () => {
   it("keeps the production Gateway model as the default", () => {
     expect(getRoomScoutLanguageModel()).toBe(roomScoutLanguageModel);
+    expect(getRoomScoutLanguageModel().modelId).toBe("openai/gpt-5.6-terra");
+    expect(getRoomScoutLanguageModel("utility").modelId).toBe("openai/gpt-5.6-luna");
   });
 
   it("rejects overrides outside the test runtime", async () => {

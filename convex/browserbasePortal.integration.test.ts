@@ -417,17 +417,26 @@ it("initializes v4 browser primitives with implicit model calls disabled", async
 });
 
 it("claims one exact Browserbase write, exposes its session only to the owner, and serializes writes", async () => {
+  // This fixture deliberately exercises a reviewed non-demo portal.
+  vi.stubEnv("SCOUT_CONTROLLED_PORTAL_ONLY", "false");
   const t = convexTest(schema, modules);
   const fixture = await t.run(async (ctx) => {
     const now = Date.now();
     const ownerId = await ctx.db.insert("users", {
       username: "owner",
+      firstName: "Mina",
+      actKind: "band",
+      actName: "Night Owls",
+      providerIdentityConfirmedAt: now,
       role: "musician",
       createdAt: now,
       lastSeenAt: now,
     });
     const otherOwnerId = await ctx.db.insert("users", {
       username: "other",
+      firstName: "Robin",
+      actKind: "solo",
+      providerIdentityConfirmedAt: now,
       role: "musician",
       createdAt: now,
       lastSeenAt: now,

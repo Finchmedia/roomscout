@@ -61,6 +61,16 @@ function renderOffer(value: ReturnType<typeof conversation>, now: number = NOW) 
 }
 
 describe("LiveProviderOffer acceptance gating", () => {
+  it("uses the projected room photo and keeps the existing fallback otherwise", () => {
+    const { rerender } = render(<MemoryRouter><LiveProviderOffer conversation={conversation({ imageUrl: "https://roomscout.dev/rooms/westend.webp" })} title="Westend room" now={NOW} /></MemoryRouter>);
+    expect(screen.getByRole("img", { name: "Westend room" })).toHaveAttribute("loading", "lazy");
+    expect(screen.queryByText("liveScout.noPhoto")).not.toBeInTheDocument();
+
+    rerender(<MemoryRouter><LiveProviderOffer conversation={conversation()} title="Westend room" now={NOW} /></MemoryRouter>);
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.getByText("liveScout.noPhoto")).toBeVisible();
+  });
+
   it("shows partial offer blockers without exposing acceptance review", () => {
     renderOffer(conversation({
       offer: {
@@ -108,6 +118,13 @@ describe("LiveProviderOffer acceptance gating", () => {
     renderOffer(conversation());
     fireEvent.click(screen.getByRole("button", { name: "liveScout.review" }));
     expect(screen.getByTestId("acceptance-flow")).toHaveTextContent("offer-current:offer-current-hash");
+  });
+
+  it("carries the provider disclosure into the offer and hides review when demo contact is disabled", () => {
+    render(<MemoryRouter><LiveProviderOffer conversation={conversation()} now={NOW}
+      disclosure="liveScout.candidatePanel.contactDisabledDemo" contactDisabled /></MemoryRouter>);
+    expect(screen.getByText("liveScout.candidatePanel.contactDisabledDemo")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "liveScout.review" })).not.toBeInTheDocument();
   });
 
   it.each(["approved", "queued"])("blocks a second review while acceptance delivery is %s", (acceptanceStatus) => {

@@ -129,6 +129,33 @@ it("the streamed reply writes deltas and saves the assistant message on the thre
   expect(deltas.every((delta) => delta.streamId === streams[0]!.streamId)).toBe(true);
 });
 
+it("gives the shared Scout turn the confirmed musician profile without private account identity", async () => {
+  const f = await fixture();
+  await f.t.run((ctx) => ctx.db.patch(f.ownerId, {
+    username: "private-login",
+    firstName: "Alex",
+    lastName: "Private-Surname",
+    actKind: "band",
+    actName: "Neon Harbour",
+    providerIdentityConfirmedAt: 1,
+  }));
+  const model = mockModel({ content: [{ type: "text", text: "Ich suche weiter." }] }) as ReturnType<typeof mockModel> & {
+    doStreamCalls: Array<{ prompt?: Array<{ role: string; content: unknown }> }>;
+  };
+  scoutAgent.options.languageModel = model;
+
+  await f.owner.mutation(api.scout.send, { threadId: f.threadId, prompt: "Wie ist der Stand?" });
+  await f.t.finishAllScheduledFunctions(() => {});
+
+  const instructions = String(model.doStreamCalls[0]?.prompt?.find((message) => message.role === "system")?.content);
+  expect(instructions).toContain('"firstName":"Alex"');
+  expect(instructions).toContain('"representedName":"Neon Harbour"');
+  expect(instructions).toContain('"actKind":"band"');
+  expect(instructions).toContain("already confirmed");
+  expect(instructions).not.toContain("Private-Surname");
+  expect(instructions).not.toContain("private-login");
+});
+
 it("a failing reply marks the pending answer failed instead of leaving it open", async () => {
   const f = await fixture();
   scoutAgent.options.languageModel = mockModel({ fail: true, content: [{ type: "text", text: "unused" }] });

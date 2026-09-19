@@ -1,6 +1,6 @@
 import * as React from "react";
 import type { FunctionReturnType } from "convex/server";
-import { ArrowDownIcon } from "lucide-react";
+import { ArrowDownIcon, ChevronDownIcon } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { api } from "../../../convex/_generated/api";
 import { DecisionCard, type OpenDecision } from "../../components/scout/DecisionCard";
@@ -8,7 +8,6 @@ import { LiveProviderOffer } from "../../components/opportunities/LiveProviderOf
 import { OfferAcceptanceFlow } from "../../components/opportunities/OfferAcceptanceDialog";
 import { Bubble, BubbleContent } from "../../components/ui/bubble";
 import { Button } from "../../components/ui/button";
-import { Marker, MarkerContent } from "../../components/ui/marker";
 import { Message, MessageContent, MessageFooter, MessageHeader } from "../../components/ui/message";
 import {
   MessageScroller,
@@ -42,7 +41,7 @@ interface ConversationThreadProps {
    * musician's own wording and arrives with `choice === "custom"`; on a message
    * kind the Scout reads it as an instruction, not as a message to forward.
    */
-  onAnswerDecision: (decisionId: OpenDecision["_id"], choice: string, text?: string) => Promise<void>;
+  onAnswerDecision: (decisionId: OpenDecision["_id"], choice: string, text?: string, questionId?: string) => Promise<void>;
   /**
    * The same conversation as `api.providerConversations.listMine` sees it —
    * the only shape `LiveProviderOffer` reads. Omitted while it is loading.
@@ -52,6 +51,7 @@ interface ConversationThreadProps {
   offerTitle?: string;
   /** German reason the last reply did not go through. */
   error?: React.ReactNode;
+  onRetryAssessment?: () => Promise<void>;
 }
 
 /**
@@ -81,44 +81,89 @@ export function ConversationThread({
   offerConversation,
   offerTitle,
   error,
+  onRetryAssessment,
 }: ConversationThreadProps) {
   const { t, locale } = useCopy();
   const [busy, setBusy] = React.useState(false);
+  const [retrying, setRetrying] = React.useState(false);
+  const [retryError, setRetryError] = React.useState(false);
   // The binding Zusage is reviewed in its own dialog — terms, the exact
   // message, one confirmation — never as a detour through the Scout chat.
   const [reviewingAcceptance, setReviewingAcceptance] = React.useState(false);
   const offer = offerConversation?.offer;
 
   const stamp = (at: number) => formatMessageStamp(locale, at, now);
-  const channelLabel = t(
+  const channelLabel = header.channel === "none" ? undefined : t(
     header.channel === "platform" ? "liveInbox.channelPortal"
-      : header.channel === "mail" ? "liveInbox.channelMail"
-        : "liveInbox.channelNone",
+      : "liveInbox.channelMail",
   );
   const title = header.title || header.providerLabel || t("liveInbox.provider");
-  const subtitle = header.subtitle
+  const subtitle = header.subtitle && channelLabel
     ? t("liveInbox.subtitle", { city: header.subtitle, label: channelLabel })
-    : t("liveInbox.subtitleChannelOnly", { label: channelLabel });
+    : header.subtitle || (channelLabel ? t("liveInbox.subtitleChannelOnly", { label: channelLabel }) : undefined);
 
-  const composerHint = header.composer.enabled ? undefined : t(
-    header.composer.reason === "closed" ? "liveInbox.hintClosed"
-      : header.composer.reason === "thinking" ? "liveInbox.hintThinking"
-        : header.composer.reason === "assessment_required" ? "liveInbox.hintAssessmentRequired"
-          : "liveInbox.hintChannelNotReady",
+  const latestPendingItem = [...items].reverse().find(
+    (item): item is Extract<ThreadItem, { kind: "pending_message" }> => item.kind === "pending_message",
   );
+  const latestSentItem = [...items].reverse().find(item => item.kind === "sent_message");
+  // Failed/blocked requests remain in history. Once a newer outbound receipt
+  // exists, that older request must not keep controlling the composer copy.
+  const latestPending = latestPendingItem && (!latestSentItem || latestPendingItem.at >= latestSentItem.at)
+    ? latestPendingItem
+    : undefined;
+  const latestDeliveryFailed = latestSentItem && ["bounced", "rejected", "complained"].includes(latestSentItem.deliveryStatus ?? "");
+
+  const composerHint = (() => {
+    if (header.composer.enabled) return undefined;
+    if (header.composer.reason === "closed") return t("liveInbox.hintClosed");
+    if (latestPending?.outcomeUnknown) return t("liveInbox.hintOutcomeUnknown");
+    if (latestPending?.status === "awaiting_approval") return t("liveInbox.hintAwaitingApproval");
+    if (latestPending && SENDING_STATUS.has(latestPending.status)) return t("liveInbox.hintSending");
+    if (latestPending?.status === "failed") return t("liveInbox.hintSendFailed");
+    if (latestPending?.status === "blocked") return t("liveInbox.pendingBlocked");
+    if (latestPending?.status === "drafted") return t("liveInbox.hintDrafted");
+    if (latestDeliveryFailed) return t("liveInbox.hintDeliveryFailed");
+    if (header.progress === "inquiry_sent" || (latestSentItem && !header.hasProviderReply)) {
+      return t("liveInbox.hintAwaitingReply");
+    }
+    if (header.progress === "assessment_failed") return t("liveInbox.assessmentFailed");
+    if (!header.hasProviderReply) {
+      return t(header.progress === "checking" ? "liveInbox.emptyChecking" : "liveInbox.emptyContactNotReady");
+    }
+    if (header.composer.reason === "thinking") return t("liveInbox.hintThinking");
+    if (header.composer.reason === "assessment_required") return t("liveInbox.hintAssessmentRequired");
+    return t("liveInbox.hintChannelNotReady");
+  })();
 
   // An open Entscheidung is answered right here, so the waiting bubble does not
   // also send the musician to the Scout chat for the same question.
   const hasOpenDecision = items.some(
     (item) => item.kind === "decision" && item.decision.status === "open",
   );
+  const visibleDecisionIds = new Set(items.flatMap(item =>
+    item.kind === "decision" ? [String(item.decision._id)] : [],
+  ));
+  const visibleItems = items.filter(item => {
+    if (item.kind !== "musician_input") return true;
+    const decisionId = item.decisionId;
+    return !decisionId || !visibleDecisionIds.has(String(decisionId));
+  });
 
   function pendingFooter(item: Extract<ThreadItem, { kind: "pending_message" }>) {
+    if (item.outcomeUnknown) return t("liveInbox.pendingOutcomeUnknown");
     if (SENDING_STATUS.has(item.status)) return t("liveInbox.pendingSending");
     if (item.status === "awaiting_approval") return t("liveInbox.pendingApproval");
     if (item.status === "blocked") return item.gateText ?? t("liveInbox.pendingBlocked");
     if (item.status === "failed") return t("liveInbox.pendingFailed");
     return t("liveInbox.pendingDrafted");
+  }
+
+  function deliveryFooter(item: Extract<ThreadItem, { kind: "sent_message" }>) {
+    if (["bounced", "rejected", "complained"].includes(item.deliveryStatus ?? "")) {
+      return t("liveInbox.deliveryFailed");
+    }
+    if (item.deliveryStatus === "delivered") return t("liveInbox.deliveryDelivered");
+    return t("liveInbox.deliverySent");
   }
 
   function renderItem(item: ThreadItem) {
@@ -141,7 +186,10 @@ export function ConversationThread({
           <MessageContent>
             <MessageHeader>{speaker}</MessageHeader>
             <Bubble align="end" variant="tinted"><BubbleContent>{item.text}</BubbleContent></Bubble>
-            <MessageFooter>{stamp(item.at)}</MessageFooter>
+            <MessageFooter className="flex flex-wrap items-center justify-end gap-[var(--space-3)]">
+              <span>{deliveryFooter(item)}</span>
+              <span>{stamp(item.at)}</span>
+            </MessageFooter>
           </MessageContent>
         </Message>;
       }
@@ -180,37 +228,46 @@ export function ConversationThread({
           </MessageContent>
         </Message>;
       case "scout_note":
-        return <Marker>
-          <MarkerContent className="min-w-0 flex-1">
-            <details className="min-w-0 text-left">
-              <summary className="cursor-pointer line-clamp-1 break-words [overflow-wrap:anywhere]">
-                {t("liveInbox.scoutNote", { text: item.summary })}
+        return <div className="w-full max-w-[44rem] text-left">
+          <details role="group" aria-label={t("liveInbox.scoutUpdate")} className="group/scout-update min-w-0 rounded-control border border-rs-border-card bg-rs-surface-subtle-1 px-[var(--space-5)] py-[var(--space-4)]">
+              <summary className="flex cursor-pointer items-center justify-between gap-[var(--space-4)] text-[length:var(--text-caption-size)] text-rs-ink-4">
+                <span>{t("liveInbox.scoutUpdate")}</span>
+                <span className="flex shrink-0 items-center gap-[var(--space-2)]">
+                  <time dateTime={new Date(item.at).toISOString()} className="text-[length:var(--text-micro-size)] text-rs-ink-6">{stamp(item.at)}</time>
+                  <ChevronDownIcon aria-hidden="true" className="size-4 transition-transform duration-[var(--duration-quick)] group-open/scout-update:rotate-180" />
+                </span>
               </summary>
-              <p className="mt-[var(--space-3)] whitespace-pre-wrap">{item.summary}</p>
-              {item.nextAction
-                ? <p className="mt-[var(--space-2)]">{t("liveInbox.scoutNoteNext", { text: item.nextAction })}</p>
-                : null}
-              <p className="mt-[var(--space-2)]">{stamp(item.at)}</p>
+              <p className="mt-[var(--space-4)] max-w-[68ch] whitespace-pre-wrap break-words text-[length:var(--text-body-size)] leading-relaxed text-rs-ink-2 [overflow-wrap:anywhere]">{item.summary}</p>
             </details>
-          </MarkerContent>
-        </Marker>;
+        </div>;
       case "decision":
         if (item.decision.status === "open") {
           return <DecisionCard
             decision={item.decision}
             offerHash={offer?.contentHash}
             busy={busy}
-            onAnswer={async (choice, _label, text) => { await onAnswerDecision(item.decision._id, choice, text); }}
+            onAnswer={async (choice, _label, text, questionId) => {
+              if (questionId) await onAnswerDecision(item.decision._id, choice, text, questionId);
+              else await onAnswerDecision(item.decision._id, choice, text);
+            }}
           />;
         }
-        return <Marker variant="separator">
-          <MarkerContent>
-            {t("liveInbox.decisionAnswered", {
-              label: item.decision.question,
-              text: answerLabel(item.decision) ?? t("liveInbox.decisionAnsweredUnknown"),
-            })}
-          </MarkerContent>
-        </Marker>;
+        if (item.decision.status !== "answered") return null;
+        return <section role="group" aria-label={t("liveInbox.privateScoutQuestion")} className="w-full max-w-[44rem] rounded-card border border-rs-border-accent-soft bg-rs-surface-card px-[var(--space-6)] py-[var(--space-5)] text-left">
+          <div className="flex flex-wrap items-center justify-between gap-[var(--space-3)]">
+            <span className="text-[length:var(--text-caption-size)] font-medium text-rs-orange-light">{t("liveInbox.privateScoutQuestion")}</span>
+            <span className="text-[length:var(--text-micro-size)] text-rs-ink-5">{t("liveInbox.decisionAnsweredState")}</span>
+          </div>
+          {answeredQuestions(item.decision, t("liveInbox.decisionAnsweredUnknown")).map((entry, index) => <div key={entry.id} className={index === 0 ? "mt-[var(--space-5)]" : "mt-[var(--space-5)] border-t border-rs-border-card pt-[var(--space-5)]"}>
+            <div className="text-[length:var(--text-micro-size)] text-rs-ink-6">{t("liveInbox.scoutQuestion")}</div>
+            <p className="mt-[var(--space-2)] break-words text-[length:var(--text-body-size)] leading-relaxed text-rs-ink-2 [overflow-wrap:anywhere]">{entry.question}</p>
+            <div className="mt-[var(--space-4)]">
+              <div className="text-[length:var(--text-micro-size)] text-rs-ink-6">{t("liveInbox.yourAnswer")}</div>
+              <p className="mt-[var(--space-2)] break-words text-[length:var(--text-body-size)] leading-relaxed text-rs-ink [overflow-wrap:anywhere]">{entry.answerLabel}</p>
+            </div>
+            <time dateTime={new Date(entry.at).toISOString()} className="mt-[var(--space-4)] block text-[length:var(--text-micro-size)] text-rs-ink-6">{stamp(entry.at)}</time>
+          </div>)}
+        </section>;
     }
   }
 
@@ -230,7 +287,7 @@ export function ConversationThread({
             <MessageScrollerItem messageId="thread-header">
               <div>
                 <h1 className="text-[length:var(--text-lead-size)] text-rs-ink">{title}</h1>
-                <p className="mt-[var(--space-2)] text-[length:var(--text-caption-size)] text-rs-ink-4">{subtitle}</p>
+                {subtitle ? <p className="mt-[var(--space-2)] text-[length:var(--text-caption-size)] text-rs-ink-4">{subtitle}</p> : null}
               </div>
             </MessageScrollerItem>
 
@@ -242,11 +299,22 @@ export function ConversationThread({
 
             {items.length === 0 ? (
               <p className="m-auto max-w-[32rem] py-[var(--space-17)] text-center text-[length:var(--text-body-sm-size)] text-rs-ink-6">
-                {t("liveInbox.emptyThread")}
+                {t(header.progress === "assessment_failed" ? "liveInbox.assessmentFailed"
+                  : header.progress === "preparing_inquiry" ? "liveInbox.emptyThread"
+                    : header.progress === "checking" ? "liveInbox.emptyChecking"
+                      : header.hasProviderReply || header.progress === "inquiry_sent" || header.progress === "closed" ? "liveInbox.emptyHistory" : "liveInbox.emptyContactNotReady")}
               </p>
             ) : null}
 
-            {items.map((item) => (
+            {header.progress === "assessment_failed" && items.length > 0 ? <p role="status">{t("liveInbox.assessmentFailed")}</p> : null}
+            {header.canRetryAssessment && onRetryAssessment ? <Button type="button" variant="outline" disabled={retrying}
+              onClick={async () => {
+                setRetrying(true); setRetryError(false);
+                try { await onRetryAssessment(); } catch { setRetryError(true); } finally { setRetrying(false); }
+              }}>{t(retrying ? "liveInbox.retrying" : "liveInbox.retryAssessment")}</Button> : null}
+            {retryError ? <p role="alert">{t("liveInbox.errorGeneric")}</p> : null}
+
+            {visibleItems.map((item) => (
               <MessageScrollerItem
                 key={`${item.kind}:${item.id}`}
                 messageId={`${item.kind}:${item.id}`}
@@ -294,6 +362,25 @@ function answerLabel(decision: ThreadDecision): string | undefined {
   const option = decision.options.find((row) => row.id === choice);
   return decision.answer?.text ?? option?.label ?? choice;
 }
+
+function answeredQuestions(decision: ThreadDecision & { questions?: DecisionQuestion[] }, unknownAnswer: string) {
+  if (decision.questions?.length) {
+    return decision.questions.flatMap((question) => question.answer ? [{
+      id: question.id,
+      question: question.question,
+      answerLabel: question.answer.text ?? question.options.find((option) => option.id === question.answer?.choice)?.label ?? question.answer.choice,
+      at: question.answer.at,
+    }] : []);
+  }
+  return [{
+    id: String(decision._id),
+    question: decision.question,
+    answerLabel: answerLabel(decision) ?? unknownAnswer,
+    at: decision.answer?.at ?? decision.updatedAt,
+  }];
+}
+
+type DecisionQuestion = NonNullable<OpenDecision["questions"]>[number];
 
 type ThreadDecision = Extract<ThreadItem, { kind: "decision" }>["decision"];
 

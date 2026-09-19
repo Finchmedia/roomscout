@@ -8,7 +8,9 @@ import { ScoutBlob, type ScoutBlobState } from "@/components/ui/scout-blob"
 import { VoiceControl } from "@/components/ui/voice-control"
 import type { VoiceScoutStatus } from "@/features/voice/voiceTypes"
 import { cn } from "@/lib/utils"
+import { cleanVoiceTranscript } from "@/features/voice/transcriptText"
 import { useCopy } from "@/ui/copy"
+import { ScoutThinkingIndicator } from "@/ui/chat/ScoutThinkingIndicator"
 
 interface LiveVoiceChatLabels {
   cancel: string
@@ -123,13 +125,9 @@ function LiveVoiceChat({
   const transcript = voice.transcript
 
   // Input and output can overlap. Keep their actual caption rows in sequence.
-  const latestTurns = React.useMemo(() => transcript.filter(turn => turn.text.trim()).slice(-8), [transcript])
+  const latestTurns = React.useMemo(() => transcript.map(turn => ({ ...turn, text: turn.role === "assistant" ? cleanVoiceTranscript(turn.text) : turn.text })).filter(turn => turn.text.trim()), [transcript])
   const captionViewport = React.useRef<HTMLDivElement>(null)
   const followLatestCaption = React.useRef(true)
-  React.useLayoutEffect(() => {
-    const viewport = captionViewport.current
-    if (viewport && followLatestCaption.current) viewport.scrollTop = viewport.scrollHeight
-  }, [latestTurns])
 
   const statusCopy = voice.error ?? (
     busy
@@ -151,6 +149,22 @@ function LiveVoiceChat({
       : voice.backendState === "processing"
         ? t("liveScout.voice.updating")
         : undefined
+  const pendingCopy = voice.error
+    ? undefined
+    : busy
+      ? labels.connecting
+      : backendStatusCopy ?? (voice.status === "thinking" ? labels.thinking : undefined)
+  const stateLineCopy = voice.error ?? (
+    voice.muted
+      ? t("liveScout.voice.muted")
+      : pendingCopy
+        ? undefined
+        : statusCopy
+  )
+  React.useLayoutEffect(() => {
+    const viewport = captionViewport.current
+    if (viewport && followLatestCaption.current) viewport.scrollTop = viewport.scrollHeight
+  }, [latestTurns, pendingCopy])
 
   const end = () => {
     voice.disconnect()
@@ -164,34 +178,34 @@ function LiveVoiceChat({
       data-compact={compact || undefined}
       data-primary={primary || undefined}
       className={cn(
-        "flex min-h-0 w-full flex-col rounded-card border border-rs-border-card bg-rs-surface-card",
+        "mx-auto flex min-h-0 w-full max-w-[var(--width-card)] flex-col",
         compact
           ? cn(
-              "items-stretch justify-start gap-[var(--space-3)] overflow-hidden px-[var(--space-4)] py-[var(--space-4)] text-left",
-              primary ? "max-h-[min(30rem,calc(100dvh-10rem))]" : "max-h-[220px]"
+              "items-stretch justify-start gap-[var(--space-3)] overflow-visible px-[var(--space-3)] py-[var(--space-3)] text-left",
+              primary ? "max-h-[calc(100dvh-10rem)]" : "max-h-[min(22rem,40dvh)]"
             )
-          : "items-center justify-center gap-[var(--space-11)] px-[var(--space-7)] py-[var(--space-13)] text-center",
+          : "items-center justify-center gap-[var(--space-11)] rounded-card border border-rs-border-card bg-rs-surface-card px-[var(--space-7)] py-[var(--space-13)] text-center",
         className
       )}
     >
       {!hideBlob && !compact ? <ScoutBlob state={blobState(voice.status)} size={160} /> : null}
       {!hideBlob && compact && primary ? <ScoutBlob className="shrink-0 self-center" state={blobState(voice.status)} size={96} /> : null}
 
-      <div className={cn("max-w-[38rem]", compact && "flex w-full min-w-0 items-center gap-[var(--space-4)]")}>
+      {(title || stateLineCopy) ? <div className={cn("max-w-[38rem] shrink-0", compact && "flex w-full min-w-0 items-center gap-[var(--space-4)]")}>
         {!hideBlob && compact && !primary ? <ScoutBlob className="shrink-0" state={blobState(voice.status)} size={48} /> : null}
         <div className={cn(compact && "flex min-w-0 flex-1 items-center justify-between gap-[var(--space-4)]")}>
-          <h2 className={cn("shrink-0 font-light text-rs-ink", compact ? "text-[length:var(--text-body-size)]" : "text-[length:var(--text-card-title-size)]")}>{title ?? t("liveScout.voice.title")}</h2>
-          <p
+          {title ? <h2 className={cn("shrink-0 font-light text-rs-ink", compact ? "text-[length:var(--text-body-size)]" : "text-[length:var(--text-card-title-size)]")}>{title}</h2> : null}
+          {stateLineCopy ? <p
             role={voice.error ? "alert" : "status"}
             className={cn(
-              compact ? "min-w-0 truncate text-right text-[length:var(--text-micro-size)] text-rs-ink-6" : "mt-[var(--space-4)] text-[length:var(--text-body-sm-size)] text-rs-ink-6",
+              compact ? "min-w-0 flex-1 truncate text-right text-[length:var(--text-micro-size)] text-rs-ink-6" : "mt-[var(--space-4)] text-[length:var(--text-body-sm-size)] text-rs-ink-6",
               voice.error && "text-rs-red-text"
             )}
           >
-            {statusCopy}{voice.muted ? ` · ${t("liveScout.voice.muted")}` : ""}{backendStatusCopy ? ` · ${backendStatusCopy}` : ""}
-          </p>
+            {stateLineCopy}
+          </p> : null}
         </div>
-      </div>
+      </div> : null}
 
       {voice.backendState === "failed" ? (
         <div role="alert" className={cn("flex items-center gap-3 text-sm text-rs-red-text", compact && "text-[length:var(--text-micro-size)]")}>
@@ -200,7 +214,7 @@ function LiveVoiceChat({
         </div>
       ) : null}
 
-      {showTranscript && latestTurns.length > 0 && (
+      {showTranscript && (latestTurns.length > 0 || pendingCopy) && (
         <div
           ref={captionViewport}
           aria-label={t("liveScout.voice.transcript")}
@@ -214,10 +228,14 @@ function LiveVoiceChat({
             "flex w-full flex-col overflow-y-auto text-left",
             compact
               ? cn(
-                  "min-h-0 flex-1 max-w-none gap-[var(--space-2)] rounded-control bg-rs-surface-inset px-[var(--space-3)] py-[var(--space-2)]",
-                  primary ? "max-h-[13rem]" : "max-h-[5rem]"
+                  "min-h-0 flex-1 max-w-none gap-[var(--space-3)] px-1 py-[var(--space-2)]",
+                  latestTurns.length === 0
+                    ? "min-h-[4rem] flex-none justify-end"
+                    : primary
+                      ? "h-[clamp(16rem,44dvh,32rem)] flex-none max-h-[calc(100dvh-22rem)]"
+                      : "h-[clamp(8rem,20dvh,14rem)] flex-none max-h-[24dvh]"
                 )
-              : "max-h-[32vh] max-w-[42rem] gap-[var(--space-5)]"
+              : "max-h-[32vh] max-w-[var(--width-card)] gap-[var(--space-5)]"
           )}
         >
           {latestTurns.map((turn) => {
@@ -228,6 +246,7 @@ function LiveVoiceChat({
               </ChatTurn>
             )
           })}
+          {pendingCopy ? <ScoutThinkingIndicator label={pendingCopy} text={pendingCopy} /> : null}
         </div>
       )}
 
@@ -235,7 +254,7 @@ function LiveVoiceChat({
         aria-label={labels.controls}
         role="group"
         data-voice-controls-density={compact ? "compact" : "full"}
-        className={cn("flex items-start justify-center", compact ? "min-h-9 flex-nowrap items-center gap-[var(--space-3)]" : "flex-wrap gap-[var(--space-9)]")}
+        className={cn("flex shrink-0 items-start justify-center", compact ? "min-h-9 flex-nowrap items-center gap-[var(--space-3)]" : "flex-wrap gap-[var(--space-9)]")}
       >
         {!active && !busy && (
           <CallControl

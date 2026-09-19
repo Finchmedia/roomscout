@@ -42,12 +42,16 @@ export type MatchSignal = {
 
 export type MatchScore = {
   eligible: boolean;
+  eligibility: "fit" | "near_budget" | "ineligible";
   kind: "need_supply" | "demand_demand";
   score: number;
   structuredScore: number;
   semanticScore: number;
   reasons: string[];
   uncertainties: string[];
+  monthlyCostBasis: "assessed_monthly_minimum" | "listed_monthly_base" | "unknown";
+  monthlyCostEur?: number;
+  budgetDeltaEur?: number;
 };
 
 function normalized(value: string): string {
@@ -102,14 +106,32 @@ export function scoreSignalMatch(
   assessment?: MatchAssessment,
 ): MatchScore {
   const kind = signal.side === "supply" ? "need_supply" : "demand_demand";
+  const assessedMonthlyMinimum = signal.side === "supply" ? assessment?.monthlyPrice.minimumEur : null;
+  const listedMonthlyBase = signal.side === "supply" && signal.pricePeriod === "month" ? signal.priceEur : undefined;
+  const monthlyCostEur = assessedMonthlyMinimum !== null && assessedMonthlyMinimum !== undefined
+    ? assessedMonthlyMinimum
+    : listedMonthlyBase;
+  const monthlyCostBasis: MatchScore["monthlyCostBasis"] = assessedMonthlyMinimum !== null && assessedMonthlyMinimum !== undefined
+    ? "assessed_monthly_minimum"
+    : listedMonthlyBase !== undefined
+      ? "listed_monthly_base"
+      : "unknown";
+  const budgetDeltaEur = need.maxBudgetEur !== undefined && monthlyCostEur !== undefined
+    ? monthlyCostEur - need.maxBudgetEur
+    : undefined;
+  const exceedsBudget = budgetDeltaEur !== undefined && budgetDeltaEur > 0;
   const empty: MatchScore = {
     eligible: false,
+    eligibility: "ineligible",
     kind,
     score: 0,
     structuredScore: 0,
     semanticScore: clamp(semanticSimilarity),
     reasons: [],
     uncertainties: [],
+    monthlyCostBasis,
+    ...(monthlyCostEur === undefined ? {} : { monthlyCostEur }),
+    ...(budgetDeltaEur === undefined ? {} : { budgetDeltaEur }),
   };
   const { radiusKm, centerLatitude, centerLongitude } = need;
   const hasRadiusSearch = radiusKm !== undefined && centerLatitude !== undefined && centerLongitude !== undefined;
@@ -143,15 +165,7 @@ export function scoreSignalMatch(
   if (assessment) {
     const conflicts = assessment.requirements.filter((item) => item.verdict === "conflict").map((item) => item.explanation);
     if ((need.schedule?.length ?? 0) > 0 && assessment.schedule.verdict === "conflict") conflicts.push(assessment.schedule.explanation);
-    if (signal.side === "supply" && need.maxBudgetEur !== undefined && assessment.monthlyPrice.minimumEur !== null &&
-      assessment.monthlyPrice.minimumEur > need.maxBudgetEur) conflicts.push("Monthly cost including stated extras exceeds the maximum budget");
     if (conflicts.length) return { ...empty, reasons: conflicts };
-  }
-  // Needs currently express a monthly budget. Never compare an hourly or
-  // unspecified quote with that budget as if its units were interchangeable.
-  if (signal.side === "supply" && need.maxBudgetEur !== undefined && signal.priceEur !== undefined &&
-    signal.pricePeriod === "month" && signal.priceEur > need.maxBudgetEur) {
-    return { ...empty, reasons: ["Monthly price exceeds the maximum budget"] };
   }
 
   const reasons: string[] = [];
@@ -183,9 +197,17 @@ export function scoreSignalMatch(
   if (need.maxBudgetEur !== undefined) possible += 0.2;
   if (need.maxBudgetEur === undefined) {
     // No budget constraint contributes neither weight nor a fabricated match reason.
+  } else if (exceedsBudget) {
+    // Score the non-budget fit independently so a candidate whose only blocker
+    // is a comparable monthly cost can remain visible as near-budget.
+    points += 0.2;
+    uncertainties.push("Comparable monthly cost is above the stated budget");
   } else if (signal.side === "supply" && assessment?.monthlyPrice.totalKnown && assessment.monthlyPrice.minimumEur !== null) {
     points += 0.2;
     reasons.push("Stated total monthly cost is within budget");
+  } else if (monthlyCostBasis === "assessed_monthly_minimum") {
+    points += 0.1;
+    uncertainties.push("The known monthly minimum is within budget, but the total recurring cost is not established");
   } else if (signal.priceEur === undefined) {
     points += 0.1;
     uncertainties.push("Price is not stated");
@@ -231,14 +253,24 @@ export function scoreSignalMatch(
   const semanticScore = clamp(semanticSimilarity);
   const score = 0.7 * structuredScore + 0.3 * semanticScore;
   const threshold = kind === "need_supply" ? 0.55 : 0.7;
+  const otherwiseEligible = score >= threshold;
+  const eligibility: MatchScore["eligibility"] = exceedsBudget && otherwiseEligible
+    ? "near_budget"
+    : otherwiseEligible
+      ? "fit"
+      : "ineligible";
   return {
-    eligible: score >= threshold,
+    eligible: eligibility === "fit",
+    eligibility,
     kind,
     score,
     structuredScore,
     semanticScore,
     reasons,
     uncertainties,
+    monthlyCostBasis,
+    ...(monthlyCostEur === undefined ? {} : { monthlyCostEur }),
+    ...(budgetDeltaEur === undefined ? {} : { budgetDeltaEur }),
   };
 }
 

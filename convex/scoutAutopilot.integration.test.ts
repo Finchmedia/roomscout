@@ -21,6 +21,10 @@ async function seedScoutWebform(t: ReturnType<typeof convexTest>, domain = "band
     const ownerId = await ctx.db.insert("users", {
       username: "scout-owner",
       displayName: "The Cooks",
+      firstName: "Mina",
+      actKind: "band",
+      actName: "The Cooks",
+      providerIdentityConfirmedAt: now,
       role: "musician",
       createdAt: now,
       lastSeenAt: now,

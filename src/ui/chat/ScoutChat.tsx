@@ -9,7 +9,7 @@ import { ChatComposer } from "@/ui/chat/ChatComposer"
 import { DecisionCard, type OpenDecision } from "@/components/scout/DecisionCard"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
-import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker"
+import { Marker, MarkerContent } from "@/components/ui/marker"
 import { Message, MessageContent, MessageHeader } from "@/components/ui/message"
 import {
   MessageScroller,
@@ -19,8 +19,8 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller"
-import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
+import { ScoutThinkingIndicator } from "@/ui/chat/ScoutThinkingIndicator"
 
 type ScoutChatAuthor = "scout" | "user" | "system"
 
@@ -110,7 +110,7 @@ interface ScoutChatProps extends Omit<React.ComponentProps<"section">, "onError"
    * musician's own wording and arrives with `choice === "custom"` — pass both
    * to `api.decisions.answer`.
    */
-  onAnswerDecision?: (decisionId: OpenDecision["_id"], choice: string, text?: string) => Promise<void>
+  onAnswerDecision?: (decisionId: OpenDecision["_id"], choice: string, text?: string, questionId?: string) => Promise<void>
   /** Shown as the Scout's bubble after an answer no chat message follows. */
   decisionAnsweredText?: string
 }
@@ -210,10 +210,9 @@ const THINKING_VERB_INTERVAL = 2_200
 /**
  * The line the chat shows while the Scout works and has written nothing yet.
  *
- * Two things make it read as somebody thinking rather than as a frozen label:
- * the text sweeps (shadcn's `shimmer` utility from `shadcn/tailwind.css`, next to
- * a `Spinner` in the `MarkerIcon`, the way the shadcn docs show it), and the
- * verb rotates. The rotation starts at a random index, so two waits in a row do
+ * The official AI Elements Shimmer makes it read as somebody thinking rather
+ * than as a frozen label, and the verb rotates. The rotation starts at a
+ * random index, so two waits in a row do
  * not open with the same canned line, and the element is mounted only while the
  * Scout is pending — a new turn is therefore a new start, for free.
  *
@@ -221,30 +220,22 @@ const THINKING_VERB_INTERVAL = 2_200
  * reader gets one stable status, not a verb changing under it every two
  * seconds.
  */
-function ThinkingMarker({ label, verbs }: { label: string; verbs: readonly string[] }) {
+function ThinkingMarker({ label, verbs, text }: { label: string; verbs: readonly string[]; text?: string }) {
   const [index, setIndex] = React.useState(() =>
     verbs.length > 0 ? Math.floor(Math.random() * verbs.length) : 0
   )
 
   React.useEffect(() => {
-    if (verbs.length < 2) return
+    if (text || verbs.length < 2) return
     const timer = setInterval(
       () => setIndex((current) => (current + 1) % verbs.length),
       THINKING_VERB_INTERVAL
     )
     return () => clearInterval(timer)
-  }, [verbs.length])
+  }, [text, verbs.length])
 
-  return (
-    <Marker role="status" aria-label={label}>
-      <MarkerIcon>
-        <Spinner />
-      </MarkerIcon>
-      <MarkerContent className="shimmer">
-        {(verbs.length > 0 ? verbs[index % verbs.length] : undefined) ?? label}
-      </MarkerContent>
-    </Marker>
-  )
+  const visibleText = text ?? (verbs.length > 0 ? verbs[index % verbs.length] : undefined) ?? label
+  return <ScoutThinkingIndicator label={label} text={visibleText} />
 }
 
 function ScoutChat({
@@ -293,15 +284,20 @@ function ScoutChat({
     return await onSend(body)
   }
 
-  const answerDecision = async (choice: string, label: string, text?: string) => {
+  const answerDecision = async (choice: string, label: string, text?: string, questionId?: string) => {
     if (!decision || !onAnswerDecision) return
     setLocalError(null)
     try {
-      await onAnswerDecision(decision._id, choice, text)
+      if (questionId) await onAnswerDecision(decision._id, choice, text, questionId)
+      else await onAnswerDecision(decision._id, choice, text)
     } catch {
       setLocalError(labels.sendError)
       throw new Error("decision answer failed")
     }
+    // A partial round immediately renders its next server-backed question. A
+    // global acknowledgement here would falsely imply the whole decision was done.
+    const unansweredQuestions = decision.questions?.filter((question) => question.answer === undefined) ?? []
+    if (questionId && unansweredQuestions.length > 1) return
     const quiet = decision.kind !== "scout_question" && decision.kind !== "offer_ready" && choice === "no"
     setEchoes((current) => [...current, {
       id: `decision-${decision._id}-${choice}`,
@@ -325,6 +321,10 @@ function ScoutChat({
   const newest = messages.at(-1)
   const thinking =
     replying && (newest === undefined || newest.author !== "scout" || newest.body.trim() === "")
+  const activeTool = messages.flatMap(runningToolParts).at(-1)
+  const activeToolLabel = activeTool
+    ? labels.tools[toolName(activeTool.type)] ?? labels.toolDefault
+    : undefined
 
   return (
     <section
@@ -377,17 +377,6 @@ function ScoutChat({
 
                 return (
                   <React.Fragment key={message.id}>
-                    {runningToolParts(message).map((part) => (
-                      <MessageScrollerItem key={part.toolCallId} messageId={`${message.id}-${part.toolCallId}`}>
-                        <Marker role="status" aria-label={labels.scout}>
-                          <MarkerIcon>
-                            <Spinner />
-                          </MarkerIcon>
-                          <MarkerContent>{labels.tools[toolName(part.type)] ?? labels.toolDefault}</MarkerContent>
-                        </Marker>
-                      </MessageScrollerItem>
-                    ))}
-
                     {body ? (
                       <MessageScrollerItem messageId={message.id} scrollAnchor={isUser}>
                         <Message align={isUser ? "end" : "start"} role="group" aria-label={speaker}>
@@ -452,9 +441,9 @@ function ScoutChat({
                 </MessageScrollerItem>
               ) : null}
 
-              {thinking && (
+              {(thinking || activeToolLabel) && (
                 <MessageScrollerItem messageId="scout-thinking">
-                  <ThinkingMarker label={labels.thinking} verbs={labels.thinkingVerbs} />
+                  <ThinkingMarker label={labels.thinking} verbs={labels.thinkingVerbs} text={activeToolLabel} />
                 </MessageScrollerItem>
               )}
             </MessageScrollerContent>

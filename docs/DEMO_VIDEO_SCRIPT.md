@@ -10,7 +10,12 @@ Feste Zeilen gibt es nur für den Menschen. Die Scout-Zeilen sind Beispiele für
 das, was das Modell sagen könnte, keine Templates. Englisch durchgehend,
 Deutsch nur als bewusster Wechsel am Schluss.
 
-Ziel-Länge: 3:00 bis 3:30. Die Produktstrecke (Szene 1 bis 5) bleibt der
+**Abnahmehinweis 2026-09-16:** Die [offizielle Ausschreibung](https://www.convex.dev/hackathons/all-gas)
+verlangt ein Video unter drei Minuten. Die ausführlichen Szenenzeiten unten
+bleiben der kreative Entwurf; für die Aufnahme gilt der auf 2:45–2:55 gekürzte
+[Ablauf im Abschlussplan](DEMO_SUBMISSION_READINESS.md#recommended-short-english-demo).
+
+Frühere Entwurfs-Länge: 3:00 bis 3:30. Die Produktstrecke (Szene 1 bis 5) bleibt der
 längste Teil, weil der Juror die App bewertet, nicht den Film.
 
 ## Szene 0 · Kaltstart (0:00 bis 0:20)

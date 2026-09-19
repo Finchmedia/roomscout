@@ -25,8 +25,8 @@ const STAGE_SHELL =
  * simply sits further left than it does on the working stages.
  *
  * 1100px is this layout's own threshold, not the app's narrow breakpoint
- * (959px): three columns need 260 + 300 of side rail before the centre still
- * has room for a headline. Below it the columns fold into the two sheets.
+ * (959px): it leaves room for the 340px candidate rail and 300px brief while
+ * the centre still carries the active conversation. Below it they fold into sheets.
  */
 const COLUMN_STAGES: ReadonlySet<LiveScoutStage> = new Set<LiveScoutStage>([
   "discovery",
@@ -92,7 +92,7 @@ function WorkChrome({ props, stage }: { props: LiveScoutSurfaceProps; stage: Liv
         </p>
       ) : null}
       {blocked && props.decisionSlot ? (
-        <div className="mt-[var(--space-11)] w-[min(620px,100%)]">
+        <div className="mt-[var(--space-11)] w-[min(720px,100%)]">
           {props.decisionSlot}
         </div>
       ) : null}
@@ -122,7 +122,7 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
     ? props.briefReviewSlot({ onReviewBrief: props.onReviewBrief, onActivate: props.onActivate })
     : props.briefReviewSlot;
   const voiceDetailSlot = props.detailSlot ?? (stage === "offer" ? props.offerSlot : stage === "provider-update" ? props.providerUpdateSlot : null);
-  const voiceHasScrollableCompanion = Boolean(props.chatSlot || voiceDetailSlot || props.decisionSlot);
+  const voiceHasScrollableCompanion = Boolean(props.chatSlot || voiceDetailSlot);
   const conversationOpen = Boolean(props.chatSlot || props.voiceSlot);
 
   let content: React.ReactNode;
@@ -157,7 +157,7 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
           <div className={cn("text-[length:var(--text-body-sm-size)] text-rs-ink-4", props.chatSlot ? "mb-[var(--space-4)]" : "mb-[var(--space-7)]")}>{copy.discoveryLabel}</div>
           <div
             className={cn(
-              "w-[min(760px,100%)]",
+              "w-[min(var(--width-card),100%)]",
               props.chatSlot && "min-h-0 flex-1 overflow-hidden [&>[data-scout-conversation=text]]:h-full [&>[data-scout-conversation=text]]:max-h-full"
             )}
             data-live-scout-chat-host={Boolean(props.chatSlot) || undefined}
@@ -184,8 +184,8 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
         <div className={STAGE_SHELL} data-live-scout-stage={stage}>
           <ScoutBlob size={96} className="mb-[var(--space-10)]" />
           <StageTitle>{copy.briefHeadline}</StageTitle>
-          {props.briefFacts ? <div className="mt-[var(--space-12)] w-[min(680px,100%)]">{props.briefFacts}</div> : null}
-          {briefReview ? <div className="mt-[var(--space-8)] w-[min(680px,100%)]">{briefReview}</div> : null}
+          {props.briefFacts ? <div className="mt-[var(--space-12)] w-[min(var(--width-card),100%)]">{props.briefFacts}</div> : null}
+          {briefReview ? <div className="mt-[var(--space-8)] w-[min(var(--width-card),100%)]">{briefReview}</div> : null}
         </div>
       );
       break;
@@ -222,7 +222,7 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-1 flex-col gap-[var(--space-7)] px-[var(--space-5)] py-[var(--space-5)] min-[960px]:px-[var(--space-7)] min-[960px]:py-[var(--space-7)]",
-          voiceHasScrollableCompanion && "h-full overflow-hidden"
+          voiceHasScrollableCompanion ? "h-full overflow-hidden" : "justify-center"
         )}
         data-live-scout-stage={stage}
       >
@@ -248,14 +248,14 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
             </div>
           ) : null}
           {working ? <p role="status" className="text-center text-sm text-rs-ink-4">{stage === "paused" ? copy.pausedHeadline : props.decisionSlot ? copy.blockedHeadline : copy.workingHeadline}</p> : null}
-          {props.decisionSlot ? <div>{props.decisionSlot}</div> : null}
+          {props.decisionSlot ? <div className="mx-auto w-full max-w-[720px]" data-voice-decision-host>{props.decisionSlot}</div> : null}
           {voiceDetailSlot}
           {stage === "complete" ? <div className="text-center">{copy.completeHeadline}{props.completeSlot}</div> : null}
         </div>
       </div>
     );
   } else if (props.detailSlot) {
-    content = <div className="flex min-w-0 flex-1 flex-col gap-[var(--space-8)] p-[var(--space-7)]">{props.detailSlot}</div>;
+    content = <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-[var(--space-8)] overflow-y-auto overscroll-contain p-[var(--space-7)] [scrollbar-width:thin]">{props.detailSlot}</div>;
   }
 
   return (
@@ -297,14 +297,14 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
           // either the active conversation or the quiet-state composition in
           // the viewport.
           <div className="flex min-h-0 w-full flex-1 items-stretch overflow-hidden">
-            <div data-live-scout-column="candidates" className="hidden h-full min-h-0 w-[260px] shrink-0 overflow-y-auto overscroll-contain pt-[var(--space-7)] pr-[var(--space-7)] pb-[var(--space-7)] pl-[var(--space-11)] [scrollbar-width:thin] min-[1100px]:block">
-              {props.railSlot}
+            <div data-live-scout-column="candidates" className="hidden h-full min-h-0 w-[340px] shrink-0 overflow-y-auto overscroll-contain pr-[var(--space-5)] pl-[var(--space-7)] [scrollbar-width:thin] min-[1100px]:block">
+              <div className="flex min-h-full flex-col py-[var(--space-7)] [justify-content:safe_center]" data-live-scout-rail-content="candidates">{props.railSlot}</div>
             </div>
             <div data-live-scout-column="center" className={cn("flex min-h-0 min-w-0 flex-1 flex-col", conversationOpen ? "justify-start overflow-hidden" : "justify-center")}>
               {content}
             </div>
-            <div data-live-scout-column="brief" className="hidden h-full min-h-0 w-[300px] shrink-0 overflow-y-auto overscroll-contain pt-[var(--space-7)] pr-[var(--space-11)] pb-[var(--space-7)] pl-[var(--space-7)] [scrollbar-width:thin] min-[1100px]:block">
-              {props.asideSlot}
+            <div data-live-scout-column="brief" className="hidden h-full min-h-0 w-[300px] shrink-0 overflow-y-auto overscroll-contain pr-[var(--space-11)] pl-[var(--space-7)] [scrollbar-width:thin] min-[1100px]:block">
+              <div className="flex min-h-full flex-col py-[var(--space-7)] [justify-content:safe_center]" data-live-scout-rail-content="brief">{props.asideSlot}</div>
             </div>
           </div>
         ) : content}
@@ -344,7 +344,7 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
         </Sheet>
       ) : null}
       {stage !== "discovery" && !props.voiceSlot ? <Dialog open={Boolean(props.chatSlot)} onOpenChange={open => { if (!open) props.onCloseChat(); }}>
-        <DialogContent tone="dialog" size="md" className="max-w-[800px]" aria-describedby={undefined}>
+        <DialogContent tone="dialog" size="md" className="max-w-[var(--width-card)]" aria-describedby={undefined}>
           <DialogHeader><DialogTitle>{copy.chatTitle}</DialogTitle></DialogHeader>
           {props.chatSlot}
         </DialogContent>

@@ -31,8 +31,9 @@ const ACCEPTANCE_CONFIRM_WINDOW_MS = 3 * 60_000;
  * keep working; a host that already threads a `now` (the Nachrichten thread
  * does) passes it, and the render stays reproducible.
  */
-export function LiveProviderOffer({ conversation, title, hideMessagesLink = false, now }: {
+export function LiveProviderOffer({ conversation, title, hideMessagesLink = false, now, disclosure, contactDisabled = false }: {
   conversation: Conversation; title?: string; hideMessagesLink?: boolean; now?: number;
+  disclosure?: string; contactDisabled?: boolean;
 }) {
   const { t, locale } = useCopy();
   // Read once, at mount: a `Date.now()` in the render body is impure, and a
@@ -43,11 +44,26 @@ export function LiveProviderOffer({ conversation, title, hideMessagesLink = fals
   const [reviewing, setReviewing] = useState(false);
   const offer = conversation.offer;
   if (!offer) return <p role="status">{t("liveScout.replyDetail")}</p>;
+  const imageUrl = "imageUrl" in conversation && typeof conversation.imageUrl === "string" && conversation.imageUrl.trim()
+    ? conversation.imageUrl
+    : undefined;
+  const roomTitle = title || t("liveScout.offerFallback");
+  const roomPhoto = imageUrl ? (
+    <img
+      alt={roomTitle}
+      className="h-full min-h-[200px] w-full object-cover min-[960px]:min-h-[380px]"
+      decoding="async"
+      loading="lazy"
+      src={imageUrl}
+    />
+  ) : (
+    <PhotoPlaceholder className="min-h-[200px] min-[960px]:min-h-[380px]">{t("liveScout.noPhoto")}</PhotoPlaceholder>
+  );
   const { assessment } = offer;
   const pending = ["approved", "queued", "executing"].includes(conversation.acceptanceStatus ?? "");
   const unknown = conversation.acceptanceStatus === "unknown";
   const sent = conversation.acceptedOfferId === offer.offerId && conversation.acceptedAt !== undefined;
-  const canReview = offer.current && offer.ready && Boolean(conversation.platformThreadId) && !pending && !unknown && !sent;
+  const canReview = offer.current && offer.ready && Boolean(conversation.platformThreadId) && !pending && !unknown && !sent && !contactDisabled;
   const price = assessment.monthlyPrice.totalEur;
   const interim = !offer.ready && !sent;
   // `conversation.updatedAt` moves with the acceptance request, so it is the
@@ -68,7 +84,8 @@ export function LiveProviderOffer({ conversation, title, hideMessagesLink = fals
     : <Link className="mt-[var(--space-5)] text-sm text-rs-ink-4 underline underline-offset-4" to="/app/inbox">{t("liveScout.viewMessages")}</Link>;
   const head = <>
     <Overline tone="accent">{t(interim ? "liveScout.interimLabel" : "liveScout.offerLabel")}</Overline>
-    <h2 className="mt-[var(--space-8)] text-[length:var(--text-card-title-size)]">{title || t("liveScout.offerFallback")}</h2>
+    {disclosure ? <p className="mt-[var(--space-3)] inline-flex rounded-chip bg-rs-surface-subtle-2 px-3 py-1 text-[length:var(--text-caption-sm-size)] text-rs-ink-3">{disclosure}</p> : null}
+    <h2 className="mt-[var(--space-8)] text-[length:var(--text-card-title-size)]">{roomTitle}</h2>
     <div className="mt-[var(--space-2)] text-[length:var(--text-price-size)] leading-[1.1]">
       {price === null ? t("liveScout.priceUnknown") : <>{new Intl.NumberFormat(locale === "en" ? "en-GB" : "de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format(price)} <span className="text-[.6em] text-rs-ink-2">{t("liveScout.perMonth")}</span></>}
     </div>
@@ -77,7 +94,7 @@ export function LiveProviderOffer({ conversation, title, hideMessagesLink = fals
   // While the Scout still clarifies, show a compact interim state instead of a full offer card.
   if (interim) return <Card size="xl" padding={0} className="w-full overflow-hidden text-left">
     <div className="grid min-[960px]:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
-      <PhotoPlaceholder className="min-h-[200px] min-[960px]:min-h-[380px]">{t("liveScout.noPhoto")}</PhotoPlaceholder>
+      {roomPhoto}
       <div className="flex min-w-0 flex-col justify-center px-[clamp(24px,3.4vw,56px)] py-[clamp(24px,3vw,44px)]">
         {head}
         {offer.blockers.length > 0 ? <div className="mt-[var(--space-8)]"><p className="text-rs-ink-2">{t("liveScout.clarifying")}</p><ul className="mt-[var(--space-3)] list-disc pl-[var(--space-9)] text-rs-ink-2">{offer.blockers.slice(0, 3).map((item, index) => <li key={index}>{item}</li>)}</ul></div> : null}
@@ -88,7 +105,7 @@ export function LiveProviderOffer({ conversation, title, hideMessagesLink = fals
   </Card>;
   return <Card size="xl" padding={0} className="w-full overflow-hidden text-left">
     <div className="grid min-[960px]:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
-      <PhotoPlaceholder className="min-h-[200px] min-[960px]:min-h-[380px]">{t("liveScout.noPhoto")}</PhotoPlaceholder>
+      {roomPhoto}
       <div className="flex min-w-0 flex-col justify-center px-[clamp(24px,3.4vw,56px)] py-[clamp(24px,3vw,44px)]">
         {head}
         <p className="mt-[var(--space-10)] leading-relaxed text-rs-ink-2">{assessment.summary}</p>

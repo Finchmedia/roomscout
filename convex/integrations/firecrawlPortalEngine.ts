@@ -69,6 +69,11 @@ export async function readFirecrawlPortalInboxBatch(input: {
     navigationTimeoutMs: boundedInt(input.navigationTimeoutMs, 12_000, 1_000, 30_000),
     overallTimeoutMs: boundedInt(input.overallTimeoutMs, 90_000, 5_000, 120_000),
   };
+  // Some multi-navigation Interact calls return an intermediate expression
+  // (for example Array.push's `1`) despite exitCode 0. Keep only the completed
+  // batch under a unique key in this short-lived sandbox. A read-back can then
+  // recover that batch without repeating navigation or any provider write.
+  const resultKey = `__roomscoutInbox_${globalThis.crypto.randomUUID()}`;
   const raw = await input.session.runProgram(`
     const deadline = Date.now() + vars.limits.overallTimeoutMs;
     const origin = vars.origin;
@@ -103,7 +108,9 @@ export async function readFirecrawlPortalInboxBatch(input: {
       if (Date.now() >= deadline) { timedOut = true; break; }
       try {
         await navigate(origin + "/inbox/" + encodeURIComponent(id));
-        if (!(await authenticated("thread", id))) { missingThreadIds.push(id); continue; }
+        if (!(await authenticated("thread", id))) {
+          missingThreadIds.push(id);
+        } else {
         const read = await page.evaluate(({ maxMessages, maxBodyChars }) => {
           const row = document.querySelector('[data-roomscout-thread-state="ready"]');
           if (!row) return null;
@@ -129,12 +136,13 @@ export async function readFirecrawlPortalInboxBatch(input: {
           if (read.bodyTruncated) bodyTruncatedThreadIds.push(id);
           if (read.historyTruncated) historyTruncatedThreadIds.push(id);
         } else missingThreadIds.push(id);
+        }
       } catch {
         if (new URL(await page.url()).origin !== origin) throw new Error("PORTAL_NAVIGATION_ESCAPED");
         failedThreadIds.push(id);
       }
     }
-    return {
+    const completedBatch = {
       threads,
       missingThreadIds,
       failedThreadIds,
@@ -144,12 +152,25 @@ export async function readFirecrawlPortalInboxBatch(input: {
       truncated: timedOut || allDiscoveredIds.length > discoveredIds.length || ids.length < requestedIds.length + rotated.length || discoveredIds.length > vars.limits.maxThreads || failedThreadIds.length > 0 || bodyTruncatedThreadIds.length > 0 || historyTruncatedThreadIds.length > 0,
       timedOut,
       nextOffset: discoveredIds.length === 0 ? 0 : (vars.limits.startOffset + Math.max(1, threads.length + missingThreadIds.length + failedThreadIds.length)) % discoveredIds.length,
-    };`, { origin: REVIEWED_PORTAL_ORIGIN, requestedThreadIds: requested, limits }, false, limits.overallTimeoutMs);
-  try {
-    return resultSchema.parse(raw);
-  } catch {
-    throw new Error("FIRECRAWL_PORTAL_READ_RESULT_INVALID");
+    };
+    globalThis[vars.resultKey] = completedBatch;
+    return completedBatch;`, { origin: REVIEWED_PORTAL_ORIGIN, requestedThreadIds: requested, limits, resultKey }, false, limits.overallTimeoutMs);
+  const parsed = resultSchema.safeParse(raw);
+  if (parsed.success) return parsed.data;
+
+  // Read only this invocation's completion slot. A missing or malformed slot
+  // stays a failure: it must never become an empty, apparently synced inbox.
+  const recovered = await input.session.runProgram(`
+    const completedBatch = globalThis[vars.resultKey];
+    delete globalThis[vars.resultKey];
+    return completedBatch ?? null;
+  `, { resultKey }, false, 10_000);
+  const recovery = resultSchema.safeParse(recovered);
+  if (recovery.success) {
+    console.warn("FIRECRAWL_INBOX_RESULT_RECOVERED", { primaryType: typeof raw });
+    return recovery.data;
   }
+  throw new Error("FIRECRAWL_PORTAL_READ_RESULT_INVALID");
 }
 
 /* ------------------------------------------------------------------ */

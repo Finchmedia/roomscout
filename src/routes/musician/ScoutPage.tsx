@@ -2,6 +2,7 @@ import { optimisticallySendMessage, useUIMessages } from "@convex-dev/agent/reac
 import type { UIMessage } from "@convex-dev/agent/react";
 import type { StreamArgs, SyncStreamsReturnValue } from "@convex-dev/agent";
 import { useMutation, useQuery } from "convex/react";
+import { ConvexError } from "convex/values";
 import type { FunctionReference, PaginationOptions, PaginationResult } from "convex/server";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
@@ -14,6 +15,8 @@ import { FactList } from "../../components/ui/fact-list";
 import { DecisionCard } from "../../components/scout/DecisionCard";
 import { LiveProviderOffer } from "../../components/opportunities/LiveProviderOffer";
 import { LiveProfileMenu } from "../../components/navigation/LiveProfileMenu";
+import { IndexedCandidatePanel, type IndexedCandidatePanelCandidate } from "../../ui/scout/live/IndexedCandidatePanel";
+import type { CandidateRow } from "../../ui/scout/live/CandidateList";
 import { ConversationThread } from "../../ui/inbox/ConversationThread";
 import { LiveVoiceChat } from "../../ui/chat/LiveVoiceChat";
 import { useVoiceSession } from "../../components/voice/VoiceSessionContext";
@@ -101,6 +104,8 @@ export function ScoutPage() {
   const updateNeed = useMutation(api.savedNeeds.update);
   const replyToConversation = useMutation(api.conversations.reply);
   const markConversationRead = useMutation(api.conversations.markRead);
+  const retryAssessment = useMutation(api.providerConversations.retryFailedAssessment);
+  const startInquiry = useMutation(api.providerConversations.startInitialInquiry);
   // The musician's own bubble is on screen before the mutation resolves; the
   // Scout's half of the turn arrives on the thread as deltas.
   const sendMessage = useMutation(api.scout.send).withOptimisticUpdate(
@@ -108,12 +113,11 @@ export function ScoutPage() {
   );
   const decisions = useQuery(api.decisions.listOpenMine);
   const answerDecision = useMutation(api.decisions.answer);
-  const [focusedConversationId, setFocusedConversationId] = useState<Id<"providerConversations">>();
   const changingFocus = useRef(false);
-  const focusedThread = useQuery(api.conversations.getMine, focusedConversationId ? { conversationId: focusedConversationId } : "skip");
   const [briefEdit, setBriefEdit] = useState<{ needId: Id<"savedNeeds">; revision: number; field: "budget" | "schedule"; value: string }>();
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
+  const [profileRequired, setProfileRequired] = useState(false);
   const [textOpen, setTextOpen] = useState(false);
   const [textDismissed, setTextDismissed] = useState(false);
   // One Entscheidung is answered at a time; the buttons on the stage go quiet
@@ -121,6 +125,8 @@ export function ScoutPage() {
   const [answeringDecision, setAnsweringDecision] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(() => voice.connected);
   const [manualBrief, setManualBrief] = useState(false);
+  const [showAboveBudget, setShowAboveBudget] = useState(true);
+  const [conversationSignalId, setConversationSignalId] = useState<Id<"signals">>();
   const [dismissedReady, setDismissedReady] = useState("");
   const draftStarting = useRef(false);
   const threadStarting = useRef<string | undefined>(undefined);
@@ -128,6 +134,7 @@ export function ScoutPage() {
     needs?.find(row => row._id === context?.activeNeedId && row.status !== "archived") ??
     needs?.find(row => row.status !== "archived");
   const threadId = need && context?.activeNeedId === need._id ? context.threadId : undefined;
+  const profileMissing = currentUser?.role === "musician" && (currentUser.profileCompleted === false || profileRequired);
   const activation = need
     ? getSavedNeedActivationReadiness(need)
     : { canActivate: false, missingFields: ["location", "radiusKm"] as const };
@@ -140,14 +147,51 @@ export function ScoutPage() {
         : t("liveScout.activateMissingRadius");
   const history = useUIMessages(listScoutMessages, threadId ? { threadId } : "skip", { initialNumItems: 60, stream: true });
   const matches = useQuery(api.matches.listMine, need ? { savedNeedId: need._id, limit: 30 } : "skip");
+  const indexedRows = useQuery(api.matches.listCandidatesMine, need ? { savedNeedId: need._id, limit: 50 } : "skip");
+  const indexedCandidates = Array.isArray(indexedRows) ? indexedRows : [];
   const conversationRows = useQuery(api.providerConversations.listMine, need ? { savedNeedId: need._id, limit: 50 } : "skip");
   const conversations = Array.isArray(conversationRows) && need ? conversationRows.filter(row => row.savedNeedId === need._id) : [];
-  // The candidate rail: the same rows the Nachrichten list shows, narrowed to
-  // this Suchauftrag and to the conversations that are still running.
-  const inboxRows = useQuery(api.conversations.listMine, { limit: 20 });
+  // Keep this search's closed history available alongside the running candidates.
+  const inboxRows = useQuery(api.conversations.listMine, need ? { savedNeedId: need._id, limit: 50 } : "skip");
   const candidates = (Array.isArray(inboxRows) && need ? inboxRows : [])
-    .filter(row => row.savedNeedId === need?._id && row.state !== "closed")
+    .filter(row => row.savedNeedId === need?._id)
     .sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+  const focusedConversationId = candidates.find(row => row.signalId === context?.focusedSignalId)?.conversationId;
+  const focusedIndexed = indexedCandidates.find(row => row.signalId === context?.focusedSignalId);
+  const conversationOpen = Boolean(focusedConversationId && conversationSignalId === context?.focusedSignalId);
+  const focusedThread = useQuery(api.conversations.getMine, conversationOpen && focusedConversationId ? { conversationId: focusedConversationId } : "skip");
+  const focusedPublicResult = useQuery(
+    api.signals.get,
+    context?.focusedSignalId && !focusedIndexed ? { signalId: context.focusedSignalId } : "skip",
+  );
+  const disclosureFor = (value: { isDemo?: boolean; providerSimulation?: "ai_simulated" }) =>
+    value.isDemo === true || value.providerSimulation === "ai_simulated"
+      ? undefined
+      : t("liveScout.candidatePanel.contactDisabledDemo");
+  const candidateMap = new Map<string, CandidateRow>(indexedCandidates.map(row => [row.candidateKey, {
+    candidateKey: row.candidateKey, savedNeedId: row.savedNeedId, signalId: row.signalId,
+    source: "indexed", matchKind: row.kind, title: row.signal.title,
+    imageUrl: row.signal.imageUrl,
+    subtitle: [row.signal.city, row.signal.district].filter(Boolean).join(" · "),
+    lastActivityAt: row.updatedAt, unread: false, hasOpenDecision: false,
+    disclosure: disclosureFor(row.signal),
+  }]));
+  for (const row of candidates) {
+    const key = `${row.savedNeedId}:${row.signalId}`;
+    if (candidateMap.get(key)?.source === "conversation") continue;
+    const boundary = conversations.find((conversation) => conversation.conversationId === row.conversationId);
+    candidateMap.set(key, {
+      candidateKey: key, conversationId: row.conversationId, savedNeedId: row.savedNeedId,
+      signalId: row.signalId, source: "conversation", title: row.title || row.providerLabel,
+      imageUrl: boundary?.imageUrl ?? candidateMap.get(key)?.imageUrl,
+      subtitle: row.subtitle, state: row.state, progress: row.progress,
+      disposition: row.disposition, exclusionReason: row.exclusionReason,
+      hasProviderReply: row.hasProviderReply, canRetryAssessment: row.canRetryAssessment,
+      lastActivityAt: row.lastActivityAt, unread: row.unread, hasOpenDecision: row.openDecision !== undefined,
+      disclosure: boundary && (boundary.providerSimulation || boundary.isDemo) ? disclosureFor(boundary) : undefined,
+    });
+  }
+  const railCandidates = [...candidateMap.values()].sort((a, b) => b.lastActivityAt - a.lastActivityAt);
   const actions = useQuery(api.externalActions.listMine, need ? { savedNeedId: need._id, limit: 50 } : "skip");
   const latestSend = (actions ?? []).find(row => row.savedNeedId === need?._id && ["send_email", "submit_webform", "send_platform_dm"].includes(row.requestedActionType));
   const ready = conversations.find(row => row.offer?.current && row.offer.ready);
@@ -278,9 +322,9 @@ export function ScoutPage() {
     }
   }, [liveConnected, backgroundUpdates, appendVerifiedBackgroundUpdate, clearBackgroundUpdate]);
   useEffect(() => {
-    if (!focusedCandidateId) return;
+    if (!focusedCandidateId || !conversationOpen) return;
     void markConversationRead({ conversationId: focusedCandidateId }).catch(() => undefined);
-  }, [focusedCandidateId, focusedActivityAt, markConversationRead]);
+  }, [conversationOpen, focusedCandidateId, focusedActivityAt, markConversationRead]);
 
   useEffect(() => {
     if (needs === undefined || needs.some(row => row.status !== "archived") || draftStarting.current) return;
@@ -306,7 +350,13 @@ export function ScoutPage() {
   async function run(task: () => Promise<unknown>) {
     if (working) return;
     setWorking(true); setError("");
-    try { await task(); } catch { setError(t("liveScout.error")); } finally { setWorking(false); }
+    try { await task(); }
+    catch (caught) {
+      const data = caught instanceof ConvexError ? caught.data : undefined;
+      if (typeof data === "object" && data !== null && "code" in data && (data as { code?: unknown }).code === "MUSICIAN_PROFILE_REQUIRED") {
+        setProfileRequired(true);
+      } else setError(t("liveScout.error"));
+    } finally { setWorking(false); }
   }
   async function send(body: string) {
     if (!threadId) return false;
@@ -329,10 +379,11 @@ export function ScoutPage() {
     setTextOpen(false);
     setTextDismissed(true);
   }
-  async function openCandidate(conversationId?: Id<"providerConversations">) {
+  async function openCandidate(targetId?: string) {
     if (!need || !threadId || changingFocus.current) return;
-    const candidate = conversationId ? candidates.find(row => row.conversationId === conversationId) : undefined;
-    if (conversationId && !candidate) return;
+    const candidate = targetId ? railCandidates.find(row => row.conversationId === targetId || row.candidateKey === targetId) : undefined;
+    if (targetId && !candidate) return;
+    setConversationSignalId(undefined);
     changingFocus.current = true;
     setError("");
     // A manual selection supersedes a focus supplied by a previous deep link.
@@ -346,11 +397,9 @@ export function ScoutPage() {
         threadId,
         activeNeedId: need._id,
         mode: candidate?.signalId ? "signal_advisor" : "search_discovery",
-        ...(candidate?.signalId ? { focusedSignalId: candidate.signalId } : {}),
+        ...(candidate?.signalId ? { focusedSignalId: candidate.signalId as Id<"signals"> } : {}),
       });
-      // Server ownership and session focus are settled before the browser can
-      // attach this target to a subsequent voice delegation.
-      setFocusedConversationId(conversationId);
+      // Reactive server focus also opens rooms requested by the Scout’s navigation tool.
     } catch {
       setError(t("liveScout.error"));
     } finally {
@@ -360,10 +409,16 @@ export function ScoutPage() {
   function editBrief() { setManualBrief(false); setDismissedReady(readyKey); openChat(); }
   // Answering closes the Entscheidung server-side; `listOpenMine` drops it and
   // the stage leaves „blocked“ on its own — nothing is hidden optimistically.
-  async function answerOpenDecision(decisionId: Id<"decisions">, choice: string, text?: string) {
+  async function answerOpenDecision(decisionId: Id<"decisions">, choice: string, text?: string, questionId?: string) {
     if (answeringDecision) return;
     setAnsweringDecision(true); setError("");
-    try { await answerDecision(text === undefined ? { decisionId, choice } : { decisionId, choice, text }); }
+    try {
+      await answerDecision({
+        decisionId, choice,
+        ...(text === undefined ? {} : { text }),
+        ...(questionId ? { questionId } : {}),
+      });
+    }
     // The card only marks itself answered when the mutation resolved, so the
     // failure has to reach it — the message beside the stage is this page's.
     catch (cause) { setError(t("liveScout.error")); throw cause; }
@@ -396,8 +451,14 @@ export function ScoutPage() {
     } catch { setError(t("liveScout.error")); }
     finally { setWorking(false); }
   }
-  const offerTitle = matches?.find(row => row.signal._id === selected?.signalId)?.signal.title;
-  const offerSlot = selected ? <LiveProviderOffer key={selected.conversationId} conversation={selected} title={offerTitle} /> : null;
+  const selectedSignal = matches?.find(row => row.signal._id === selected?.signalId)?.signal;
+  const offerTitle = selectedSignal?.title;
+  const selectedBoundary = {
+    isDemo: selectedSignal?.isDemo ?? selected?.isDemo,
+    providerSimulation: selectedSignal?.providerSimulation ?? selected?.providerSimulation,
+  };
+  const offerSlot = selected ? <LiveProviderOffer key={selected.conversationId} conversation={selected} title={offerTitle}
+    disclosure={disclosureFor(selectedBoundary)} contactDisabled={selectedBoundary.isDemo !== true} /> : null;
   // Approval waits are Entscheidungen now (stage "blocked"); only a failed send still blocks here.
   const blocked = latestSend?.status === "failed";
   const workHeading = blocked ? t("liveScout.blocked") : latestSend?.status === "executed" ? t("liveScout.waiting") :
@@ -428,12 +489,12 @@ export function ScoutPage() {
   // „Angebot prüfen“ that opens the acceptance review right here instead of
   // routing the musician through the chat for a second click (issue 7).
   const decisionSlot = openDecision ? (
-    <div className="flex flex-col items-center gap-[var(--space-7)]">
+    <div className="mx-auto flex w-full max-w-[var(--width-card)] flex-col items-center gap-[var(--space-7)]">
       <DecisionCard
         decision={openDecision}
         offerHash={decisionOfferHash}
         busy={answeringDecision}
-        onAnswer={(choice, _label, text) => answerOpenDecision(openDecision._id, choice, text)}
+        onAnswer={(choice, _label, text, questionId) => answerOpenDecision(openDecision._id, choice, text, questionId)}
       />
       <Button variant="ghost" size="sm" onClick={openChat}>{t("liveScout.decisionWrite")}</Button>
     </div>
@@ -442,18 +503,25 @@ export function ScoutPage() {
   // so discovery gets the aside alone and the conversation keeps the room.
   const railSlot = need && need.status !== "draft" ? (
     <CandidateList
-      candidates={candidates.map(row => ({
-        conversationId: row.conversationId, title: row.title || row.providerLabel, subtitle: row.subtitle,
-        state: row.state, lastActivityAt: row.lastActivityAt, unread: row.unread,
-        hasOpenDecision: row.openDecision !== undefined,
-      }))}
+      candidates={railCandidates}
       copy={{
         title: t("liveScout.candidatesTitle"), empty: t("liveScout.candidatesEmpty"),
         question: t("liveScout.candidateState.question"), offer: t("liveScout.candidateState.offer"),
         reply: t("liveScout.candidateState.reply"), asked: t("liveScout.candidateState.asked"),
+        checking: t("liveScout.candidateState.checking"), preparing: t("liveScout.candidateState.preparing"),
+        failed: t("liveScout.candidateState.failed"), reviewing: t("liveScout.candidateState.reviewing"),
+        attention: t("liveScout.candidateState.attention"), closed: t("liveScout.candidateState.closed"),
+        fit: t("liveScout.candidateState.fit"), nearBudget: t("liveScout.candidateState.nearBudget"),
+        showAboveBudget: t("liveScout.showAboveBudget"),
+        groupActive: t("liveScout.candidateGroups.active"), groupAboveBudget: t("liveScout.candidateGroups.aboveBudget"),
+        groupNotFit: t("liveScout.candidateGroups.notFit"), unavailable: t("liveScout.candidateState.unavailable"),
+        notFit: t("liveScout.candidateState.notFit"), scheduleConflict: t("liveScout.candidateState.scheduleConflict"),
+        requirementsConflict: t("liveScout.candidateState.requirementsConflict"),
       }}
+      showAboveBudget={showAboveBudget}
+      onShowAboveBudgetChange={setShowAboveBudget}
       formatStamp={at => formatMessageStamp(locale, at, now, { short: true })}
-      onOpen={conversationId => { void openCandidate(conversationId as Id<"providerConversations">); }}
+      onOpen={targetId => { void openCandidate(targetId); }}
     />
   ) : undefined;
   const briefActions = <div className="mt-[var(--space-5)] flex flex-col gap-[var(--space-4)]">
@@ -479,12 +547,78 @@ export function ScoutPage() {
   const asideSlot = need ? <ArrivingFactList facts={asideFacts} animationKey={`${need._id}:${locale}`} title={t("liveScout.asideTitle")} className="w-full">
     {briefActions}
   </ArrivingFactList> : undefined;
-  const detailSlot = focusedConversationId ? <section className="flex h-[min(680px,70vh)] min-h-[360px] flex-col overflow-hidden rounded-card border border-rs-border-card bg-rs-surface-card" aria-label={t("liveInbox.title")}>
-    <div className="flex justify-end p-2"><Button variant="ghost" size="sm" onClick={() => { void openCandidate(); }}>{t("common.close")}</Button></div>
+  const focusedRailCandidate = railCandidates.find(row => row.signalId === context?.focusedSignalId);
+  const focusedNotFit = focusedRailCandidate?.disposition === "not_fit" || focusedRailCandidate?.state === "closed";
+  const focusedExclusion = focusedRailCandidate?.exclusionReason ?? (focusedRailCandidate?.state === "closed" ? "closed" : "not_fit");
+  const exclusionLabels = {
+    unavailable: t("liveScout.candidateState.unavailable"), schedule: t("liveScout.candidateState.scheduleConflict"),
+    requirements: t("liveScout.candidateState.requirementsConflict"), closed: t("liveScout.candidateState.closed"),
+    not_fit: t("liveScout.candidateState.notFit"),
+  };
+  const focusedPublicSignal = focusedPublicResult?.signal;
+  const focusedDetailSignal = focusedIndexed?.signal ?? focusedPublicSignal;
+  const focusedDetailPrice = focusedIndexed?.monthlyCostEur ??
+    (focusedPublicSignal?.pricePeriod === "month" ? focusedPublicSignal.priceEur : undefined);
+  const focusedDetail: IndexedCandidatePanelCandidate | undefined = context?.focusedSignalId && (focusedDetailSignal?.title || focusedRailCandidate?.title) ? {
+    kind: focusedNotFit ? "room" : focusedRailCandidate?.disposition === "above_budget" ? "near_budget" : focusedIndexed?.kind ?? "room",
+    statusLabel: focusedNotFit ? exclusionLabels[focusedExclusion] : undefined,
+    title: focusedDetailSignal?.title ?? focusedRailCandidate?.title ?? "",
+    imageUrl: focusedDetailSignal?.imageUrl ?? focusedRailCandidate?.imageUrl,
+    subtitle: focusedDetailSignal
+      ? [focusedDetailSignal.city, focusedDetailSignal.district].filter(Boolean).join(" · ")
+      : focusedRailCandidate?.subtitle,
+    summary: focusedDetailSignal?.summary,
+    reasons: focusedNotFit ? [] : focusedIndexed?.reasons ?? [],
+    uncertainties: focusedIndexed?.uncertainties ?? focusedPublicSignal?.unknowns ?? [],
+    disclosure: focusedDetailSignal ? disclosureFor(focusedDetailSignal) : focusedRailCandidate?.disclosure,
+    priceLabel: focusedDetailPrice === undefined ? undefined : t(
+      focusedIndexed?.monthlyCostBasis === "assessed_monthly_minimum"
+        ? "liveScout.candidatePanel.minimumPrice"
+        : "liveScout.candidatePanel.monthlyPrice",
+      { amount: new Intl.NumberFormat(locale, { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format(focusedDetailPrice) },
+    ),
+    budgetGapLabel: focusedIndexed?.kind !== "near_budget" || focusedIndexed.budgetDeltaEur === undefined ? undefined : t(
+      focusedIndexed.monthlyCostBasis === "assessed_monthly_minimum"
+        ? "liveScout.candidatePanel.minimumBudgetGap"
+        : "liveScout.candidatePanel.budgetGap",
+      { amount: new Intl.NumberFormat(locale, { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format(focusedIndexed.budgetDeltaEur) },
+    ),
+  } : undefined;
+  const detailSlot = conversationOpen && focusedConversationId ? <section className="mx-auto flex h-[min(680px,70vh)] min-h-[360px] w-full max-w-[var(--width-card)] flex-col overflow-hidden rounded-card border border-rs-border-card bg-rs-surface-card" aria-label={t("liveInbox.title")}>
+    <div className="flex items-center justify-between p-2">
+      <Button variant="ghost" size="sm" onClick={() => setConversationSignalId(undefined)}>{t("liveScout.candidatePanel.backToRoom")}</Button>
+      <Button variant="ghost" size="sm" onClick={() => { void openCandidate(); }}>{t("common.close")}</Button>
+    </div>
     {focusedThread ? <ConversationThread key={focusedConversationId} header={focusedThread.header} items={focusedThread.items} now={now}
-      offerConversation={focusedOffer} offerTitle={focusedThread.header.title || undefined}
+      offerConversation={focusedOffer} offerTitle={focusedThread.header.title || undefined} error={error || undefined}
       onSend={async body => { try { await replyToConversation({ conversationId: focusedConversationId, body }); return true; } catch { setError(t("liveInbox.errorGeneric")); return false; } }}
+      onRetryAssessment={() => run(async () => {
+        const result = await retryAssessment({ conversationId: focusedConversationId });
+        if (result.status === "not_eligible") setError(t("liveScout.candidatePanel.actionUnavailable"));
+      })}
       onAnswerDecision={answerOpenDecision} /> : <p role="status">{t("liveInbox.threadLoading")}</p>}
+  </section> : focusedDetail ? <section className="mx-auto w-full max-w-[var(--width-card)]">
+    <div className="flex justify-end p-2"><Button variant="ghost" size="sm" onClick={() => { void openCandidate(); }}>{t("common.close")}</Button></div>
+    <IndexedCandidatePanel candidate={focusedDetail} copy={{
+      room: t("liveScout.candidatePanel.room"),
+      fit: t("liveScout.candidatePanel.fit"), nearBudget: t("liveScout.candidatePanel.nearBudget"),
+      reasons: t("liveScout.candidatePanel.reasons"), uncertainties: t("liveScout.candidatePanel.uncertainties"),
+      adjustBudget: t("liveScout.candidatePanel.adjustBudget"), contact: t("liveScout.candidatePanel.contact"),
+      openConversation: t("liveScout.candidatePanel.openConversation"), retry: t("liveScout.candidatePanel.retry"),
+      actionQueued: t("liveScout.candidatePanel.actionQueued"), actionUnavailable: t(
+        profileMissing
+          ? "liveScout.candidatePanel.profileRequired"
+          : focusedDetailSignal?.isDemo === true
+            ? "liveScout.candidatePanel.actionUnavailable"
+            : "liveScout.candidatePanel.contactDisabledDemo",
+      ),
+    }} busy={working} onAdjustBudget={() => beginBriefEdit("budget")}
+      onOpenConversation={focusedConversationId ? () => setConversationSignalId(context?.focusedSignalId) : undefined}
+      onContact={!focusedNotFit && focusedIndexed?.contactEligible && focusedIndexed.signal.isDemo === true && !profileMissing ? () => { void run(async () => {
+        const result = await startInquiry({ savedNeedId: focusedIndexed.savedNeedId, signalId: focusedIndexed.signalId });
+        if (result.status === "not_eligible") setError(t("liveScout.candidatePanel.actionUnavailable"));
+      }); } : undefined} />
+    {error ? <p role="alert">{error}</p> : null}
   </section> : undefined;
   const brief = <FactList facts={facts} variant="card" title={t("scout.brief.title")}>
     <div className="mt-[var(--space-8)] flex flex-col items-center gap-[var(--space-6)]">
@@ -507,11 +641,17 @@ export function ScoutPage() {
   // card when text chat or the selected provider thread shows this decision.
   // Keep the global card only as the fallback when neither panel owns it.
   const surfaceDecisionSlot = showScoutChat || focusedThreadShowsDecision ? undefined : decisionSlot;
-  const voicePrimary = voiceOpen && !showScoutChat && !focusedConversationId && !offerSlot && !openDecision;
-  const voiceCompact = voiceOpen && (voice.connected || !voicePrimary);
-  const chatSlot = showScoutChat ? <div className="relative h-full min-h-0">
+  const voicePrimary = voiceOpen && !showScoutChat && !focusedConversationId && !focusedIndexed && !offerSlot && !openDecision;
+  // Opening, connecting and connected calls share one transparent 720px shell;
+  // provider state changes must not make the centre pane jump between cards.
+  const voiceCompact = voiceOpen;
+  const profileNotice = profileMissing ? <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-rs-border-accent-soft bg-rs-surface-card px-5 py-4" role="status">
+    <span className="text-sm text-rs-ink-2">{t("liveScout.profileIncomplete.title")}</span>
+    <Button asChild size="sm"><Link to="/onboarding?returnTo=%2Fapp%2Fscout">{t("liveScout.profileIncomplete.action")}</Link></Button>
+  </div> : undefined;
+  const chatSlot = showScoutChat ? <div className="relative mx-auto h-full min-h-0 w-full max-w-[var(--width-card)]">
     {stage === "discovery" ? <Button className="absolute right-2 top-2 z-10" variant="ghost" size="sm" aria-label={t("common.close")} onClick={closeChat}>×</Button> : null}
-    <ScoutChat key={threadId ?? "loading"} className={voiceOpen ? "h-full max-h-full min-h-[18rem]" : undefined} messages={messages.length ? messages : [{ id: "intro", author: "scout", body: t("liveScout.intro") }]} onSend={send} replying={(!liveConnected && scoutBusy) || !threadId} restoredDraft={voice.pendingTextDraft || undefined} onDraftRestored={voice.clearPendingTextDraft} onActivity={voice.noteActivity} labels={chatLabels} error={error} onVoice={openVoice} autoFocus decision={openDecision} decisionOfferHash={decisionOfferHash} onAnswerDecision={async (decisionId, choice, text) => { voice.noteActivity(); await answerOpenDecision(decisionId, choice, text); }} decisionAnsweredText={t("liveScout.decisionAnswered")} hasMoreHistory={history.status === "CanLoadMore"} historyBusy={history.status === "LoadingMore"} onLoadHistory={() => history.loadMore(60)} />
+    <ScoutChat key={threadId ?? "loading"} className={voiceOpen ? "h-full max-h-full min-h-[18rem]" : undefined} messages={messages.length ? messages : [{ id: "intro", author: "scout", body: t("liveScout.intro") }]} onSend={send} replying={(!liveConnected && scoutBusy) || !threadId} restoredDraft={voice.pendingTextDraft || undefined} onDraftRestored={voice.clearPendingTextDraft} onActivity={voice.noteActivity} labels={chatLabels} error={error} onVoice={openVoice} autoFocus decision={openDecision} decisionOfferHash={decisionOfferHash} onAnswerDecision={async (decisionId, choice, text, questionId) => { voice.noteActivity(); await answerOpenDecision(decisionId, choice, text, questionId); }} decisionAnsweredText={t("liveScout.decisionAnswered")} hasMoreHistory={history.status === "CanLoadMore"} historyBusy={history.status === "LoadingMore"} onLoadHistory={() => history.loadMore(60)} />
   </div> : undefined;
   return <LiveScoutSurface stage={stage} band={{ displayName: currentUser?.displayName ?? currentUser?.username ?? "" }}
     profileMenuSlot={<LiveProfileMenu name={currentUser?.displayName ?? currentUser?.username ?? ""} operator={currentUser?.role === "operator"} />}
@@ -538,7 +678,7 @@ export function ScoutPage() {
     providerUpdateSlot={offerSlot} offerSlot={offerSlot} detailSlot={detailSlot}
     decisionSlot={surfaceDecisionSlot} railSlot={railSlot} asideSlot={asideSlot}
     completeSlot={<Link className="text-rs-ink-2 underline underline-offset-4" to="/app/inbox">{t("liveScout.viewMessages")}</Link>}
-    errorSlot={error ? <p role="alert">{error}</p> : undefined}
+    errorSlot={profileNotice || error ? <>{profileNotice}{error ? <p role="alert">{error}</p> : null}</> : undefined}
     onChat={openChat} onCloseChat={closeChat} onVoice={openVoice} onReviewBrief={() => setManualBrief(value => !value)}
     onActivate={activateSearch}
     onPause={() => { if (need) void run(() => setStatus({ needId: need._id, status: "paused" })); }}

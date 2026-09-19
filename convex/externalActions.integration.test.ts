@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import { actionPayloadHash } from "./integrations/contentHash";
@@ -9,6 +9,7 @@ import type { Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 
 const modules = import.meta.glob("./**/*.ts");
+afterEach(() => vi.unstubAllEnvs());
 
 async function seedSemanticClearance(ctx: MutationCtx, requestId: Id<"actionRequests">) {
   const request = (await ctx.db.get(requestId))!;
@@ -21,7 +22,7 @@ async function seedSemanticClearance(ctx: MutationCtx, requestId: Id<"actionRequ
 async function seedStandingClaimFixture(t: ReturnType<typeof convexTest>) {
   return await t.run(async (ctx) => {
     const now = Date.now();
-    const ownerId = await ctx.db.insert("users", { username: "owner", role: "musician", createdAt: now, lastSeenAt: now });
+    const ownerId = await ctx.db.insert("users", { username: "owner", firstName: "Mina", actKind: "band", actName: "Night Owls", providerIdentityConfirmedAt: now, role: "musician", createdAt: now, lastSeenAt: now });
     const needId = await ctx.db.insert("savedNeeds", { ownerId, title: "Room", city: "Hamburg", districts: [], arrangement: ["shared"], schedule: [], requirements: [], status: "active", createdAt: now, updatedAt: now });
     const platformId = await ctx.db.insert("sourcePlatforms", { slug: "bandnet", name: "Bandnet", canonicalDomain: "roomscout.dev", kind: "community", status: "active", firstSeenAt: now, lastObservedAt: now, createdAt: now, updatedAt: now });
     const policyId = await ctx.db.insert("sourceFlowPolicies", { platformId, scopeKey: "bandnet:contact", flow: "contact", version: 1, status: "approved", decision: "allowed", maxAutomationLevel: "approved_execute", userConnectionRequired: false, humanPresenceRequired: false, accountCreationAllowed: false, externalApprovalRequired: true, robotsDecision: "allowed", termsDecision: "allowed", evidenceUrls: ["https://roomscout.dev/nutzungsbedingungen"], createdAt: now, updatedAt: now });
@@ -113,11 +114,11 @@ it("will not turn exact approval into an arbitrary Firecrawl form destination", 
   })).rejects.toThrow();
 });
 
-it("claims an approved provider write once and rechecks the current source policy", async () => {
+it("blocks an exact human approval in demo mode, while the reviewed non-demo workflow remains available", async () => {
   const t = convexTest(schema, modules);
   const fixture = await t.run(async (ctx) => {
     const now = Date.now();
-    const ownerId = await ctx.db.insert("users", { username: "owner", role: "musician", createdAt: now, lastSeenAt: now });
+    const ownerId = await ctx.db.insert("users", { username: "owner", firstName: "Mina", actKind: "band", actName: "Night Owls", providerIdentityConfirmedAt: now, role: "musician", createdAt: now, lastSeenAt: now });
     const platformId = await ctx.db.insert("sourcePlatforms", { slug: "bandnet", name: "Bandnet", canonicalDomain: "bandnet.hamburg", kind: "community", status: "active", firstSeenAt: now, lastObservedAt: now, createdAt: now, updatedAt: now });
     const policyId = await ctx.db.insert("sourceFlowPolicies", { platformId, scopeKey: "bandnet:contact", flow: "contact", version: 1, status: "approved", decision: "allowed", maxAutomationLevel: "approved_execute", userConnectionRequired: false, humanPresenceRequired: false, accountCreationAllowed: false, externalApprovalRequired: true, robotsDecision: "allowed", termsDecision: "allowed", evidenceUrls: ["https://bandnet.hamburg/nutzungsbedingungen"], createdAt: now, updatedAt: now });
     const bindingId = await ctx.db.insert("sourceAdapterBindings", { platformId, scopeKey: "bandnet:contact", flow: "contact", adapterKey: "bandnet_contact_v1", adapterVersion: 1, status: "active", executor: "firecrawl", config: { kind: "firecrawl", extractionProfileKey: "bandnet_contact_v1", monitorDriven: false }, configFingerprint: "binding-hash", policyVersionId: policyId, createdAt: now, updatedAt: now });
@@ -127,6 +128,12 @@ it("claims an approved provider write once and rechecks the current source polic
     return { ownerId, platformId, policyId, bindingId, requestId, payload };
   });
 
+  await expect(t.mutation(internal.externalActions.claimForExecutor, {
+    ownerId: fixture.ownerId, requestId: fixture.requestId, executor: "firecrawl",
+  })).rejects.toThrow("CONTROLLED_PORTAL_ONLY");
+  expect(await t.run((ctx) => ctx.db.query("actionExecutions").collect())).toEqual([]);
+
+  vi.stubEnv("SCOUT_CONTROLLED_PORTAL_ONLY", "false");
   const first = await t.mutation(internal.externalActions.claimForExecutor, { ownerId: fixture.ownerId, requestId: fixture.requestId, executor: "firecrawl" });
   const second = await t.mutation(internal.externalActions.claimForExecutor, { ownerId: fixture.ownerId, requestId: fixture.requestId, executor: "firecrawl" });
   expect(first.alreadyClaimed).toBe(false);
@@ -147,7 +154,7 @@ it("does not execute from a Scout authorization after the user switches contact 
   const t = convexTest(schema, modules);
   const fixture = await t.run(async (ctx) => {
     const now = Date.now();
-    const ownerId = await ctx.db.insert("users", { username: "owner", role: "musician", createdAt: now, lastSeenAt: now });
+    const ownerId = await ctx.db.insert("users", { username: "owner", firstName: "Mina", actKind: "band", actName: "Night Owls", providerIdentityConfirmedAt: now, role: "musician", createdAt: now, lastSeenAt: now });
     const needId = await ctx.db.insert("savedNeeds", { ownerId, title: "Room", city: "Hamburg", districts: [], arrangement: ["shared"], schedule: [], requirements: [], status: "active", createdAt: now, updatedAt: now });
     const platformId = await ctx.db.insert("sourcePlatforms", { slug: "bandnet", name: "Bandnet", canonicalDomain: "roomscout.dev", kind: "community", status: "active", firstSeenAt: now, lastObservedAt: now, createdAt: now, updatedAt: now });
     const policyId = await ctx.db.insert("sourceFlowPolicies", { platformId, scopeKey: "bandnet:contact", flow: "contact", version: 1, status: "approved", decision: "allowed", maxAutomationLevel: "approved_execute", userConnectionRequired: false, humanPresenceRequired: false, accountCreationAllowed: false, externalApprovalRequired: true, robotsDecision: "allowed", termsDecision: "allowed", evidenceUrls: ["https://bandnet.hamburg/nutzungsbedingungen"], createdAt: now, updatedAt: now });
@@ -199,11 +206,29 @@ it("refuses the transactional claim for a Scout request that never passed the Fr
   expect(await t.run((ctx) => ctx.db.query("actionExecutions").collect())).toEqual([]);
 });
 
+it("refuses the final outbound claim when the canonical musician profile is incomplete", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedStandingClaimFixture(t);
+  await t.run((ctx) => ctx.db.patch(fixture.ownerId, {
+    firstName: undefined,
+    actKind: undefined,
+    actName: undefined,
+    providerIdentityConfirmedAt: undefined,
+  }));
+
+  await expect(t.mutation(internal.externalActions.claimForExecutor, {
+    ownerId: fixture.ownerId,
+    requestId: fixture.firstRequestId,
+    executor: "firecrawl",
+  })).rejects.toThrow("MUSICIAN_PROFILE_REQUIRED");
+  expect(await t.run((ctx) => ctx.db.query("actionExecutions").collect())).toEqual([]);
+});
+
 it("rejects an exact approval whose action request expired before claim", async () => {
   const t = convexTest(schema, modules);
   const fixture = await t.run(async (ctx) => {
     const now = Date.now();
-    const ownerId = await ctx.db.insert("users", { username: "owner", role: "musician", createdAt: now, lastSeenAt: now });
+    const ownerId = await ctx.db.insert("users", { username: "owner", firstName: "Mina", actKind: "band", actName: "Night Owls", providerIdentityConfirmedAt: now, role: "musician", createdAt: now, lastSeenAt: now });
     const platformId = await ctx.db.insert("sourcePlatforms", { slug: "bandnet", name: "Bandnet", canonicalDomain: "bandnet.hamburg", kind: "community", status: "active", firstSeenAt: now, lastObservedAt: now, createdAt: now, updatedAt: now });
     const policyId = await ctx.db.insert("sourceFlowPolicies", { platformId, scopeKey: "bandnet:contact", flow: "contact", version: 1, status: "approved", decision: "allowed", maxAutomationLevel: "approved_execute", userConnectionRequired: false, humanPresenceRequired: false, accountCreationAllowed: false, externalApprovalRequired: true, robotsDecision: "allowed", termsDecision: "allowed", evidenceUrls: ["https://bandnet.hamburg/nutzungsbedingungen"], createdAt: now, updatedAt: now });
     const bindingId = await ctx.db.insert("sourceAdapterBindings", { platformId, scopeKey: "bandnet:contact", flow: "contact", adapterKey: "bandnet_contact_v1", adapterVersion: 1, status: "active", executor: "firecrawl", config: { kind: "firecrawl", extractionProfileKey: "bandnet_contact_v1", monitorDriven: false }, configFingerprint: "binding-hash", policyVersionId: policyId, createdAt: now, updatedAt: now });

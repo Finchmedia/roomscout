@@ -11,7 +11,7 @@ vi.mock("@convex-dev/auth/react", () => ({
 vi.mock("convex/react", () => ({ useQuery: () => ({ role: auth.role }) }));
 vi.mock("../routes", () => Object.fromEntries([
   "AppExplorePage", "BrowserRunPage", "ExplorePage", "LandingPage", "MapPage",
-  "MySearchPage", "OpsAuditPage", "OpsInboxPage", "OpsOutreachPage",
+  "MySearchPage", "OnboardingPage", "OpsAuditPage", "OpsInboxPage", "OpsOutreachPage",
   "OpsOverviewPage", "OpsSignalsPage", "OpsSourcesPage", "ProfilePage", "ScoutPage", "SignalDetailPage",
 ].map((name) => [name, () => <h1>{name}</h1>])));
 vi.mock("../routes/musician/LiveInboxPage", () => ({ LiveInboxPage: () => <h1>Live inbox</h1> }));
@@ -32,6 +32,17 @@ beforeEach(() => { auth.signedIn = true; auth.role = "musician"; });
 function open(path: string) { window.history.replaceState({}, "", path); render(<AppRouter />); }
 
 describe("live UI routing", () => {
+  it.each(["/explore", "/map", "/app/explore", "/app/map"])("opens Scout for the retired %s entry point", (path) => {
+    open(path);
+    expect(screen.getByRole("heading", { name: "ScoutPage" })).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/app/scout");
+  });
+  it("takes an old public browsing link through sign-in with Scout as the destination", () => {
+    auth.signedIn = false;
+    open("/explore?city=Stuttgart");
+    expect(screen.getByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+    expect(new URLSearchParams(window.location.search).get("returnTo")).toBe("/app/scout");
+  });
   it("opens live settings, keeping the legacy profile separate", () => {
     open("/app/settings/profile");
     expect(screen.getByRole("heading", { name: "Live settings" })).toBeInTheDocument();
@@ -50,6 +61,11 @@ describe("live UI routing", () => {
     open("/app/settings/profile");
     expect(screen.getByRole("heading", { name: "Sign in" })).toBeInTheDocument();
     expect(new URLSearchParams(window.location.search).get("returnTo")).toBe("/app/settings/profile");
+  });
+  it("opens protected onboarding and preserves its requested destination", () => {
+    open("/onboarding?returnTo=%2Fapp%2Finbox");
+    expect(screen.getByRole("heading", { name: "OnboardingPage" })).toBeInTheDocument();
+    expect(new URLSearchParams(window.location.search).get("returnTo")).toBe("/app/inbox");
   });
   it("denies operator surfaces to a musician", () => {
     open("/ops/integrations");

@@ -10,8 +10,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProfilePage } from "./ProfilePage";
 
 const deleteFact = vi.fn(async () => undefined);
-const recoverSetup = vi.fn(async () => undefined);
-const registerPortal = vi.fn(async () => ({ runId: "new-run" }));
 
 vi.mock("../../../convex/_generated/api", () => ({
   api: {
@@ -99,10 +97,8 @@ vi.mock("convex/react", () => ({
   useMutation: (mutation: string) =>
     mutation === "memory.deleteFact"
       ? deleteFact
-      : mutation === "portalConnections.recoverFailedRegistration"
-        ? recoverSetup : vi.fn(async () => undefined),
-  useAction: (action: string) => action === "browserbasePortal.startAgentRegistration"
-    ? registerPortal : vi.fn(async () => ({ configured: true, status: "active" })),
+      : vi.fn(async () => undefined),
+  useAction: () => vi.fn(async () => ({ configured: true, status: "active" })),
 }));
 
 vi.mock("../../components/navigation/WorkspaceShell", () => ({
@@ -111,62 +107,30 @@ vi.mock("../../components/navigation/WorkspaceShell", () => ({
   ),
 }));
 vi.mock("../../components/connections/PortalConnectionsWorkspace", () => ({
-  PortalConnectionsWorkspace: ({ onRecoverRegistration, success, error }: {
-    onRecoverRegistration?: (id: string) => void; success?: string; error?: string;
-  }) => <div>Live portal controls
-    <button onClick={() => onRecoverRegistration?.("failed-connection")} type="button">Reset failed setup</button>
-    {success ? <p role="status">{success}</p> : null}
-    {error ? <p role="alert">{error}</p> : null}
-  </div>,
+  PortalConnectionsWorkspace: () => null,
 }));
 vi.mock("../../components/memory/ContextImportDialog", () => ({
   ContextImportDialog: () => null,
 }));
 
-function renderSection(path: string) {
+function renderSection(section: string) {
   return render(
-    <MemoryRouter initialEntries={[path]}>
+    <MemoryRouter initialEntries={[`/app/profile?section=${section}`]}>
       <Routes>
-        <Route element={<ProfilePage />} path="/app/settings/:section?" />
         <Route element={<ProfilePage />} path="/app/profile" />
       </Routes>
     </MemoryRouter>,
   );
 }
 
-describe("ProfilePage settings routes", () => {
+describe("ProfilePage legacy settings route", () => {
   beforeEach(() => {
-    deleteFact.mockClear(); recoverSetup.mockReset(); registerPortal.mockClear();
+    deleteFact.mockClear();
   });
   afterEach(cleanup);
 
-  it("uses the deep-linked section and presents sources without requiring a search", () => {
-    renderSection("/app/settings/sources");
-    expect(
-      screen.getByRole("heading", { name: "Sources & access" }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Live portal controls")).toBeInTheDocument();
-    expect(screen.getByText(/portal access/i)).toBeInTheDocument();
-  });
-
-  it("recovers only the selected setup and waits for a separate registration click", async () => {
-    renderSection("/app/settings/sources");
-    fireEvent.click(screen.getByRole("button", { name: "Reset failed setup" }));
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Setup unblocked"));
-    expect(recoverSetup).toHaveBeenCalledWith({ connectionId: "failed-connection" });
-    expect(registerPortal).not.toHaveBeenCalled();
-  });
-
-  it("renders a recovery cooldown without leaking server details", async () => {
-    recoverSetup.mockRejectedValueOnce({ data: { kind: "RateLimited", name: "portalAuthRecovery", retryAfter: 60_000 } });
-    renderSection("/app/settings/sources");
-    fireEvent.click(screen.getByRole("button", { name: "Reset failed setup" }));
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Try again in 1 minute"));
-    expect(registerPortal).not.toHaveBeenCalled();
-  });
-
   it("states honestly that billing and metering are unavailable", () => {
-    renderSection("/app/settings/usage");
+    renderSection("usage");
     expect(
       screen.getByRole("heading", { name: "Billing is not available" }),
     ).toBeInTheDocument();
@@ -175,8 +139,8 @@ describe("ProfilePage settings routes", () => {
     ).toBeInTheDocument();
   });
 
-  it("navigates between path-based settings sections", () => {
-    renderSection("/app/settings/sources");
+  it("navigates between query-selected settings sections", () => {
+    renderSection("sources");
     fireEvent.click(screen.getByRole("button", { name: "Privacy" }));
     expect(
       screen.getByRole("heading", { name: "Privacy" }),
@@ -187,7 +151,7 @@ describe("ProfilePage settings routes", () => {
   });
 
   it("keeps memory deletion behind confirmation", async () => {
-    renderSection("/app/settings/knowledge");
+    renderSection("knowledge");
     fireEvent.click(screen.getByRole("button", { name: "Forget Berlin" }));
     expect(
       screen.getByRole("dialog", { name: "Forget this fact?" }),
@@ -200,7 +164,7 @@ describe("ProfilePage settings routes", () => {
   });
 
   it("keeps the legacy profile query links working", () => {
-    renderSection("/app/profile?section=privacy");
+    renderSection("privacy");
     expect(
       screen.getByRole("heading", { name: "Privacy" }),
     ).toBeInTheDocument();

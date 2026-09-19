@@ -2,6 +2,7 @@ import * as React from "react";
 import type { FunctionReturnType } from "convex/server";
 import type { api } from "../../../convex/_generated/api";
 import { Button } from "../../components/ui/button";
+import { Badge } from "../../components/ui/badge";
 import { Icon } from "../../components/ui/icon";
 import { Overline } from "../../components/ui/overline";
 import { Switch } from "../../components/ui/switch";
@@ -28,6 +29,11 @@ interface Props {
 
 function hostname(value: string) {
   try { return new URL(value).hostname; } catch { return value; }
+}
+
+function hasIndexedEvidence(source: Source) {
+  const evidence = source as Source & { hasIndexedEvidence?: boolean; indexedEntryCount?: number };
+  return evidence.hasIndexedEvidence === true || (evidence.indexedEntryCount ?? 0) > 0;
 }
 
 export function LiveSourcesSection(props: Props) {
@@ -57,17 +63,27 @@ export function LiveSourcesSection(props: Props) {
     </div>
     <div className="mt-[var(--space-12)] flex items-baseline justify-between gap-[var(--space-9)]"><Overline>{t("settings.sources.list.label")}</Overline><span className="text-[length:var(--text-caption-size)] text-rs-ink-6">{t("settings.sources.list.scope")}</span></div>
     <div className="mt-[var(--space-5)]">
-      {props.portals.map((portal) => <SourceRowSurface key={portal._id}
+      {props.portals.map((portal) => {
+        const controlled = hostname(portal.baseUrl) === "roomscout.dev";
+        return <SourceRowSurface key={portal._id}
         name={hostname(portal.baseUrl) || portal.platformName || portal.sourceName}
-        description={hostname(portal.baseUrl) === "roomscout.dev" ? t("settings.sources.demo.roomscout.desc") : portal.sourceName}
-        brand={hostname(portal.baseUrl) === "roomscout.dev"}
+        description={controlled ? t("settings.sources.demo.roomscout.desc") : portal.sourceName}
+        brand={controlled}
         enabled={props.preference(portal)} disabled={props.busy || !props.city}
         status={{ label: props.preference(portal) ? status(portal) : t("settings.sources.status.excluded"), tone: props.preference(portal) && portal.status === "active" ? "success" : "muted" }}
+        statusSupplement={!controlled ? <Badge variant="muted">{t("settings.sources.status.contactDisabledDemo")}</Badge> : undefined}
         onToggle={(checked) => props.onPortalToggle(portal, checked)} defaultOpen
-        detail={<><div>{props.address ?? t("liveSettings.notConfigured")}</div><div>{t("settings.sources.detail.portalScope")}</div></>}
+        detail={<><div>{props.address ?? t("liveSettings.notConfigured")}</div><div>{t(controlled ? "settings.sources.detail.portalScope" : "settings.sources.detail.reviewedReadOnly")}</div></>}
         connectionAction={<Button variant="link" size="2xs" className="text-[length:var(--text-body-sm-size)] text-rs-ink" onClick={() => setConnectionId(portal._id)}>{t("settings.sources.detail.manageConnection")}<Icon name="arrow-up-right" size={14} /></Button>}
-      />)}
-      {publicSources.map((source) => <SourceRowSurface key={source.platformId} name={source.name} description={source.domain} enabled={source.preference !== "exclude"} disabled={props.busy || source.platformStatus === "restricted"} status={{ label: t(source.preference === "exclude" ? "settings.sources.status.excluded" : "settings.sources.status.public"), tone: "muted" }} onToggle={(checked) => props.onSourceToggle(source, checked)} detail={t("settings.sources.detail.publicListings")} />)}
+      />;
+      })}
+      {publicSources.map((source) => {
+        const indexed = hasIndexedEvidence(source);
+        return <SourceRowSurface key={source.platformId} name={source.name} description={source.domain} enabled={source.preference !== "exclude"} disabled={props.busy || source.platformStatus === "restricted"}
+          status={{ label: t(source.preference === "exclude" ? "settings.sources.status.excluded" : indexed ? "settings.sources.status.indexed" : "settings.sources.status.reviewed"), tone: "muted" }}
+          statusSupplement={<Badge variant="muted">{t("settings.sources.status.contactDisabledDemo")}</Badge>}
+          onToggle={(checked) => props.onSourceToggle(source, checked)} detail={t(indexed ? "settings.sources.detail.indexedReadOnly" : "settings.sources.detail.reviewedReadOnly")} />;
+      })}
       {!props.portals.length && !publicSources.length ? <p className="py-6 text-rs-ink-4">{t("liveSettings.noSourcesYet")}</p> : null}
     </div>
     <div className="mt-[var(--space-10)] grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-[var(--space-9)] border-t border-rs-border-divider pt-[var(--space-10)]">

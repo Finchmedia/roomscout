@@ -24,6 +24,12 @@ type PublicSignal = {
   sourceCount: number;
   firstSeenAt: number;
   lastSeenAt: number;
+  facets?: Array<{
+    namespace: string;
+    key: string;
+    value: string | number | boolean | string[];
+    confidence: number;
+  }>;
 };
 
 const arrangementLabels = {
@@ -44,6 +50,56 @@ function relativeTime(timestamp: number, prefix: string): string {
   return `${prefix} ${days} d ago`;
 }
 
+type PublicFacet = NonNullable<PublicSignal["facets"]>[number];
+
+function humanizeFacetKey(key: string): string {
+  if (key.toLocaleLowerCase() === "pa") return "PA";
+  return key
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toLocaleUpperCase());
+}
+
+function facetValue(facet: PublicFacet): string | undefined {
+  const label = humanizeFacetKey(facet.key);
+  const genericKey = /^(?:capacity|equipment|features?|items?|details?)$/i.test(facet.key);
+  const values = Array.isArray(facet.value) ? facet.value.map((value) => value.trim()).filter(Boolean) : undefined;
+  if (values) return values.length === 0 ? undefined : genericKey ? values.join(" · ") : `${label}: ${values.join(" · ")}`;
+  if (typeof facet.value === "boolean") return facet.value ? label : `${label}: no`;
+  if (typeof facet.value === "number") {
+    return facet.namespace.toLocaleLowerCase() === "capacity" && /(?:people|persons?|capacity|occupancy)/i.test(facet.key)
+      ? `${facet.value} people`
+      : `${label}: ${facet.value}`;
+  }
+  if (typeof facet.value !== "string") return undefined;
+  const value = facet.value.trim();
+  if (!value) return undefined;
+  if (/^(?:true|yes|available|included)$/i.test(value)) return label;
+  if (/^(?:false|no|unavailable|not available)$/i.test(value)) return `${label}: no`;
+  if (facet.namespace.toLocaleLowerCase() === "capacity" && /(?:people|persons?|capacity|occupancy)/i.test(facet.key) && /^\d+(?:[.,]\d+)?$/.test(value)) {
+    return `${value} people`;
+  }
+  return genericKey ? value : `${label}: ${value}`;
+}
+
+function publicFacetFacts(facets: PublicSignal["facets"]) {
+  const grouped = new Map<string, string[]>();
+  for (const facet of facets ?? []) {
+    const namespace = facet.namespace.trim().toLocaleLowerCase();
+    const label = namespace === "capacity" ? "Capacity" : namespace === "equipment" ? "Equipment" : undefined;
+    if (!label) continue;
+    const value = facetValue(facet);
+    if (!value) continue;
+    const values = grouped.get(label) ?? [];
+    if (!values.includes(value)) values.push(value);
+    grouped.set(label, values);
+  }
+  return ["Capacity", "Equipment"]
+    .flatMap((label) => {
+      const values = grouped.get(label);
+      return values?.length ? [{ label, value: values.join(" · ") }] : [];
+    });
+}
+
 export function publicSignalToMarketSignal(
   signal: PublicSignal,
   sourceName?: string,
@@ -56,6 +112,7 @@ export function publicSignalToMarketSignal(
       ? "fresh"
       : "current";
   const pricePeriod = signal.pricePeriod === "hour" ? "hour" : "month";
+  const facetFacts = publicFacetFacts(signal.facets);
   const facts = [
     signal.priceEur === undefined
       ? { label: "Price", value: "Not stated", unknown: true }
@@ -63,7 +120,10 @@ export function publicSignalToMarketSignal(
     { label: "Arrangement", value: arrangementLabels[signal.arrangement] },
     ...(signal.requirements.length > 0
       ? [{ label: "Requirements", value: signal.requirements.join(" · ") }]
-      : [{ label: "Requirements", value: "Not stated", unknown: true }]),
+      : facetFacts.length === 0
+        ? [{ label: "Requirements", value: "Not stated", unknown: true }]
+        : []),
+    ...facetFacts,
   ];
 
   return {

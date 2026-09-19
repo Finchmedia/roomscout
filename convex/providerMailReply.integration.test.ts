@@ -16,10 +16,15 @@ const modules = import.meta.glob("./**/*.ts");
 const agentmailModules = import.meta.glob("../node_modules/@agentmail/convex/src/component/**/*.{ts,js}");
 const cleared = messageSafetySchema.parse({ classification: "non_binding", explanation: "A non-binding availability question.", personalDataScopes: ["reply_email"], proposedMonthlyPriceEur: null, unsupportedClaims: [] });
 
-beforeEach(() => { vi.useFakeTimers(); vi.stubEnv("AGENTMAIL_API_KEY", "agentmail-test-key"); });
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.stubEnv("AGENTMAIL_API_KEY", "agentmail-test-key");
+  // This suite proves the reviewed real-email workflow, not demo mode.
+  vi.stubEnv("SCOUT_CONTROLLED_PORTAL_ONLY", "false");
+});
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
-async function fixture() {
+async function fixture(options: { decline?: boolean } = {}) {
   const t = convexTest(schema, modules);
   agentTest.register(t);
   workpoolTest.register(t, "scoutWorkpool");
@@ -29,7 +34,7 @@ async function fixture() {
   workpoolTest.register(t, "agentmail/callbackPool");
   const ids = await t.run(async (ctx) => {
     const now = Date.now();
-    const ownerId = await ctx.db.insert("users", { username: "mail-owner", role: "musician", createdAt: now, lastSeenAt: now });
+    const ownerId = await ctx.db.insert("users", { username: "mail-owner", firstName: "Mina", actKind: "band", actName: "Night Owls", providerIdentityConfirmedAt: now, role: "musician", createdAt: now, lastSeenAt: now });
     const otherId = await ctx.db.insert("users", { username: "other", role: "musician", createdAt: now, lastSeenAt: now });
     const needId = await ctx.db.insert("savedNeeds", { ownerId, title: "Band room", city: "Hamburg", districts: [], arrangement: ["shared"], schedule: [], requirements: [], matchingRevision: 1, status: "active", createdAt: now, updatedAt: now });
     const platformId = await ctx.db.insert("sourcePlatforms", { slug: "mail-source", name: "Mail source", canonicalDomain: "example.com", kind: "community", status: "active", firstSeenAt: now, lastObservedAt: now, createdAt: now, updatedAt: now });
@@ -46,7 +51,9 @@ async function fixture() {
     await ctx.db.insert("mailMessages", { threadId, providerMessageId: "parent-1", direction: "inbound", from: "provider@example.com", to: ["scout@agentmail.to"], subject: "Re: Room", body: "Is Tuesday suitable?", deliveryStatus: "received", receivedAt: now });
     const conversationId = await ctx.db.insert("providerConversations", { ownerId, savedNeedId: needId, signalId, conversationKey: "mail-thread", agentThreadId: "agent-thread", mailThreadId: threadId, revision: 1, state: "needs_attention", createdAt: now, updatedAt: now });
     const eventId = await ctx.db.insert("providerTurns", { conversationId, sourceKey: "mail:parent-1", kind: "mail_reply", revision: 1, status: "completed", createdAt: now });
-    const assessment: ProviderAssessment = { summary: "Ask about Tuesday", availability: { status: "unknown", evidence: [] }, monthlyPrice: { totalEur: null, allRecurringCostsKnown: false, evidence: [] }, terms: [], constraints: [], uncertainties: ["Tuesday"], contradictions: [], nextAction: "ask_provider", suggestedReply: { subject: "Re: Room", body: "Would Tuesday evening work?" } };
+    const assessment: ProviderAssessment = options.decline
+      ? { summary: "The provider cannot meet the required schedule.", availability: { status: "unknown", evidence: [] }, monthlyPrice: { totalEur: null, allRecurringCostsKnown: false, evidence: [] }, terms: [], constraints: [], uncertainties: [], contradictions: [], nextAction: "decline", suggestedReply: { subject: "Re: Room", body: "Thanks, but the schedule does not fit." } }
+      : { summary: "Ask about Tuesday", availability: { status: "unknown", evidence: [] }, monthlyPrice: { totalEur: null, allRecurringCostsKnown: false, evidence: [] }, terms: [], constraints: [], uncertainties: ["Tuesday"], contradictions: [], nextAction: "ask_provider", suggestedReply: { subject: "Re: Room", body: "Would Tuesday evening work?" } };
     const offerId = await ctx.db.insert("offerRevisions", { ownerId, savedNeedId: needId, conversationId, eventId, revision: 1, needRevision: 1, signalRevision, assessment, ready: false, blockers: ["Schedule unknown"], contentHash: "offer-v1", model: "test", promptVersion: "test", schemaVersion: "test", createdAt: now });
     await ctx.db.patch(conversationId, { currentOfferId: offerId });
     return { ownerId, otherId, needId, policyId, bindingId, mailboxId, threadId, conversationId, offerId };
@@ -66,6 +73,12 @@ async function fixture() {
 }
 
 describe("approved provider email replies", () => {
+  it("allows one decline in an established provider conversation", async () => {
+    const f = await fixture({ decline: true });
+    expect(await f.t.run((ctx) => ctx.db.get(f.requestId))).toMatchObject({ status: "approved" });
+    expect(await f.t.run((ctx) => ctx.db.get(f.conversationId))).toMatchObject({ state: "needs_attention" });
+  });
+
   it("claims once and reuses one official component outbound on duplicate enqueue and worker replay", async () => {
     const f = await fixture();
     const claim = await f.claim();

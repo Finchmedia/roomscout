@@ -2,7 +2,7 @@
 
 - **Project:** RoomScout
 - **Event:** Convex All Gas Hackathon
-- **What it does:** Indexes public rehearsal-room supply and demand and gives musicians a context-aware text/voice Scout that runs on Autopilot within per-user autonomy rules, checked by one gate (release check), with binding commitments left to the musician.
+- **What it does:** A voice and text Scout that finds rehearsal rooms from a shared public market index and coordinates non-binding outreach within the user's autonomy rules, with binding commitments left to the musician.
 - **Live app:** https://fleet-jackal-83.eu-west-1.convex.site
 - **Repo:** https://github.com/Finchmedia/roomscout
 - **Frontend:** Convex static hosting
@@ -10,9 +10,9 @@
 - **Components:** @convex-dev/agent, @convex-dev/auth, @convex-dev/static-hosting, @convex-dev/workpool
 - **Convex features:** schema, tables, indexes, vector search, queries, mutations, actions, HTTP actions, crons, scheduled functions, realtime queries, paginated queries
 - **Auth:** Convex Auth
-- **AI models:** `openai/gpt-5.6-terra` through Convex AI Gateway, `text-embedding-3-small`, `gpt-live-1` for voice
+- **AI models:** `openai/gpt-5.6-terra` and `openai/gpt-5.6-luna` through Convex AI Gateway, `text-embedding-3-small`, `gpt-live-1` for voice
 - **Started:** 2026-08-26T13:55:26Z
-- **Last updated:** 2026-09-16T06:53:48Z
+- **Last updated:** 2026-09-18T01:43:04Z
 
 ## Log
 
@@ -674,3 +674,54 @@ An existing account retained its saved search and chat; the English text Scout a
 No production data was reset or imported, and agents did not start a voice call.
 A portal registration failure from September 14 blocks the new controlled round trip; user voice/demo acceptance remains open.
 Evidence: `convex/http.ts`, `convex/integrations/providerReadiness.ts`; [release checks](docs/GPT_LIVE_PRODUCTION_MOVE_PLAN.md).
+
+### 2026-09-16 - working tree
+
+Removed unused Scout components, an empty test and redundant copy, prompt and styling assertions while preserving safety and behavior checks.
+Added bounded provider-assessment repair, guarded candidate-panel retries, current-revision matching and over-budget review through a global budget change.
+The Scout inspects/opens indexed candidates without forwarding chat; statuses reflect delivery evidence and Settings use EN/DE. Explore/Map URLs lead to Scout; signed-in landing actions now do too, while room evidence stays accessible.
+Verification: the full suite passed 1,273 cases with one skip; navigation passed 19 targeted cases and landing-session behavior passed 17, plus seven browser checks. TypeScript/build/scoped lint and the separate GT dry-run/UI proof passed; hosted translation remains untested.
+Deployed the backend and static frontend to production and verified the served build; prepared the shorter demo/submission checklist. Real microphone/provider acceptance remains with the user; verification sent no inquiry.
+Convex features: indexes, queries, mutations, actions and realtime queries (`convex/providerConversations.ts`, `convex/matches.ts`, `convex/scoutCandidates.ts`); [build evidence](docs/BUILD_LOG.md), [GT experiment](docs/GT_COMPATIBILITY.md), [submission preparation](docs/DEMO_SUBMISSION_READINESS.md).
+
+### 2026-09-17 - working tree
+
+Deployed the separate portal backend and frontend with a shared AI-provider engine and one Convex Agent Component thread per portal conversation. Seeded 24 fictional Berlin listings; the immediate replay reported all 24 unchanged and preserved the earlier Stuttgart record. The main Firecrawl path processed all 24 public detail pages into distinct AI-simulated signals, then reconciled their public location facets after a coordinate fix.
+
+A fresh main-app account completed normal auth, profile and saved-need setup, Firecrawl portal registration, the BER01 initial inquiry, a real AI provider reply, portal notification and main-app assessment. EN, DE and follow-up pilot threads returned distinct model responses in roughly three seconds. All 24 Berlin provider mappings are enabled; the recorded end-to-end inquiry proof covers BER01. Microphone acceptance, a full human binding acceptance, repeated demo runs, video, social post and submission remain open. Verification: main suite 1,323 passed with one skip; portal 57; coordinate checks 10. The orange Mapbox landing is deployed and visually checked in EN/DE with zero errors and an honest zero-real-pin state. Evidence: [provider plan](docs/DEMO_PROVIDER_ENGINE_PLAN.md), [readiness](docs/DEMO_SUBMISSION_READINESS.md).
+
+Generated and published 25 distinct OpenAI room photos as optimized WebPs. Portal listings now use neutral room descriptions and real street names without house numbers, with the simulation disclosed once at portal level. Firecrawl imported 25 distinct image URLs into the production index; candidate previews, details and offers display those images. The targeted UI and backend checks passed, both frontends and backends are deployed, and all public image assets respond successfully. Evidence: `convex/integrations/publicImageUrl.ts`, `convex/ingestion.ts`, `src/ui/scout/live/CandidateList.tsx`; portal image prompts and assets are in `roomscout-dev/providerScenarios/room-image-prompts.json` and `roomscout-dev/public/demo-rooms/`.
+
+
+Follow-up voice/UI polish centered the call stage, enlarged captions, constrained decisions and widened candidate cards with an above-budget filter. Repeated per-listing demo labels were removed while central disclosure remains. Corrected latest-message direction and focused-room context so older replies do not masquerade as current provider updates; decision questions follow the saved locale. Portal responses rejected for locale/price output errors now use bounded Workpool retries with stronger provider instructions. Historical failed jobs were not replayed. Both backends and the main frontend are deployed; scoped tests, build and the live candidate/filter check passed. No microphone test or new inquiry was initiated. Evidence: `src/ui/chat/LiveVoiceChat.tsx`, `src/ui/scout/live/CandidateList.tsx`, `convex/providerConversations.ts`, `convex/decisions.ts`; [build details](docs/BUILD_LOG.md).
+
+
+Corrected typed Scout status lookup across multiple candidates: its existing inspector now returns persisted provider conversations independently of UI focus. A read-only production inspection confirmed both tested rooms were waiting for a new reply. Provider assessment receives recent sent inquiries separately from confirmation evidence; minor contract details can be clarified at a viewing while binding acceptance checks remain unchanged. Added private practical terms to the 24 Berlin scenarios and an idempotent provider binding for the existing Stuttgart listing (25 enabled). Scoped tests and backend deployments passed; no new inquiry was sent. Evidence: `convex/scoutCandidates.ts`, `convex/providerConversations.ts`, `convex/lib/providerAssessment.ts`; [build details](docs/BUILD_LOG.md).
+
+
+Installed the official AI Elements Shimmer through the shadcn registry (`src/components/ai-elements/shimmer.tsx`). Text and voice share one in-conversation pending line; voice connection layout, caption scrolling and blob glow are consistent, without the permanent discovery heading. All Scout conversation and detail surfaces share the existing 720 px width token. Candidate threads show collapsible Scout updates without internal tool names, and pair private questions with their answers using persisted decision IDs rather than duplicate message bubbles. Scoped UI tests, typecheck and the production build passed; deployed the final frontend and verified the served bundle byte for byte. Evidence: `src/ui/chat/ScoutThinkingIndicator.tsx`, `src/ui/chat/LiveVoiceChat.tsx`, `src/ui/inbox/ConversationThread.tsx`, `convex/conversations.ts`.
+
+Candidate selection opens the photo-and-facts room card first, including rooms with an existing inquiry. “Open conversation” opens the thread and “Back to room details” returns to the card; only opening the thread marks messages read. Above-budget rooms retain the global budget action, and previously contacted rooms remain readable through the public signal query even when absent from current matches. Focused UI checks, TypeScript and build passed; deployed the frontend and verified the served bundle. Evidence: `src/routes/musician/ScoutPage.tsx`, `src/ui/scout/live/IndexedCandidatePanel.tsx`.
+
+Corrected a contradictory schedule-match verdict with explicit compatible-weekday evidence checks and a new assessment cache version. An initial incompatible listing is dismissed internally; a decline requires an actual provider exchange, and acknowledgments after an executed decline are terminal. Message-review questions respect EN/DE, preserve the distinction between uncertain and binding content, and display subject/body separately. Safety review receives the saved search facts used by the inquiry without weakening approval checks. Focused regression checks passed; no model selection changed and no historical messages or jobs were replayed. Evidence: `convex/lib/matchAssessment.ts`, `convex/providerConversations.ts`, `convex/providerActions.ts`, `convex/lib/messageSafety.ts`, `src/components/scout/DecisionCard.tsx`.
+
+Provider-specific decision answers no longer flow into global memory; already queued absorption jobs are guarded too. This prevents a concession for one room from becoming a requirement for another. Safety review prioritizes the active search for current requirements and scopes concessions to their provider conversation. Existing historical memory was preserved. Targeted decision and safety regressions passed. Evidence: `convex/decisions.ts`, `convex/lib/messageSafety.ts`.
+
+An automatic initial no-fit expires the opportunity so a later eligible search/listing revision can reassess an untouched conversation. Same-revision attempts and conversations with action or delivery history remain closed; actual declines remain terminal. Focused lifecycle regressions and TypeScript passed. Evidence: `convex/providerConversations.ts`, `convex/providerActions.ts`.
+
+Published the final backend corrections and localized review UI to production. Verified the served frontend bundle against the local production build; no new provider inquiry, replay or microphone test was initiated.
+
+Aligned candidate-thread contact hints with staged, approved, sending and confirmed message states. The known message channel can appear before the remote thread is attached, while reply authorization still requires the real channel. Uncertain submission outcomes remain explicit rather than looking like an endless send. Targeted backend and UI checks, TypeScript and the production build passed. Published backend and frontend and verified the served bundle against the local build; no messages were retried. Evidence: `convex/conversations.ts`, `convex/lib/conversationProgress.ts`, `src/ui/inbox/ConversationThread.tsx`.
+
+Hardened portal inbox reads against an Interact response containing an intermediate scalar instead of the completed batch. Each read keeps its completed result in an invocation-specific sandbox slot and can recover it with a read-only lookup; missing results still fail closed. Expired browser runs no longer indefinitely block write preflight, and pre-claim contention gets bounded retries without replaying provider writes. Focused regression checks, backend typechecking and a read-only multi-thread live probe passed. Deployed the backend fixes; a scheduled post-deployment sync has not yet been observed. Evidence: `convex/integrations/firecrawlPortalEngine.ts`, `convex/firecrawlPortal.ts`, `convex/externalActions.ts`, `convex/portalConnections.ts`.
+
+Provider clarification now supports one persisted question round with separate, sequential choices. All surfaced conflicting constraint keys must be covered, and only the completed round resumes provider assessment; question IDs and offer/search revisions reject stale answers. Scoped question/answer pairs prevent a schedule concession from becoming an unrelated equipment concession, while explicit keep-requirement choices remain blockers. Text, voice and private conversation history share the round. Targeted regressions, frontend/backend typechecking, scoped lint and build passed; deployed backend and frontend and verified the served bundle. No live microphone retest or provider-message replay was performed. Evidence: `convex/decisions.ts`, `convex/providerConversations.ts`, `convex/lib/providerAssessment.ts`, `src/components/scout/DecisionCard.tsx`.
+
+Switched bounded early voice facts, decision-question formulation, source/index/detail extraction, memory compression/import and simulated portal providers to `openai/gpt-5.6-luna` through the Convex AI Gateway. Core Scout conversation, full voice delegation, provider assessment, matching and outgoing-message safety retain Terra. Both production backends are deployed. Four focused local tests and two real Luna calls with synthetic inputs passed: a corrected budget was retained and independent schedule/drum conflicts produced separate questions. No full suite or provider inquiry was run. Evidence: `convex/ai.ts`, `convex/scoutRuntime.ts`, `convex/aiModelSmoke.ts`, and the portal `convex/simulatedProviderModel.ts`; [build details](docs/BUILD_LOG.md).
+
+Separated the candidate rail into active, above-budget and no-longer-fitting rooms, with counts and explicit exclusion badges. The authenticated projection derives disposition from current structured provider assessments and search/listing revisions; delivery activity remains separate. Closed conversations stay accessible, and stale assessments or unresolved musician alternatives do not silently discard active prospects. A read-only production check confirmed the reported unavailable room now projects as excluded despite its last event being a reply. Four focused functional tests, frontend/backend typechecking, scoped lint and build passed. Published backend and frontend and verified the served bundle. Evidence: `convex/lib/candidateDisposition.ts`, `convex/conversations.ts`, `src/routes/musician/ScoutPage.tsx`, `src/ui/scout/live/CandidateList.tsx`.
+
+Audited existing Workpool usage and documented a [portal browser coordination plan](docs/BROWSER_WORKPOOL_PLAN.md).
+Passive reads already use Workpool; approved writes and manual refresh currently bypass its concurrency limit.
+The proposal combines per-connection admission, explicit retry rules and reactive work/delivery status, preserving write receipts and uncertain-outcome reconciliation.
+Checked the installed 0.4.11 API against the documentation; this step changes documentation only and was not deployed.

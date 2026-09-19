@@ -1,6 +1,7 @@
 import { stableFingerprint } from "./fingerprints";
 import { redactContactData } from "./piiRedaction";
 import { canonicalizeUrl } from "./urlCanonicalization";
+import { normalizePublicImageUrl } from "./publicImageUrl";
 
 export type SignalSide = "supply" | "demand";
 export type Arrangement = "permanent" | "shared" | "hourly" | "unknown";
@@ -10,6 +11,7 @@ export type ExtractedSourceEntry = {
   externalId?: string;
   canonicalUrl: string;
   detailUrl: string;
+  imageUrl?: string;
   title: string;
   excerpt: string;
   side: SignalSide;
@@ -140,14 +142,16 @@ export function extractSourceEntriesFromSnapshot(args: {
     const side = normalizeSide(raw.side, args.defaultSide);
     const summary = excerptResult.redacted.slice(0, 1_500);
     const externalId = stringValue(raw.externalId) ?? stringValue(raw.id);
+    const imageUrl = normalizePublicImageUrl(raw.imageUrl, pageCanonical);
     const fingerprint = stableFingerprint(
-      JSON.stringify({ detailUrl, side, title: titleResult.redacted, summary }),
+      JSON.stringify({ detailUrl, imageUrl, side, title: titleResult.redacted, summary }),
     );
 
     output.push({
       ...(externalId ? { externalId: externalId.slice(0, 300) } : {}),
       canonicalUrl: detailUrl,
       detailUrl,
+      ...(imageUrl ? { imageUrl } : {}),
       title: titleResult.redacted.slice(0, 300),
       excerpt: summary.slice(0, 1_000),
       side,
@@ -195,6 +199,7 @@ export const SOURCE_ENTRY_CHANGE_TRACKING_SCHEMA = {
           externalId: { type: "string" },
           title: { type: "string" },
           url: { type: "string" },
+          imageUrl: { type: "string" },
           summary: { type: "string" },
           side: { type: "string", enum: ["supply", "demand"] },
           city: { type: "string" },
@@ -220,4 +225,4 @@ export const SOURCE_ENTRY_CHANGE_TRACKING_SCHEMA = {
 } as const;
 
 export const SOURCE_ENTRY_EXTRACTION_PROMPT =
-  "Extract every distinct rehearsal-room supply or demand listing visible on the page. Preserve only explicitly stated facts. Use each listing's stable detail URL when available, never invent contact details, and return an empty entries array when the page contains no listings.";
+  "Extract every distinct rehearsal-room supply or demand listing visible on the page. Preserve only explicitly stated facts. Use each listing's stable detail URL and explicit public image URL when available, never invent URLs or contact details, and return an empty entries array when the page contains no listings.";

@@ -4,6 +4,12 @@ import { query, type QueryCtx } from "./_generated/server";
 
 const signalSide = v.union(v.literal("supply"), v.literal("demand"));
 const signalStatus = v.union(v.literal("published"), v.literal("stale"));
+const signalFacetValidator = v.object({
+  namespace: v.string(),
+  key: v.string(),
+  value: v.union(v.string(), v.number(), v.boolean(), v.array(v.string())),
+  confidence: v.number(),
+});
 
 export const signalProjectionValidator = v.object({
   _id: v.id("signals"),
@@ -35,6 +41,9 @@ export const signalProjectionValidator = v.object({
   lastSeenAt: v.number(),
   publishedAt: v.optional(v.number()),
   isDemo: v.optional(v.boolean()),
+  providerSimulation: v.optional(v.literal("ai_simulated")),
+  imageUrl: v.optional(v.string()),
+  facets: v.optional(v.array(signalFacetValidator)),
 });
 
 const evidenceProjectionValidator = v.object({
@@ -69,6 +78,12 @@ export function projectSignal(signal: Doc<"signals">) {
     lastSeenAt: signal.lastSeenAt,
     publishedAt: signal.publishedAt,
     isDemo: signal.isDemo,
+    providerSimulation: signal.providerSimulation,
+    imageUrl: signal.imageUrl,
+    facets: signal.facets?.filter((facet) => {
+      const namespace = facet.namespace.trim().toLocaleLowerCase();
+      return namespace === "capacity" || namespace === "equipment";
+    }),
   };
 }
 

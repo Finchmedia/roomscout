@@ -142,11 +142,17 @@ describe("Scout search equipment extraction contract", () => {
     expect(Object.keys(tools)).toEqual(expect.arrayContaining([
       "updateSearchDraft",
       "getCurrentSearch",
-      "continueAutopilot",
+      "inspectCandidates",
+      "openCandidate",
       "answerDecision",
     ]));
     expect(tools).not.toHaveProperty("markSearchBriefReady");
+    expect(tools).not.toHaveProperty("continueAutopilot");
+    expect(tools).not.toHaveProperty("createWebformDraft");
+    expect(tools).not.toHaveProperty("replyToProvider");
     expect(tools.getCurrentSearch?.description).toContain("overrides earlier chat messages");
+    expect(tools.inspectCandidates?.description).toContain("every persisted provider conversation");
+    expect(tools.inspectCandidates?.description).toContain("regardless of the UI's focused room");
   });
 
   it("shares the claim-fenced readiness marker without activating the search", async () => {
@@ -186,6 +192,48 @@ describe("Scout search equipment extraction contract", () => {
     expect(onReady).toHaveBeenCalledWith(expect.objectContaining({ needRevision: 4 }));
     expect(tool.description).toContain("useful enough to run");
     expect(tool.description).toContain("never activates the search");
+  });
+
+  it("reports a partial voice decision as open with its next question", async () => {
+    const runMutation = vi.fn().mockResolvedValue({
+      decisionId: "decision",
+      status: "open",
+      action: "awaiting_answers",
+      nextQuestionId: "equipment",
+      nextQuestion: "Would an electronic drum kit work?",
+    });
+    const onEffect = vi.fn();
+    const tools = buildScoutTools({ runMutation } as never, {
+      ownerId: "owner" as Id<"users">,
+      threadId: "thread",
+      context: { mode: "search_discovery", hasOpenDecision: true },
+      voiceClaim: {
+        voiceSessionId: "voice" as Id<"voiceSessions">,
+        requestId: "answer-slot",
+        generation: 1,
+      },
+      decisionId: "decision" as Id<"decisions">,
+      onEffect,
+    });
+    const tool = tools.answerDecision;
+    if (!tool?.execute) throw new Error("answerDecision is not executable");
+
+    await expect(tool.execute.call({ ...tool, ctx: {} } as never, {
+      decisionId: "decision",
+      questionId: "schedule",
+      choice: "yes",
+    }, {} as never)).resolves.toMatchObject({
+      status: "open",
+      action: "awaiting_answers",
+      nextQuestionId: "equipment",
+      nextQuestion: "Would an electronic drum kit work?",
+    });
+    expect(onEffect).toHaveBeenCalledWith("decision", ["decision"], [
+      "decision.status=open",
+      "decision.action=awaiting_answers",
+      "decision.nextQuestionId=equipment",
+      'decision.nextQuestion="Would an electronic drum kit work?"',
+    ]);
   });
 
   it.each(["search_discovery", "signal_advisor", "outreach_drafting"] as const)(

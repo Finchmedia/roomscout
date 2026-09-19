@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { api } from "./_generated/api.js";
-import { initConvexTest, mockFetch, TEST_API_KEY } from "./setup.test.js";
+import { initConvexTest, mockFetch, TEST_API_KEY } from "./setup.testSupport.js";
 import { withExtra } from "./lib.js";
 
 afterEach(() => {

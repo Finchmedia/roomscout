@@ -26,8 +26,11 @@ in conversation are not requirements until explicitly adopted.
   `roomscout.dev` controlled-demo registration may accept only pre-reviewed,
   fingerprint-pinned free-account terms and may use Browserbase's native
   CAPTCHA solver; changed/unknown terms, costs, and commitments stop.
-- OpenAI is the only in-product model provider. Scout text and normalization use
-  the Convex AI Gateway with `openai/gpt-5.6-terra`; embeddings, GPT-Live WebRTC,
+- OpenAI is the only in-product model provider. The Convex AI Gateway routes
+  Scout conversation, full voice delegation, provider assessment, matching and
+  safety to `openai/gpt-5.6-terra`. Bounded voice fact capture, decision-question
+  formulation, source/index/detail extraction, memory compression/import and
+  simulated portal providers use `openai/gpt-5.6-luna`. Embeddings, GPT-Live WebRTC,
   and browser interpretation in the Stagehand v4 Node runtime may use the direct
   OpenAI endpoint because the Gateway does not provide those paths.
 - Firecrawl performs web discovery and crawling; AgentMail handles approved

@@ -6,6 +6,25 @@ Built for the Convex **"All Gas"** hackathon (Aug 25 – Sep 22, 2026).
 
 **Live prototype:** https://fleet-jackal-83.eu-west-1.convex.site
 
+## Demo and submission checkpoint — September 16
+
+The current demo centers on a spoken room search in Stuttgart, persisted facts,
+candidate review and a controlled provider workflow on `roomscout.dev`. English
+is the default; an explicit German switch is supported. Final microphone and
+end-to-end provider acceptance are tracked separately from automated checks.
+
+Voice and text Scout are the musician interface. Explore and Map are retired
+from production navigation; their old URLs lead to the Scout. Room details and
+source evidence remain available, and the shared index still feeds the search.
+
+- [Demo, juror walkthrough and submission checklist](docs/DEMO_SUBMISSION_READINESS.md)
+- [EN/DE General Translation experiment](docs/GT_COMPATIBILITY.md)
+- [Latest build evidence](docs/BUILD_LOG.md) and [hackathon log](hackathon.md)
+
+Additional languages and locations are outside this completion step. The
+broader product direction below describes the architecture and exploration;
+it is not a claim of comprehensive market coverage.
+
 ## Current product baseline
 
 RoomScout explores a continuously updated discovery layer for a fragmented,
@@ -22,7 +41,7 @@ The current leading product loop is:
    normalize the findings,
 4. redact public evidence, separate private contact candidates, deduplicate,
    geocode, match, and store canonical state in Convex,
-5. let musicians search the live index and save a room need,
+5. let musicians describe and save a room need through the Scout,
 6. let the text or voice Scout apply durable musician context to that search,
 7. choose which reviewed sources and connected portals participate in a search,
 8. prepare exact outreach actions for one-time approval or authorize a narrowly
@@ -59,7 +78,9 @@ The reasoning is recorded in
 The application is a React + Vite + TypeScript SPA prepared for deployment with
 Convex Static Hosting to `convex.site`. It uses Convex Auth v2 Alpha, the Agent,
 Rate Limiter, and Static Hosting components, and the Convex AI Gateway with
-`openai/gpt-5.6-terra`. Direct OpenAI calls are limited to embeddings and the
+`openai/gpt-5.6-terra` for core Scout decisions and `openai/gpt-5.6-luna` for
+extraction, question formulation, memory preparation and simulated providers.
+Direct OpenAI calls are limited to embeddings and the
 GPT-Live WebRTC session endpoint.
 
 | Sponsor | Intended role |
@@ -67,8 +88,8 @@ GPT-Live WebRTC session endpoint.
 | **Convex** | Source Registry, canonical market state, webhooks, realtime search, matching, approvals, rate limits, and reconciliation jobs |
 | **Firecrawl** | bounded Germany source discovery, Native Monitoring, public-page extraction, and reviewed public-form execution with Interact |
 | **AgentMail** | personal user inboxes, approved outreach, delivery events, and replies |
-| **OpenAI** | `gpt-5.6-terra` generation through Convex AI Gateway, `text-embedding-3-small` semantic retrieval, and `gpt-live-1` voice through WebRTC |
-| **Mapbox** | cached server-side geocoding and the public rehearsal-room globe/map |
+| **OpenAI** | `gpt-5.6-terra` and `gpt-5.6-luna` generation through Convex AI Gateway, `text-embedding-3-small` semantic retrieval, and `gpt-live-1` voice through WebRTC |
+| **Mapbox** | cached server-side geocoding for location and radius matching |
 | **Browserbase** | isolated persistent user/portal login contexts, short-lived human Live Views, reviewed recon/Inbox sync, and code-owned approved portal actions |
 
 ## Relationship to Jumper

@@ -242,6 +242,22 @@ export const landingDe = {
     },
   },
   // §17.10 Kontrolle & FAQ
+  coverage: {
+    eyebrow: "Gefundene Proberäume",
+    title: "Proberäume auf öffentlichen Websites",
+    lead: "Hier siehst du, wo RoomScout reale Proberäume gefunden hat und von welchen öffentlichen Websites sie stammen.",
+    realCountLabel: "reale Proberäume gefunden",
+    observedLabel: "Zuletzt geprüft",
+    mapLabel: "Karte realer gefundener Proberäume in Deutschland",
+    mapLoading: "Recherchekarte wird geladen…",
+    mapUnavailable: "Die Karte ist derzeit nicht verfügbar.",
+    empty: "Aktuell sind hier keine realen Proberäume aufgeführt.",
+    sourcesTitle: "Wo diese Räume gefunden wurden",
+    indexedSource: "Öffentliche Quelle",
+    noSources: "Noch sind keine Links zu öffentlichen Quellen verfügbar.",
+    contactDisabled: "RoomScout kontaktiert während dieser Demo keine realen Anbieter. Ein hier gezeigter Raum kann inzwischen vergeben sein.",
+    demoCta: "Fiktive Räume in Berlin ausprobieren →",
+  },
   control: {
     eyebrow: "Klar geregelt",
     headline: {

@@ -18,7 +18,7 @@ describe("evidence-backed matching", () => {
   });
   it("includes mandatory extras before comparing budget", () => {
     const checked = { ...assessment, requirements: [{ ...assessment.requirements[0]!, verdict: "unknown" as const }] };
-    expect(scoreSignalMatch(need, signal, 1, checked).reasons).toContain("Monthly cost including stated extras exceeds the maximum budget");
+    expect(scoreSignalMatch(need, signal, 1, checked)).toMatchObject({ eligible: false, eligibility: "near_budget", monthlyCostEur: 270, budgetDeltaEur: 20, monthlyCostBasis: "assessed_monthly_minimum" });
   });
   it("rejects invented evidence even when the generated object matches the schema", () => {
     expect(() => validateMatchAssessment({ ...assessment, requirements: [{ ...assessment.requirements[0]!, evidence: "Drums are allowed" }] }, need, signal)).toThrow("Ungrounded");
@@ -43,7 +43,7 @@ describe("evidence-backed matching", () => {
     expect(checked.monthlyPrice).toEqual({ minimumEur: null, totalKnown: false, evidence: null });
     expect(scoreSignalMatch(perPersonNeed, perPersonSignal, 1, checked).reasons).not.toContain("Monthly price is within budget");
     expect(scoreSignalMatch(perPersonNeed, perPersonSignal, 1, checked).uncertainties).toContain("Price is not stated");
-    expect(MATCH_ASSESSMENT_VERSION).toBe("constraints-v3");
+    expect(MATCH_ASSESSMENT_VERSION).toBe("constraints-v4");
   });
   it("does not fabricate musical overlap when neither party has musical preferences", () => {
     const result = scoreSignalMatch({ ...need, requirements: [], schedule: [] }, { ...signal, summary: "Plain shared room" }, 0);
@@ -58,6 +58,30 @@ describe("evidence-backed matching", () => {
   it("rejects an incompatible schedule regardless of semantic similarity", () => {
     const checked = { ...assessment, requirements: [], schedule: { verdict: "conflict" as const, evidence: "Monday after 18:00 is free.", explanation: "Only weekday slot is incompatible" }, monthlyPrice: { minimumEur: null, totalKnown: false, evidence: null } };
     expect(scoreSignalMatch({ ...need, requirements: [], schedule: ["Saturday morning"] }, signal, 1, checked).eligible).toBe(false);
+  });
+  it("rejects a satisfied schedule when its evidence names no requested weekday", () => {
+    const weekdayNeed = { ...need, requirements: [], schedule: ["Tuesday evening", "Thursday evening"] };
+    const weekdaySignal = {
+      ...signal,
+      summary: "Wednesday evening is the fixed weekly slot.",
+      facets: [{ namespace: "pricing", key: "coverage", value: "Monthly price covers one fixed weekly slot", confidence: 1 }],
+    };
+    const contradictory: MatchAssessment = {
+      requirements: [],
+      schedule: {
+        verdict: "satisfied",
+        evidence: "Monthly price covers one fixed weekly slot",
+        explanation: "The stated slot is Wednesday rather than Tuesday or Thursday.",
+      },
+      monthlyPrice: { minimumEur: null, totalKnown: false, evidence: null },
+      sharing: { open: null, evidence: null },
+    };
+    expect(() => validateMatchAssessment(contradictory, weekdayNeed, weekdaySignal))
+      .toThrow("Unsupported satisfied schedule");
+    expect(() => validateMatchAssessment({
+      ...contradictory,
+      schedule: { ...contradictory.schedule, evidence: "Wednesday evening is the fixed weekly slot." },
+    }, weekdayNeed, weekdaySignal)).toThrow("Unsupported satisfied schedule");
   });
   it("requires positive sharing evidence instead of matching a negated phrase", () => {
     const demand = { ...signal, side: "demand" as const, summary: "Not open to sharing" };

@@ -25,7 +25,7 @@ import * as React from "react"
 import { Badge } from "@/components/ui/badge"
 import { Icon } from "@/components/ui/icon"
 import type { IconName } from "@/components/ui/icon"
-import { Wordmark } from "@/components/ui/wordmark"
+import { BrandLockup } from "@/components/navigation/BrandLockup"
 import { PanelDialog } from "@/ui/chrome/PanelDialog"
 import { useCopy } from "@/ui/copy"
 import type { StringCopyKey } from "@/ui/copy"
@@ -225,7 +225,7 @@ function OperatorPanel({
       back={{ label: t("operator.nav.back"), onSelect: handleBack }}
       navHeader={
         <div className="mt-[var(--space-2)] flex items-center gap-[var(--space-5)] px-[var(--space-4)]">
-          <Wordmark size="md" />
+          <BrandLockup size="md" />
           <Badge variant="outline">{t("operator.badge.internal")}</Badge>
         </div>
       }

@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import { test, vi } from "vitest";
+import { vi } from "vitest";
 import { convexTest } from "convex-test";
 import schema from "./schema.js";
 import { RETRY } from "./api.js";
@@ -49,5 +49,3 @@ export function mockFetch(
   vi.stubGlobal("fetch", fetchMock);
   return { calls, fetchMock };
 }
-
-test("setup", () => {});

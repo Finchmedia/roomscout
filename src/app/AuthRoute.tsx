@@ -3,6 +3,7 @@ import {
   useSignUpWithPassword,
 } from "@convex-dev/auth/providers/password/react";
 import { Authenticated, AuthLoading, Unauthenticated } from "@convex-dev/auth/react";
+import { useQuery } from "convex/react";
 import { useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../../convex/_generated/api";
@@ -34,7 +35,8 @@ function PasswordAuthForm() {
       setError(authErrorMessage(result.userError));
       return;
     }
-    navigate(safeReturnTo(searchParams.get("returnTo")), { replace: true });
+    const returnTo = safeReturnTo(searchParams.get("returnTo"));
+    navigate(`/onboarding?returnTo=${encodeURIComponent(returnTo)}`, { replace: true });
   }
 
   return (
@@ -44,6 +46,16 @@ function PasswordAuthForm() {
       pending={signInPending || signUpPending}
     />
   );
+}
+
+function AuthenticatedDestination({ returnTo }: { returnTo: string }) {
+  const { t } = useCopy();
+  const user = useQuery(api.users.current);
+  if (user === undefined) return <div className="rs-route-state" role="status">{t("appRoutes.restoring")}</div>;
+  if (user?.role === "musician" && !user.profileCompleted) {
+    return <Navigate replace to={`/onboarding?returnTo=${encodeURIComponent(returnTo)}`} />;
+  }
+  return <Navigate replace to={returnTo} />;
 }
 
 export function AuthRoute() {
@@ -57,7 +69,7 @@ export function AuthRoute() {
         <div className="rs-route-state" role="status">{t("appRoutes.restoring")}</div>
       </AuthLoading>
       <Authenticated>
-        <Navigate replace to={returnTo} />
+        <AuthenticatedDestination returnTo={returnTo} />
       </Authenticated>
       <Unauthenticated>
         <PasswordAuthForm />

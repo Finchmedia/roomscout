@@ -31,4 +31,17 @@ describe("LiveSourcesSection", () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("band@example.test"));
     expect(await screen.findByRole("button", { name: "settings.sources.address.copied" })).toBeVisible();
   });
+  it("claims indexing only from explicit evidence and marks real-source contact disabled", () => {
+    const values = props();
+    values.portals = [];
+    values.sources = [
+      { platformId: "indexed", name: "Indexed", domain: "indexed.example", platformStatus: "active", confidence: 1, preference: "neutral", hasIndexedEvidence: true },
+      { platformId: "reviewed", name: "Reviewed", domain: "reviewed.example", platformStatus: "active", confidence: 1, preference: "neutral" },
+    ] as unknown as typeof values.sources;
+    render(<LiveSourcesSection {...values} />);
+
+    expect(screen.getByText("settings.sources.status.indexed")).toBeVisible();
+    expect(screen.getByText("settings.sources.status.reviewed")).toBeVisible();
+    expect(screen.getAllByText("settings.sources.status.contactDisabledDemo")).toHaveLength(2);
+  });
 });

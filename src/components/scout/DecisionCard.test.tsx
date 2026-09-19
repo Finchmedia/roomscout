@@ -142,6 +142,34 @@ describe("DecisionCard", () => {
     expect(screen.getByRole("dialog")).toHaveTextContent("offer-en:exact-en-hash");
   });
 
+  it("localizes a stored safety question and separates the exact subject from the message body", () => {
+    render(<LocaleCtx.Provider value={{ locale: "en", dict: en, availableLocales: ["en", "de"], setLocale: vi.fn() }}>
+      <MemoryRouter><DecisionCard decision={decision({
+        kind: "unsupported_claims",
+        question: "Die Nachricht enthält Behauptungen ohne Beleg. Trotzdem so senden?",
+        detail: "Subject:\nTuesday or Thursday slot and drum-kit access\n\nMessage:\nHello, I’m RoomScout on behalf of The Example Band.",
+      })} onAnswer={vi.fn()} /></MemoryRouter>
+    </LocaleCtx.Provider>);
+
+    expect(screen.getByText("This message contains claims that are not supported by the saved facts. Send it anyway?")).toBeVisible();
+    expect(screen.getByText("Subject")).toBeVisible();
+    expect(screen.getByText("Tuesday or Thursday slot and drum-kit access")).toBeVisible();
+    expect(screen.getByText("Hello, I’m RoomScout on behalf of The Example Band.")).toBeVisible();
+    expect(screen.queryByText(/access Hello/)).not.toBeInTheDocument();
+  });
+
+  it("keeps an uncertain-content decision distinct from a binding commitment in English", () => {
+    render(<LocaleCtx.Provider value={{ locale: "en", dict: en, availableLocales: ["en", "de"], setLocale: vi.fn() }}>
+      <MemoryRouter><DecisionCard decision={decision({
+        kind: "binding_content",
+        question: "Die Bedeutung der Nachricht ist nicht eindeutig. Soll ich sie trotzdem so senden?",
+      })} onAnswer={vi.fn()} /></MemoryRouter>
+    </LocaleCtx.Provider>);
+
+    expect(screen.getByText("The meaning of this message is unclear. Send it anyway?")).toBeVisible();
+    expect(screen.queryByText(/binding commitment/)).not.toBeInTheDocument();
+  });
+
   it("human_step links to the browser run and offers no answers", () => {
     renderCard({
       decision: decision({
@@ -172,6 +200,48 @@ describe("DecisionCard", () => {
     expect(screen.getByRole("textbox", { name: "Eigene Antwort" })).toBeInTheDocument();
     expect(screen.queryByText("Das liest dein Scout, der Anbieter bekommt es nicht zu sehen.")).not.toBeInTheDocument();
   });
+
+  it("submits a two-question round one step at a time and resets for the next server-owned step", async () => {
+    const onAnswer = vi.fn().mockResolvedValue(undefined);
+    const first = {
+      id: "schedule",
+      constraintKeys: ["schedule"],
+      question: "Passt Mittwochabend?",
+      options: [{ id: "yes", label: "Ja, Mittwoch passt" }],
+    };
+    const second = {
+      id: "room_kind",
+      constraintKeys: ["room_kind"],
+      question: "Welche Ausstattung braucht ihr?",
+      options: [{ id: "yes", label: "Ja, nur elektronische Instrumente" }],
+    };
+    const round = decision({
+      kind: "scout_question",
+      question: first.question,
+      options: first.options,
+      refs: {},
+      questions: [first, second],
+    });
+    const view = render(<MemoryRouter><DecisionCard decision={round} onAnswer={onAnswer} /></MemoryRouter>);
+
+    expect(screen.getByText("Frage 1 von 2")).toBeVisible();
+    fireEvent.click(screen.getByRole("radio", { name: "Ja, Mittwoch passt" }));
+    fireEvent.click(screen.getByRole("button", { name: "Nächste Frage" }));
+    expect(onAnswer).toHaveBeenCalledWith("yes", "Ja, Mittwoch passt", undefined, "schedule");
+    await waitFor(() => expect(screen.queryByText("Danke, ich mache weiter.")).not.toBeInTheDocument());
+
+    view.rerender(<MemoryRouter><DecisionCard decision={{
+      ...round,
+      question: second.question,
+      options: second.options,
+      questions: [{ ...first, answer: { choice: "yes", at: 2 } }, second],
+    }} onAnswer={onAnswer} /></MemoryRouter>);
+    expect(screen.getByText("Frage 2 von 2")).toBeVisible();
+    expect(screen.getByRole("radio", { name: "Ja, nur elektronische Instrumente" })).not.toBeChecked();
+    fireEvent.click(screen.getByRole("radio", { name: "Ja, nur elektronische Instrumente" }));
+    fireEvent.click(screen.getByRole("button", { name: "Antworten" }));
+    expect(onAnswer).toHaveBeenLastCalledWith("yes", "Ja, nur elektronische Instrumente", undefined, "room_kind");
+  });
 });
 
 describe("splitDecisionDetail", () => {
@@ -179,5 +249,11 @@ describe("splitDecisionDetail", () => {
     expect(splitDecisionDetail({ kind: "private_data", detail: "Datenfelder: phone\n\nText" })).toEqual({ scopes: ["phone"], message: "Text" });
     expect(splitDecisionDetail({ kind: "review_message", detail: "Text" })).toEqual({ scopes: [], message: "Text" });
     expect(splitDecisionDetail({ kind: "scout_question" })).toEqual({ scopes: [] });
+  });
+
+  it("keeps an unlabelled legacy message intact instead of guessing that its first paragraph is a subject", () => {
+    expect(splitDecisionDetail({ kind: "unsupported_claims", detail: "Hello, I’m RoomScout.\n\nFirst paragraph.\n\nSecond paragraph." })).toEqual({
+      scopes: [], message: "Hello, I’m RoomScout.\n\nFirst paragraph.\n\nSecond paragraph.",
+    });
   });
 });

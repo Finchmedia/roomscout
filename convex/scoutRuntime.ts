@@ -1,5 +1,5 @@
 import { Agent } from "@convex-dev/agent";
-import { Output, stepCountIs, type ToolSet } from "ai";
+import { Output, stepCountIs, type PrepareStepFunction, type ToolSet } from "ai";
 import { z } from "zod";
 import { components, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
@@ -35,7 +35,8 @@ export const scoutAgent = new Agent(components.agent, {
   stopWhen: stepCountIs(6),
 });
 
-/** All musician and provider turns use this Agent, memory and model path.
+/** All musician and provider turns use this Agent and memory path.
+ * Bounded fact capture and question formulation select the utility model per call.
  * Callers resolve ownership and select server-owned tools before entering it.
  * Provider turns receive read-only musician context, never memory-write tools. */
 export async function runScoutTurn(ctx: ActionCtx, args: {
@@ -44,6 +45,7 @@ export async function runScoutTurn(ctx: ActionCtx, args: {
   /** `scout`: the Scout speaks to the musician on its own initiative (an Entscheidung question). */
   origin: "musician" | "provider" | "opportunity" | "scout";
   savedNeedId?: Id<"savedNeeds">;
+  focusedSignalId?: Id<"signals">;
   caseCard: string;
   memoryQuery: string;
   tools: ToolSet;
@@ -53,10 +55,16 @@ export async function runScoutTurn(ctx: ActionCtx, args: {
   responseMode?: "voice_delivery";
   /** Early search-fact capture skips unrelated memory/provider context. */
   contextMode?: "full" | "search_facts";
+  modelRole?: "utility";
   /** Musician chat turns stream: the reply is written to the thread as deltas while it is generated. */
   stream?: boolean;
+  /** Optional same-turn tool policy, used by provider assessment to permit one bounded correction. */
+  prepareStep?: PrepareStepFunction<ToolSet>;
 } & ({ prompt: string; promptMessageId?: never } | { promptMessageId: string; prompt?: string })) {
   const searchFactsOnly = args.contextMode === "search_facts";
+  const musicianProfileContext = await ctx.runQuery(internal.musicianProfile.getPromptContext, {
+    ownerId: args.ownerId,
+  });
   const memoryContext: string = searchFactsOnly
     ? ""
     : await ctx.runQuery(internal.memory.getPromptContext, {
@@ -65,7 +73,8 @@ export async function runScoutTurn(ctx: ActionCtx, args: {
   let relevantMemory = "";
   const progress = !searchFactsOnly && (args.origin === "musician" || args.origin === "scout")
     ? await ctx.runQuery(internal.providerConversations.getProgressContext, {
-        ownerId: args.ownerId, savedNeedId: args.savedNeedId,
+      ownerId: args.ownerId, savedNeedId: args.savedNeedId,
+      focusedSignalId: args.focusedSignalId,
       })
     : "";
   let semanticRecallAvailable = true;
@@ -97,15 +106,17 @@ export async function runScoutTurn(ctx: ActionCtx, args: {
     ? `VOICE DELIVERY OUTPUT: Return the required structured envelope after all tool work. Choose delivery semantically from the musician's current request and verified tool results. Use silent only for routine fact/memory saves, corrections, or successful brief-readiness updates that need no backend answer. Use spoken for an explicit information or status question, a requested action or decision, or a required clarification. A turn that combines a correction with an action is spoken. If setConversationLanguage succeeds, write any spokenSummary in that newly selected language. For silent output set responseKind=routine_update and spokenSummary to the empty string. Never place internal ids, tool metadata, or raw structured completion data in spokenSummary.`
     : "";
   const generationArgs = {
+    ...(args.modelRole ? { model: getRoomScoutLanguageModel(args.modelRole) } : {}),
     ...(args.promptMessageId
       ? { promptMessageId: args.promptMessageId, ...(args.prompt !== undefined ? { prompt: args.prompt } : {}) }
       : { prompt: args.prompt! }),
-    instructions: [scoutBaseInstructions, originInstructions, memoryContext, relevantMemory, progress, args.caseCard,
+    instructions: [scoutBaseInstructions, originInstructions, musicianProfileContext, memoryContext, relevantMemory, progress, args.caseCard,
       !semanticRecallAvailable ? "Semantic memory retrieval is temporarily unavailable. Use the supplied durable context; do not claim exhaustive recall." : "",
       latestSearch,
       voiceDeliveryInstructions,
     ].filter(Boolean).join("\n\n"),
     tools: args.tools,
+    ...(args.prepareStep ? { prepareStep: args.prepareStep } : {}),
     abortSignal: AbortSignal.timeout(120_000),
     maxRetries: 1,
   };

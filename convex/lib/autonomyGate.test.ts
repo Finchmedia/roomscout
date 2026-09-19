@@ -31,7 +31,7 @@ function facts(overrides: Partial<GateFacts> = {}): GateFacts {
     contextValid: true,
     policyExecutable: true,
     connectionActive: true,
-    controlledPortalOnly: true,
+    controlledPortalOnly: false,
     browserBusy: false,
     userApproved: false,
     now: NOW,
@@ -145,15 +145,28 @@ describe("decideGate: binding boundary and destination facts", () => {
   });
 
   it("stops (controlled_portal_only) off the controlled portal", () => {
-    expect(decideGate(autopilot, facts({ platformDomain: "bandnet.hamburg" }))).toEqual({
+    expect(decideGate(autopilot, facts({ platformDomain: "bandnet.hamburg", controlledPortalOnly: true }))).toEqual({
       outcome: "stop", reason: "controlled_portal_only", detail: "bandnet.hamburg",
     });
-    expect(decideGate(autopilot, facts({ platformDomain: null }))).toEqual({ outcome: "stop", reason: "controlled_portal_only" });
+    expect(decideGate(autopilot, facts({ platformDomain: null, controlledPortalOnly: true }))).toEqual({ outcome: "stop", reason: "controlled_portal_only" });
   });
 
-  it("exempts owned mail replies and portal account operations from the controlled-portal rule", () => {
-    expect(decideGate(autopilot, facts({ actionType: "send_email", platformDomain: "bandnet.hamburg", isOwnedMailReply: true }))).toEqual({ outcome: "proceed" });
-    expect(decideGate(autopilot, facts({ actionType: "create_portal_account", isPortalAccountOperation: true, platformDomain: "bandnet.hamburg" }))).toEqual({ outcome: "proceed" });
+  it("does not let human approval, owned mail replies, or account setup escape the demo boundary", () => {
+    expect(decideGate(autopilot, facts({ phase: "claim", userApproved: true, platformDomain: "bandnet.hamburg", controlledPortalOnly: true }))).toEqual({
+      outcome: "stop", reason: "controlled_portal_only", detail: "bandnet.hamburg",
+    });
+    expect(decideGate(autopilot, facts({ actionType: "send_email", platformDomain: "bandnet.hamburg", isOwnedMailReply: true, controlledPortalOnly: true }))).toEqual({
+      outcome: "stop", reason: "controlled_portal_only", detail: "bandnet.hamburg",
+    });
+    expect(decideGate(autopilot, facts({ actionType: "create_portal_account", isPortalAccountOperation: true, platformDomain: "bandnet.hamburg", controlledPortalOnly: true }))).toEqual({
+      outcome: "stop", reason: "controlled_portal_only", detail: "bandnet.hamburg",
+    });
+  });
+
+  it("blocks AgentMail sends in demo mode even if a platform row names the controlled domain", () => {
+    expect(decideGate(autopilot, facts({ actionType: "send_email", platformDomain: "roomscout.dev", controlledPortalOnly: true }))).toEqual({
+      outcome: "stop", reason: "controlled_portal_only", detail: "roomscout.dev",
+    });
   });
 
   it("lets any platform through when the controlled-portal rule is off", () => {
@@ -186,7 +199,7 @@ describe("decideGate: binding boundary and destination facts", () => {
 describe("decideGate: user-approved claim", () => {
   const approved = (overrides: Partial<GateFacts> = {}) => facts({ phase: "claim", userApproved: true, ...overrides });
 
-  it("proceeds through review_mode, private_data and binding_content — the human said yes", () => {
+  it("proceeds through review_mode, private_data and binding_content on the controlled portal — the human said yes", () => {
     expect(decideGate(review, approved())).toEqual({ outcome: "proceed" });
     expect(decideGate(autopilot, approved({ detectedScopes: ["phone"] }))).toEqual({ outcome: "proceed" });
     expect(decideGate(autopilot, approved({ verdict: { ...clear, classification: "binding" } }))).toEqual({ outcome: "proceed" });
@@ -203,6 +216,12 @@ describe("decideGate: user-approved claim", () => {
     expect(decideGate(autopilot, approved({ browserBusy: true }))).toMatchObject({ outcome: "wait", reason: "browser_busy" });
   });
 
+  it("still applies the controlled demo boundary after exact human approval", () => {
+    expect(decideGate(autopilot, approved({ platformDomain: "bandnet.hamburg", controlledPortalOnly: true }))).toEqual({
+      outcome: "stop", reason: "controlled_portal_only", detail: "bandnet.hamburg",
+    });
+  });
+
   it("also applies at submit time for a musician-dictated text (humanDraft), world facts still apply", () => {
     expect(decideGate(review, facts({ phase: "submit", userApproved: true }))).toEqual({ outcome: "proceed" });
     expect(decideGate(review, facts({ phase: "submit", userApproved: true, verdict: null, detectedScopes: ["phone"] }))).toEqual({ outcome: "proceed" });
@@ -217,18 +236,18 @@ describe("decideGate: precedence", () => {
       .toEqual({ outcome: "stop", reason: "context_changed" });
   });
 
-  it("binding_action beats action_not_allowed, controlled portal and verdict", () => {
-    expect(decideGate({ ...autopilot, contact: false }, facts({ isAcceptance: true, platformDomain: "x", verdict: null })))
-      .toEqual({ outcome: "ask_user", reason: "binding_action" });
+  it("controlled portal beats binding_action, action_not_allowed and verdict", () => {
+    expect(decideGate({ ...autopilot, contact: false }, facts({ isAcceptance: true, platformDomain: "x", verdict: null, controlledPortalOnly: true })))
+      .toEqual({ outcome: "stop", reason: "controlled_portal_only", detail: "x" });
   });
 
-  it("action_not_allowed beats controlled_portal_only, policy and verdict", () => {
-    expect(decideGate({ ...autopilot, contact: false }, facts({ platformDomain: "x", policyExecutable: false, verdict: null })))
+  it("action_not_allowed beats policy and verdict outside demo mode", () => {
+    expect(decideGate({ ...autopilot, contact: false }, facts({ platformDomain: "x", policyExecutable: false, verdict: null, controlledPortalOnly: false })))
       .toMatchObject({ outcome: "stop", reason: "action_not_allowed" });
   });
 
   it("controlled_portal_only beats policy_not_executable", () => {
-    expect(decideGate(autopilot, facts({ platformDomain: "x", policyExecutable: false }))).toMatchObject({ outcome: "stop", reason: "controlled_portal_only" });
+    expect(decideGate(autopilot, facts({ platformDomain: "x", policyExecutable: false, controlledPortalOnly: true }))).toMatchObject({ outcome: "stop", reason: "controlled_portal_only" });
   });
 
   it("policy_not_executable beats connection_not_ready and browser_busy", () => {

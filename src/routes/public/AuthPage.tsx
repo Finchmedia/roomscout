@@ -1,7 +1,7 @@
 import { Bookmark, Eye, EyeOff } from "lucide-react";
 import { useId, useState } from "react";
 import type { FormEvent } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import { PublicHeader } from "../../components/navigation/PublicHeader";
 import { LedgerCard } from "../../components/ui/LedgerCard";
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "../../features/auth/errors";
@@ -60,7 +60,7 @@ export function AuthPage({ initialMode, onAuthenticate, error, pending = false }
 
   return (
     <>
-      <PublicHeader />
+      <PublicHeader minimal />
       <main className="center rs-auth-page">
         <LedgerCard className="authcard" header={<span className="type t-scout">{t("appRoutes.auth.personalScout")}</span>}>
           <div className="rs-auth-intro"><h1>{t(isSignUp ? "appRoutes.auth.signUpTitle" : "appRoutes.auth.signInTitle")}</h1><p>{t(isSignUp ? "appRoutes.auth.signUpSubtitle" : "appRoutes.auth.signInSubtitle")}</p></div>
@@ -76,7 +76,6 @@ export function AuthPage({ initialMode, onAuthenticate, error, pending = false }
             {isSignUp ? "Already have an account? " : "New here? "}
             <button className="rs-link-button" onClick={() => { setMode(isSignUp ? "signIn" : "signUp"); setNotice(undefined); }} type="button">{isSignUp ? "Sign in" : "Create an account"}</button>
           </p>
-          <Link className="mono rs-auth-page__back" to="/explore">Continue browsing without an account</Link>
         </LedgerCard>
       </main>
     </>

@@ -11,9 +11,8 @@ import { cn } from "@/lib/utils"
  * Cross-surface catalogue: `docs/UI_PORT/COMPONENT_MAP.md` §A1 (R header,
  * O header, L header, L footer).
  *
- * It is the *only* brand mark in the product UI — never paired with the cube
- * logo (`assets/logo-roomscout.png`), which appears solely as the roomscout.dev
- * source avatar (design-system/readme.md § Iconography).
+ * This is the canonical text mark. Navigation composes it with the existing
+ * cube logo through `BrandLockup`; non-navigation uses may keep it on its own.
  *
  * Fixed for every instance, verbatim from `Wordmark.jsx:5`:
  * `--font-sans` · `--text-wordmark-weight` (500) ·

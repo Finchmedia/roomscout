@@ -1,5 +1,5 @@
 import { ConvexError, v } from "convex/values";
-import { mutation, query, type MutationCtx } from "./_generated/server";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { requireUserId } from "./integrations/authz";
 import { savedNeedLocationLabel, savedNeedLocationQuery } from "./lib/savedNeedLocation";
@@ -17,8 +17,38 @@ const sourceItemValidator = v.object({
   demandStatus: v.optional(v.string()),
   confidence: v.number(),
   lastObservedAt: v.optional(v.number()),
+  hasIndexedEvidence: v.boolean(),
   preference: preferenceValidator,
 });
+
+async function hasPublicIndexedEvidence(
+  ctx: QueryCtx,
+  sourceIds: Id<"sources">[],
+  sourceTargetIds: Id<"sourceTargets">[],
+) {
+  const targetIds = new Set(sourceTargetIds.map(String));
+  const targets = [...sourceTargetIds];
+  for (const sourceId of sourceIds) {
+    for (const target of await ctx.db.query("sourceTargets").withIndex("by_source", (q) => q.eq("sourceId", sourceId)).take(20)) {
+      if (targetIds.has(String(target._id))) continue;
+      targetIds.add(String(target._id));
+      targets.push(target._id);
+    }
+  }
+  for (const targetId of targets.slice(0, 40)) {
+    const entries = await ctx.db.query("sourceEntries")
+      .withIndex("by_target_and_status", (q) => q.eq("sourceTargetId", targetId).eq("status", "active"))
+      .take(20);
+    for (const entry of entries) {
+      if (entry.detailState !== "processed") continue;
+      const signal = entry.signalId
+        ? await ctx.db.get(entry.signalId)
+        : await ctx.db.query("signals").withIndex("by_source_entry", (q) => q.eq("sourceEntryId", entry._id)).first();
+      if (signal?.status === "published") return true;
+    }
+  }
+  return false;
+}
 
 export const listForNeed = query({
   args: { savedNeedId: v.id("savedNeeds"), limit: v.optional(v.number()) },
@@ -57,6 +87,14 @@ export const listForNeed = query({
       const platform = await ctx.db.get(platformId);
       if (platform === null) continue;
       const observed = [coverage.supply?.lastObservedAt, coverage.demand?.lastObservedAt].filter((value): value is number => value !== undefined);
+      const coverageRows = [];
+      if (coverage.supply) coverageRows.push(coverage.supply);
+      if (coverage.demand) coverageRows.push(coverage.demand);
+      const hasIndexedEvidence = await hasPublicIndexedEvidence(
+        ctx,
+        coverageRows.flatMap((row) => row.sourceId ? [row.sourceId] : []),
+        coverageRows.flatMap((row) => row.sourceTargetId ? [row.sourceTargetId] : []),
+      );
       sources.push({
         platformId,
         name: platform.name,
@@ -66,6 +104,7 @@ export const listForNeed = query({
         demandStatus: coverage.demand?.status,
         confidence: Math.max(coverage.supply?.confidence ?? 0, coverage.demand?.confidence ?? 0),
         lastObservedAt: observed.length ? Math.max(...observed) : undefined,
+        hasIndexedEvidence,
         preference: platform.status === "restricted"
           ? "exclude" as const
           : preferenceByPlatform.get(platformKey) ?? "neutral" as const,

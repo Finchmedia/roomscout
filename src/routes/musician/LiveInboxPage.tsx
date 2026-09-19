@@ -203,7 +203,11 @@ export function LiveInboxPage() {
         items={thread.items}
         now={now}
         onSend={send}
-        onAnswerDecision={async (decisionId, choice, text) => { await answerDecision({ decisionId, choice, ...(text ? { text } : {}) }); }}
+        onAnswerDecision={async (decisionId, choice, text, questionId) => { await answerDecision({
+          decisionId, choice,
+          ...(text ? { text } : {}),
+          ...(questionId ? { questionId } : {}),
+        }); }}
         offerConversation={offerConversation}
         offerTitle={thread.header.title || undefined}
         error={replyError?.conversationId === selectedId ? replyError.message : undefined}

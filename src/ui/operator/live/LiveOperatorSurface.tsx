@@ -12,7 +12,7 @@ import { Icon, type IconName } from "@/components/ui/icon";
 import { Overline } from "@/components/ui/overline";
 import { StatusDot } from "@/components/ui/status-dot";
 import { Switch } from "@/components/ui/switch";
-import { Wordmark } from "@/components/ui/wordmark";
+import { BrandLockup } from "@/components/navigation/BrandLockup";
 import {
   Table,
   TableBody,
@@ -922,7 +922,7 @@ export function LiveOperatorSurface(props: LiveOperatorSurfaceProps) {
         back={{ label: t("operator.nav.back"), onSelect: props.onClose }}
         navHeader={
           <div className="mt-[var(--space-2)] flex items-center gap-[var(--space-5)] px-[var(--space-4)]">
-            <Wordmark size="md" />
+            <BrandLockup size="md" />
             <Badge variant="outline">{t("operator.badge.internal")}</Badge>
           </div>
         }

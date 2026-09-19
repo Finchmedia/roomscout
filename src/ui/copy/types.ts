@@ -102,10 +102,12 @@ export type PluralCopyKey = PluralLeafPaths<Dict>;
  * `formatTime()` (§6.3, DECISIONS.md item 44).
  */
 export const COPY_VAR_NAMES = [
+  "amount",
   "budget",
   "category",
   "city",
   "count",
+  "current",
   "date",
   "h",
   "label",
@@ -122,6 +124,7 @@ export const COPY_VAR_NAMES = [
   "text",
   "time",
   "timeLower",
+  "total",
   "usage",
   "username",
   "version",

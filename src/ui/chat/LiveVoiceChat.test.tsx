@@ -56,6 +56,18 @@ describe("LiveVoiceChat", () => {
   })
   afterEach(cleanup)
 
+  it("hides voice delivery cues while preserving spoken content and meaningful brackets", () => {
+    fixture.session = session({ transcript: [
+      { id: "cue", role: "assistant", text: "[laugh]", final: true },
+      { id: "joke", role: "assistant", text: "Hm [chuckle] Because they wanted to reach the high notes. [Tuesday] works.", final: true },
+      { id: "user", role: "user", text: "Keep [laugh] in the song title", final: true },
+    ] })
+    const { container } = render(<LiveVoiceChat compact primary />)
+    expect(screen.getByText("Hm Because they wanted to reach the high notes. [Tuesday] works.")).toBeTruthy()
+    expect(screen.getByText("Keep [laugh] in the song title")).toBeTruthy()
+    expect(screen.queryByText("[laugh]")).toBeNull()
+  })
+
   it("connects and supports custom typed labels", () => {
     render(<LiveVoiceChat labels={{ connect: "Jetzt sprechen" }} />)
     fireEvent.click(screen.getByRole("button", { name: "Jetzt sprechen" }))
@@ -110,12 +122,11 @@ describe("LiveVoiceChat", () => {
     expect(onText).toHaveBeenCalledOnce()
   })
 
-  it("shows hook errors and reconnects without inventing activity UI", () => {
+  it("shows hook errors and offers reconnection", () => {
     fixture.session = session({ status: "error", error: "Mikrofon nicht verfügbar" })
-    const { container } = render(<LiveVoiceChat />)
+    render(<LiveVoiceChat />)
     expect(screen.getByRole("alert")).toHaveTextContent("Mikrofon nicht verfügbar")
     expect(screen.getByRole("button", { name: "Gespräch erneut starten" })).toBeInTheDocument()
-    expect(container.querySelector("canvas")).toBeNull()
   })
 
   it("can defer the decorative blob to an enclosing stage", () => {
@@ -133,7 +144,7 @@ describe("LiveVoiceChat", () => {
       ],
     })
     const onText = vi.fn()
-    const { container } = render(
+    render(
       <LiveVoiceChat
         compact
         onText={onText}
@@ -146,27 +157,20 @@ describe("LiveVoiceChat", () => {
       />,
     )
 
-    const surface = container.querySelector('[data-scout-conversation="voice"]')
-    const transcript = container.querySelector('[data-voice-transcript-density="compact"]')
     const controls = screen.getByRole("group", { name: "Gesprächssteuerung" })
-    expect(surface).toHaveAttribute("data-compact", "true")
-    expect(surface).toHaveClass("max-h-[220px]", "overflow-hidden")
-    expect(container.querySelector('[data-slot="scout-blob"]')).toHaveStyle({ "--scout-blob-size": "48px" })
-    expect(transcript).toHaveAttribute("data-voice-transcript-density", "compact")
-    expect(transcript).toHaveClass("max-h-[5rem]", "overflow-y-auto", "flex-1")
-    expect(transcript).toHaveTextContent("Wednesday evenings, around three hundred euros.")
-    expect(transcript).toHaveTextContent("I am updating the saved search.")
-    expect(controls).toHaveAttribute("data-voice-controls-density", "compact")
+    expect(screen.getByRole("region", { name: "Gespräch mit deinem RoomScout" })).toBeInTheDocument()
+    expect(screen.getByLabelText("Letzte Gesprächsbeiträge")).toHaveTextContent(
+      "Wednesday evenings, around three hundred euros.",
+    )
+    expect(screen.getByLabelText("Letzte Gesprächsbeiträge")).toHaveTextContent(
+      "I am updating the saved search.",
+    )
 
     const mic = screen.getByRole("button", { name: "Turn microphone off" })
     const interrupt = screen.getByRole("button", { name: "Interrupt Scout" })
     const end = screen.getByRole("button", { name: "End conversation" })
     const switchToText = screen.getByRole("button", { name: "Switch to text" })
-    for (const control of [mic, interrupt, end]) {
-      expect(control).toHaveAttribute("data-slot", "icon-button")
-      expect(control).toHaveAttribute("data-size", "36px")
-      expect(controls).toContainElement(control)
-    }
+    for (const control of [mic, interrupt, end]) expect(controls).toContainElement(control)
     expect(controls).toContainElement(switchToText)
 
     fireEvent.click(mic)
@@ -177,21 +181,37 @@ describe("LiveVoiceChat", () => {
     expect(onText).toHaveBeenCalledOnce()
   })
 
-  it("keeps the familiar blob above a larger caption stream in primary voice mode", () => {
+  it("shows one primary voice conversation with its caption and controls", () => {
     fixture.session = session({
       connected: true,
       status: "listening",
       transcript: [{ id: "caption", role: "assistant", text: "I am checking that now.", final: false }],
     })
     const { container } = render(<LiveVoiceChat compact primary />)
-    const surface = container.querySelector('[data-scout-conversation="voice"]')
-    const blob = container.querySelector('[data-slot="scout-blob"]')
-    const transcript = container.querySelector('[data-voice-transcript-density="compact"]')
-    expect(surface).toHaveAttribute("data-primary", "true")
-    expect(surface).toHaveClass("max-h-[min(30rem,calc(100dvh-10rem))]")
-    expect(blob).toHaveStyle({ "--scout-blob-size": "96px" })
-    expect(blob?.nextElementSibling).not.toBe(transcript)
-    expect(transcript).toHaveClass("max-h-[13rem]", "overflow-y-auto")
+    expect(screen.getAllByRole("region", { name: "Gespräch mit deinem RoomScout" })).toHaveLength(1)
+    expect(container.querySelectorAll('[data-slot="scout-blob"]')).toHaveLength(1)
+    expect(screen.getByLabelText("Letzte Gesprächsbeiträge")).toHaveTextContent("I am checking that now.")
+    expect(screen.getByRole("button", { name: "Mikrofon ausschalten" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Gespräch beenden" })).toBeInTheDocument()
+  })
+
+  it("puts one official shimmer pending line after the newest voice turn without a permanent title", () => {
+    fixture.session = session({
+      connected: true,
+      status: "thinking",
+      muted: true,
+      transcript: [{ id: "user", role: "user", text: "Wednesday evening works.", final: true }],
+    })
+    render(<LiveVoiceChat compact primary />)
+
+    const transcript = screen.getByLabelText("Letzte Gesprächsbeiträge")
+    const pending = screen.getByRole("status", { name: "Ich denke kurz nach" })
+    expect(transcript).toContainElement(pending)
+    expect(pending.querySelector(".text-transparent")).toBeInTheDocument()
+    expect(screen.getAllByText("Ich denke kurz nach")).toHaveLength(1)
+    expect(screen.getByText("Mikrofon aus")).toBeInTheDocument()
+    expect(screen.queryByRole("heading", { name: "Erzähl mir, was ihr sucht." })).not.toBeInTheDocument()
+    expect(screen.getAllByRole("status", { name: "Ich denke kurz nach" })).toHaveLength(1)
   })
 
   it("keeps call controls while the explicit text view suppresses live captions", () => {

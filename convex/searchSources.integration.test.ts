@@ -62,7 +62,7 @@ async function fixture() {
       fingerprint: "portal-match", eligible: true, contactEligible: true, needRevision: 0,
       signalRevision: await signalMatchRevision((await ctx.db.get(signalId))!), createdAt: now, updatedAt: now,
     });
-    return { ownerId, otherId, savedNeedId, otherNeedId, platformId, sourceId, connectionId };
+    return { ownerId, otherId, savedNeedId, otherNeedId, platformId, sourceId, sourceTargetId, connectionId };
   });
   return {
     t,
@@ -103,4 +103,25 @@ it("enforces saved-need and portal ownership", async () => {
     savedNeedId: f.otherNeedId, sourceId: f.sourceId, preference: "exclude",
   })).rejects.toThrow("PORTAL_NOT_FOUND");
   expect(await f.t.run((ctx) => ctx.db.query("searchSourcePreferences").collect())).toHaveLength(0);
+});
+
+it("reports indexed evidence only for an active processed entry with a published signal", async () => {
+  const f = await fixture();
+  await f.t.run(async (ctx) => {
+    const geoAreaId = await ctx.db.insert("geoAreas", {
+      key: "de:city:unmapped", name: "Unmapped", normalizedName: "unmapped", countryCode: "DE",
+      type: "city", status: "active", createdAt: 1, updatedAt: 1,
+    });
+    await ctx.db.insert("sourceCoverage", {
+      platformId: f.platformId, sourceId: f.sourceId, sourceTargetId: f.sourceTargetId,
+      geoAreaId, side: "supply", mode: "explicit_page", status: "verified", confidence: 1,
+      lastObservedAt: 1, createdAt: 1, updatedAt: 1,
+    });
+  });
+
+  const result = await f.owner.query(api.searchSources.listForNeed, { savedNeedId: f.savedNeedId });
+  expect(result.sources).toEqual([expect.objectContaining({
+    platformId: f.platformId,
+    hasIndexedEvidence: true,
+  })]);
 });

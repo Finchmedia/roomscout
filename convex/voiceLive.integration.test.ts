@@ -4,7 +4,7 @@ import { listMessages } from "@convex-dev/agent";
 import { convexTest } from "convex-test";
 import { makeFunctionReference } from "convex/server";
 import { expect, it } from "vitest";
-import { api, components } from "./_generated/api";
+import { api, components, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { scoutAgent } from "./scoutRuntime";
@@ -76,6 +76,7 @@ type Result = {
   delivery?: "silent" | "spoken";
   spokenSummary?: string;
   changedFields?: string[];
+  verifiedFacts?: string[];
   endCall?: { reason: "user_request" | "farewell"; farewell: string };
 };
 type ClaimResult =
@@ -113,6 +114,7 @@ const answerNonbindingFromVoice = makeFunctionReference<"mutation", {
   decisionId: Id<"decisions">;
   choice: string;
   text?: string;
+  questionId?: string;
 }, unknown>("decisions:answerNonbindingFromVoice");
 const setLanguageFromClaim = makeFunctionReference<"mutation", {
   ownerId: Id<"users">;
@@ -243,6 +245,27 @@ function claimArgs(f: Awaited<ReturnType<typeof fixture>>, requestId: string): C
     prompt: `Request ${requestId}`,
   };
 }
+
+it("includes the confirmed musician identity in Live context without private surname or login", async () => {
+  const f = await fixture();
+  await f.t.run((ctx) => ctx.db.patch(f.ownerId, {
+    username: "private-login",
+    firstName: "Alex",
+    lastName: "Private-Surname",
+    actKind: "band",
+    actName: "Neon Harbour",
+    providerIdentityConfirmedAt: 1,
+  }));
+
+  const bootstrap = await f.t.query(internal.voiceLive.getSessionBootstrap, { ownerId: f.ownerId });
+
+  expect(bootstrap?.discoveryContext).toContain('"firstName":"Alex"');
+  expect(bootstrap?.discoveryContext).toContain('"representedName":"Neon Harbour"');
+  expect(bootstrap?.discoveryContext).toContain('"actKind":"band"');
+  expect(bootstrap?.discoveryContext).toContain("already confirmed");
+  expect(bootstrap?.discoveryContext).not.toContain("Private-Surname");
+  expect(bootstrap?.discoveryContext).not.toContain("private-login");
+});
 
 it("claims once, reports active duplicates and caches terminal results", async () => {
   const f = await fixture();
@@ -811,6 +834,91 @@ it("denies a binding decision even when it was explicitly bound to the claim", a
   })).rejects.toThrow(/VOICE_DECISION_SUPERSEDED/);
   const decision = await f.t.run((ctx) => ctx.db.get(decisionId));
   expect(decision?.status).toBe("open");
+});
+
+it("returns the next decision question and accepts it only under a fresh voice claim", async () => {
+  const f = await fixture();
+  const decisionId = await f.t.run((ctx) => ctx.db.insert("decisions", {
+    ownerId: f.ownerId,
+    savedNeedId: f.needId,
+    kind: "scout_question",
+    status: "open",
+    question: "Does Wednesday work?",
+    options: [{ id: "yes", label: "Yes, Wednesday works" }],
+    questions: [
+      {
+        id: "schedule",
+        constraintKeys: ["schedule"],
+        question: "Does Wednesday work?",
+        options: [{ id: "yes", label: "Yes, Wednesday works" }],
+      },
+      {
+        id: "equipment",
+        constraintKeys: ["requirement:0"],
+        question: "Would an electronic drum kit work?",
+        options: [{ id: "no", label: "No, acoustic drums are required" }],
+      },
+    ],
+    refs: {},
+    createdAt: 2_000,
+    updatedAt: 2_000,
+  }));
+  const first = await f.t.mutation(claimRequest, { ...claimArgs(f, "round-one"), decisionId });
+  if (first.kind !== "accepted") throw new Error("first claim not accepted");
+
+  await expect(f.t.mutation(answerNonbindingFromVoice, {
+    ownerId: f.ownerId,
+    voiceSessionId: f.voiceSessionId,
+    requestId: "round-one",
+    generation: first.generation,
+    decisionId,
+    questionId: "schedule",
+    choice: "yes",
+  })).resolves.toMatchObject({
+    status: "open",
+    action: "awaiting_answers",
+    nextQuestionId: "equipment",
+    nextQuestion: "Would an electronic drum kit work?",
+  });
+
+  await expect(f.t.mutation(answerNonbindingFromVoice, {
+    ownerId: f.ownerId,
+    voiceSessionId: f.voiceSessionId,
+    requestId: "round-one",
+    generation: first.generation,
+    decisionId,
+    questionId: "equipment",
+    choice: "no",
+  })).rejects.toThrow(/VOICE_DECISION_SUPERSEDED/);
+
+  await f.t.mutation(finishRequest, {
+    ownerId: f.ownerId,
+    voiceSessionId: f.voiceSessionId,
+    requestId: "round-one",
+    generation: first.generation,
+    expectedLocale: "en",
+    result: {
+      status: "completed",
+      requestId: "round-one",
+      resolvedEventIds: [],
+      locale: "en",
+      delivery: "spoken",
+      spokenSummary: "I still need your equipment answer.",
+      changedFields: ["decision"],
+      verifiedFacts: ["decision.status=open", "decision.action=awaiting_answers"],
+    },
+  });
+  const second = await f.t.mutation(claimRequest, { ...claimArgs(f, "round-two"), decisionId });
+  if (second.kind !== "accepted") throw new Error("second claim not accepted");
+  await expect(f.t.mutation(answerNonbindingFromVoice, {
+    ownerId: f.ownerId,
+    voiceSessionId: f.voiceSessionId,
+    requestId: "round-two",
+    generation: second.generation,
+    decisionId,
+    questionId: "equipment",
+    choice: "no",
+  })).resolves.toMatchObject({ status: "answered" });
 });
 
 it("fences a claimed write after focus changes", async () => {

@@ -12,12 +12,10 @@ import {
 } from "react-router-dom";
 import { api } from "../../convex/_generated/api";
 import {
-  AppExplorePage,
   BrowserRunPage,
-  ExplorePage,
   LandingPage,
-  MapPage,
   MySearchPage,
+  OnboardingPage,
   OpsAuditPage,
   OpsInboxPage,
   OpsOutreachPage,
@@ -87,9 +85,11 @@ function AppRoutes() {
   return (
     <Routes>
       <Route element={<LandingPage />} path="/" />
-      <Route element={<ExplorePage />} path="/explore" />
+      <Route element={<Navigate replace to="/app/scout" />} path="/explore" />
       <Route element={<SignalDetailPage />} path="/signals/:signalId" />
-      <Route element={<MapPage />} path="/map" />
+      <Route element={<Navigate replace to="/app/scout" />} path="/map" />
+      <Route element={<Navigate replace to="/app/scout" />} path="/app/explore" />
+      <Route element={<Navigate replace to="/app/scout" />} path="/app/map" />
       <Route element={<DesignGalleryPage />} path="/design" />
       <Route element={<DemoScoutPage />} path="/design/scout" />
       <Route element={<DemoSettingsPage />} path="/design/settings" />
@@ -97,11 +97,10 @@ function AppRoutes() {
       <Route element={<DesignLandingPage />} path="/design/landing" />
       <Route element={<AuthRoute />} path="/sign-in" />
       <Route element={<AuthRoute />} path="/sign-up" />
+      <Route element={<RequireAuth><OnboardingPage /></RequireAuth>} path="/onboarding" />
 
       <Route element={<RequireAuth><VoiceSessionProvider><Outlet /></VoiceSessionProvider></RequireAuth>}>
         <Route element={<ScoutPage />} path="/app/scout" />
-        <Route element={<AppExplorePage />} path="/app/explore" />
-        <Route element={<MapPage workspace />} path="/app/map" />
         <Route element={<MySearchPage />} path="/app/search" />
         <Route element={<LiveInboxPage />} path="/app/inbox/:conversationId?" />
         <Route element={<ProfilePage />} path="/app/profile" />

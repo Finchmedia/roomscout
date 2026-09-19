@@ -28,10 +28,13 @@ import { Footer } from "./Footer"
 import { Hero } from "./Hero"
 import { HowItWorks } from "./HowItWorks"
 import { LandingHeader } from "./LandingHeader"
+import { ResearchCoverage } from "./ResearchCoverage"
+import { researchCoverageSnapshot, type ResearchCoverageSnapshot } from "./researchCoverageSnapshot"
 import { useReducedMotion } from "./useLandingScroll"
 
 interface LandingPageProps {
   demoHref?: string
+  researchHref?: string
   startHref?: string
   signInHref?: string
   exploreHref?: string
@@ -39,10 +42,12 @@ interface LandingPageProps {
   startLabel?: React.ReactNode
   exploreLabel?: React.ReactNode
   demoDisclosure?: React.ReactNode
+  researchCoverage?: ResearchCoverageSnapshot
 }
 
 export function LandingPage({
   demoHref,
+  researchHref,
   startHref,
   signInHref,
   exploreHref,
@@ -50,6 +55,7 @@ export function LandingPage({
   startLabel,
   exploreLabel,
   demoDisclosure,
+  researchCoverage = researchCoverageSnapshot,
 }: LandingPageProps) {
   const reducedMotion = useReducedMotion()
 
@@ -73,6 +79,7 @@ export function LandingPage({
         <Hero demoHref={demoHref} demoDisclosure={demoDisclosure} />
         <HowItWorks demoHref={demoHref} />
         <Bento />
+        <ResearchCoverage demoHref={researchHref ?? demoHref} snapshot={researchCoverage} />
         <Faq />
         <ClosingCta
           primaryHref={startHref ?? demoHref}

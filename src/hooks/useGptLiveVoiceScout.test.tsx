@@ -1,5 +1,5 @@
-import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LiveDelegateResult } from "./useGptLiveVoiceScout";
 import {
   createGptLiveSession,
@@ -106,6 +106,12 @@ beforeEach(() => {
     configurable: true,
     value: { getUserMedia: vi.fn().mockResolvedValue(stream) },
   });
+});
+
+afterEach(async () => {
+  // Close each synthetic call before jsdom disappears, including its timers
+  // and pending React updates. Vitest does not expose a global afterEach here.
+  await act(async () => { cleanup(); });
 });
 
 it("requires the explicit Live provider and app session headers", async () => {
@@ -1193,7 +1199,7 @@ describe("useGptLiveVoiceScout", () => {
 
       audioMocks.inputVolume = 0;
       act(() => rerender());
-      act(() => vi.advanceTimersByTime(1_099));
+      act(() => vi.advanceTimersByTime(1_599));
       expect(sent.some((event) => event.content === "Current provider update.")).toBe(false);
       act(() => vi.advanceTimersByTime(2));
       expect(sent.some((event) => event.content === "Old provider update.")).toBe(false);
@@ -1234,7 +1240,7 @@ describe("useGptLiveVoiceScout", () => {
       expect(sent.some((event) => event.content === "Announce after unmute.")).toBe(false);
 
       act(() => result.current.setMuted(false));
-      act(() => vi.advanceTimersByTime(1_101));
+      act(() => vi.advanceTimersByTime(1_601));
       expect(sent.some((event) => event.content === "Announce after unmute.")).toBe(true);
 
       audioMocks.inputVolume = 0.2;
@@ -1261,7 +1267,7 @@ describe("useGptLiveVoiceScout", () => {
           end_ms: 1_200,
         });
       });
-      act(() => vi.advanceTimersByTime(1_101));
+      act(() => vi.advanceTimersByTime(1_601));
       expect(sent.some((event) => event.content === "Wait for the next user turn.")).toBe(true);
 
       audioMocks.inputVolume = 0.2;

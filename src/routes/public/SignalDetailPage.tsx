@@ -10,8 +10,10 @@ import { ActionDialog } from "../../components/ui/ActionDialog";
 import { EmptyState, LedgerCard } from "../../components/ui/LedgerCard";
 import { Table, TableBody, TableCell, TableRow } from "../../components/ui/table";
 import { formatMessageTime, publicSignalToMarketSignal } from "../../data/convexAdapters";
+import { useCopy } from "../../ui/copy";
 
 export function SignalDetailPage() {
+  const { t } = useCopy();
   const { signalId } = useParams();
   const detail = useQuery(
     api.signals.get,
@@ -24,7 +26,7 @@ export function SignalDetailPage() {
   }
   if (detail === null) {
     return (
-      <><PublicHeader /><main className="wrap"><Link className="back" to="/explore"><ArrowLeft aria-hidden="true" size={14} />Back to explorer</Link><EmptyState body="This signal is not public, no longer available, or the link is invalid." title="Signal not found" /></main></>
+      <><PublicHeader /><main className="wrap"><Link className="back" to="/app/scout"><ArrowLeft aria-hidden="true" size={14} />{t("appRoutes.scout")}</Link><EmptyState body="This signal is not public, no longer available, or the link is invalid." title="Signal not found" /></main></>
     );
   }
 
@@ -38,7 +40,7 @@ export function SignalDetailPage() {
     <>
       <PublicHeader />
       <main className="wrap rs-signal-detail">
-        <Link className="back" to="/explore"><ArrowLeft aria-hidden="true" size={14} />Back to explorer</Link>
+        <Link className="back" to="/app/scout"><ArrowLeft aria-hidden="true" size={14} />{t("appRoutes.scout")}</Link>
         <SignalBadge signal={signal} />
         <div className="headrow">
           <h1>{signal.title}</h1>

@@ -22,6 +22,10 @@ import {
   decisionKindValidator, decisionPublic, decisionPublicValidator, MESSAGE_DECISION_KINDS,
 } from "./lib/decisions";
 import { providerAssessmentValidator } from "./lib/providerAssessment";
+import { conversationProgress, conversationProgressValidator, messageOutcomeUnknown } from "./lib/conversationProgress";
+import { candidateDisposition, candidateDispositionValidator, candidateExclusionReasonValidator } from "./lib/candidateDisposition";
+import { signalMatchRevision } from "./lib/matchValidity";
+import { failedAssessmentRetryEligibility } from "./providerConversations";
 import { answerDecision } from "./decisions";
 import { replyChannelReady, stageCustomReplyForOwner } from "./providerActions";
 
@@ -44,6 +48,7 @@ const composerReasonValidator = v.union(
 const pendingValidator = v.object({
   requestId: v.id("actionRequests"),
   status: requestStatusValidator,
+  outcomeUnknown: v.optional(v.boolean()),
   author: v.union(v.literal("scout"), v.literal("musician")),
   gateReason: v.optional(v.string()),
   gateText: v.optional(v.string()),
@@ -58,6 +63,11 @@ const listRowValidator = v.object({
   subtitle: v.string(),
   channel: channelValidator,
   state: conversationStateValidator,
+  progress: conversationProgressValidator,
+  disposition: candidateDispositionValidator,
+  exclusionReason: v.optional(candidateExclusionReasonValidator),
+  hasProviderReply: v.boolean(),
+  canRetryAssessment: v.boolean(),
   revision: v.number(),
   lastActivityAt: v.number(),
   lastReadAt: v.optional(v.number()),
@@ -83,13 +93,17 @@ const itemValidator = v.union(
   v.object({
     kind: v.literal("pending_message"), id: v.id("actionRequests"), at: v.number(), author: sentAuthorValidator,
     text: v.string(), subject: v.optional(v.string()), status: requestStatusValidator,
+    outcomeUnknown: v.optional(v.boolean()),
     gateReason: v.optional(v.string()), gateText: v.optional(v.string()),
   }),
   v.object({
     kind: v.literal("scout_note"), id: v.id("offerRevisions"), at: v.number(),
     revision: v.number(), summary: v.string(), nextAction: v.string(),
   }),
-  v.object({ kind: v.literal("musician_input"), id: v.id("providerTurns"), at: v.number(), text: v.string() }),
+  v.object({
+    kind: v.literal("musician_input"), id: v.id("providerTurns"), at: v.number(), text: v.string(),
+    decisionId: v.optional(v.id("decisions")),
+  }),
   v.object({ kind: v.literal("decision"), id: v.id("decisions"), at: v.number(), decision: decisionPublicValidator }),
 );
 
@@ -101,6 +115,9 @@ const headerValidator = v.object({
   subtitle: v.string(),
   channel: channelValidator,
   state: conversationStateValidator,
+  progress: conversationProgressValidator,
+  hasProviderReply: v.boolean(),
+  canRetryAssessment: v.boolean(),
   providerLabel: v.string(),
   lastReadAt: v.optional(v.number()),
   offer: v.union(v.object({
@@ -146,9 +163,12 @@ function mailFromLabel(from: string): string {
   return (name && name.length > 0 ? name : from.trim()).slice(0, 160);
 }
 
-function channelOf(conversation: Doc<"providerConversations">): "platform" | "mail" | "none" {
+function channelOf(conversation: Doc<"providerConversations">, requests: Doc<"actionRequests">[] = []): "platform" | "mail" | "none" {
   if (conversation.platformThreadId) return "platform";
   if (conversation.mailThreadId) return "mail";
+  const request = requests.find(row => row.ownerId === conversation.ownerId && MESSAGE_PAYLOAD_KINDS.has(row.payload.kind));
+  if (request?.payload.kind === "platform_message") return "platform";
+  if (request?.payload.kind === "email_message") return "mail";
   return "none";
 }
 
@@ -201,8 +221,7 @@ async function openDecisionOf(
 
 /**
  * The composer's answer, in the order the musician experiences it: a closed
- * conversation first, then a running assessment, then a missing or outdated
- * assessment, and only then the channel itself.
+ * conversation first, then current work, missing channel and outdated assessment.
  */
 async function composerState(ctx: QueryCtx, args: {
   conversation: Doc<"providerConversations">;
@@ -212,6 +231,7 @@ async function composerState(ctx: QueryCtx, args: {
   const { conversation, offer, signal } = args;
   if (conversation.state === "closed") return { enabled: false, reason: "closed" };
   if (conversation.state === "thinking" || conversation.activeEventId) return { enabled: false, reason: "thinking" };
+  if (channelOf(conversation) === "none") return { enabled: false, reason: "channel_not_ready" };
   if (!offer || offer.revision !== conversation.revision) return { enabled: false, reason: "assessment_required" };
   if (!signal) return { enabled: false, reason: "channel_not_ready" };
   // Queries must not read the wall clock; the conversation's own timestamp is
@@ -223,30 +243,55 @@ async function composerState(ctx: QueryCtx, args: {
   return { enabled: true };
 }
 
+async function progressFor(ctx: QueryCtx, conversation: Doc<"providerConversations">, requests: Doc<"actionRequests">[]) {
+  const status = await conversationProgress(ctx, conversation, requests);
+  const retry = conversation.opportunityId && status.progress === "assessment_failed"
+    ? await failedAssessmentRetryEligibility(ctx, {
+      ownerId: conversation.ownerId, savedNeedId: conversation.savedNeedId,
+      signalId: conversation.signalId, opportunityId: conversation.opportunityId,
+    }) : null;
+  return { ...status, canRetryAssessment: retry?.eligible === true };
+}
+
 // ---------------------------------------------------------------------------
 // listMine
 // ---------------------------------------------------------------------------
 
 export const listMine = query({
-  args: { limit: v.optional(v.number()) },
+  args: { limit: v.optional(v.number()), savedNeedId: v.optional(v.id("savedNeeds")) },
   returns: v.array(listRowValidator),
   handler: async (ctx, args) => {
     const ownerId = await requireUserId(ctx);
     const limit = Math.floor(args.limit ?? 30);
     if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new ConvexError({ code: "INVALID_LIMIT" });
-    const conversations = await ctx.db.query("providerConversations").withIndex("by_owner_and_updated_at", (q) =>
-      q.eq("ownerId", ownerId),
-    ).order("desc").take(limit);
+    if (args.savedNeedId) {
+      const need = await ctx.db.get(args.savedNeedId);
+      if (need?.ownerId !== ownerId) throw new ConvexError({ code: "NEED_NOT_FOUND" });
+    }
+    const conversations = args.savedNeedId
+      ? await ctx.db.query("providerConversations").withIndex("by_need_and_updated_at", q =>
+        q.eq("savedNeedId", args.savedNeedId!)).order("desc").take(limit)
+      : await ctx.db.query("providerConversations").withIndex("by_owner_and_updated_at", q =>
+        q.eq("ownerId", ownerId)).order("desc").take(limit);
 
     const rows = await Promise.all(conversations.map(async (conversation) => {
       if (conversation.ownerId !== ownerId) return null;
-      const channel = channelOf(conversation);
-      const [signal, offer, decision, requests] = await Promise.all([
+      const [signal, offer, decision, requests, need, match] = await Promise.all([
         ctx.db.get(conversation.signalId),
         conversation.currentOfferId ? ctx.db.get(conversation.currentOfferId) : null,
         openDecisionOf(ctx, conversation._id),
         conversationRequests(ctx, conversation._id, 5),
+        ctx.db.get(conversation.savedNeedId),
+        ctx.db.query("signalMatches").withIndex("by_saved_need_and_signal", q =>
+          q.eq("savedNeedId", conversation.savedNeedId).eq("signalId", conversation.signalId)).unique(),
       ]);
+      const signalRevision = signal ? await signalMatchRevision(signal) : undefined;
+      const currentOffer = offer?.ownerId === ownerId && offer.conversationId === conversation._id &&
+        !conversation.activeEventId && offer.revision === conversation.revision && need?.ownerId === ownerId &&
+        offer.needRevision === (need.matchingRevision ?? 0) && signalRevision === offer.signalRevision;
+      const indexedAboveBudget = match?.ownerId === ownerId && match.status !== "dismissed" &&
+        match.eligibility === "near_budget" && match.needRevision === (need?.matchingRevision ?? 0) &&
+        signalRevision === match.signalRevision;
 
       // Exactly one message body per row: the newest one, for the preview.
       const newest = conversation.platformThreadId
@@ -292,8 +337,11 @@ export const listMine = query({
         signalId: conversation.signalId,
         title: signal?.title ?? "",
         subtitle: signal?.city ?? "",
-        channel,
+        channel: channelOf(conversation, requests),
         state: conversation.state,
+        ...candidateDisposition({ closed: conversation.state === "closed", assessment: currentOffer ? offer.assessment : undefined,
+          maxBudgetEur: need?.maxBudgetEur, indexedAboveBudget }),
+        ...await progressFor(ctx, conversation, requests),
         revision: conversation.revision,
         lastActivityAt,
         ...(conversation.lastReadAt !== undefined ? { lastReadAt: conversation.lastReadAt } : {}),
@@ -307,6 +355,7 @@ export const listMine = query({
           ? {
             pending: {
               requestId: pendingRequest._id, status: pendingRequest.status,
+              ...(messageOutcomeUnknown(pendingRequest) ? { outcomeUnknown: true } : {}),
               author: pendingRequest.humanDraft ? ("musician" as const) : ("scout" as const),
               ...gateOf(pendingRequest),
             },
@@ -349,9 +398,10 @@ type Item =
   | {
     kind: "pending_message"; id: Id<"actionRequests">; at: number; author: "scout" | "musician" | "acceptance";
     text: string; subject?: string; status: Doc<"actionRequests">["status"]; gateReason?: string; gateText?: string;
+    outcomeUnknown?: boolean;
   }
   | { kind: "scout_note"; id: Id<"offerRevisions">; at: number; revision: number; summary: string; nextAction: string }
-  | { kind: "musician_input"; id: Id<"providerTurns">; at: number; text: string }
+  | { kind: "musician_input"; id: Id<"providerTurns">; at: number; text: string; decisionId?: Id<"decisions"> }
   | { kind: "decision"; id: Id<"decisions">; at: number; decision: ReturnType<typeof decisionPublic> };
 
 /**
@@ -453,6 +503,7 @@ export const getMine = query({
       items.push({
         kind: "pending_message", id: request._id, at: request.updatedAt, author: requestAuthor(request),
         text, ...(subject ? { subject } : {}), status: request.status, ...gateOf(request),
+        ...(messageOutcomeUnknown(request) ? { outcomeUnknown: true } : {}),
       });
     }
 
@@ -466,7 +517,10 @@ export const getMine = query({
 
     for (const turn of inputs) {
       if (!turn.input) continue;
-      items.push({ kind: "musician_input", id: turn._id, at: turn.createdAt, text: turn.input });
+      items.push({
+        kind: "musician_input", id: turn._id, at: turn.createdAt, text: turn.input,
+        ...(turn.decisionId !== undefined ? { decisionId: turn.decisionId } : {}),
+      });
     }
 
     for (const decision of [...openDecisions, ...answeredDecisions]) {
@@ -483,8 +537,9 @@ export const getMine = query({
         signalId: conversation.signalId,
         title: signal?.title ?? "",
         subtitle: signal?.city ?? "",
-        channel: channelOf(conversation),
+        channel: channelOf(conversation, requests),
         state: conversation.state,
+        ...await progressFor(ctx, conversation, requests),
         providerLabel,
         ...(conversation.lastReadAt !== undefined ? { lastReadAt: conversation.lastReadAt } : {}),
         offer: offer && offer.ownerId === ownerId

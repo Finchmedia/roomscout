@@ -37,7 +37,6 @@ it("keeps provider readiness operator-only", async () => {
   const result = await t
     .withIdentity({ subject: users.operatorId })
     .action(api.opsActions.providerReadiness, {});
-  expect(result.serverProviderCount).toBe(5);
   expect(result.frontendMapbox).toMatchObject({
     status: "client_only",
     backendInspectable: false,

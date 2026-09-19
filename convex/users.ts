@@ -2,11 +2,19 @@ import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalMutation, internalQuery, query } from "./_generated/server";
 import { isUserResetTombstoned } from "./devUserReset";
+import { resolveProviderIdentity } from "./lib/musicianIdentity";
 
 const currentUserValidator = v.object({
   _id: v.id("users"),
   username: v.string(),
   displayName: v.optional(v.string()),
+  firstName: v.optional(v.string()),
+  lastName: v.optional(v.string()),
+  actKind: v.optional(v.union(v.literal("band"), v.literal("solo"))),
+  actName: v.optional(v.string()),
+  profileCompleted: v.boolean(),
+  providerDisplayName: v.union(v.string(), v.null()),
+  representedName: v.union(v.string(), v.null()),
   role: v.union(v.literal("musician"), v.literal("operator")),
 });
 
@@ -120,10 +128,18 @@ export const current = query({
       return null;
     }
 
+    const providerIdentity = resolveProviderIdentity(user);
     return {
       _id: user._id,
       username: user.username,
       displayName: user.displayName,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      actKind: user.actKind,
+      actName: user.actName,
+      profileCompleted: providerIdentity.complete,
+      providerDisplayName: providerIdentity.complete ? providerIdentity.providerDisplayName : null,
+      representedName: providerIdentity.complete ? providerIdentity.representedName : null,
       role: user.role,
     };
   },

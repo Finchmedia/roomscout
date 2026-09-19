@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { matchAssessmentValidator } from "./lib/matchAssessment";
 import { providerAssessmentValidator } from "./lib/providerAssessment";
 import { messageSafetyValidator } from "./lib/messageSafety";
+import { decisionQuestionValidator } from "./lib/decisions";
 
 const role = v.union(v.literal("musician"), v.literal("operator"));
 const signalSide = v.union(v.literal("supply"), v.literal("demand"));
@@ -160,6 +161,11 @@ export default defineSchema({
   users: defineTable({
     username: v.string(),
     displayName: v.optional(v.string()),
+    firstName: v.optional(v.string()),
+    lastName: v.optional(v.string()),
+    actKind: v.optional(v.union(v.literal("band"), v.literal("solo"))),
+    actName: v.optional(v.string()),
+    providerIdentityConfirmedAt: v.optional(v.number()),
     conversationLocale: v.optional(v.union(v.literal("en"), v.literal("de"))),
     role,
     controlledProofActorKey: v.optional(
@@ -420,6 +426,7 @@ export default defineSchema({
     contactDataPresent: v.optional(v.boolean()),
   })
     .index("by_source_and_external_id", ["sourceId", "externalId"])
+    .index("by_canonical_url", ["canonicalUrl"])
     .index("by_target_and_canonical_url", ["sourceTargetId", "canonicalUrl"])
     .index("by_detail_state_and_next_attempt", ["detailState", "nextDetailAttemptAt"])
     .index("by_target_and_detail_state", ["sourceTargetId", "detailState"])
@@ -453,17 +460,20 @@ export default defineSchema({
     genres: v.optional(v.array(v.string())),
     instruments: v.optional(v.array(v.string())),
     facets: v.optional(v.array(flexibleFacet)),
+    imageUrl: v.optional(v.string()),
     locationLabel: v.optional(v.string()),
     latitude: v.optional(v.number()),
     longitude: v.optional(v.number()),
     locationPrecision: v.optional(locationPrecision),
     geocodeId: v.optional(v.id("geocodes")),
     isDemo: v.optional(v.boolean()),
+    providerSimulation: v.optional(v.literal("ai_simulated")),
   })
     .index("by_city_and_status", ["city", "status"])
     .index("by_city_and_is_demo_and_status", ["city", "isDemo", "status"])
     .index("by_side_and_city_and_status", ["side", "city", "status"])
-    .index("by_status_and_last_seen_at", ["status", "lastSeenAt"]),
+    .index("by_status_and_last_seen_at", ["status", "lastSeenAt"])
+    .index("by_source_entry", ["sourceEntryId"]),
 
   signalContacts: defineTable({
     signalId: v.id("signals"),
@@ -567,7 +577,15 @@ export default defineSchema({
     ),
     fingerprint: v.string(),
     eligible: v.optional(v.boolean()),
+    eligibility: v.optional(v.union(v.literal("fit"), v.literal("near_budget"), v.literal("ineligible"))),
     contactEligible: v.optional(v.boolean()),
+    monthlyCostBasis: v.optional(v.union(
+      v.literal("assessed_monthly_minimum"),
+      v.literal("listed_monthly_base"),
+      v.literal("unknown"),
+    )),
+    monthlyCostEur: v.optional(v.number()),
+    budgetDeltaEur: v.optional(v.number()),
     needRevision: v.optional(v.number()),
     signalRevision: v.optional(v.string()),
     matchingRunId: v.optional(v.string()),
@@ -578,6 +596,7 @@ export default defineSchema({
     .index("by_saved_need_and_signal", ["savedNeedId", "signalId"])
     .index("by_owner_and_eligible_and_updated_at", ["ownerId", "eligible", "updatedAt"])
     .index("by_need_revision_and_eligible_score", ["savedNeedId", "needRevision", "eligible", "score"])
+    .index("by_need_revision_and_eligibility_score", ["savedNeedId", "needRevision", "eligibility", "score"])
     .index("by_signal", ["signalId"]),
 
   marketAreas: defineTable({
@@ -941,6 +960,7 @@ export default defineSchema({
     providerEventAt: v.optional(v.number()),
   })
     .index("by_thread_and_received_at", ["threadId", "receivedAt"])
+    .index("by_thread_and_direction_and_received_at", ["threadId", "direction", "receivedAt"])
     .index("by_provider_message_id", ["providerMessageId"]),
 
   userMailboxes: defineTable({
@@ -1689,6 +1709,7 @@ export default defineSchema({
       "providerMessageId",
     ])
     .index("by_thread_and_sent_at", ["threadId", "sentAt"])
+    .index("by_thread_and_direction_and_sent_at", ["threadId", "direction", "sentAt"])
     .index("by_owner", ["ownerId"]),
 
   /** Handlungsspielraum — one row per user (ADR 0001); defaults apply while absent. */
@@ -1787,6 +1808,7 @@ export default defineSchema({
     .index("by_need_and_updated_at", ["savedNeedId", "updatedAt"])
     .index("by_mail_thread", ["mailThreadId"])
     .index("by_platform_thread", ["platformThreadId"])
+    .index("by_owner_and_state_and_updated_at", ["ownerId", "state", "updatedAt"])
     .index("by_owner_and_updated_at", ["ownerId", "updatedAt"]),
 
   providerTurns: defineTable({
@@ -1833,6 +1855,7 @@ export default defineSchema({
     question: v.string(),
     detail: v.optional(v.string()),
     options: v.array(v.object({ id: v.string(), label: v.string() })),
+    questions: v.optional(v.array(decisionQuestionValidator)),
     refs: v.object({
       requestId: v.optional(v.id("actionRequests")),
       offerId: v.optional(v.id("offerRevisions")),

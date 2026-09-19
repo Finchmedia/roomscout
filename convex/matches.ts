@@ -23,6 +23,7 @@ import {
   savedNeedLocationLabel,
   savedNeedLocationQuery,
 } from "./lib/savedNeedLocation";
+import { failedAssessmentRetryEligibility } from "./providerConversations";
 
 const matchStatus = v.union(
   v.literal("new"),
@@ -30,6 +31,18 @@ const matchStatus = v.union(
   v.literal("saved"),
   v.literal("dismissed"),
   v.literal("contacted"),
+);
+
+const matchEligibility = v.union(
+  v.literal("fit"),
+  v.literal("near_budget"),
+  v.literal("ineligible"),
+);
+
+const monthlyCostBasis = v.union(
+  v.literal("assessed_monthly_minimum"),
+  v.literal("listed_monthly_base"),
+  v.literal("unknown"),
 );
 
 type ReadCtx = Pick<QueryCtx, "db">;
@@ -290,7 +303,11 @@ export const applyMatches = internalMutation({
       signalId: v.id("signals"),
       signalRevision: v.string(),
       eligible: v.boolean(),
+      eligibility: matchEligibility,
       contactEligible: v.optional(v.boolean()),
+      monthlyCostBasis,
+      monthlyCostEur: v.optional(v.number()),
+      budgetDeltaEur: v.optional(v.number()),
       kind: v.union(v.literal("need_supply"), v.literal("demand_demand")),
       score: v.number(),
       structuredScore: v.number(),
@@ -327,19 +344,41 @@ export const applyMatches = internalMutation({
       }
       if (!match.eligible) {
         if (existing) await ctx.db.patch(existing._id, value);
+        else {
+          await ctx.db.insert("signalMatches", {
+            ownerId: args.ownerId,
+            savedNeedId: args.savedNeedId,
+            ...value,
+            status: "new",
+            createdAt: now,
+          });
+        }
         if (opportunity && !["contacted", "dismissed", "converted"].includes(opportunity.status)) {
           await ctx.db.patch(opportunity._id, { status: "expired", updatedAt: now });
         }
         continue;
       }
       if (existing) {
+        const newlyEligible = existing.eligible !== true;
         await ctx.db.patch(existing._id, value);
-        if (opportunity !== null && opportunity.status !== "dismissed" && opportunity.status !== "converted") {
+        if (opportunity !== null && !["dismissed", "contacted", "converted"].includes(opportunity.status)) {
+          let status = opportunity.status === "expired" && !["dismissed", "contacted"].includes(existing.status)
+            ? "new" as const
+            : opportunity.status;
+          if (status === "reviewing" && existing.needRevision !== args.needRevision && match.contactEligible === true) {
+            const recovery = await failedAssessmentRetryEligibility(ctx, {
+              ownerId: args.ownerId,
+              savedNeedId: args.savedNeedId,
+              signalId: match.signalId,
+              opportunityId: opportunity._id,
+            });
+            if (recovery.eligible) status = "new";
+          }
           await ctx.db.patch(opportunity._id, {
             score: match.score, reasons: match.reasons, uncertainties: match.uncertainties, lastSeenAt: now, updatedAt: now,
-            status: opportunity.status === "expired" && existing.status !== "dismissed" ? "new" : opportunity.status,
+            status,
           });
-        } else if (opportunity === null && existing.status !== "dismissed") {
+        } else if (opportunity === null && !["dismissed", "contacted"].includes(existing.status)) {
           // A current match without an opportunity row (deleted, reset) must
           // still reach the orchestrator; otherwise the Scout stays idle forever.
           await ctx.db.insert("opportunities", {
@@ -358,6 +397,17 @@ export const applyMatches = internalMutation({
             updatedAt: now,
           });
           created += 1;
+        }
+        const terminalOpportunity = opportunity !== null && ["dismissed", "contacted", "converted"].includes(opportunity.status);
+        if (newlyEligible && !terminalOpportunity && !["dismissed", "contacted"].includes(existing.status)) {
+          await ctx.db.insert("notifications", {
+            ownerId: args.ownerId,
+            kind: "new_match",
+            title: "RoomScout found a new match",
+            body: match.reasons.slice(0, 2).join(" · "),
+            signalMatchId: existing._id,
+            createdAt: now,
+          });
         }
         continue;
       }
@@ -510,13 +560,13 @@ async function processPage(ctx: ActionCtx, args: MatchingRun): Promise<number> {
             const repaired = await generateRoomScoutObject({
               schema: matchAssessmentSchema, instructions: MATCH_ASSESSMENT_INSTRUCTIONS, timeoutMs: 45_000,
               prompt: JSON.stringify({ ...input, previousAssessment: output,
-                retryFeedback: "The previous assessment failed validation. Include every requirement index exactly once. For every definite verdict copy a contiguous, exact quote from listingEvidence. Do not translate or paraphrase evidence. Keep absent facts unknown; do not invent permission or restrictions." }),
+                retryFeedback: "The previous assessment failed validation. Include every requirement index exactly once. For every definite verdict copy a contiguous, exact quote from listingEvidence. Do not translate or paraphrase evidence. A satisfied weekday request needs evidence naming a compatible requested weekday; otherwise use unknown. Keep absent facts unknown; do not invent permission or restrictions." }),
             });
             assessment = validateMatchAssessment(repaired, need, signal);
           }
         } catch (error) {
           // Provider failures and ungrounded outputs never authorize first contact.
-          const safeErrors = ["Invalid requirement reference", "Ungrounded requirement verdict", "Incomplete requirement assessment", "Ungrounded schedule verdict", "Ungrounded monthly price", "Missing total price", "Ungrounded sharing consent"];
+          const safeErrors = ["Invalid requirement reference", "Ungrounded requirement verdict", "Incomplete requirement assessment", "Ungrounded schedule verdict", "Unsupported satisfied schedule", "Ungrounded monthly price", "Missing total price", "Ungrounded sharing consent"];
           errorCode = error instanceof Error && safeErrors.includes(error.message) ? error.message :
             error instanceof Error && ["AbortError", "TimeoutError", "AI_APICallError", "AI_NoObjectGeneratedError", "ZodError"].includes(error.name) ? error.name : "ASSESSMENT_GENERATION_FAILED";
           console.warn("Match assessment failed", errorCode);
@@ -675,6 +725,91 @@ export const rematchAllActive = internalMutation({
     if (!result.isDone) await ctx.scheduler.runAfter(0, internal.matches.rematchAllActive, { cursor: result.continueCursor });
     return null;
   },
+});
+
+const candidateProjectionValidator = v.object({
+  candidateKey: v.string(),
+  matchId: v.id("signalMatches"),
+  savedNeedId: v.id("savedNeeds"),
+  signalId: v.id("signals"),
+  kind: v.union(v.literal("fit"), v.literal("near_budget")),
+  score: v.number(),
+  reasons: v.array(v.string()),
+  uncertainties: v.array(v.string()),
+  updatedAt: v.number(),
+  contactEligible: v.boolean(),
+  budgetDeltaEur: v.optional(v.number()),
+  monthlyCostEur: v.optional(v.number()),
+  monthlyCostBasis,
+  signal: signalProjectionValidator,
+});
+
+/** Read-only candidate projection shared by the authenticated query and Scout's
+ * server-bound inspection tools. Matching remains the only evaluator. */
+export async function listCandidatesForOwner(
+  ctx: ReadCtx,
+  args: { ownerId: Id<"users">; savedNeedId: Id<"savedNeeds">; limit?: number },
+) {
+  const need = await ctx.db.get(args.savedNeedId);
+  if (!need || need.ownerId !== args.ownerId || need.status !== "active") return [];
+  const limit = Math.max(1, Math.min(50, Math.floor(args.limit ?? 30)));
+  const needRevision = need.matchingRevision ?? 0;
+  const take = Math.min(200, Math.max(50, limit * 4));
+  const [fits, nearBudget, legacyFits] = await Promise.all([
+    ctx.db.query("signalMatches")
+      .withIndex("by_need_revision_and_eligibility_score", (q) =>
+        q.eq("savedNeedId", args.savedNeedId).eq("needRevision", needRevision).eq("eligibility", "fit"))
+      .order("desc").take(take),
+    ctx.db.query("signalMatches")
+      .withIndex("by_need_revision_and_eligibility_score", (q) =>
+        q.eq("savedNeedId", args.savedNeedId).eq("needRevision", needRevision).eq("eligibility", "near_budget"))
+      .order("desc").take(take),
+    ctx.db.query("signalMatches")
+      .withIndex("by_need_revision_and_eligible_score", (q) =>
+        q.eq("savedNeedId", args.savedNeedId).eq("needRevision", needRevision).eq("eligible", true))
+      .order("desc").take(take),
+  ]);
+  const matches = [...new Map([...fits, ...nearBudget, ...legacyFits].map((match) => [match._id, match])).values()];
+  const candidates = [];
+  for (const match of matches) {
+    if (match.ownerId !== args.ownerId || match.status === "dismissed") continue;
+    const kind = match.eligibility ?? (match.eligible === true ? "fit" : "ineligible");
+    if (kind !== "fit" && kind !== "near_budget") continue;
+    if ((kind === "fit" && match.eligible !== true) ||
+      (kind === "near_budget" && (match.eligible === true || (match.budgetDeltaEur ?? 0) <= 0))) continue;
+    const signal = await ctx.db.get(match.signalId);
+    if (!signal || signal.status !== "published" || match.signalRevision !== await signalMatchRevision(signal) ||
+      await signalIsExcludedForNeed(ctx, args.savedNeedId, signal)) continue;
+    candidates.push({
+      candidateKey: `${args.savedNeedId}:${match.signalId}`,
+      matchId: match._id,
+      savedNeedId: args.savedNeedId,
+      signalId: match.signalId,
+      kind,
+      score: match.score,
+      reasons: match.reasons,
+      uncertainties: match.uncertainties,
+      updatedAt: match.updatedAt,
+      contactEligible: kind === "fit" && match.contactEligible === true,
+      ...(match.budgetDeltaEur === undefined ? {} : { budgetDeltaEur: match.budgetDeltaEur }),
+      ...(match.monthlyCostEur === undefined ? {} : { monthlyCostEur: match.monthlyCostEur }),
+      monthlyCostBasis: match.monthlyCostBasis ?? "unknown",
+      signal: projectSignal(signal),
+    });
+  }
+  return candidates
+    .sort((left, right) => left.kind === right.kind ? right.score - left.score : left.kind === "fit" ? -1 : 1)
+    .slice(0, limit);
+}
+
+export const listCandidatesMine = query({
+  args: { savedNeedId: v.id("savedNeeds"), limit: v.optional(v.number()) },
+  returns: v.array(candidateProjectionValidator),
+  handler: async (ctx, args) => await listCandidatesForOwner(ctx, {
+    ownerId: await requireUserId(ctx),
+    savedNeedId: args.savedNeedId,
+    limit: args.limit,
+  }),
 });
 
 export const listMine = query({

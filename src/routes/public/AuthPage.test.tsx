@@ -31,5 +31,9 @@ describe("AuthPage locale copy", () => {
 
     expect(screen.getByRole("heading", { name: "Welcome back." })).toBeVisible();
     expect(screen.getByText("Your search and conversations are waiting for you.")).toBeVisible();
+    expect(screen.getByRole("link", { name: "RoomScout home" }).querySelector("img")).toHaveAttribute("src", "/logo.png");
+    expect(screen.queryByRole("link", { name: "Explore" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Map" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Continue browsing without an account" })).not.toBeInTheDocument();
   });
 });

@@ -17,7 +17,7 @@ const convex = new ConvexReactClient(convexUrl);
  * App-wide providers.
  *
  * `LocaleProvider` wraps everything so `useCopy()` works on every route —
- * German is its default locale, and it is the only place the dictionary is
+ * English is its default locale, and it is the only place the dictionary is
  * mounted. The single `<Toaster />` lives here too: sonner keeps one queue per
  * toaster, so a second one anywhere below would render every toast twice.
  */

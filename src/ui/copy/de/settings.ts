@@ -74,6 +74,9 @@ export const settingsDe = {
       connected: "Verbunden",
       expired: "Anmeldung erneut nötig",
       public: "Ohne Anmeldung",
+      indexed: "Indexierte Quelle",
+      reviewed: "Geprüfte Quelle",
+      contactDisabledDemo: "Kontakt in der Demo deaktiviert",
     },
     row: {
       saved: "Gespeichert",
@@ -84,6 +87,8 @@ export const settingsDe = {
       portalProfile: "Portalprofil: {profile}",
       portalScope: "Anzeigen lesen und Nachrichten austauschen",
       publicListings: "Öffentliche Anzeigen können berücksichtigt werden. Der Kontaktweg hängt von der Anzeige ab.",
+      indexedReadOnly: "Indexierte öffentliche Anzeigen können gelesen werden. Kontakt ist in der Demo deaktiviert.",
+      reviewedReadOnly: "Die Quellenabdeckung wurde geprüft, aber hier sind noch keine indexierten Anzeigen belegt. Kontakt ist in der Demo deaktiviert.",
       demoInactive: "In dieser Demo nicht aktiv",
       outOfRegion: "Hamburg liegt außerhalb eurer Suche. Eine Anmeldung ist dafür nicht nötig.",
       offHint: "Keine neuen Anfragen über diese Quelle. Vorhandene Gespräche bleiben sichtbar.",
@@ -113,6 +118,7 @@ export const settingsDe = {
         exclude: "Ausschließen",
         include: "Einbeziehen",
         unavailable: "Nicht verfügbar",
+        contactDisabled: "Kontakt in der Demo deaktiviert",
       },
       example: {
         name: "Proberaumbörse Süd (Beispiel)",

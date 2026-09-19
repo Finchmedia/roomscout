@@ -58,8 +58,6 @@ function renderSurface(stage: LiveScoutStage, overrides: Partial<LiveScoutSurfac
   );
 }
 
-const centreColumn = () => document.querySelector('[data-live-scout-column="center"]');
-
 afterEach(cleanup);
 
 describe("live Scout surface columns", () => {
@@ -69,60 +67,44 @@ describe("live Scout surface columns", () => {
       asideSlot: <div>Euer Suchauftrag</div>,
     });
 
-    // The aside is inside the three-column row, not only behind the sheet.
-    expect(centreColumn()).not.toBeNull();
     expect(screen.getAllByText("Euer Suchauftrag").length).toBeGreaterThan(0);
     expect(screen.getByText("Gespräch")).toBeInTheDocument();
-    // The column row replaces the „Suchauftrag ansehen“ toggle with the sheet.
     expect(screen.getByRole("button", { name: "Suchauftrag" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Suchauftrag ansehen" })).not.toBeInTheDocument();
   });
 
   it("leaves discovery single-column while there is nothing to put beside it", () => {
     renderSurface("discovery", { chatSlot: <div>Gespräch</div> });
-    expect(centreColumn()).toBeNull();
+    expect(screen.getByText("Gespräch")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Suchauftrag ansehen" })).toBeInTheDocument();
   });
 
-  it("centres a quiet stage while both long side columns own their viewport scroll", () => {
+  it("keeps working status, candidates and saved brief accessible together", () => {
     renderSurface("working", {
       railSlot: <div>Kandidaten</div>,
       asideSlot: <div>Euer Suchauftrag</div>,
     });
 
-    const centre = centreColumn();
-    expect(centre).not.toBeNull();
-    // The mock centres blob and headline in the space the columns leave.
-    expect(centre).toHaveClass("justify-center", "flex-1", "min-h-0");
-    const row = centre?.parentElement;
-    expect(row).toHaveClass("items-stretch", "overflow-hidden", "min-h-0");
-    for (const side of [row?.firstElementChild, row?.lastElementChild]) {
-      expect(side).toHaveClass("h-full", "min-h-0", "overflow-y-auto");
-    }
+    expect(screen.getByRole("heading", { name: "Ich kümmere mich darum." })).toBeInTheDocument();
+    expect(screen.getAllByText("Kandidaten").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Euer Suchauftrag").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Kandidaten" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Suchauftrag" })).toBeInTheDocument();
   });
 
-  it("constrains a long text chat and keeps only the mobile side-sheet entries in the footer", () => {
+  it("keeps side-sheet navigation reachable without duplicate conversation actions", () => {
     renderSurface("discovery", {
       chatSlot: <section data-scout-conversation="text"><textarea aria-label="Message your Scout" /></section>,
       railSlot: <div>Candidate one</div>,
       asideSlot: <div>{Array.from({ length: 40 }, (_, index) => <p key={index}>Saved fact {index + 1}</p>)}</div>,
     });
 
-    const main = document.querySelector("main");
-    const centre = centreColumn();
-    const chatHost = document.querySelector('[data-live-scout-chat-host="true"]');
-    const briefColumn = document.querySelector('[data-live-scout-column="brief"]');
-    expect(main).toHaveClass("overflow-clip", "min-h-0");
-    expect(main).not.toHaveClass("overflow-y-hidden", "overflow-y-auto");
-    expect(centre).toHaveClass("justify-start", "overflow-hidden", "min-h-0");
-    expect(chatHost).toHaveClass("min-h-0", "flex-1", "overflow-hidden");
-    expect(briefColumn).toHaveClass("h-full", "min-h-0", "overflow-y-auto", "overscroll-contain");
+    expect(screen.getByRole("textbox", { name: "Message your Scout" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Mit Scout sprechen" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Lieber schreiben" })).not.toBeInTheDocument();
 
     const candidates = screen.getByRole("button", { name: "Kandidaten" });
-    const brief = screen.getByRole("button", { name: "Suchauftrag" });
-    expect(brief.closest("div")?.parentElement).toHaveClass("min-[1100px]:hidden");
+    expect(screen.getByRole("button", { name: "Suchauftrag" })).toBeInTheDocument();
     fireEvent.click(candidates);
     expect(screen.getAllByText("Candidate one").length).toBeGreaterThan(1);
   });
@@ -172,20 +154,7 @@ describe("live Scout surface columns", () => {
 
     const view = render(<Harness stage="discovery" />);
     const voiceNode = screen.getByTestId("voice-probe");
-    const stageFrame = document.querySelector<HTMLElement>('[data-slot="stage-background-content"]');
-    const companionScroll = document.querySelector<HTMLElement>('[data-voice-companion-scroll="true"]');
-    const textCompanion = document.querySelector<HTMLElement>("[data-voice-text-companion]");
-    expect(stageFrame).toHaveClass("h-full", "min-h-0", "overflow-hidden");
-    expect(voiceNode.parentElement).toHaveAttribute("data-voice-sticky", "true");
-    expect(companionScroll).toHaveClass("overflow-y-auto", "flex-1", "min-h-0");
-    expect(companionScroll).not.toContainElement(voiceNode);
-    expect(textCompanion).toHaveClass(
-      "h-[min(32rem,55dvh)]",
-      "min-h-[18rem]",
-      "shrink-0",
-      "overflow-hidden",
-    );
-    expect(companionScroll).toContainElement(textCompanion);
+    expect(screen.getAllByTestId("voice-probe")).toHaveLength(1);
     expect(screen.getByText("Text composer and history")).toBeInTheDocument();
     expect(screen.getAllByText("All saved facts").length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "Mit Scout sprechen" })).not.toBeInTheDocument();
@@ -199,5 +168,17 @@ describe("live Scout surface columns", () => {
     expect(screen.queryByText("Text composer and history")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Review exact offer" }));
     expect(reviewOffer).toHaveBeenCalledOnce();
+  });
+
+  it("centres a primary voice conversation while keeping decisions in a bounded reading column", () => {
+    renderSurface("blocked", {
+      voiceSlot: <div>Primary voice conversation</div>,
+      decisionSlot: <div>Review this decision</div>,
+      asideSlot: <div>Saved facts</div>,
+    });
+
+    expect(screen.getByText("Primary voice conversation").closest("[data-live-scout-stage]"))
+      .toHaveClass("justify-center");
+    expect(screen.getByText("Review this decision").parentElement).toHaveAttribute("data-voice-decision-host");
   });
 });

@@ -76,6 +76,33 @@ describe("firecrawlPortalEngine", () => {
       session: { runProgram } as unknown as FirecrawlPortalSession,
     })).rejects.toThrow("FIRECRAWL_PORTAL_READ_RESULT_INVALID");
   });
+
+  it("recovers a completed batch when Interact returns an intermediate expression", async () => {
+    const batch = {
+      threads: [{ providerThreadId: "thread_1", participants: [], lastMessageAt: 42,
+        messages: [{ providerMessageId: "message_1", direction: "inbound", bodyText: "Available", sentAt: 42 }] }],
+      missingThreadIds: [], failedThreadIds: [], bodyTruncatedThreadIds: [],
+      historyTruncatedThreadIds: [], discoveredThreadIds: ["thread_1"],
+      truncated: false, timedOut: false, nextOffset: 0,
+    };
+    const runProgram = vi.fn().mockResolvedValueOnce(1).mockResolvedValueOnce(batch);
+    await expect(readFirecrawlPortalInboxBatch({
+      session: { runProgram } as unknown as FirecrawlPortalSession,
+    })).resolves.toEqual(batch);
+    expect(runProgram).toHaveBeenCalledTimes(2);
+    const [initial, recovery] = runProgram.mock.calls;
+    expect(recovery![1]).toEqual({ resultKey: initial![1].resultKey });
+    expect(recovery![0]).not.toContain("page.");
+    expect(recovery![2]).toBe(false);
+  });
+
+  it("does not treat an unfinished completion slot as an empty inbox", async () => {
+    const runProgram = vi.fn().mockResolvedValueOnce(1).mockResolvedValueOnce(null);
+    await expect(readFirecrawlPortalInboxBatch({
+      session: { runProgram } as unknown as FirecrawlPortalSession,
+    })).rejects.toThrow("FIRECRAWL_PORTAL_READ_RESULT_INVALID");
+    expect(runProgram).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("writeFirecrawlPortalMessage", () => {

@@ -69,7 +69,7 @@ async function portalFixture(provider: "firecrawl" | "browserbase") {
   const t = convexTest(schema, modules);
   const ids = await t.run(async (ctx) => {
     const now = Date.now();
-    const ownerId = await ctx.db.insert("users", { username: `isolation-${provider}`, role: "musician", createdAt: now, lastSeenAt: now });
+    const ownerId = await ctx.db.insert("users", { username: `isolation-${provider}`, firstName: "Mina", actKind: "band", actName: "Night Owls", providerIdentityConfirmedAt: now, role: "musician", createdAt: now, lastSeenAt: now });
     const platformId = await ctx.db.insert("sourcePlatforms", {
       slug: `isolation-${provider}`, name: "Controlled portal", canonicalDomain: "roomscout.dev",
       kind: "community", status: "active", firstSeenAt: now, lastObservedAt: now, createdAt: now, updatedAt: now,

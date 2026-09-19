@@ -21,6 +21,9 @@ export type MarketGlobeProps = {
   className?: string;
   onSignalSelect?: (signal: MapMarketSignal | null) => void;
   onVisibleSignalsChange?: (signals: MapMarketSignal[]) => void;
+  showHint?: boolean;
+  showSignalPanel?: boolean;
+  interactive?: boolean;
 };
 
 export function MarketGlobe({
@@ -33,6 +36,9 @@ export function MarketGlobe({
   className = "",
   onSignalSelect,
   onVisibleSignalsChange,
+  showHint = true,
+  showSignalPanel = true,
+  interactive = true,
 }: MarketGlobeProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
@@ -118,6 +124,15 @@ export function MarketGlobe({
       });
       mapRef.current = map;
       map.scrollZoom.disable();
+      if (!interactive) {
+        map.boxZoom.disable();
+        map.doubleClickZoom.disable();
+        map.dragPan.disable();
+        map.dragRotate.disable();
+        map.keyboard.disable();
+        map.touchPitch.disable();
+        map.touchZoomRotate.disable();
+      }
 
       const pause = () => { interactingRef.current = true; };
       const resume = () => { interactingRef.current = false; spinGlobe(); };
@@ -191,7 +206,7 @@ export function MarketGlobe({
             "circle-stroke-width": 1,
           },
         });
-        map.on("click", "roomscout-clusters", (event) => {
+        if (interactive) map.on("click", "roomscout-clusters", (event) => {
           const feature = map.queryRenderedFeatures(event.point, { layers: ["roomscout-clusters"] })[0] as unknown as {
             properties?: Record<string, unknown>;
             geometry?: { type?: string; coordinates?: unknown[] };
@@ -205,13 +220,13 @@ export function MarketGlobe({
             map.easeTo({ center: [Number(coordinates[0]), Number(coordinates[1])], zoom });
           });
         });
-        map.on("click", "roomscout-unclustered", (event) => {
+        if (interactive) map.on("click", "roomscout-unclustered", (event) => {
           const feature = event.features?.[0] as unknown as { properties?: Record<string, unknown> } | undefined;
           const id = feature?.properties?.id;
           const signal = signalsRef.current.find((candidate) => candidate.id === id);
           if (signal) selectSignal(signal);
         });
-        for (const layer of ["roomscout-clusters", "roomscout-unclustered"]) {
+        for (const layer of interactive ? ["roomscout-clusters", "roomscout-unclustered"] : []) {
           map.on("mouseenter", layer, () => { map.getCanvas().style.cursor = "pointer"; });
           map.on("mouseleave", layer, () => { map.getCanvas().style.cursor = ""; });
         }
@@ -229,8 +244,10 @@ export function MarketGlobe({
       map.on("pitchend", resume);
       map.on("rotateend", resume);
       map.on("moveend", handleMoveEnd);
-      document.addEventListener("keydown", handleKeyDown);
-      document.addEventListener("keyup", handleKeyUp);
+      if (interactive) {
+        document.addEventListener("keydown", handleKeyDown);
+        document.addEventListener("keyup", handleKeyUp);
+      }
 
       resizeObserver = new ResizeObserver(() => map.resize());
       resizeObserver.observe(containerRef.current);
@@ -251,7 +268,7 @@ export function MarketGlobe({
       mapboxRef.current = null;
       setLoaded(false);
     };
-  }, [accessToken, initialCenter, initialZoom, selectSignal, spinGlobe, updateVisibleSignals]);
+  }, [accessToken, initialCenter, initialZoom, interactive, selectSignal, spinGlobe, updateVisibleSignals]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -279,8 +296,8 @@ export function MarketGlobe({
     <section aria-label="RoomScout market map" className={`${styles.root}${className ? ` ${className}` : ""}`}>
       <div className={styles.map} ref={containerRef} />
       {displayError ? <div className={styles.error} role="alert">{displayError}</div> : null}
-      <p className={styles.hint}>Hold <strong>⌘ or Ctrl</strong> while scrolling to zoom. Drag the globe to explore current market signals.</p>
-      <aside className={styles.panel}>
+      {showHint ? <p className={styles.hint}>Hold <strong>⌘ or Ctrl</strong> while scrolling to zoom. Drag the globe to explore current market signals.</p> : null}
+      {showSignalPanel ? <aside className={styles.panel}>
         <header className={styles.panelHeader}><h2>Signals in view</h2><span className={styles.count}>{visibleSignals.length} visible</span></header>
         {selectedSignal ? (
           <div className={styles.detail}>
@@ -300,7 +317,7 @@ export function MarketGlobe({
             </button>
           ))}
         </div>
-      </aside>
+      </aside> : null}
     </section>
   );
 }

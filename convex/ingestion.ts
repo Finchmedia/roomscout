@@ -10,9 +10,10 @@ import {
 } from "./_generated/server";
 import { generateRoomScoutObject } from "./ai";
 import { stableFingerprint } from "./integrations/fingerprints";
+import { normalizePublicImageUrl, publicImageUrlFromDocument } from "./integrations/publicImageUrl";
 import { redactContactData } from "./integrations/piiRedaction";
 import { delimitUntrustedData } from "./lib/privacy";
-import { DEMO_PROVENANCE_MIGRATION_NAME, isControlledDemoOrigin } from "./lib/demoProvenance";
+import { DEMO_PROVENANCE_MIGRATION_NAME, isControlledDemoOrigin, providerSimulationFromEvidence } from "./lib/demoProvenance";
 import {
   compareForCorroboration,
   verificationFromEvidence,
@@ -36,6 +37,47 @@ const arrangement = v.union(
   v.literal("hourly"),
   v.literal("unknown"),
 );
+
+type DetailFacet = {
+  namespace: string;
+  key: string;
+  value: string | number | boolean | string[];
+  confidence: number;
+};
+
+/** Coordinates are accepted only from the structured location facet produced
+ * from the public detail document. The pair remains explicitly approximate;
+ * no address precision is inferred from it. */
+function coordinatesFromDetailFacets(
+  facets: DetailFacet[] | undefined,
+): { latitude: number; longitude: number } | undefined {
+  for (const facet of facets ?? []) {
+    if (
+      facet.namespace.trim().toLocaleLowerCase() !== "location" ||
+      !facet.key.trim().toLocaleLowerCase().endsWith("coordinates") ||
+      typeof facet.value !== "string"
+    ) {
+      continue;
+    }
+    const match = facet.value.trim().match(
+      /^(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)(?:\s|$)/,
+    );
+    if (!match) continue;
+    const latitude = Number(match[1]);
+    const longitude = Number(match[2]);
+    if (
+      Number.isFinite(latitude) &&
+      Number.isFinite(longitude) &&
+      latitude >= -90 &&
+      latitude <= 90 &&
+      longitude >= -180 &&
+      longitude <= 180
+    ) {
+      return { latitude, longitude };
+    }
+  }
+  return undefined;
+}
 
 function signalSnapshot(
   signal: Pick<Doc<"signals">, "side" | "title" | "city" | "district" | "arrangement" | "priceEur" | "pricePeriod">,
@@ -126,6 +168,112 @@ async function countPendingDetailsForTarget(
   ]);
   return Math.min(queued.length + fetching.length, 5);
 }
+
+/** Keep only five detail rows runnable for one target while ensuring rows that
+ * were deferred by the list-ingestion cap eventually enter the normal worker. */
+async function refillTargetDetailBacklog(
+  ctx: MutationCtx,
+  sourceTargetId: Id<"sourceTargets">,
+  now: number,
+): Promise<{ promoted: number; backlogCount: number }> {
+  const target = await ctx.db.get(sourceTargetId);
+  if (!target || target.paused) return { promoted: 0, backlogCount: 0 };
+  const source = await ctx.db.get(target.sourceId);
+  if (!source || source.status !== "active") return { promoted: 0, backlogCount: 0 };
+  const backlogCount = await countPendingDetailsForTarget(ctx, sourceTargetId);
+  let available = Math.max(0, 5 - backlogCount);
+  if (available === 0) return { promoted: 0, backlogCount };
+  const entries = await ctx.db.query("sourceEntries")
+    .withIndex("by_target_and_status", (q) =>
+      q.eq("sourceTargetId", sourceTargetId).eq("status", "active"),
+    )
+    .take(500);
+  let promoted = 0;
+  for (const entry of entries) {
+    if (available === 0) break;
+    // An entry whose detail URL is the target itself was fully represented by
+    // the index page and must not be sent through the detail scraper.
+    if (entry.detailState !== "none" || entry.detailUrl === target.url) continue;
+    await ctx.db.patch(entry._id, {
+      detailState: "queued",
+      nextDetailAttemptAt: now,
+      updatedAt: now,
+      error: undefined,
+    });
+    promoted++;
+    available--;
+  }
+  return { promoted, backlogCount: backlogCount + promoted };
+}
+
+/** Target-scoped recovery for list ingestions whose first five detail slots
+ * were filled before later rows could be queued. Processing remains on the
+ * existing two-at-a-time detail worker. */
+export const continueTargetDetailBacklog = internalMutation({
+  args: { sourceTargetId: v.id("sourceTargets") },
+  returns: v.object({ promoted: v.number(), backlogCount: v.number() }),
+  handler: async (ctx, args) => {
+    const result = await refillTargetDetailBacklog(ctx, args.sourceTargetId, Date.now());
+    await ctx.db.patch(args.sourceTargetId, { backlogCount: result.backlogCount, updatedAt: Date.now() });
+    if (result.backlogCount > 0) {
+      await ctx.scheduler.runAfter(0, internal.firecrawlDetails.processDetailBacklog, {});
+    }
+    return result;
+  },
+});
+
+/** Applies already-extracted public detail coordinates to one bounded target.
+ * This repairs signals normalized before coordinate facets were authoritative,
+ * without copying coordinates from a private catalog or fabricating precision. */
+export const reconcileTargetDetailCoordinates = internalMutation({
+  args: { sourceTargetId: v.id("sourceTargets") },
+  returns: v.object({
+    scanned: v.number(),
+    updated: v.number(),
+    invalidOrMissing: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    const entries = await ctx.db
+      .query("sourceEntries")
+      .withIndex("by_target_and_detail_state", (q) =>
+        q.eq("sourceTargetId", args.sourceTargetId).eq("detailState", "processed"),
+      )
+      .take(100);
+    let updated = 0;
+    let invalidOrMissing = 0;
+    const cities = new Set<string>();
+    for (const entry of entries) {
+      const signal = entry.signalId ? await ctx.db.get(entry.signalId) : null;
+      const coordinates = coordinatesFromDetailFacets(signal?.facets);
+      if (!signal || !coordinates) {
+        invalidOrMissing++;
+        continue;
+      }
+      if (
+        signal.latitude === coordinates.latitude &&
+        signal.longitude === coordinates.longitude &&
+        signal.locationPrecision === "unknown" &&
+        signal.geocodeId === undefined
+      ) {
+        continue;
+      }
+      await ctx.db.patch(signal._id, {
+        ...coordinates,
+        locationPrecision: "unknown",
+        geocodeId: undefined,
+      });
+      cities.add(signal.city);
+      updated++;
+    }
+    if (updated > 0) {
+      for (const city of cities) {
+        await ctx.scheduler.runAfter(0, internal.map.rebuildArea, { city });
+      }
+      await ctx.scheduler.runAfter(0, internal.matches.rematchAllActive, { cursor: null });
+    }
+    return { scanned: entries.length, updated, invalidOrMissing };
+  },
+});
 
 function evidenceSnapshotFields(snapshot: CorroborationSnapshot) {
   return {
@@ -305,6 +453,7 @@ export const upsertNormalizedSignal = internalMutation({
     ),
     requirements: v.array(v.string()),
     unknowns: v.array(v.string()),
+    imageUrl: v.optional(v.string()),
   },
   returns: v.union(v.id("signals"), v.null()),
   handler: async (ctx, args) => {
@@ -332,6 +481,8 @@ export const upsertNormalizedSignal = internalMutation({
 
     const now = Date.now();
     const isDemo = isControlledDemoOrigin(args.sourceUrl);
+    const providerSimulation = providerSimulationFromEvidence(args.sourceUrl, args.excerpt);
+    const imageUrl = normalizePublicImageUrl(args.imageUrl);
     const snapshot: CorroborationSnapshot = {
       side: source.side === "both" ? "supply" : source.side,
       title: args.title,
@@ -366,6 +517,8 @@ export const upsertNormalizedSignal = internalMutation({
           lastSeenAt: now,
           publishedAt: signal.publishedAt ?? now,
           isDemo: signal.isDemo === true || isDemo,
+          ...(providerSimulation ? { providerSimulation } : {}),
+          ...(imageUrl ? { imageUrl } : {}),
         });
         await ctx.db.patch(existingEvidence._id, {
           sourceUrl: args.sourceUrl,
@@ -395,6 +548,8 @@ export const upsertNormalizedSignal = internalMutation({
           lastSeenAt: now,
           publishedAt: now,
           isDemo,
+          ...(providerSimulation ? { providerSimulation } : {}),
+          ...(imageUrl ? { imageUrl } : {}),
         });
       if (corroborated) await ctx.db.patch(signalId, { status: "published", lastSeenAt: now });
       await ctx.db.insert("signalEvidence", {
@@ -534,6 +689,7 @@ export const normalizeDocument = internalAction({
 
     try {
       const output = await generateRoomScoutObject({
+        modelRole: "utility",
         schema: z.object({
           title: z.string().min(1).max(300),
           city: z.string().min(1).max(200),
@@ -577,6 +733,9 @@ export const normalizeDocument = internalAction({
         excerpt: safeExcerpt,
         fingerprint: args.fingerprint,
         ...safeOutput,
+        ...(publicImageUrlFromDocument({ pageUrl: args.sourceUrl, markdown: args.markdown })
+          ? { imageUrl: publicImageUrlFromDocument({ pageUrl: args.sourceUrl, markdown: args.markdown }) }
+          : {}),
         ...(district === null ? {} : { district }),
         ...(priceEur === null ? {} : { priceEur }),
         ...(pricePeriod === null ? {} : { pricePeriod }),
@@ -596,6 +755,7 @@ const extractedEntryValidator = v.object({
   externalId: v.optional(v.string()),
   canonicalUrl: v.string(),
   detailUrl: v.string(),
+  imageUrl: v.optional(v.string()),
   title: v.string(),
   excerpt: v.string(),
   side: v.union(v.literal("supply"), v.literal("demand")),
@@ -705,6 +865,8 @@ export const upsertSourceEntries = internalMutation({
 
     for (const entry of args.entries.slice(0, 100)) {
       const isDemo = isControlledDemoOrigin(entry.canonicalUrl);
+      const providerSimulation = providerSimulationFromEvidence(entry.canonicalUrl, entry.excerpt);
+      const imageUrl = normalizePublicImageUrl(entry.imageUrl);
       observedCanonicalUrls.add(entry.canonicalUrl);
       const existing = await ctx.db
         .query("sourceEntries")
@@ -722,8 +884,14 @@ export const upsertSourceEntries = internalMutation({
         contentChanged &&
         availableDetailSlots > 0 &&
         existing?.detailState !== "fetching";
+      const resetDeferredDetail =
+        needsDetail &&
+        contentChanged &&
+        existing?.detailState !== "fetching";
       const nextDetailState = canQueueDetail
         ? ("queued" as const)
+        : resetDeferredDetail
+          ? ("none" as const)
         : existing?.detailState === "processed" && !contentChanged
           ? ("processed" as const)
           : needsDetail
@@ -748,9 +916,14 @@ export const upsertSourceEntries = internalMutation({
           contentFingerprint: entry.contentFingerprint,
           status: "active",
           detailState: nextDetailState,
-          nextDetailAttemptAt: canQueueDetail ? now : existing.nextDetailAttemptAt,
-          detailLeaseId: canQueueDetail ? undefined : existing.detailLeaseId,
-          detailLeaseExpiresAt: canQueueDetail
+          detailAttempts: resetDeferredDetail ? 0 : existing.detailAttempts,
+          nextDetailAttemptAt: canQueueDetail
+            ? now
+            : resetDeferredDetail
+              ? undefined
+              : existing.nextDetailAttemptAt,
+          detailLeaseId: resetDeferredDetail ? undefined : existing.detailLeaseId,
+          detailLeaseExpiresAt: resetDeferredDetail
             ? undefined
             : existing.detailLeaseExpiresAt,
           lastSeenAt: now,
@@ -804,6 +977,8 @@ export const upsertSourceEntries = internalMutation({
         status: "published" as const,
         lastSeenAt: now,
         isDemo,
+        ...(providerSimulation ? { providerSimulation } : {}),
+        ...(imageUrl ? { imageUrl } : {}),
       };
       const snapshot = signalSnapshot({ ...signalPatch });
       if (signalId) {
@@ -975,6 +1150,7 @@ export const ingestPageDocument = internalAction({
           externalId: string | null;
           title: string;
           url: string;
+          imageUrl: string | null;
           summary: string;
           side: "supply" | "demand";
           city: string | null;
@@ -987,6 +1163,7 @@ export const ingestPageDocument = internalAction({
           unknowns: string[];
         }>;
       } = await generateRoomScoutObject({
+        modelRole: "utility",
         schema: z.object({
           entries: z
             .array(
@@ -994,6 +1171,7 @@ export const ingestPageDocument = internalAction({
                 externalId: z.string().max(300).nullable(),
                 title: z.string().min(1).max(300),
                 url: z.string().min(1).max(2_000),
+                imageUrl: z.string().max(2_000).nullable(),
                 summary: z.string().min(1).max(1_500),
                 side: z.enum(["supply", "demand"]),
                 city: z.string().max(200).nullable(),
@@ -1013,7 +1191,7 @@ export const ingestPageDocument = internalAction({
             )
             .max(maxEntries),
         }),
-        instructions: `Extract every distinct public rehearsal-room listing from ${context.sourceName}. Preserve only explicit facts. Return the listing detail URL when present, resolve no URLs yourself, never infer contact details or availability, and return an empty list if the page contains no listings.`,
+        instructions: `Extract every distinct public rehearsal-room listing from ${context.sourceName}. Preserve only explicit facts. Return the listing detail URL and explicit public image URL when present, resolve no URLs yourself, never invent URLs, contact details or availability, and return an empty list if the page contains no listings.`,
         prompt: delimitUntrustedData(
           "firecrawl_index",
           args.markdown.slice(0, 50_000),
@@ -1259,6 +1437,7 @@ export const completeDetailNormalization = internalMutation({
     excerpt: v.string(),
     contentFingerprint: v.string(),
     contactDataPresent: v.boolean(),
+    imageUrl: v.optional(v.string()),
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
@@ -1272,6 +1451,9 @@ export const completeDetailNormalization = internalMutation({
     }
     const now = Date.now();
     const isDemo = isControlledDemoOrigin(entry.canonicalUrl);
+    const providerSimulation = providerSimulationFromEvidence(entry.canonicalUrl, args.excerpt);
+    const detailCoordinates = coordinatesFromDetailFacets(args.facets);
+    const imageUrl = normalizePublicImageUrl(args.imageUrl);
     let signalId = entry.signalId;
     const previousSignalId = signalId;
     const signalPatch = {
@@ -1291,6 +1473,13 @@ export const completeDetailNormalization = internalMutation({
       status: "published" as const,
       lastSeenAt: now,
       isDemo,
+      imageUrl,
+      ...(providerSimulation ? { providerSimulation } : {}),
+      ...(detailCoordinates ? {
+        ...detailCoordinates,
+        locationPrecision: "unknown" as const,
+        geocodeId: undefined,
+      } : {}),
     };
     const snapshot = signalSnapshot(signalPatch);
     const currentEvidence = signalId
@@ -1389,10 +1578,7 @@ export const completeDetailNormalization = internalMutation({
       updatedAt: now,
       error: undefined,
     });
-    const backlogCount = await countPendingDetailsForTarget(
-      ctx,
-      entry.sourceTargetId,
-    );
+    const { backlogCount } = await refillTargetDetailBacklog(ctx, entry.sourceTargetId, now);
     await ctx.db.patch(entry.sourceTargetId, { backlogCount, updatedAt: now });
     await refreshSignalVerification(ctx, signalId);
     if (previousSignalId && previousSignalId !== signalId) {
@@ -1420,21 +1606,20 @@ export const failDetailNormalization = internalMutation({
     }
     const now = Date.now();
     const retry = entry.detailAttempts < 3;
+    const retryDelay = 30_000 * 2 ** Math.max(0, entry.detailAttempts - 1);
     await ctx.db.patch(entry._id, {
       detailState: retry ? "queued" : "failed",
-      nextDetailAttemptAt: retry
-        ? now + 30_000 * 2 ** Math.max(0, entry.detailAttempts - 1)
-        : undefined,
+      nextDetailAttemptAt: retry ? now + retryDelay : undefined,
       detailLeaseId: undefined,
       detailLeaseExpiresAt: undefined,
       updatedAt: now,
       error: args.error.slice(0, 500),
     });
-    const backlogCount = await countPendingDetailsForTarget(
-      ctx,
-      entry.sourceTargetId,
-    );
+    const { backlogCount } = await refillTargetDetailBacklog(ctx, entry.sourceTargetId, now);
     await ctx.db.patch(entry.sourceTargetId, { backlogCount, updatedAt: now });
+    if (retry) {
+      await ctx.scheduler.runAfter(retryDelay, internal.firecrawlDetails.processDetailBacklog, {});
+    }
     return retry;
   },
 });
@@ -1476,6 +1661,7 @@ export const normalizeDetailDocument = internalAction({
         facets: Array<{ namespace: string; key: string; value: string; confidence: number }>;
         contacts: Array<{ kind: "email" | "phone" | "social" | "platform"; value: string }>;
       } = await generateRoomScoutObject({
+        modelRole: "utility",
         schema: z.object({
           title: z.string().min(1).max(300),
           city: z.string().min(1).max(200),
@@ -1530,6 +1716,7 @@ export const normalizeDetailDocument = internalAction({
             value: redactContactData(facet.value).redacted,
           })),
           contacts: output.contacts,
+          imageUrl: publicImageUrlFromDocument({ pageUrl: context.detailUrl, markdown: args.markdown }),
           excerpt: safe.redacted.slice(0, 1_000),
           contentFingerprint: stableFingerprint(
             `${context.detailUrl}\n${safe.redacted.slice(0, 10_000)}`,

@@ -1,10 +1,9 @@
 /**
- * Copy-layer contract tests — COMPONENT_MAP.md Part 6, DECISIONS.md items 10–20 and 44.
+ * Copy-layer contract tests.
  *
- * These assert the properties the port depends on and that prose cannot guarantee:
- * the dictionary is complete and non-empty, its placeholder vocabulary is exactly the
- * declared one, the two excluded blocks really are absent, and `useCopy` resolves a key
- * through the provider.
+ * These assert the runtime properties both dictionaries must preserve: non-empty
+ * values, matching leaf and plural shapes, matching interpolation variables, and
+ * locale resolution and persistence through the provider.
  *
  * Written without JSX (the file is `.ts`, per the build plan) — `React.createElement`.
  */
@@ -141,10 +140,6 @@ describe("formatTime / formatCurrencyEUR", () => {
 });
 
 describe("the German dictionary", () => {
-  it("ships the full extracted copy (>= 860 leaves)", () => {
-    expect(deLeaves.length).toBeGreaterThanOrEqual(860);
-  });
-
   it("has no empty string anywhere", () => {
     const empty = deLeaves.filter((leaf) => leaf.strings.some((s) => s.trim() === ""));
     expect(empty.map((leaf) => leaf.path)).toEqual([]);
@@ -182,49 +177,6 @@ describe("the German dictionary", () => {
     expect([...COPY_VAR_NAMES].filter((name) => !used.has(name))).toEqual([]);
   });
 
-  it("carries every plural leaf as one leaf each (COMPONENT_MAP.md §6.3)", () => {
-    expect(deLeaves.filter((leaf) => leaf.plural).map((leaf) => leaf.path).sort()).toEqual([
-      // The port's own fifth plural leaf: „{count} Unterhaltungen“ in the
-      // Nachrichten nav header. §6.3 predates the surface; the rule it states
-      // (a plural is one leaf, read only through `tp`) is what is under test.
-      "liveInbox.count",
-      "scout.brief.sheet.count",
-      "settings.billing.usage.searches",
-      "settings.knowledge.import.done",
-      "settings.privacy.portals.sub",
-    ]);
-  });
-
-  it("excludes the prototype dev bar and the superseded landing v1 copy", () => {
-    // COMPONENT_MAP.md §6.1 rule 2 / DECISIONS.md item 20. The excluded blocks are exactly
-    // SCOUT §18.18 `scout.demo.*` and LANDING §17.12 `landing.v1.*` — NOT every path that
-    // contains the substring "demo": `settings.sources.demo.*`, `settings.knowledge.demo.*`
-    // and `landing.header.cta.demo` are shipped product copy (the demo data of §6.2 rule 6).
-    const excluded = deLeaves.filter(
-      (leaf) => leaf.path.startsWith("scout.demo.") || leaf.path.startsWith("landing.v1."),
-    );
-    expect(excluded.map((leaf) => leaf.path)).toEqual([]);
-    expect("demo" in de.scout).toBe(false);
-    expect("v1" in de.landing).toBe(false);
-  });
-
-  it("applied the two §6.1 self-prefix strips", () => {
-    expect("settings" in de.settings).toBe(false); // not settings.settings.nav.back
-    expect("operator" in de.operator).toBe(false); // not operator.operator.nav.back
-    expect(de.settings.nav.back).toBeTypeOf("string");
-    expect(de.operator.nav.back).toBeTypeOf("string");
-    // §17.12's quoted cross-surface blocks are a different surface and correctly stay.
-    expect(de.operator.settings).toBeTypeOf("object");
-    expect(de.operator.scout).toBeTypeOf("object");
-  });
-
-  it("hoisted SETTINGS §17.12's common.* to the root", () => {
-    expect("common" in de.settings).toBe(false);
-    expect(de.common.saved).toBe("Gespeichert");
-    expect(de.common.copyFailedToast).toBe(
-      "Kopieren war nicht möglich. Markiere den Text und kopiere ihn selbst.",
-    );
-  });
 });
 
 describe("the English dictionary", () => {

@@ -12,7 +12,7 @@ async function fixture() {
   const t = convexTest(schema, modules);
   const ids = await t.run(async (ctx) => {
     const now = 1_000;
-    const ownerId = await ctx.db.insert("users", { username: "context-musician", role: "musician", createdAt: now, lastSeenAt: now });
+    const ownerId = await ctx.db.insert("users", { username: "context-musician", firstName: "Mina", actKind: "band", actName: "Night Owls", providerIdentityConfirmedAt: now, role: "musician", createdAt: now, lastSeenAt: now });
     const needId = await ctx.db.insert("savedNeeds", { ownerId, title: "Band room", city: "Stuttgart", districts: [], arrangement: ["shared"], schedule: ["Tuesday"], requirements: ["Drums"], maxBudgetEur: 300, matchingRevision: 1, status: "active", createdAt: now, updatedAt: now });
     const signalId = await ctx.db.insert("signals", { side: "supply", title: "Provider room", city: "Stuttgart", summary: "A real provider room", arrangement: "shared", requirements: ["Drums"], unknowns: [], status: "published", verification: "observed", sourceCount: 1, firstSeenAt: now, lastSeenAt: now });
     const signal = (await ctx.db.get(signalId))!;
@@ -53,6 +53,11 @@ it("includes the current provider offer in Scout chat context without requiring 
   expect(context).toContain('"currentAssessment"');
   expect(context).toContain("Provider confirmed availability and the monthly price.");
   expect(context).toContain("TRUSTED ACCEPTANCE RULE:");
+
+  const focused = await f.t.query(internal.providerConversations.getProgressContext, {
+    ownerId: f.ownerId, savedNeedId: f.needId, focusedSignalId: (await f.t.run(async (ctx) => (await ctx.db.get(f.conversationId))!)).signalId,
+  });
+  expect(focused).toContain('"focused":true');
 });
 
 it("reports a completed acceptance as sent even after the search is paused and conversation closed", async () => {

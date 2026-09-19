@@ -49,7 +49,11 @@ says to lock them in or asks for a file update.
   follow verification links, handle payment/contracts, use custom CAPTCHA
   bypass logic, or apply this exception to another source, host, or adapter.
 - **Text generation uses OpenAI through the Convex AI Gateway.**
-  `openai/gpt-5.6-terra` is the shared text-generation model. The regular OpenAI
+  `openai/gpt-5.6-terra` remains the default for Scout conversations, full voice
+  delegation, provider assessment, matching and outgoing-message safety.
+  `openai/gpt-5.6-luna` handles bounded early voice fact capture, decision-question
+  formulation, source/index/detail extraction, memory compression/import, and
+  simulated portal providers. Both use the Gateway. The regular OpenAI
   endpoint may use `OPENAI_API_KEY` only for semantic embeddings, the approved
   GPT-Live WebRTC voice flow, and browser interpretation inside the Stagehand
   v4 Node runtime. Scout text and normalization stay on the Gateway; do not

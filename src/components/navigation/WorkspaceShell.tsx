@@ -5,11 +5,9 @@ import {
   Database,
   LogOut,
   Mail,
-  Map,
   Radar,
   Radio,
   ScrollText,
-  Search,
   Send,
   SlidersHorizontal,
 } from "lucide-react";
@@ -19,6 +17,8 @@ import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../../../convex/_generated/api";
+import { useCopy } from "../../ui/copy";
+import { BrandLockup } from "./BrandLockup";
 
 type NavItem = {
   label: string;
@@ -43,6 +43,7 @@ type WorkspaceShellProps = {
 };
 
 export function WorkspaceShell({ children, mode }: WorkspaceShellProps) {
+  const { t } = useCopy();
   const navigate = useNavigate();
   const location = useLocation();
   const { signOut } = useAuthActions();
@@ -53,10 +54,9 @@ export function WorkspaceShell({ children, mode }: WorkspaceShellProps) {
   const newMatches = useQuery(api.matches.listMine, isOps ? "skip" : { status: "new", limit: 50 });
   const approvalDrafts = useQuery(api.outreach.listMine, isOps ? "skip" : { status: "awaiting_approval", limit: 50 });
   const musicianItems: NavItem[] = [
-    { label: "Scout", to: "/app/scout", icon: Radar, count: approvalDrafts?.length },
-    { label: "Anzeigen entdecken", to: "/app/explore", icon: Search },
-    { label: "Euer Suchauftrag", to: "/app/search", icon: SlidersHorizontal, count: newMatches?.length },
-    { label: "Nachrichten", to: "/app/inbox", icon: Mail, count: inboxThreads?.filter((thread) => thread.status === "replied").length },
+    { label: t("appRoutes.workspace.scout"), to: "/app/scout", icon: Radar, count: approvalDrafts?.length },
+    { label: t("appRoutes.workspace.search"), to: "/app/search", icon: SlidersHorizontal, count: newMatches?.length },
+    { label: t("appRoutes.messages"), to: "/app/inbox", icon: Mail, count: inboxThreads?.filter((thread) => thread.status === "replied").length },
   ];
   const opsItems: NavItem[] = [
     { label: "Overview", to: "/ops", icon: Activity },
@@ -67,7 +67,7 @@ export function WorkspaceShell({ children, mode }: WorkspaceShellProps) {
   ];
   const items = isOps ? opsItems : musicianItems;
   const home = isOps ? "/ops" : "/app/scout";
-  const displayName = currentUser?.displayName ?? currentUser?.username ?? "Dein Konto";
+  const displayName = currentUser?.displayName ?? currentUser?.username ?? t("appRoutes.workspace.account");
   const initials = displayName.split(/[\s_-]+/).filter(Boolean).map((word) => word[0]).slice(0, 2).join("").toUpperCase();
 
   async function handleSignOut() {
@@ -78,17 +78,16 @@ export function WorkspaceShell({ children, mode }: WorkspaceShellProps) {
   if (!isOps) return (
     <div className={`rs-consumer-workspace${location.pathname === "/app/scout" ? " rs-consumer-workspace--scout" : ""}`}>
       <header className="rs-consumer-header">
-        <Link className="rs-consumer-wordmark" to={home} aria-label="RoomScout home">roomscout</Link>
+        <Link className="rs-consumer-wordmark" to={home} aria-label={t("appRoutes.workspace.home")}><BrandLockup /></Link>
         <details className="rs-account-menu" key={location.pathname}>
-          <summary aria-label="Profilmenü"><span>{initials}</span></summary>
-          <nav aria-label="RoomScout und Konto" className="rs-account-menu__panel">
-            <div className="rs-account-menu__identity"><strong>{displayName}</strong><span>Dein persönlicher Scout</span></div>
+          <summary aria-label={t("appRoutes.profileMenu")}><span>{initials}</span></summary>
+          <nav aria-label={t("appRoutes.workspace.accountNavigation")} className="rs-account-menu__panel">
+            <div className="rs-account-menu__identity"><strong>{displayName}</strong><span>{t("appRoutes.workspace.personalScout")}</span></div>
             <NavigationItems items={musicianItems} />
-            <Link to="/app/map"><Map size={16} aria-hidden="true" />Karte</Link>
             <hr />
-            <Link to="/app/settings/sources"><CircleUser size={16} aria-hidden="true" />Einstellungen</Link>
-            {currentUser?.role === "operator" ? <Link to="/ops"><ArrowLeftRight size={16} aria-hidden="true" />Betreiberansicht</Link> : null}
-            <button onClick={() => void handleSignOut()} type="button"><LogOut size={16} aria-hidden="true" />Abmelden</button>
+            <Link to="/app/settings/sources"><CircleUser size={16} aria-hidden="true" />{t("appRoutes.settings")}</Link>
+            {currentUser?.role === "operator" ? <Link to="/ops"><ArrowLeftRight size={16} aria-hidden="true" />{t("appRoutes.operator")}</Link> : null}
+            <button onClick={() => void handleSignOut()} type="button"><LogOut size={16} aria-hidden="true" />{t("appRoutes.signOut")}</button>
           </nav>
         </details>
       </header>
@@ -100,9 +99,7 @@ export function WorkspaceShell({ children, mode }: WorkspaceShellProps) {
     <div className={`shell rs-workspace rs-workspace--${mode}`}>
       <aside className="side rs-sidebar">
         <Link aria-label={isOps ? "RoomScout Ops home" : "RoomScout home"} className="brand" to={home}>
-          <b className="rs-wordmark">
-            roomscout {isOps ? <span className="rs-brand-accent">ops</span> : null}
-          </b>
+          <BrandLockup suffix={isOps ? <span className="rs-brand-accent">ops</span> : null} />
         </Link>
         <nav aria-label={isOps ? "Operations" : "RoomScout"} className="nav">
           <NavigationItems items={items} />

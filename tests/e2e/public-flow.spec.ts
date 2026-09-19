@@ -1,42 +1,44 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./public-fixture";
 
-test("public search flows from the landing page into the market explorer", async ({ page }) => {
+test("the landing page takes musicians into the Scout sign-up flow", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: /Stop searching/ })).toBeVisible();
-  await expect(page.getByText(/recent public signals/)).toBeVisible();
-  await page.getByLabel("City or region").fill("Stuttgart");
-  await page.getByRole("button", { name: "Search rehearsal rooms" }).click();
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  await expect(page.locator('a[href="/explore"], a[href="/map"]')).toHaveCount(0);
+  await page.getByRole("link", { name: "Start searching", exact: true }).click();
 
-  await expect(page).toHaveURL(/\/explore\?city=Stuttgart/);
-  await expect(page.getByRole("heading", { name: "Market explorer" })).toBeVisible();
-  await expect(page.getByText(/signals in Stuttgart/)).toBeVisible();
+  await expect(page).toHaveURL(/\/sign-up\?returnTo=%2Fapp%2Fscout$/);
+  await expect(page.getByRole("button", { name: "Create account", exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "RoomScout home", exact: true }).click();
+  await expect(page).toHaveURL(/\/$/);
 });
 
-test("signal-side filtering and provenance detail remain usable", async ({ page }) => {
-  await page.goto("/explore");
+test("an old map link leads to sign-in for the Scout", async ({ page }) => {
+  await page.goto("/map");
+  await expect(page).toHaveURL(/\/sign-in\?returnTo=%2Fapp%2Fscout$/);
+  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
+});
 
-  await page.getByRole("button", { name: "Supply", exact: true }).click();
-  await expect(page.getByText("Post-punk band looking for a fixed room")).toHaveCount(0);
-  await page.getByRole("combobox", { name: "Sort signals" }).click();
-  await page.getByRole("option", { name: "Newest" }).click();
-  await expect(page.getByRole("combobox", { name: "Sort signals" })).toHaveText("Newest");
-  const signalLinks = page.locator(".rs-signal-card__link");
-  if (await signalLinks.count()) {
-    await signalLinks.first().click();
-    await expect(page.getByText("Known facts", { exact: true })).toBeVisible();
-    await expect(page.getByText("Provenance", { exact: true })).toBeVisible();
-  } else {
-    await expect(page.getByRole("heading", { name: "No matching signals yet" })).toBeVisible();
-  }
+test("a room's evidence stays available and leads back to the Scout", async ({ page }) => {
+  await page.goto("/signals/newer-supply");
+  await expect(page.getByRole("heading", { level: 1, name: "Newly listed rehearsal room" })).toBeVisible();
+  await expect(page.getByText("Known facts", { exact: true })).toBeVisible();
+  await expect(page.getByText("€230 / month", { exact: true })).toBeVisible();
+  await expect(page.getByText("Provenance", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open source" })).toHaveAttribute("href", "https://example.com/rehearsal-room");
+  await page.getByRole("link", { name: "Go to Scout", exact: true }).click();
+  await expect(page).toHaveURL(/\/sign-in\?returnTo=%2Fapp%2Fscout$/);
 });
 
 test("mobile public navigation opens on demand", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile", "Mobile-only interaction");
-  await page.goto("/");
+  await page.goto("/signals/newer-supply");
 
+  await expect(page.getByRole("navigation", { name: "Public navigation" })).toBeHidden();
   await page.getByRole("button", { name: "Open navigation" }).click();
-  await expect(page.getByRole("navigation", { name: "Public navigation" })).toBeVisible();
-  await page.getByRole("link", { name: "Explore", exact: true }).click();
-  await expect(page).toHaveURL(/\/explore/);
+  const navigation = page.getByRole("navigation", { name: "Public navigation" });
+  await expect(navigation).toBeVisible();
+  await expect(navigation.getByRole("link", { name: /explore|map/i })).toHaveCount(0);
+  await navigation.getByRole("link", { name: "How it works", exact: true }).click();
+  await expect(page).toHaveURL(/\/#how$/);
 });

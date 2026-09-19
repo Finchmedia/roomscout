@@ -31,6 +31,7 @@ import { runScoutTurn, scoutAgent } from "./scoutRuntime";
 import { liveInstructions, scoutVoiceInstructions, type ConversationLocale } from "./prompts/roomScoutLive";
 import { voiceEndFarewell, type VoiceEndReason } from "./lib/voiceEndIntent";
 import { buildLiveDiscoveryContext } from "./lib/liveDiscoveryContext";
+import { musicianProfilePromptContext } from "./lib/musicianIdentity";
 
 const MAX_SESSION_MS = 15 * 60 * 1_000;
 const MAX_REQUESTS_PER_SESSION = 64;
@@ -401,7 +402,10 @@ export const getSessionBootstrap = internalQuery({
       threadId: context.threadId,
       activeNeedId: context.activeNeedId,
       focusedSignalId: context.focusedSignalId,
-      discoveryContext: JSON.stringify(discoveryContext),
+      discoveryContext: [
+        musicianProfilePromptContext(user),
+        `TRUSTED SEARCH CONTEXT:\n${JSON.stringify(discoveryContext)}`,
+      ].filter(Boolean).join("\n\n"),
       discovery: discoveryContext.discovery,
       locale: user.conversationLocale ?? "en",
       hasPriorContext: hasMeaningfulNeed || priorVoiceTranscript !== null,
@@ -1096,12 +1100,12 @@ export const delegate = action({
     let endCallReason: VoiceEndReason | undefined;
     const claimRef = { voiceSessionId: args.voiceSessionId, requestId, generation: claimed.generation };
     const captureFacts = args.intent === "capture_facts";
-    const onEffect = (kind: string, fields: string[]) => {
+    const onEffect = (kind: string, fields: string[], facts: string[] = []) => {
       sideEffect = true;
       effectKinds.add(kind);
       fields.forEach((field) => changedFields.add(field));
+      facts.forEach((fact) => verifiedFacts.add(fact));
       if (kind === "memory") verifiedFacts.add("memory.updated=true");
-      if (kind === "decision") verifiedFacts.add("decision.status=answered");
     };
     const searchCanChange = context.activeNeedId !== undefined &&
       (context.mode === "search_discovery" || context.mode === "signal_advisor");
@@ -1193,6 +1197,7 @@ export const delegate = action({
         threadId: state.threadId,
         origin: "musician",
         savedNeedId: context.activeNeedId,
+        focusedSignalId: context.focusedSignalId,
         caseCard: [
           context.caseCard,
           captureFacts ? captureInstruction : scoutVoiceInstructions(claimed.locale, { discovery }),
@@ -1204,6 +1209,7 @@ export const delegate = action({
               prompt: userPrompt,
               saveMessages: "none" as const,
               contextMode: "search_facts" as const,
+              modelRole: "utility" as const,
             }
           : {
               promptMessageId: claimed.promptMessageId!,

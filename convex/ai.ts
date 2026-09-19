@@ -4,15 +4,19 @@ import { structuredConvexGateway } from "./integrations/structuredConvexGateway"
 import type { LanguageModelV4 } from "@ai-sdk/provider";
 
 export const ROOMSCOUT_MODEL_ID = "openai/gpt-5.6-terra" as const;
+export const ROOMSCOUT_UTILITY_MODEL_ID = "openai/gpt-5.6-luna" as const;
 
 export const roomScoutLanguageModel =
   structuredConvexGateway(ROOMSCOUT_MODEL_ID);
+const roomScoutUtilityLanguageModel =
+  structuredConvexGateway(ROOMSCOUT_UTILITY_MODEL_ID);
 
 let activeRoomScoutLanguageModel: LanguageModelV4 = roomScoutLanguageModel;
 let testOverrideActive = false;
 
-export function getRoomScoutLanguageModel(): LanguageModelV4 {
-  return activeRoomScoutLanguageModel;
+export function getRoomScoutLanguageModel(modelRole?: "utility"): LanguageModelV4 {
+  if (testOverrideActive) return activeRoomScoutLanguageModel;
+  return modelRole === "utility" ? roomScoutUtilityLanguageModel : roomScoutLanguageModel;
 }
 
 /** Local convex-test/eval seam. It is deliberately unavailable in deployed
@@ -39,9 +43,10 @@ export async function generateRoomScoutObject<T>(args: {
   instructions: string;
   prompt: string;
   timeoutMs?: number;
+  modelRole?: "utility";
 }): Promise<T> {
   const result = await generateText({
-    model: getRoomScoutLanguageModel(),
+    model: getRoomScoutLanguageModel(args.modelRole),
     output: Output.object({ schema: args.schema }),
     instructions: args.instructions,
     prompt: args.prompt,

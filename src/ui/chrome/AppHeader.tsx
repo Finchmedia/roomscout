@@ -1,7 +1,7 @@
 import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
-import { Wordmark } from "@/components/ui/wordmark"
+import { BrandLockup } from "@/components/navigation/BrandLockup"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 
 /**
@@ -227,7 +227,7 @@ function AppHeader({
         className={cn(appHeaderVariants({ narrow }), className)}
         {...props}
       >
-        <Wordmark size={narrow ? "sm" : "default"} />
+        <BrandLockup size={narrow ? "sm" : "default"} />
         <div
           data-slot="app-header-actions"
           data-narrow={narrow ? "true" : undefined}

@@ -10,63 +10,39 @@ const need = (status: Doc<"savedNeeds">["status"]) => ({
   status, createdAt: 0, updatedAt: 0,
 }) as Doc<"savedNeeds">;
 
-describe("search discovery case card", () => {
-  it("forbids recapping captured facts and makes follow-up questions optional", () => {
+describe("prompt construction: search discovery case card", () => {
+  it("keeps a draft concise, canonical and explicitly user-started", () => {
     const card = buildScoutCaseCard({ mode: "search_discovery", need: need("draft") });
+
     expect(card).toContain("NEVER RECAP THE FACTS");
-    expect(card).toContain("Suchauftrag panel");
-    expect(card).toContain("at most one short acknowledging sentence");
-    expect(card).toContain("Add one focused follow-up only when QUESTION GATE permits it");
-    expect(card).not.toContain("EXACTLY ONE focused follow-up question");
+    expect(card).toContain("QUESTION GATE");
     expect(card).toContain("CANONICAL SEARCH AUTHORITY");
     expect(card).toContain("call getCurrentSearch");
-    expect(card).not.toContain("summarize for confirmation");
-  });
-
-  it("keeps the ready handoff locale-neutral while the search is a draft", () => {
-    const card = buildScoutCaseCard({ mode: "search_discovery", need: need("draft") });
-    expect(card).toContain("READY HANDOFF");
+    expect(scoutBaseInstructions).toContain("always use inspectCandidates before answering");
     expect(card).toContain("markSearchBriefReady");
-    expect(card).toContain("explicitly asks to start it in voice");
     expect(card).toContain("never start it merely because the brief is ready");
-    expect(card).toContain("do not quote a UI button label");
-    expect(card).not.toContain("Scout losschicken");
-  });
-
-  it("tells the Scout the search is already live and never to ask for the activation click", () => {
-    for (const status of ["active", "paused"] as const) {
-      const card = buildScoutCaseCard({ mode: "search_discovery", need: need(status) });
-      expect(card).toContain(`SEARCH ALREADY LIVE: the attached search is ${status}, not a draft.`);
-      expect(card).toContain("never ask them to start it again");
-      expect(card).not.toContain("Scout losschicken");
-      expect(card).not.toContain("READY HANDOFF");
-    }
-  });
-
-  it("asks only about genuine gaps and separates saved requirements from room capabilities", () => {
-    const card = buildScoutCaseCard({ mode: "search_discovery", need: need("draft") });
-    expect(card).toContain("QUESTION GATE");
-    expect(card).toContain("A missing optional field is not a material gap by itself");
-    expect(card).toContain("do not turn discovery into a form");
-    expect(card).toContain("blocks a useful next step or the musician explicitly invites refinement");
-    expect(card).toContain("arrangements=shared already answers whether they are open to sharing");
-    expect(card).toContain("Wanting to leave gear is a storage requirement; it does not create a separate security question");
     expect(card).toContain("REQUIREMENT IS NOT CAPABILITY");
-    expect(card).toContain("only from verified focused-room or provider evidence");
-    expect(card).toContain("If it is only asked about and not saved");
-    expect(card).toContain("NEVER RECAP THE FACTS");
+    expect(card).not.toContain("EXACTLY ONE focused follow-up question");
   });
 
-  it("falls back to the draft handoff when no search is attached", () => {
+  it.each(["active", "paused"] as const)("does not restart an already %s search", (status) => {
+    const card = buildScoutCaseCard({ mode: "search_discovery", need: need(status) });
+
+    expect(card).toContain(`SEARCH ALREADY LIVE: the attached search is ${status}, not a draft.`);
+    expect(card).toContain("never ask them to start it again");
+    expect(card).not.toContain("READY HANDOFF");
+  });
+
+  it("keeps the draft handoff available before a structured search exists", () => {
     const card = buildScoutCaseCard({ mode: "search_discovery", need: null });
+
     expect(card).toContain("READY HANDOFF");
     expect(card).toContain("No active structured search is attached.");
   });
 });
 
-describe("shared Scout instructions", () => {
-  it("does not turn user questions into facts or saved needs into room promises", () => {
-    expect(scoutBaseInstructions).toContain("requesting information, not stating a preference or fact");
+describe("prompt construction: shared Scout safety", () => {
+  it("does not turn questions into facts or requirements into room promises", () => {
     expect(scoutBaseInstructions).toContain("Do not store or infer a requirement from a question alone");
     expect(scoutBaseInstructions).toContain("only verified signal or provider evidence establishes a room capability");
   });

@@ -11,6 +11,8 @@ import {
   normalizeEmail,
   normalizeText,
 } from "./integrations/contentHash";
+import { controlledPortalOnly } from "./autonomyGate";
+import { resolveProviderIdentity } from "./lib/musicianIdentity";
 import { assertVoiceClaim, voiceClaimValidator } from "./lib/voiceClaim";
 
 const draftStatus = v.union(
@@ -440,6 +442,23 @@ export const claimApprovedSend = internalMutation({
       return { shouldSend: false as const };
     }
     if (draft.status !== "approved") {
+      return { shouldSend: false as const };
+    }
+    if (controlledPortalOnly()) {
+      await ctx.db.patch(draft._id, {
+        status: "failed",
+        error: "CONTROLLED_PORTAL_ONLY",
+        updatedAt: Date.now(),
+      });
+      return { shouldSend: false as const };
+    }
+    const owner = await ctx.db.get(draft.ownerId);
+    if (owner === null || !resolveProviderIdentity(owner).complete) {
+      await ctx.db.patch(draft._id, {
+        status: "failed",
+        error: "MUSICIAN_PROFILE_REQUIRED",
+        updatedAt: Date.now(),
+      });
       return { shouldSend: false as const };
     }
     const approval = await ctx.db

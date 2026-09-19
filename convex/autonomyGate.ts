@@ -216,7 +216,8 @@ export async function recordOutcome(
       summary: outcome.reason, occurredAt: now,
     });
     // ADR 0002: an ask_user is an Entscheidung with the finished text, never a silent stop.
-    const spec = gateDecisionSpec(request, outcome);
+    const owner = await ctx.db.get(ownerId);
+    const spec = gateDecisionSpec(request, outcome, owner?.conversationLocale === "de" ? "de" : "en");
     if (spec !== null) {
       await raiseDecision(ctx, {
         ownerId, savedNeedId: request.savedNeedId, conversationId: request.providerConversationId,

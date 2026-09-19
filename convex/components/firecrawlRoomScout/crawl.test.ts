@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api.js";
-import { initConvexTest, mockFetch, TEST_SITE_URL } from "./setup.test.js";
+import { initConvexTest, mockFetch, TEST_SITE_URL } from "./setup.testSupport.js";
 import { TOKEN_HEADER, _test } from "./crawl.js";
 import type { Id } from "./_generated/dataModel.js";
 import { sign } from "./signature.js";

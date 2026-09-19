@@ -15,8 +15,5 @@ describe("personal AgentMail usernames", () => {
     expect(collisionSafeMailboxUsername("The Strümmers!!", clientId)).toBe(
       "the-strummers-a1b2c3d4",
     );
-    expect(collisionSafeMailboxUsername("The Strümmers!!", clientId)).toBe(
-      collisionSafeMailboxUsername("The Strümmers!!", clientId),
-    );
   });
 });

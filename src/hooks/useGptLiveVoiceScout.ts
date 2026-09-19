@@ -1,3 +1,4 @@
+import { cleanVoiceTranscript } from "@/features/voice/transcriptText";
 import { useAuthToken } from "@convex-dev/auth/react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
@@ -199,7 +200,7 @@ const LIVE_CLIENT_EVENT_TYPES = new Set([
 const MAX_APPEND_UTF8_BYTES = 400;
 const INPUT_SPEECH_VOLUME_THRESHOLD = 0.02;
 const OUTPUT_SPEECH_VOLUME_THRESHOLD = 0.01;
-const SPOKEN_RELAY_QUIET_DWELL_MS = 1_100;
+const SPOKEN_RELAY_QUIET_DWELL_MS = 1_600;
 const textEncoder = new TextEncoder();
 
 /**
@@ -305,7 +306,7 @@ function toTranscript(rows: LiveCaptionRow[]): VoiceTranscriptItem[] {
   return rows.slice(-24).map((row) => ({
     id: row.id,
     role: row.role,
-    text: row.text,
+    text: row.role === "assistant" ? cleanVoiceTranscript(row.text) : row.text,
     // GPT-Live deliberately has no authoritative final-fragment event.
     final: false,
   }));
@@ -589,13 +590,15 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       if ((persistedSegmentRevisionsRef.current.get(segment.segmentId) ?? 0) >= segment.revision) {
         continue;
       }
+      const visibleText = segment.role === "assistant" ? cleanVoiceTranscript(segment.text) : segment.text;
+      if (!visibleText.trim()) continue;
       try {
         await recordTranscriptSegment({
           voiceSessionId: sessionId,
           segmentId: segment.segmentId,
           revision: segment.revision,
           role: segment.role,
-          transcript: segment.text,
+          transcript: visibleText,
           sourceEventIds: segment.sourceEventIds,
           startMs: segment.startMs,
           endMs: segment.endMs,

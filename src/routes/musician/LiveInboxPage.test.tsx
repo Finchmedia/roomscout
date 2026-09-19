@@ -80,6 +80,7 @@ function thread(overrides: Record<string, unknown> = {}) {
       conversationId: "c1", savedNeedId: "n1", signalId: "s1",
       title: "Proberaum Neukölln", subtitle: "Berlin", channel: "platform",
       state: "waiting", providerLabel: "Anna Meier", offer: null,
+      progress: "reply_received", hasProviderReply: true, canRetryAssessment: false,
       composer: { enabled: true },
       ...(overrides.header as Record<string, unknown> ?? {}),
     },
@@ -195,7 +196,8 @@ describe("LiveInboxPage", () => {
     }
     expect(screen.getByRole("group", { name: "liveInbox.you" })).toHaveAttribute("data-align", "end");
     expect(screen.getByText("liveInbox.pendingApproval")).toBeVisible();
-    expect(screen.getByText("liveInbox.scoutNote")).toBeVisible();
+    expect(screen.getByText("liveInbox.scoutUpdate")).toBeVisible();
+    expect(screen.queryByText(/ask_provider/)).not.toBeInTheDocument();
   });
 
   it("stages the musician's own reply through conversations.reply", async () => {

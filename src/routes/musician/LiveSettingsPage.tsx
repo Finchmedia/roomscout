@@ -4,10 +4,10 @@ import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { ContextImportDialog } from "../../components/memory/ContextImportDialog";
+import { MusicianProfileForm, type MusicianProfileDraft } from "../../components/profile/MusicianProfileForm";
 import { ActionDialog } from "../../components/ui/ActionDialog";
 import { Button } from "../../components/ui/button";
 import { Icon } from "../../components/ui/icon";
-import { Input } from "../../components/ui/input";
 import { LiveSourcesSection } from "./LiveSourcesSection";
 import { LiveKnowledgeSection } from "./LiveKnowledgeSection";
 import { LiveBillingSection, LivePrivacySection } from "./LiveAccountSections";
@@ -56,7 +56,7 @@ export function LiveSettingsPage() {
   const portalPreferences = useQuery(api.searchSources.getPortalPreferences, need ? { savedNeedId: need._id } : "skip");
   const setPortalPreference = useMutation(api.searchSources.setPortalPreference);
   const saveAutonomy = useMutation(api.autonomy.save);
-  const updateName = useMutation(api.settings.updateDisplayName);
+  const saveProfile = useMutation(api.musicianProfile.saveMine);
   const setPreference = useMutation(api.searchSources.setPreference);
   const deleteFact = useMutation(api.memory.deleteFact);
   const updateFact = useMutation(api.memory.updateFact);
@@ -70,7 +70,8 @@ export function LiveSettingsPage() {
   const recoverFirecrawlProfile = useAction(api.firecrawlPortal.recoverProfile);
   const syncInbox = useAction(api.browserbasePortal.syncInboxNow);
   const disableConnection = useAction(api.browserbasePortal.disableConnection);
-  const [nameDraft, setNameDraft] = React.useState<string | null>(null);
+  const [profileDirty, setProfileDirty] = React.useState(false);
+  const [profileFormVersion, setProfileFormVersion] = React.useState(0);
   const [autonomyDraft, setAutonomyDraft] = React.useState<AutonomyRules | null>(null);
   const [autonomyError, setAutonomyError] = React.useState<string | null>(null);
   const [working, setWorking] = React.useState("");
@@ -78,11 +79,9 @@ export function LiveSettingsPage() {
   const [importOpen, setImportOpen] = React.useState(false);
   const [discardAction, setDiscardAction] = React.useState<(() => void) | null>(null);
   const [disableId, setDisableId] = React.useState<Id<"portalConnections"> | null>(null);
-  const currentName = user?.displayName ?? user?.username ?? "";
-  const draftName = nameDraft ?? currentName;
-  const nameDirty = nameDraft !== null && nameDraft.trim() !== currentName;
+  const currentName = user?.displayName ?? user?.firstName ?? "";
   const autonomyDirty = autonomyDraft !== null && JSON.stringify(autonomyDraft) !== JSON.stringify(autonomy?.rules);
-  const dirty = nameDirty || autonomyDirty;
+  const dirty = profileDirty || autonomyDirty;
   const connectedSourceIds = new Set((portals ?? []).filter((portal) => portal.status !== "disabled").map((portal) => portal.sourceId));
   const availableConnections = (connectable ?? []).filter((source) => !connectedSourceIds.has(source.sourceId));
 
@@ -135,7 +134,7 @@ export function LiveSettingsPage() {
     footer={<div><div className="font-medium">{currentName || "RoomScout"}</div><div className="text-sm text-rs-ink-6">{copy("personalArea")}</div></div>}
     overlays={<>
       <ContextImportDialog open={importOpen} onOpenChange={setImportOpen} />
-      <ActionDialog open={discardAction !== null} onOpenChange={(open) => { if (!open) setDiscardAction(null); }} title={copy("discardTitle")} description={copy("discardDescription")} footer={<><Button variant="secondary" onClick={() => setDiscardAction(null)}>{copy("keepEditing")}</Button><Button onClick={() => { const action = discardAction; setNameDraft(null); setAutonomyDraft(null); setDiscardAction(null); action?.(); }}>{copy("discard")}</Button></>}><p>{copy("discardBody")}</p></ActionDialog>
+      <ActionDialog open={discardAction !== null} onOpenChange={(open) => { if (!open) setDiscardAction(null); }} title={copy("discardTitle")} description={copy("discardDescription")} footer={<><Button variant="secondary" onClick={() => setDiscardAction(null)}>{copy("keepEditing")}</Button><Button onClick={() => { const action = discardAction; setProfileDirty(false); setProfileFormVersion((version) => version + 1); setAutonomyDraft(null); setDiscardAction(null); action?.(); }}>{copy("discard")}</Button></>}><p>{copy("discardBody")}</p></ActionDialog>
       <ActionDialog open={disableId !== null} onOpenChange={(open) => { if (!open) setDisableId(null); }} title={copy("removeTitle")} description={copy("removeDescription")} footer={<><Button variant="secondary" disabled={working.startsWith("disable:")} onClick={() => setDisableId(null)}>{copy("keepConnected")}</Button><Button variant="danger" disabled={working.startsWith("disable:")} onClick={() => { const connectionId = disableId; if (!connectionId) return; void run(`disable:${connectionId}`, async () => { await disableConnection({ connectionId }); setDisableId(null); }, copy("connectionRemoved")); }}>{copy("removeConnection")}</Button></>}><p>{copy("removeBody")}</p></ActionDialog>
     </>}
   >
@@ -149,6 +148,11 @@ export function LiveSettingsPage() {
       onPortalToggle={(portal, checked) => { if (need) void run(`source:${portal.sourceId}`, () => setPortalPreference({ savedNeedId: need._id, sourceId: portal.sourceId, preference: checked ? "include" : "exclude" })); }}
       onSourceToggle={(source, checked) => { if (need) void run(`source:${source.platformId}`, () => setPreference({ savedNeedId: need._id, platformId: source.platformId, preference: checked ? "include" : "exclude" })); }}
       portalActions={(portal) => {
+        const controlled = isControlledDemoUrl(portal.baseUrl);
+        if (!controlled) return <>
+          <span className="text-sm text-rs-ink-4">{t("settings.sources.status.contactDisabledDemo")}</span>
+          <Button size="xs" variant="danger" disabled={Boolean(working)} onClick={() => setDisableId(portal._id)}>{copy("remove")}</Button>
+        </>;
         const registrationInProgress = portal.latestAuthenticationRun && ["queued", "running", "human_required"].includes(portal.latestAuthenticationRun.status);
         const firecrawlNeedsRecovery = portal.browserProvider === "firecrawl" && portal.latestAuthenticationRun?.status === "completed" && (portal.status !== "active" || portal.contextStatus !== "ready");
         return <>
@@ -163,7 +167,12 @@ export function LiveSettingsPage() {
         </>;
       }}
       addressAction={!mailbox || mailbox.status === "failed" ? <Button size="xs" disabled={Boolean(working)} onClick={() => void run("mailbox", () => ensureMailbox(), copy("mailboxReady"))}>{copy("configureAddress")}</Button> : null}
-      moreSources={< >{availableConnections.map((source) => <SettingsRow key={source.sourceId}><div><strong>{source.platformName ?? source.name}</strong><div className="text-sm text-rs-ink-4">{source.baseUrl}</div></div><Button size="xs" variant="secondary" disabled={Boolean(working)} onClick={() => void run(`connect:${source.sourceId}`, () => requestConnection({ sourceId: source.sourceId, label: source.name }), copy("connectionAdded"))}>{copy("include")}</Button></SettingsRow>)}{!availableConnections.length ? <p className="text-rs-ink-4">{copy("noMoreSources")}</p> : null}</>}
+      moreSources={< >{availableConnections.map((source) => {
+        const controlled = isControlledDemoUrl(source.baseUrl);
+        return <SettingsRow key={source.sourceId}><div><strong>{source.platformName ?? source.name}</strong><div className="text-sm text-rs-ink-4">{source.baseUrl}</div></div>{controlled
+          ? <Button size="xs" variant="secondary" disabled={Boolean(working)} onClick={() => void run(`connect:${source.sourceId}`, () => requestConnection({ sourceId: source.sourceId, label: source.name }), copy("connectionAdded"))}>{copy("include")}</Button>
+          : <Button size="xs" variant="secondary" disabled>{t("settings.sources.more.action.contactDisabled")}</Button>}</SettingsRow>;
+      })}{!availableConnections.length ? <p className="text-rs-ink-4">{copy("noMoreSources")}</p> : null}</>}
     /> : null}
 
     {!loading && page === "autonomy" ? <AutonomyPage
@@ -208,7 +217,14 @@ export function LiveSettingsPage() {
 
     {!loading && page === "profile" ? <>
       <PageTitle>{copy("profileTitle")}</PageTitle><PageLead>{copy("profileLead")}</PageLead>
-      <form className="mt-8 grid max-w-xl gap-4" onSubmit={(event) => { event.preventDefault(); const value = draftName.trim(); if (!value || value === currentName) return; void run("profile", async () => { await updateName({ displayName: value }); setNameDraft(null); }); }}><div className="flex size-16 items-center justify-center rounded-full bg-rs-surface-subtle text-xl">{initials(draftName)}</div><Input label={copy("displayName")} maxLength={80} value={draftName} onChange={(event) => setNameDraft(event.target.value)} /><Button type="submit" disabled={!dirty || !draftName.trim() || Boolean(working)}>{copy("save")}</Button></form><p className="mt-8 text-sm text-rs-ink-4">{copy("immutableLogin", { username: user?.username })}</p>
+      <div className="mt-8 max-w-xl"><MusicianProfileForm
+        key={`${user?._id}:${profileFormVersion}`}
+        initialProfile={{ firstName: user?.firstName, lastName: user?.lastName, actKind: user?.actKind, actName: user?.actName }}
+        submitting={working === "profile"}
+        submitLabel={t("appRoutes.onboarding.update")}
+        onDirtyChange={setProfileDirty}
+        onSubmit={(profile: MusicianProfileDraft) => run("profile", () => saveProfile(profile))}
+      /></div><p className="mt-8 text-sm text-rs-ink-4">{copy("immutableLogin", { username: user?.username })}</p>
     </> : null}
 
     {!loading && page === "notifications" ? <><PageTitle>{copy("notificationsTitle")}</PageTitle><PageLead>{copy("notificationUnavailable")}</PageLead><Button className="mt-8" variant="secondary" onClick={() => navigate("/app/inbox")}>{copy("openInbox")}</Button></> : null}

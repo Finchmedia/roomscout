@@ -3,13 +3,18 @@
 Festgehalten aus dem Gespräch mit dem Maintainer nach dem Firecrawl-Umbau.
 Hackathon-Deadline 2026-09-22.
 
-> Aktualisierung 2026-09-16: GPT-Live und die aktuellen Demo-Dokumente sind im
-> Integrationsbranch zusammengeführt. Der Stand ist noch nicht in Produktion
-> veröffentlicht. Die technische Integration ersetzt weder den vollständigen
-> Portal-/Raum-Durchlauf noch die zehn aufeinanderfolgenden Durchläufe vor der
-> Aufnahme; diese reale Prüfung übernimmt der Maintainer. Verbindlicher Stand:
-> [Produktions-Umzugsplan](GPT_LIVE_PRODUCTION_MOVE_PLAN.md) und
-> [Implementierungs-/Prüfstatus](GPT_LIVE_IMPLEMENTATION_STATUS.md).
+> Aktualisierung 2026-09-16: GPT-Live und die Kandidaten-/Budget-Fixes sind auf
+> Produktion veröffentlicht. Die untenstehenden Bestandszahlen beschreiben den
+> früheren Priorisierungsstand, keine aktuelle Datenabfrage. Als Nächstes stehen
+> durchgehend EN/DE, der begrenzte GT-Wörterbuchtest und das fertige Demo-Paket
+> an. Neue Sprachen und Standorte gehören nicht in diesen Schritt. Der
+> vollständige Portal-/Raum-Durchlauf und die zehn Wiederholungen bleiben reale
+> Abnahmen durch den Maintainer. Aktueller Abschlussplan:
+> [Demo und Einreichung](DEMO_SUBMISSION_READINESS.md).
+
+> UX-Entscheidung 2026-09-16: Voice und Text-Scout sind der Musiker-Einstieg.
+> Explore und Karte entfallen als Produktoberflächen; der Index bleibt die
+> Datengrundlage des Scouts. Die ältere Karten-Kulisse unten ist damit überholt.
 
 ## Stand der drei Punkte
 
@@ -22,8 +27,8 @@ Hackathon-Deadline 2026-09-22.
 - **Demo-Portal:** Ein Listing, ein Vermieter, das ist der Maintainer. Der
   geskriptete Simulator im Portal (`controlledSimulation.ts`) kennt drei
   Szenarien, ist aber nur Betreiber-Werkzeug und kein LLM.
-- **GPT-Live:** Der GPT-Live-Pfad ist implementiert und mit dem aktuellen
-  Demo-Stand zusammengeführt, aber noch nicht in Produktion veröffentlicht.
+- **GPT-Live:** Der GPT-Live-Pfad ist implementiert und inzwischen mit dem
+  aktuellen Demo-Stand in Produktion veröffentlicht.
   Live führt das natürliche Discovery-Gespräch; der bestehende Terra-Scout
   speichert Fakten und Memory, prüft Bereitschaft und führt Aktionen aus.
   Englisch ist Standard, ein ausdrücklicher Deutschwechsel bleibt gespeichert,

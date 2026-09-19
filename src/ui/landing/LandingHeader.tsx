@@ -29,7 +29,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet"
-import { Wordmark } from "@/components/ui/wordmark"
+import { BrandLockup } from "@/components/navigation/BrandLockup"
 import { LanguageToggle, useCopy } from "@/ui/copy"
 import type { StringCopyKey } from "@/ui/copy"
 
@@ -72,7 +72,9 @@ export function LandingHeader({ demoHref = DEMO_HREF, signInHref, signInLabel }:
           : "h-20 border-transparent bg-transparent"
       )}
     >
-      <Wordmark href={`#${SECTION_IDS.top}`} size="md" className="justify-self-start" />
+      <a aria-label="RoomScout" href={`#${SECTION_IDS.top}`} className="justify-self-start no-underline">
+        <BrandLockup size="md" />
+      </a>
 
       {narrow ? (
         <span />

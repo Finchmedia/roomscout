@@ -37,6 +37,87 @@ it("requires explicit bilateral sharing consent for demand matches", () => {
   expect(result.eligible).toBe(false);
 });
 
+it("classifies an otherwise fitting room above a comparable monthly budget as near-budget", () => {
+  const result = scoreSignalMatch({
+    city: "Stuttgart",
+    maxBudgetEur: 250,
+    arrangement: ["shared"],
+    requirements: [],
+  }, {
+    side: "supply",
+    city: "Stuttgart",
+    title: "Shared room",
+    summary: "A monthly rehearsal room",
+    arrangement: "shared",
+    priceEur: 350,
+    pricePeriod: "month",
+    requirements: [],
+  }, 1);
+
+  expect(result).toMatchObject({
+    eligible: false,
+    eligibility: "near_budget",
+    monthlyCostEur: 350,
+    monthlyCostBasis: "listed_monthly_base",
+    budgetDeltaEur: 100,
+  });
+});
+
+it("does not compare an hourly listing price with a monthly search budget", () => {
+  const result = scoreSignalMatch({
+    city: "Stuttgart",
+    maxBudgetEur: 250,
+    arrangement: ["hourly"],
+    requirements: [],
+  }, {
+    side: "supply",
+    city: "Stuttgart",
+    title: "Hourly room",
+    summary: "Book by the hour",
+    arrangement: "hourly",
+    priceEur: 300,
+    pricePeriod: "hour",
+    requirements: [],
+  }, 1);
+
+  expect(result.eligibility).toBe("fit");
+  expect(result.monthlyCostBasis).toBe("unknown");
+  expect(result.budgetDeltaEur).toBeUndefined();
+  expect(result.uncertainties).toContain("A comparable total monthly price has not been established");
+});
+
+it("uses a grounded monthly minimum as a comparable lower bound without claiming the total is known", () => {
+  const result = scoreSignalMatch({
+    city: "Stuttgart", maxBudgetEur: 250, arrangement: ["shared"], requirements: [],
+  }, {
+    side: "supply", city: "Stuttgart", title: "Shared room", summary: "Room",
+    arrangement: "shared", priceEur: 25, pricePeriod: "hour", requirements: [],
+  }, 1, {
+    requirements: [],
+    schedule: { verdict: "unknown", evidence: null, explanation: "No schedule requested" },
+    monthlyPrice: { minimumEur: 320, totalKnown: false, evidence: "At least EUR 320 monthly" },
+    sharing: { open: null, evidence: null },
+  });
+
+  expect(result).toMatchObject({
+    eligibility: "near_budget",
+    monthlyCostBasis: "assessed_monthly_minimum",
+    monthlyCostEur: 320,
+    budgetDeltaEur: 70,
+  });
+});
+
+it("does not call a room near-budget when another hard constraint also excludes it", () => {
+  const result = scoreSignalMatch({
+    city: "Stuttgart", maxBudgetEur: 250, arrangement: ["shared"], requirements: [],
+  }, {
+    side: "supply", city: "Stuttgart", title: "Permanent room", summary: "Room",
+    arrangement: "permanent", priceEur: 350, pricePeriod: "month", requirements: [],
+  }, 1);
+
+  expect(result).toMatchObject({ eligibility: "ineligible", budgetDeltaEur: 100 });
+});
+
 describe("hard constraints", () => {
   it("rejects another city", () => {
     expect(scoreSignalMatch(need, {

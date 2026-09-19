@@ -9,3 +9,9 @@ export function isControlledDemoOrigin(value: string): boolean {
     return false;
   }
 }
+
+/** The exact controlled portal is an AI-provider demo; its global banner is
+ * authoritative, so individual room descriptions need no repeated label. */
+export function providerSimulationFromEvidence(url: string, _evidence: string): "ai_simulated" | undefined {
+  return isControlledDemoOrigin(url) ? "ai_simulated" : undefined;
+}

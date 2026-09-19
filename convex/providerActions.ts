@@ -6,6 +6,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { actionPayloadHash, normalizeText } from "./integrations/contentHash";
 import { opportunityMatchIsCurrent, signalMatchRevision } from "./lib/matchValidity";
 import { approveRequestAsHuman, dispatchApproved } from "./externalActions";
+import { resolveProviderIdentity, type ProviderIdentityResolution } from "./lib/musicianIdentity";
 
 const stagedValidator = v.object({
   requestId: v.id("actionRequests"),
@@ -16,6 +17,32 @@ const stagedValidator = v.object({
 });
 
 type PortalTarget = NonNullable<Awaited<ReturnType<typeof resolveControlledPortal>>>;
+type CompleteProviderIdentity = Extract<ProviderIdentityResolution, { complete: true }>;
+
+function initialInquiryBody(identity: CompleteProviderIdentity, need: Doc<"savedNeeds">, modelBody: string, locale: "en" | "de" = "en"): string {
+  const bandSize = need.facets?.find((facet) => facet.namespace === "band" && facet.key === "size" && typeof facet.value === "number")?.value as number | undefined;
+  const equipment = need.facets?.find((facet) => facet.namespace === "equipment" && facet.value === true)?.key;
+  const equipmentFact = equipment === "storage"
+    ? (locale === "de" ? "Wir möchten eigenes Equipment vor Ort lagern können." : "We need permission to store our own equipment on site.")
+    : equipment === "drums"
+      ? (locale === "de" ? "Wir suchen einen Raum mit vorhandenem Schlagzeug." : "We are looking for a room with drums provided.")
+      : equipment === "pa"
+        ? (locale === "de" ? "Wir suchen einen Raum mit vorhandener PA." : "We are looking for a room with a PA provided.")
+        : equipment === "backline"
+          ? (locale === "de" ? "Wir suchen einen Raum mit vorhandener Backline." : "We are looking for a room with backline provided.")
+          : null;
+  const contextFacts = [
+    bandSize === undefined ? null : locale === "de" ? `Wir sind ${bandSize} Personen.` : `We are a ${bandSize}-piece act.`,
+    need.genres?.[0] ? locale === "de" ? `Wir spielen ${need.genres[0]}.` : `We play ${need.genres[0]}.` : null,
+    need.schedule[0] ? locale === "de" ? `Wir suchen einen Termin für ${need.schedule[0]}.` : `We are looking for ${need.schedule[0]}.` : null,
+    equipmentFact,
+    need.city ? locale === "de" ? `Wir suchen in ${need.city}.` : `We are searching in ${need.city}.` : null,
+  ].filter((value): value is string => value !== null).slice(0, 2);
+  const introduction = locale === "de"
+    ? `Hallo, ich bin RoomScout, ein KI-Assistent, und kontaktiere Sie im Auftrag von ${identity.representedName}.`
+    : `Hello, I’m RoomScout, an AI assistant contacting you on behalf of ${identity.representedName}.`;
+  return [introduction, ...contextFacts, modelBody].join("\n\n");
+}
 
 /** The conversation's reply channel once every precondition holds, or why it does not. */
 export type ReplyChannel =
@@ -85,7 +112,16 @@ async function draftReplyRequest(ctx: MutationCtx, args: {
   humanDraft?: boolean;
 }): Promise<Id<"actionRequests"> | null> {
   const { conversation, need, signal, offer } = args;
-  const body = normalizeText(args.body).slice(0, 20_000);
+  const owner = await ctx.db.get(offer.ownerId);
+  const identity = owner ? resolveProviderIdentity(owner) : { complete: false as const };
+  if (!identity.complete) {
+    await ctx.db.patch(conversation._id, { state: "needs_attention", lastErrorCode: "MUSICIAN_PROFILE_REQUIRED", updatedAt: Date.now() });
+    return null;
+  }
+  const normalizedBody = normalizeText(args.body);
+  const body = (args.humanDraft || conversation.mailThreadId || conversation.platformThreadId
+    ? normalizedBody
+    : initialInquiryBody(identity, need, normalizedBody, owner?.conversationLocale)).slice(0, 20_000);
   if (!body) throw new ConvexError({ code: "INVALID_REPLY_BODY" });
   const common = {
     ownerId: offer.ownerId, savedNeedId: need._id, providerConversationId: conversation._id, providerOfferId: offer._id,
@@ -105,21 +141,21 @@ async function draftReplyRequest(ctx: MutationCtx, args: {
     const subject = normalizeText(args.subject || thread.subject).slice(0, 200);
     const payload: Doc<"actionRequests">["payload"] = { kind: "email_message", recipientName: parent.from.slice(0, 160), recipientEmail: parent.from.trim().toLowerCase(), subject, body, mailThreadId: thread._id, parentMessageId: parent.providerMessageId };
     const now = Date.now();
-    return await ctx.db.insert("actionRequests", { ...common, platformId: platform._id, adapterBindingId: binding._id, policyVersionId: policy._id, automationMode: "autopilot", requestedActionType: "send_email", personalDataScopes: ["reply_email"], payload, contentVersion: 1, contentHash: await actionPayloadHash(payload), status: "drafted", expiresAt: now + 86_400_000, createdAt: now, updatedAt: now });
+    return await ctx.db.insert("actionRequests", { ...common, platformId: platform._id, adapterBindingId: binding._id, policyVersionId: policy._id, automationMode: "autopilot", requestedActionType: "send_email", personalDataScopes: ["reply_email", ...identity.dataFields], payload, contentVersion: 1, contentHash: await actionPayloadHash(payload), status: "drafted", expiresAt: now + 86_400_000, createdAt: now, updatedAt: now });
   }
   const { platform, listingUrl, binding, policy, connection } = channel.target;
   const thread = channel.thread;
   const subject = normalizeText(args.subject || thread?.subject || `Re: ${signal.title}`).slice(0, 200);
   const payload: Doc<"actionRequests">["payload"] = {
     kind: "platform_message", threadId: thread?._id, targetPath: thread ? undefined : listingUrl.pathname,
-    recipients: thread?.participants ?? ["Listing owner"], senderLabel: "RoomScout musician",
+    recipients: thread?.participants ?? ["Listing owner"], senderLabel: identity.providerDisplayName,
     subject, body,
   };
   const now = Date.now();
   const requestId = await ctx.db.insert("actionRequests", {
     ...common,
     platformId: platform._id, connectionId: connection._id, adapterBindingId: binding._id, policyVersionId: policy._id,
-    automationMode: "autopilot", requestedActionType: "send_platform_dm", personalDataScopes: [],
+    automationMode: "autopilot", requestedActionType: "send_platform_dm", personalDataScopes: identity.dataFields,
     payload, contentVersion: 1, contentHash: await actionPayloadHash(payload), status: "drafted",
     expiresAt: now + 86_400_000, createdAt: now, updatedAt: now,
   });
@@ -128,6 +164,56 @@ async function draftReplyRequest(ctx: MutationCtx, args: {
     entityKey: `action:${requestId}`, eventType: args.humanDraft ? "provider.reply_dictated" : "provider.reply_drafted", actionRequestId: requestId, occurredAt: now,
   });
   return requestId;
+}
+
+export async function hasPersistedProviderExchange(
+  ctx: Pick<MutationCtx, "db">,
+  conversation: Doc<"providerConversations">,
+): Promise<boolean> {
+  if (conversation.platformThreadId) {
+    const message = await ctx.db
+      .query("platformMessages")
+      .withIndex("by_thread_and_sent_at", (q) => q.eq("threadId", conversation.platformThreadId!))
+      .first();
+    if (message) return true;
+  }
+  if (conversation.mailThreadId) {
+    const message = await ctx.db
+      .query("mailMessages")
+      .withIndex("by_thread_and_received_at", (q) => q.eq("threadId", conversation.mailThreadId!))
+      .first();
+    if (message) return true;
+  }
+  return false;
+}
+
+export async function hasExecutedProviderDecline(
+  ctx: Pick<MutationCtx, "db">,
+  conversationId: Id<"providerConversations">,
+  excludedOfferId?: Id<"offerRevisions">,
+): Promise<boolean> {
+  const requests = await ctx.db
+    .query("actionRequests")
+    .withIndex("by_provider_conversation_and_updated_at", (q) => q.eq("providerConversationId", conversationId))
+    .order("desc")
+    .take(50);
+  const priorOffers = await Promise.all(requests
+    .filter((request) => request.status === "executed" && request.providerOfferId && request.providerOfferId !== excludedOfferId)
+    .map((request) => ctx.db.get(request.providerOfferId!)));
+  return priorOffers.some((priorOffer) => priorOffer?.assessment.nextAction === "decline");
+}
+
+async function closeDeclinedConversation(
+  ctx: MutationCtx,
+  conversation: Doc<"providerConversations">,
+  opportunityStatus: "expired" | "dismissed",
+): Promise<void> {
+  const now = Date.now();
+  await ctx.db.patch(conversation._id, { state: "closed", lastErrorCode: undefined, updatedAt: now });
+  const opportunity = conversation.opportunityId ? await ctx.db.get(conversation.opportunityId) : null;
+  if (opportunity?.ownerId === conversation.ownerId && !["converted", "dismissed"].includes(opportunity.status)) {
+    await ctx.db.patch(opportunity._id, { status: opportunityStatus, updatedAt: now });
+  }
 }
 
 /** Translate a recorded proposal into an exact ledger payload. The model never
@@ -144,11 +230,24 @@ export const stageReply = internalMutation({
       ctx.db.get(conversation.savedNeedId), ctx.db.get(conversation.signalId),
       ctx.db.query("actionRequests").withIndex("by_provider_offer", (q) => q.eq("providerOfferId", offerId)).order("desc").take(10),
     ]);
+    if (!need || need.ownerId !== offer.ownerId || need.status !== "active" || (need.matchingRevision ?? 0) !== offer.needRevision ||
+      !signal || !["published", "stale"].includes(signal.status) || await signalMatchRevision(signal) !== offer.signalRevision) return null;
+    if (offer.assessment.nextAction === "decline") {
+      const [providerExchange, priorDeclineSent] = await Promise.all([
+        hasPersistedProviderExchange(ctx, conversation),
+        hasExecutedProviderDecline(ctx, conversation._id, offer._id),
+      ]);
+      // A listing that does not fit is an internal dismissal, not a message to
+      // a provider we have never contacted. Once a decline was delivered, a
+      // provider acknowledgment is terminal and must not produce a farewell.
+      if (!providerExchange || priorDeclineSent) {
+        await closeDeclinedConversation(ctx, conversation, providerExchange ? "dismissed" : "expired");
+        return null;
+      }
+    }
     // A dead request (stopped, expired, rejected) must not block a fresh draft forever.
     const existing = priorRequests.find((row) => !["expired", "blocked", "rejected"].includes(row.status));
     if (existing) return existing._id;
-    if (!need || need.ownerId !== offer.ownerId || need.status !== "active" || (need.matchingRevision ?? 0) !== offer.needRevision ||
-      !signal || !["published", "stale"].includes(signal.status) || await signalMatchRevision(signal) !== offer.signalRevision) return null;
     const requestId = await draftReplyRequest(ctx, {
       conversation, need, signal, offer,
       subject: offer.assessment.suggestedReply.subject, body: offer.assessment.suggestedReply.body,

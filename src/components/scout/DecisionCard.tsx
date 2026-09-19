@@ -24,7 +24,17 @@ import { useCopy } from "../../ui/copy";
 import { splitDecisionDetail } from "./decisionDetail";
 
 /** One row of `api.decisions.listOpenMine` — the Entscheidung the Scout put to the musician. */
-export type OpenDecision = FunctionReturnType<typeof api.decisions.listOpenMine>[number];
+type DecisionQuestion = {
+  id: string;
+  constraintKeys: string[];
+  question: string;
+  options: Array<{ id: string; label: string }>;
+  answer?: { choice: string; text?: string; at: number };
+};
+
+export type OpenDecision = FunctionReturnType<typeof api.decisions.listOpenMine>[number] & {
+  questions?: DecisionQuestion[];
+};
 
 const MESSAGE_KINDS = new Set<OpenDecision["kind"]>([
   "review_message", "private_data", "binding_content", "unsupported_claims", "safety_unavailable",
@@ -48,7 +58,7 @@ export type DecisionCardProps = {
    * choice, text })`. A host that only knows the two-argument form still
    * compiles: the parameter is optional.
    */
-  onAnswer: (choice: string, label: string, text?: string) => Promise<void> | void;
+  onAnswer: (choice: string, label: string, text?: string, questionId?: string) => Promise<void> | void;
   /** `offer_ready`: the current content hash of `refs.offerId`, needed to open the review. */
   offerHash?: string;
   busy?: boolean;
@@ -74,7 +84,12 @@ export type DecisionCardProps = {
  * `offer_ready` and `human_step` have no answer to type: the first opens the
  * acceptance review, the second hands over to the browser run or the settings.
  */
-export function DecisionCard({ decision, onAnswer, offerHash, busy = false }: DecisionCardProps) {
+export function DecisionCard(props: DecisionCardProps) {
+  const activeQuestionId = props.decision.questions?.find((item) => item.answer === undefined)?.id ?? "legacy";
+  return <DecisionCardStateful key={`${props.decision._id}:${activeQuestionId}`} {...props} />;
+}
+
+function DecisionCardStateful({ decision, onAnswer, offerHash, busy = false }: DecisionCardProps) {
   const { t } = useCopy();
   const [answered, setAnswered] = useState<string>();
   const [pending, setPending] = useState<string>();
@@ -82,7 +97,15 @@ export function DecisionCard({ decision, onAnswer, offerHash, busy = false }: De
   const [text, setText] = useState("");
   const [reviewing, setReviewing] = useState(false);
   const inputId = useId();
-  const { scopes, message } = splitDecisionDetail(decision);
+  const activeQuestionIndex = decision.questions?.findIndex((item) => item.answer === undefined) ?? -1;
+  const activeQuestion = activeQuestionIndex >= 0 ? decision.questions?.[activeQuestionIndex] : undefined;
+  const activeQuestionKey = activeQuestion?.id ?? String(decision._id);
+  const questionOptions = activeQuestion?.options ?? decision.options;
+  const hasAnotherQuestion = activeQuestionIndex >= 0 && Boolean(
+    decision.questions?.slice(activeQuestionIndex + 1).some((item) => item.answer === undefined),
+  );
+  const roundComplete = Boolean(decision.questions?.length) && activeQuestionIndex < 0;
+  const { scopes, subject, message } = splitDecisionDetail(decision);
   const messageKind = MESSAGE_KINDS.has(decision.kind);
   const disabled = busy || pending !== undefined || answered !== undefined;
 
@@ -98,11 +121,39 @@ export function DecisionCard({ decision, onAnswer, offerHash, busy = false }: De
     return option.label;
   }
 
+  function messageQuestion(): string {
+    switch (decision.question) {
+      case "Should I send this message?":
+      case "Soll ich diese Nachricht so senden?":
+        return t("liveScout.decisionQuestion.review_message");
+      case "Should I send your message as written?":
+      case "Soll ich deine Nachricht so senden?":
+        return t("liveScout.decisionQuestion.user_draft");
+      case "This message includes details your sharing rules do not allow. Send it anyway?":
+      case "Die Nachricht enthält Angaben, die ich laut deinen Regeln nicht teilen darf. Trotzdem so senden?":
+        return t("liveScout.decisionQuestion.private_data");
+      case "This message contains a binding commitment. Send it anyway?":
+      case "Die Nachricht enthält eine verbindliche Zusage. Soll ich sie trotzdem so senden?":
+        return t("liveScout.decisionQuestion.binding_content");
+      case "The meaning of this message is unclear. Send it anyway?":
+      case "Die Bedeutung der Nachricht ist nicht eindeutig. Soll ich sie trotzdem so senden?":
+        return t("liveScout.decisionQuestion.uncertain_content");
+      case "This message contains claims that are not supported by the saved facts. Send it anyway?":
+      case "Die Nachricht enthält Behauptungen ohne Beleg. Trotzdem so senden?":
+        return t("liveScout.decisionQuestion.unsupported_claims");
+      case "I could not complete the safety review. Send it anyway?":
+      case "Ich konnte die Nachricht nicht prüfen. Soll ich sie trotzdem so senden?":
+        return t("liveScout.decisionQuestion.safety_unavailable");
+      default: return decision.question;
+    }
+  }
+
   async function answer(answerChoice: string, label: string, answerText?: string) {
     if (disabled) return;
     setPending(answerChoice);
     try {
-      await onAnswer(answerChoice, label, answerText);
+      if (activeQuestion) await onAnswer(answerChoice, label, answerText, activeQuestion.id);
+      else await onAnswer(answerChoice, label, answerText);
       setAnswered(answerChoice);
     } catch {
       // The host reports the failure next to its composer; the answers stay usable.
@@ -117,17 +168,19 @@ export function DecisionCard({ decision, onAnswer, offerHash, busy = false }: De
     // The typed answer wins: the questionnaire already unpicked the chip the
     // moment the musician started writing.
     if (typed) return void answer(CUSTOM_CHOICE, typed, typed);
-    const option = decision.options.find((row) => row.id === choice);
+    const option = questionOptions.find((row) => row.id === choice);
     if (!option) return;
     void answer(option.id, optionLabel(option));
   }
 
   const canReviewOffer = decision.kind === "offer_ready" && Boolean(decision.refs.offerId && offerHash);
-  const showAck = answered !== undefined && !(messageKind && answered === "no");
+  const showAck = answered !== undefined && !hasAnotherQuestion && !(messageKind && answered === "no");
   // The kinds that take an answer here. `offer_ready` opens the review instead,
   // `human_step` is a hand-over with nothing to answer.
-  const answerable = decision.kind !== "offer_ready" && decision.kind !== "human_step";
+  const answerable = decision.kind !== "offer_ready" && decision.kind !== "human_step" && !roundComplete;
   const inputLabel = t(messageKind ? "liveScout.decisionChangeLabel" : "liveScout.decisionOwnLabel");
+  const question = activeQuestion?.question ?? (messageKind ? messageQuestion() :
+    decision.kind === "offer_ready" ? t("liveScout.decisionOfferQuestion") : decision.question);
 
   const detail = <>
     {scopes.length > 0 ? <div>
@@ -137,10 +190,15 @@ export function DecisionCard({ decision, onAnswer, offerHash, busy = false }: De
       </ul>
     </div> : null}
 
+    {subject ? <div className="flex flex-col gap-[var(--space-2)]">
+      <span className="text-[length:var(--text-caption-size)] text-rs-ink-6">{t("liveScout.decisionSubject")}</span>
+      <p className="m-0 font-medium text-rs-ink-2">{subject}</p>
+    </div> : null}
+
     {message ? <div className="flex flex-col gap-[var(--space-3)]">
       {messageKind ? <span className="text-[length:var(--text-caption-size)] text-rs-ink-6">{t("liveScout.decisionMessage")}</span> : null}
       <Bubble align="start" variant="secondary" className="max-w-full">
-        <BubbleContent><blockquote className="m-0">{message}</blockquote></BubbleContent>
+        <BubbleContent><blockquote className="m-0 whitespace-pre-wrap">{message}</blockquote></BubbleContent>
       </Bubble>
     </div> : null}
   </>;
@@ -148,16 +206,20 @@ export function DecisionCard({ decision, onAnswer, offerHash, busy = false }: De
   return <Card size="md" tone="accent" role="group" aria-label={t("liveScout.decisionEyebrow")} className="w-full text-left">
     <Overline tone="accent" tracking="default">{t("liveScout.decisionEyebrow")}</Overline>
 
+    {activeQuestion && decision.questions ? <p className="mt-[var(--space-3)] text-[length:var(--text-micro-size)] text-rs-ink-5">
+      {t("liveScout.decisionQuestionProgress", { current: activeQuestionIndex + 1, total: decision.questions.length })}
+    </p> : null}
+
     {answerable && answered === undefined ? (
-      <Questionnaire className="mt-[var(--space-5)] gap-[var(--space-6)]" shortcuts="letters" onSubmit={submit}>
-        <QuestionnaireItem name={decision._id} required>
-          <QuestionnaireTitle>{decision.kind === "offer_ready" ? t("liveScout.decisionOfferQuestion") : decision.question}</QuestionnaireTitle>
+      <Questionnaire key={activeQuestionKey} className="mt-[var(--space-5)] gap-[var(--space-6)]" shortcuts="letters" onSubmit={submit}>
+        <QuestionnaireItem name={activeQuestionKey} required>
+          <QuestionnaireTitle>{question}</QuestionnaireTitle>
           <QuestionnaireDescription render={<div />} className="flex flex-col gap-[var(--space-6)] empty:hidden">
             {detail}
           </QuestionnaireDescription>
 
-          {decision.options.length > 0 ? <QuestionnaireChoices>
-            {decision.options.map((option) => (
+          {questionOptions.length > 0 ? <QuestionnaireChoices>
+            {questionOptions.map((option) => (
               <QuestionnaireChoice
                 key={option.id}
                 value={option.id}
@@ -189,14 +251,14 @@ export function DecisionCard({ decision, onAnswer, offerHash, busy = false }: De
 
           <QuestionnaireActions>
             <QuestionnaireSubmit disabled={disabled} aria-busy={pending !== undefined}>
-              {t("liveScout.decisionSubmit")}
+              {t(hasAnotherQuestion ? "liveScout.decisionNext" : "liveScout.decisionSubmit")}
             </QuestionnaireSubmit>
           </QuestionnaireActions>
         </QuestionnaireItem>
       </Questionnaire>
     ) : <>
       <p className="mt-[var(--space-5)] text-[length:var(--text-body-lg-size)] leading-[1.35] font-light tracking-[-.01em] [text-wrap:balance]">
-        {decision.kind === "offer_ready" ? t("liveScout.decisionOfferQuestion") : decision.question}
+        {question}
       </p>
       <div className="mt-[var(--space-6)] flex flex-col gap-[var(--space-6)] empty:hidden">{detail}</div>
     </>}

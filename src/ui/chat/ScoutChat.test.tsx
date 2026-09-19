@@ -156,7 +156,7 @@ describe("ScoutChat", () => {
     // of the rotating verbs and it sweeps.
     const marker = screen.getByRole("status", { name: "Dein Scout denkt nach …" })
     const line = marker.querySelector('[data-slot="marker-content"]')
-    expect(line).toHaveClass("shimmer")
+    expect(line?.querySelector(".text-transparent")).toBeInTheDocument()
     expect(verbs).toContain(line?.textContent)
     // An empty pending reply is a state, not an empty bubble.
     expect(screen.queryByRole("group", { name: "Dein Scout" })).not.toBeInTheDocument()
@@ -200,7 +200,7 @@ describe("ScoutChat", () => {
     expect(screen.getByRole("textbox", { name: "Nachricht an deinen Scout …" })).not.toBeDisabled()
   })
 
-  it("names a running tool call and drops the line once the reply succeeded", () => {
+  it("shows one pending line for a running tool and drops it once the reply succeeded", () => {
     const toolPart = { type: "tool-rememberFact", toolCallId: "call-1", state: "input-available" }
     const labels = { tools: { rememberFact: "Merkt sich etwas" }, toolDefault: "Arbeitet …" }
     const view = render(
@@ -211,6 +211,7 @@ describe("ScoutChat", () => {
         replying
       />
     )
+    expect(screen.getAllByRole("status", { name: "Dein Scout denkt nach …" })).toHaveLength(1)
     expect(screen.getByText("Merkt sich etwas")).toBeInTheDocument()
 
     view.rerender(
@@ -262,5 +263,43 @@ describe("ScoutChat", () => {
     expect(onAnswerDecision).toHaveBeenCalledWith("decision-1", "yes", undefined)
     expect((await screen.findAllByRole("group", { name: "Du" })).at(-1)).toHaveTextContent("Ja, so senden")
     expect(screen.getAllByRole("group", { name: "Dein Scout" }).at(-1)).toHaveTextContent("Danke, ich mache weiter.")
+  })
+
+  it("passes the current question id without showing a completed-round echo for a partial answer", async () => {
+    const onAnswerDecision = vi.fn().mockResolvedValue(undefined)
+    const roundDecision = {
+      ...decision,
+      kind: "scout_question" as const,
+      question: "Welcher Termin passt?",
+      questions: [
+        {
+          id: "slot",
+          constraintKeys: ["schedule"],
+          question: "Passt Mittwoch?",
+          options: [{ id: "yes", label: "Ja, Mittwoch passt" }],
+        },
+        {
+          id: "drums",
+          constraintKeys: ["requirement:0"],
+          question: "Reicht ein E-Drumset?",
+          options: [{ id: "yes", label: "Ja, E-Drums reichen" }],
+        },
+      ],
+    } satisfies OpenDecision
+
+    render(<MemoryRouter><ScoutChat
+      messages={[]}
+      onSend={vi.fn()}
+      decision={roundDecision}
+      onAnswerDecision={onAnswerDecision}
+      decisionAnsweredText="Danke, ich mache weiter."
+    /></MemoryRouter>)
+
+    fireEvent.click(screen.getByRole("radio", { name: "Ja, Mittwoch passt" }))
+    fireEvent.click(screen.getByRole("button", { name: "Nächste Frage" }))
+
+    expect(onAnswerDecision).toHaveBeenCalledWith("decision-1", "yes", undefined, "slot")
+    expect(screen.queryByText("Danke, ich mache weiter.")).not.toBeInTheDocument()
+    expect(screen.queryByRole("group", { name: "Du" })).not.toBeInTheDocument()
   })
 })

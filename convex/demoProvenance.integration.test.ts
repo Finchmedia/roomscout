@@ -64,8 +64,9 @@ it("stamps ingestion provenance and never corroborates demo evidence with a real
   const upsert = async (target: typeof fixture.demo, sourceUrl: string, fingerprint: string) =>
     await t.mutation(internal.ingestion.upsertNormalizedSignal, {
       eventId: target.eventId, sourceTargetId: target.targetId, sourceUrl, sourceTitle: "Listing",
-      excerpt: "Shared rehearsal room", fingerprint, title: "Same room", city: "Berlin",
+      excerpt: "Public rehearsal room", fingerprint, title: "Same room", city: "Berlin",
       summary: "Shared rehearsal room", arrangement: "shared", requirements: [], unknowns: [],
+      ...(sourceUrl.includes("roomscout.dev") ? { imageUrl: "https://roomscout.dev/demo-rooms/one.webp" } : {}),
     });
   const demoId = await upsert(fixture.demo, "https://roomscout.dev/listings/one", "demo-fingerprint");
   const realId = await upsert(fixture.real, "https://real.example/listings/one", "real-fingerprint");
@@ -74,9 +75,123 @@ it("stamps ingestion provenance and never corroborates demo evidence with a real
   expect(realId).not.toBe(demoId);
   const rows = await t.run((ctx) => ctx.db.query("signals").collect());
   expect(rows).toHaveLength(2);
-  expect(rows.find((row) => row._id === demoId)?.isDemo).toBe(true);
+  expect(rows.find((row) => row._id === demoId)).toMatchObject({ isDemo: true, providerSimulation: "ai_simulated" });
   expect(rows.find((row) => row._id === realId)?.isDemo).toBe(false);
-  expect((await t.query(api.signals.get, { signalId: demoId! }))?.signal.isDemo).toBe(true);
+  expect(rows.find((row) => row._id === realId)?.providerSimulation).toBeUndefined();
+  expect((await t.query(api.signals.get, { signalId: demoId! }))?.signal)
+    .toMatchObject({ isDemo: true, providerSimulation: "ai_simulated", imageUrl: "https://roomscout.dev/demo-rooms/one.webp" });
+
+  const projectionFixture = await t.run(async (ctx) => {
+    const now = Date.now();
+    const ownerId = await ctx.db.insert("users", {
+      username: "provenance-owner", role: "musician", createdAt: now, lastSeenAt: now,
+    });
+    const savedNeedId = await ctx.db.insert("savedNeeds", {
+      ownerId, title: "Berlin room", city: "Berlin", districts: [], arrangement: [], schedule: [],
+      requirements: [], status: "active", matchingRevision: 1, createdAt: now, updatedAt: now,
+    });
+    await ctx.db.insert("providerConversations", {
+      ownerId, savedNeedId, signalId: demoId!, conversationKey: "provenance-demo",
+      agentThreadId: "provider-provenance-thread", revision: 0, state: "waiting",
+      createdAt: now, updatedAt: now,
+    });
+    return { ownerId, savedNeedId };
+  });
+  expect(await t.withIdentity({ subject: projectionFixture.ownerId }).query(api.providerConversations.listMine, {
+    savedNeedId: projectionFixture.savedNeedId,
+  })).toMatchObject([{
+    isDemo: true,
+    providerSimulation: "ai_simulated",
+    imageUrl: "https://roomscout.dev/demo-rooms/one.webp",
+  }]);
+});
+
+it("marks every exact controlled-host listing as AI-simulated without per-listing prose", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await t.run(async (ctx) => {
+    const now = Date.now();
+    const sourceId = await ctx.db.insert("sources", {
+      slug: "controlled-listings", name: "Controlled listings", baseUrl: "https://roomscout.dev/listings",
+      side: "supply", status: "active", health: "healthy", accessMode: "public",
+      automationReview: "approved", createdAt: now, updatedAt: now,
+    });
+    const targetId = await ctx.db.insert("sourceTargets", {
+      sourceId, url: "https://roomscout.dev/listings", mode: "scrape", changeTrackingTag: "controlled:v1",
+      scheduleMinutes: 60, nextRunAt: now, paused: false, createdAt: now, updatedAt: now,
+    });
+    const eventId = await ctx.db.insert("ingestionEvents", {
+      provider: "firecrawl", providerEventId: "controlled-list-event", sourceTargetId: targetId,
+      eventType: "crawl", status: "received", payloadHash: "controlled-list", receivedAt: now,
+    });
+    const detailEntryId = await ctx.db.insert("sourceEntries", {
+      sourceId, sourceTargetId: targetId, externalId: "detail-ai",
+      canonicalUrl: "https://roomscout.dev/listings/detail-ai", detailUrl: "https://roomscout.dev/listings/detail-ai",
+      title: "Detail room", excerpt: "Pending detail", side: "supply", city: "Hamburg",
+      status: "active", detailState: "fetching", detailAttempts: 1, detailLeaseId: "detail-lease",
+      detailLeaseExpiresAt: now + 60_000, firstSeenAt: now, lastSeenAt: now, updatedAt: now,
+    });
+    return { eventId, targetId, detailEntryId };
+  });
+
+  await t.mutation(internal.ingestion.upsertSourceEntries, {
+    eventId: fixture.eventId,
+    sourceTargetId: fixture.targetId,
+    pageUrl: "https://roomscout.dev/listings",
+    entries: [
+      {
+        externalId: "list-ai", canonicalUrl: "https://roomscout.dev/listings/list-ai",
+        detailUrl: "https://roomscout.dev/listings", title: "AI disclosed room",
+        imageUrl: "https://roomscout.dev/demo-rooms/list-ai.webp",
+        excerpt: "Public room listing", side: "supply", city: "Berlin",
+        contentFingerprint: "list-ai-v1", contactDataPresent: false, summary: "Controlled room",
+        arrangement: "shared", requirements: [], unknowns: [],
+      },
+      {
+        externalId: "list-generic", canonicalUrl: "https://roomscout.dev/listings/list-generic",
+        detailUrl: "https://roomscout.dev/listings", title: "Generic controlled room",
+        excerpt: "Controlled demonstration listing", side: "supply", city: "Potsdam",
+        contentFingerprint: "list-generic-v1", contactDataPresent: false, summary: "Controlled room",
+        arrangement: "shared", requirements: [], unknowns: [],
+      },
+    ],
+  });
+  expect(await t.mutation(internal.ingestion.completeDetailNormalization, {
+    sourceEntryId: fixture.detailEntryId,
+    leaseId: "detail-lease",
+    title: "Detailed AI room",
+    city: "Hamburg",
+    summary: "Controlled detail room",
+    arrangement: "shared",
+    requirements: [],
+    unknowns: [],
+    genres: [],
+    instruments: [],
+    facets: [],
+    contacts: [],
+    excerpt: "Public room detail",
+    contentFingerprint: "detail-ai-v1",
+    contactDataPresent: false,
+  })).toBe(true);
+
+  const projected = await t.run(async (ctx) => {
+    const entries = await ctx.db.query("sourceEntries").collect();
+    const readSignal = async (externalId: string) => {
+      const entry = entries.find((row) => row.externalId === externalId);
+      return entry?.signalId ? await ctx.db.get(entry.signalId) : null;
+    };
+    return {
+      listAi: await readSignal("list-ai"),
+      listGeneric: await readSignal("list-generic"),
+      detailAi: await readSignal("detail-ai"),
+    };
+  });
+  expect(projected.listAi).toMatchObject({
+    isDemo: true,
+    providerSimulation: "ai_simulated",
+    imageUrl: "https://roomscout.dev/demo-rooms/list-ai.webp",
+  });
+  expect(projected.listGeneric).toMatchObject({ isDemo: true, providerSimulation: "ai_simulated" });
+  expect(projected.detailAi).toMatchObject({ isDemo: true, providerSimulation: "ai_simulated" });
 });
 
 it("backfills legacy demo evidence conservatively and counts every paginated real market signal", async () => {

@@ -954,6 +954,7 @@ export const rebuildContext = internalAction({
       return null;
     }
     const output = await generateRoomScoutObject({
+      modelRole: "utility",
       schema: compressedContextSchema,
       instructions:
         "Compress a musician's durable RoomScout memory. Use only the supplied facts. Preserve uncertainty and distinguish people, bands, preferences, and hard constraints. Do not invent demographics, addresses, contact details, availability, or relationships. The summary should help a long-term rehearsal-room scout avoid asking repeated questions.",
@@ -1009,6 +1010,7 @@ export const parseContextImport = action({
       throw new ConvexError({ code: "INVALID_CONTEXT_IMPORT" });
     }
     const output = await generateRoomScoutObject({
+      modelRole: "utility",
       schema: z.object({
         summary: z.string().max(2_000),
         facts: z.array(importedFactSchema).max(40),

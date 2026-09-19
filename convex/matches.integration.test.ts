@@ -74,6 +74,166 @@ it("activation matches an already indexed room without a new signal", async () =
   expect((await f.owner.query(api.savedNeeds.getMine, { needId: f.savedNeedId }))?.matchingRevision).toBe(1);
 });
 
+it("shows a budget-only exclusion as near-budget and promotes the same row after a budget edit", async () => {
+  vi.useFakeTimers();
+  vi.stubEnv("OPENAI_API_KEY", "");
+  const f = await fixture();
+  await f.t.run(async (ctx) => { await ctx.db.patch(f.signalId, { priceEur: 350 }); });
+
+  await f.owner.mutation(api.savedNeeds.setStatus, { needId: f.savedNeedId, status: "active" });
+  await f.t.finishAllScheduledFunctions(vi.runAllTimers);
+
+  expect(await f.owner.query(api.matches.listMine, { savedNeedId: f.savedNeedId })).toEqual([]);
+  const [near] = await f.owner.query(api.matches.listCandidatesMine, { savedNeedId: f.savedNeedId });
+  expect(near).toMatchObject({
+    candidateKey: `${f.savedNeedId}:${f.signalId}`,
+    savedNeedId: f.savedNeedId,
+    signalId: f.signalId,
+    kind: "near_budget",
+    contactEligible: false,
+    budgetDeltaEur: 100,
+    monthlyCostEur: 350,
+    monthlyCostBasis: "listed_monthly_base",
+    signal: { _id: f.signalId, title: "Rehearsal room", priceEur: 350, pricePeriod: "month" },
+  });
+  expect(await f.t.run((ctx) => ctx.db.query("opportunities").collect())).toEqual([]);
+  expect(await f.t.run((ctx) => ctx.db.query("notifications").collect())).toEqual([]);
+
+  await f.owner.mutation(api.savedNeeds.update, { needId: f.savedNeedId, maxBudgetEur: 400 });
+  await f.t.finishAllScheduledFunctions(vi.runAllTimers);
+
+  const [fit] = await f.owner.query(api.matches.listCandidatesMine, { savedNeedId: f.savedNeedId });
+  expect(fit).toMatchObject({
+    candidateKey: `${f.savedNeedId}:${f.signalId}`,
+    kind: "fit",
+    budgetDeltaEur: -50,
+  });
+  expect(await f.owner.query(api.matches.listMine, { savedNeedId: f.savedNeedId })).toHaveLength(1);
+  expect(await f.t.run((ctx) => ctx.db.query("signalMatches").collect())).toHaveLength(1);
+  expect(await f.t.run((ctx) => ctx.db.query("opportunities").collect())).toHaveLength(1);
+  expect((await f.t.run((ctx) => ctx.db.query("notifications").collect()))
+    .filter((notification) => notification.kind === "new_match")).toHaveLength(1);
+});
+
+it("retains a first ineligible row without exposing a candidate or starting outreach", async () => {
+  vi.useFakeTimers();
+  vi.stubEnv("OPENAI_API_KEY", "");
+  const f = await fixture();
+  await f.t.run(async (ctx) => { await ctx.db.patch(f.signalId, { city: "Berlin" }); });
+
+  await f.owner.mutation(api.savedNeeds.setStatus, { needId: f.savedNeedId, status: "active" });
+  await f.t.finishAllScheduledFunctions(vi.runAllTimers);
+
+  expect(await f.t.run((ctx) => ctx.db.query("signalMatches").first())).toMatchObject({
+    signalId: f.signalId,
+    eligible: false,
+    eligibility: "ineligible",
+    contactEligible: false,
+  });
+  expect(await f.owner.query(api.matches.listCandidatesMine, { savedNeedId: f.savedNeedId })).toEqual([]);
+  expect(await f.t.run((ctx) => ctx.db.query("opportunities").collect())).toEqual([]);
+  expect(await f.t.run((ctx) => ctx.db.query("notifications").collect())).toEqual([]);
+});
+
+it("does not reopen or renotify a contacted candidate after a new search revision", async () => {
+  vi.useFakeTimers();
+  vi.stubEnv("OPENAI_API_KEY", "");
+  const f = await fixture();
+  await f.owner.mutation(api.savedNeeds.setStatus, { needId: f.savedNeedId, status: "active" });
+  await f.t.finishAllScheduledFunctions(vi.runAllTimers);
+  const match = (await f.owner.query(api.matches.listMine, { savedNeedId: f.savedNeedId }))[0]!;
+  await f.owner.mutation(api.matches.updateStatus, { matchId: match._id, status: "contacted" });
+  await f.t.run(async (ctx) => {
+    const opportunity = await ctx.db.query("opportunities")
+      .withIndex("by_saved_need_and_fingerprint", (q) => q.eq("savedNeedId", f.savedNeedId).eq("fingerprint", `match:${f.savedNeedId}:${f.signalId}`))
+      .unique();
+    await ctx.db.patch(opportunity!._id, { status: "contacted" });
+  });
+  const beforeNotifications = (await f.t.run((ctx) => ctx.db.query("notifications").collect()))
+    .filter((notification) => notification.kind === "new_match").length;
+
+  await f.owner.mutation(api.savedNeeds.update, { needId: f.savedNeedId, maxBudgetEur: 260 });
+  await f.t.finishAllScheduledFunctions(vi.runAllTimers);
+
+  expect(await f.t.run(async (ctx) => (await ctx.db.query("signalMatches").first())?.status)).toBe("contacted");
+  expect(await f.t.run(async (ctx) => (await ctx.db.query("opportunities").first())?.status)).toBe("contacted");
+  expect(await f.t.run((ctx) => ctx.db.query("opportunities").collect())).toHaveLength(1);
+  expect((await f.t.run((ctx) => ctx.db.query("notifications").collect()))
+    .filter((notification) => notification.kind === "new_match")).toHaveLength(beforeNotifications);
+});
+
+it("requeues a failed assessment with no external effects after a newer need revision", async () => {
+  const f = await fixture();
+  await f.t.run(async (ctx) => { await ctx.db.patch(f.savedNeedId, { status: "active", matchingRevision: 1 }); });
+  const firstRun = (await f.t.mutation(internal.matches.beginMatching, {
+    ownerId: f.ownerId, savedNeedId: f.savedNeedId,
+  }))!;
+  const signalRevision = await f.t.run(async (ctx) => signalMatchRevision((await ctx.db.get(f.signalId))!));
+  const scored = {
+    signalId: f.signalId,
+    signalRevision,
+    eligible: true,
+    eligibility: "fit" as const,
+    contactEligible: true,
+    monthlyCostBasis: "listed_monthly_base" as const,
+    monthlyCostEur: 220,
+    budgetDeltaEur: -30,
+    kind: "need_supply" as const,
+    score: 1,
+    structuredScore: 1,
+    semanticScore: 1,
+    reasons: ["Same city: Stuttgart"],
+    uncertainties: [],
+    fingerprint: "first",
+  };
+  await f.t.mutation(internal.matches.applyMatches, {
+    ownerId: f.ownerId, savedNeedId: f.savedNeedId, needRevision: 1,
+    matchingRunId: firstRun.matchingRunId, matches: [scored],
+  });
+  const opportunity = (await f.t.run((ctx) => ctx.db.query("opportunities").first()))!;
+  await f.t.run(async (ctx) => {
+    await ctx.db.patch(opportunity._id, { status: "reviewing" });
+    const conversationId = await ctx.db.insert("providerConversations", {
+      ownerId: f.ownerId,
+      savedNeedId: f.savedNeedId,
+      signalId: f.signalId,
+      opportunityId: opportunity._id,
+      conversationKey: `opportunity:${opportunity._id}`,
+      agentThreadId: "failed-assessment-thread",
+      revision: 1,
+      state: "needs_attention",
+      lastErrorCode: "SCOUT_ASSESSMENT_FAILED",
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await ctx.db.insert("providerTurns", {
+      conversationId,
+      sourceKey: "opportunity:first",
+      kind: "opportunity",
+      revision: 1,
+      status: "failed",
+      errorCode: "SCOUT_ASSESSMENT_FAILED",
+      createdAt: 1,
+      completedAt: 2,
+    });
+    await ctx.db.patch(f.savedNeedId, { matchingRevision: 2, maxBudgetEur: 400 });
+  });
+  const nextRun = (await f.t.mutation(internal.matches.beginMatching, {
+    ownerId: f.ownerId, savedNeedId: f.savedNeedId,
+  }))!;
+
+  await f.t.mutation(internal.matches.applyMatches, {
+    ownerId: f.ownerId, savedNeedId: f.savedNeedId, needRevision: 2,
+    matchingRunId: nextRun.matchingRunId,
+    matches: [{ ...scored, budgetDeltaEur: -180, fingerprint: "second" }],
+  });
+
+  expect(await f.t.run(async (ctx) => (await ctx.db.get(opportunity._id))?.status)).toBe("new");
+  expect(await f.t.run((ctx) => ctx.db.query("opportunities").collect())).toHaveLength(1);
+  expect((await f.t.run((ctx) => ctx.db.query("notifications").collect()))
+    .filter((notification) => notification.kind === "new_match")).toHaveLength(1);
+});
+
 it("activation sets the search active, records the audit event and schedules matching, the orchestrator and the roomscout.dev check", async () => {
   vi.useFakeTimers();
   const f = await fixture();
@@ -111,6 +271,7 @@ it("edits hide obsolete matches immediately and expire the old opportunity after
   expect(await f.owner.query(api.matches.listMine, {})).toHaveLength(1);
   await f.owner.mutation(api.savedNeeds.update, { needId: f.savedNeedId, locationQuery: "Berlin" });
   expect(await f.owner.query(api.matches.listMine, {})).toHaveLength(0);
+  expect(await f.owner.query(api.matches.listCandidatesMine, { savedNeedId: f.savedNeedId })).toHaveLength(0);
   await f.t.finishAllScheduledFunctions(vi.runAllTimers);
   const opportunity = await f.t.run(async (ctx) => ctx.db.query("opportunities").withIndex("by_saved_need_and_fingerprint", (q) => q.eq("savedNeedId", f.savedNeedId)).first());
   expect(opportunity?.status).toBe("expired");
@@ -134,7 +295,8 @@ it("rejects late match application after a need edit", async () => {
   const signalRevision = await f.t.run(async (ctx) => signalMatchRevision((await ctx.db.get(f.signalId))!));
   const args = {
     ownerId: f.ownerId, savedNeedId: f.savedNeedId, needRevision: need!.matchingRevision!, matchingRunId: need!.matchingRunId!,
-    matches: [{ signalId: f.signalId, signalRevision, eligible: true, kind: "need_supply" as const,
+    matches: [{ signalId: f.signalId, signalRevision, eligible: true, eligibility: "fit" as const,
+      monthlyCostBasis: "listed_monthly_base" as const, monthlyCostEur: 220, budgetDeltaEur: -30, kind: "need_supply" as const,
       score: 1, structuredScore: 1, semanticScore: 1, reasons: ["late"], uncertainties: [], fingerprint: "late" }],
   };
   await f.owner.mutation(api.savedNeeds.update, { needId: f.savedNeedId, maxBudgetEur: 100 });
@@ -152,7 +314,8 @@ it("rejects superseded runs and changed signal content during an asynchronous as
   const signalRevision = await f.t.run(async (ctx) => signalMatchRevision((await ctx.db.get(f.signalId))!));
   const pending = {
     ownerId: f.ownerId, savedNeedId: f.savedNeedId, needRevision: need!.matchingRevision!, matchingRunId: need!.matchingRunId!,
-    matches: [{ signalId: f.signalId, signalRevision, eligible: true, contactEligible: true, kind: "need_supply" as const,
+    matches: [{ signalId: f.signalId, signalRevision, eligible: true, eligibility: "fit" as const,
+      monthlyCostBasis: "listed_monthly_base" as const, monthlyCostEur: 220, budgetDeltaEur: -30, contactEligible: true, kind: "need_supply" as const,
       score: 1, structuredScore: 1, semanticScore: 1, reasons: ["late"], uncertainties: [], fingerprint: "late" }],
   };
   const newer = await f.t.mutation(internal.matches.beginMatching, { ownerId: f.ownerId, savedNeedId: f.savedNeedId });
@@ -259,6 +422,7 @@ it("retires paused search opportunities and keeps all owner projections private"
   await f.t.finishAllScheduledFunctions(vi.runAllTimers);
   const otherId = await f.t.run(async (ctx) => ctx.db.insert("users", { username: "other", role: "musician", createdAt: 1, lastSeenAt: 1 }));
   expect(await f.t.withIdentity({ subject: otherId }).query(api.matches.listMine, { savedNeedId: f.savedNeedId })).toEqual([]);
+  expect(await f.t.withIdentity({ subject: otherId }).query(api.matches.listCandidatesMine, { savedNeedId: f.savedNeedId })).toEqual([]);
   await f.owner.mutation(api.savedNeeds.setStatus, { needId: f.savedNeedId, status: "paused" });
   expect(await f.owner.query(api.matches.listMine, {})).toEqual([]);
   await f.t.finishAllScheduledFunctions(vi.runAllTimers);

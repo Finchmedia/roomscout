@@ -1,15 +1,19 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { getFunctionName } from "convex/server";
+import { ConvexError } from "convex/values";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ScoutPage } from "./ScoutPage";
 
 const fixtures = vi.hoisted(() => ({
+  user: { username: "test-band", displayName: "Test Band", role: "musician", profileCompleted: true } as Record<string, unknown>,
   needs: [] as Array<Record<string, unknown>>,
   context: {} as Record<string, unknown>,
   matches: [] as Array<Record<string, unknown>>,
+  indexed: [] as Array<Record<string, unknown>>,
   conversations: [] as Array<Record<string, unknown>>,
   focusedThread: null as Record<string, unknown> | null,
+  focusedSignal: null as Record<string, unknown> | null,
   /** `api.conversations.listMine` — the rows behind the „Kandidaten“ rail. */
   inbox: [] as Array<Record<string, unknown>>,
   actions: [] as Array<Record<string, unknown>>,
@@ -18,7 +22,7 @@ const fixtures = vi.hoisted(() => ({
   queries: vi.fn(),
   mutations: new Map<string, ReturnType<typeof vi.fn>>(),
   actionFns: new Map<string, ReturnType<typeof vi.fn>>(),
-  voice: { connected: false, muted: false, connect: vi.fn().mockResolvedValue(undefined), disconnect: vi.fn(), setMuted: vi.fn(),
+  voice: { connected: false, status: "idle" as "idle" | "requesting_microphone" | "connecting" | "creating_session", muted: false, connect: vi.fn().mockResolvedValue(undefined), disconnect: vi.fn(), setMuted: vi.fn(),
     sendText: vi.fn().mockReturnValue(true), setFocus: vi.fn(), appendVerifiedBackgroundUpdate: vi.fn(), clearBackgroundUpdate: vi.fn(),
     pendingTextDraft: "", clearPendingTextDraft: vi.fn(), noteActivity: vi.fn(),
     backendState: "idle" as "idle" | "queued" | "processing" },
@@ -74,6 +78,7 @@ function providerConversation(options: {
   return {
     conversationId: `conversation-${revision}`, savedNeedId: "need-current",
     signalId: "signal-provider", platformThreadId: "provider-thread",
+    isDemo: true, providerSimulation: "ai_simulated",
     state: ready ? "ready" : "needs_attention", revision, updatedAt: revision,
     assessmentFromProviderReply: true,
     ...(accepted ? { acceptedOfferId: "offer-provider", acceptedAt: 10, acceptanceStatus: "executed" } : {}),
@@ -125,13 +130,15 @@ vi.mock("convex/react", () => ({
   useQuery: (ref: Parameters<typeof getFunctionName>[0], args: unknown) => {
     const name = getFunctionName(ref);
     fixtures.queries(name, args);
-    if (name === "users:current") return { username: "test-band", displayName: "Test Band" };
+    if (name === "users:current") return fixtures.user;
     if (name === "savedNeeds:listMine") return fixtures.needs;
     if (name === "scout:getMine") return fixtures.context;
     if (name === "matches:listMine") return fixtures.matches;
+    if (name === "matches:listCandidatesMine") return fixtures.indexed;
     if (name === "providerConversations:listMine") return fixtures.conversations;
     if (name === "conversations:listMine") return fixtures.inbox;
     if (name === "conversations:getMine") return args === "skip" ? null : fixtures.focusedThread;
+    if (name === "signals:get") return args === "skip" ? null : fixtures.focusedSignal;
     if (name === "externalActions:listMine") return fixtures.actions;
     if (name === "decisions:listOpenMine") return fixtures.decisions;
     return null;
@@ -163,11 +170,13 @@ function renderPage() { return render(<MemoryRouter><ScoutPage /></MemoryRouter>
 
 afterEach(cleanup);
 beforeEach(() => {
+  fixtures.user = { username: "test-band", displayName: "Test Band", role: "musician", profileCompleted: true };
   fixtures.needs = [need()];
   fixtures.context = { threadId: "thread", activeNeedId: "need-current", mode: "search_discovery" };
-  fixtures.matches = []; fixtures.conversations = []; fixtures.focusedThread = null; fixtures.inbox = []; fixtures.actions = []; fixtures.messages = []; fixtures.decisions = [];
+  fixtures.indexed = []; fixtures.matches = []; fixtures.conversations = []; fixtures.focusedThread = null; fixtures.focusedSignal = null; fixtures.inbox = []; fixtures.actions = []; fixtures.messages = []; fixtures.decisions = [];
   fixtures.queries.mockClear(); fixtures.mutations.clear(); fixtures.actionFns.clear();
   fixtures.voice.connected = false;
+  fixtures.voice.status = "idle";
   fixtures.voice.backendState = "idle";
   fixtures.voice.muted = false;
   fixtures.voice.connect.mockClear(); fixtures.voice.disconnect.mockClear(); fixtures.voice.sendText.mockClear();
@@ -177,6 +186,13 @@ beforeEach(() => {
 });
 
 describe("live Scout route", () => {
+  it("keeps saved Scout state readable while an incomplete profile gets a clear completion path", () => {
+    fixtures.user = { username: "login-handle", role: "musician", profileCompleted: false };
+    renderPage();
+    expect(screen.getByText("Vervollständige dein Musikerprofil, bevor dein Scout Anbieter kontaktiert.")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Profil vervollständigen" })).toHaveAttribute("href", "/onboarding?returnTo=%2Fapp%2Fscout");
+    expect(screen.getByRole("heading", { name: "Finden wir euren Proberaum." })).toBeVisible();
+  });
   it("queries matches only for the Scout context's selected need", () => {
     fixtures.needs = [need(), { ...need(), _id: "need-other", locationQuery: "Berlin" }];
     renderPage();
@@ -288,11 +304,11 @@ describe("live Scout route", () => {
     expect(screen.getByRole("button", { name: "Mit Scout sprechen" })).toBeInTheDocument();
   });
 
-  it("keeps the discovery voice presentation spacious until connection, then compacts beside saved facts", () => {
+  it("keeps one compact voice shell before and after connection", () => {
     const view = renderPage();
     fireEvent.click(screen.getByRole("button", { name: "Mit Scout sprechen" }));
 
-    expect(screen.getByTestId("voice-session")).not.toHaveAttribute("data-compact");
+    expect(screen.getByTestId("voice-session")).toHaveAttribute("data-compact", "true");
     expect(screen.getByRole("group", { name: "Euer Suchauftrag" })).toBeInTheDocument();
 
     fixtures.voice.connected = true;
@@ -301,6 +317,14 @@ describe("live Scout route", () => {
     expect(screen.getByTestId("voice-session")).toHaveAttribute("data-compact", "true");
     expect(screen.getByTestId("voice-session")).toHaveAttribute("data-primary", "true");
     expect(screen.getByRole("group", { name: "Euer Suchauftrag" })).toBeInTheDocument();
+  });
+
+  it("uses the compact transparent voice layout while the session initializes", () => {
+    fixtures.voice.status = "creating_session";
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Mit Scout sprechen" }));
+    expect(screen.getByTestId("voice-session")).toHaveAttribute("data-compact", "true");
+    expect(screen.getByTestId("voice-session")).toHaveAttribute("data-primary", "true");
   });
 
   it("keeps persisted chat history out of the active voice composition", () => {
@@ -474,29 +498,32 @@ describe("live Scout route", () => {
     expect(screen.getByText("Voice Scout session")).toBeInTheDocument();
   });
 
-  it("lists the running candidates of this Suchauftrag, newest first", () => {
+  it("groups this search's candidates and keeps unavailable and closed rooms accessible", () => {
     fixtures.needs = [need("active")];
     fixtures.inbox = [
       candidate({ id: "c-old", title: "Raum Süd", at: 1_000 }),
       candidate({ id: "c-new", title: "Raum West", state: "offer_ready", unread: true, at: 9_000 }),
       candidate({ id: "c-other", title: "Fremder Raum", savedNeedId: "need-other", at: 8_000 }),
       candidate({ id: "c-closed", title: "Beendeter Raum", state: "closed", at: 7_000 }),
+      { ...candidate({ id: "c-unavailable", title: "Unavailable room", at: 10_000 }), disposition: "not_fit", exclusionReason: "unavailable", progress: "reply_received" },
     ];
     renderPage();
 
     const rail = screen.getByRole("navigation", { name: "Kandidaten" });
     expect(rail).toHaveTextContent("Angebot liegt vor");
     expect(rail).not.toHaveTextContent("Fremder Raum");
-    expect(rail).not.toHaveTextContent("Beendeter Raum");
+    expect(rail).toHaveTextContent("Beendeter Raum");
+    expect(rail).toHaveTextContent("Nicht verfügbar");
+    expect(fixtures.queries).toHaveBeenCalledWith("conversations:listMine", { savedNeedId: "need-current", limit: 50 });
     const rows = screen.getAllByRole("button").filter(row => rail.contains(row));
-    expect(rows.map(row => row.textContent?.split("Proberaum")[0])).toEqual(["Raum West", "Raum Süd"]);
+    expect(rows.map(row => row.textContent?.split("Proberaum")[0])).toEqual(["Raum West", "Raum Süd", "Unavailable room", "Beendeter Raum"]);
   });
 
   it("names the empty rail rather than leaving the column blank", () => {
     fixtures.needs = [need("active")];
     renderPage();
     expect(screen.getByRole("navigation", { name: "Kandidaten" }))
-      .toHaveTextContent("Noch keine Kandidaten. Ich melde mich, sobald ich Räume anfrage.");
+      .toHaveTextContent("Noch keine passenden Räume. Ich suche weiter.");
   });
 
   it("does not claim a provider reply merely because an outbound thread exists", () => {
@@ -608,13 +635,17 @@ describe("live Scout route", () => {
       },
       items: [{ kind: "decision", id: decision._id, at: 1, decision }],
     };
-    renderPage();
+    const view = renderPage();
 
     // Before another panel owns it, the global voice companion keeps the one
     // actionable card available.
     expect(screen.getAllByRole("group", { name: "Entscheidung" })).toHaveLength(1);
 
     fireEvent.click(screen.getByRole("button", { name: /Raum West/ }));
+    await waitFor(() => expect(mutation("scout:setFocus")).toHaveBeenCalled());
+    fixtures.context = { ...fixtures.context, focusedSignalId: "signal-conversation-2", mode: "signal_advisor" };
+    view.rerender(<MemoryRouter><ScoutPage /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "Unterhaltung öffnen" }));
     await waitFor(() => expect(screen.getByRole("region", { name: "Nachrichten" })).toBeInTheDocument());
     expect(screen.getAllByRole("group", { name: "Entscheidung" })).toHaveLength(1);
 
@@ -698,17 +729,111 @@ describe("live Scout route", () => {
     fixtures.voice.connected = true;
     fixtures.needs = [need("active")];
     fixtures.inbox = [candidate({ id: "c-west", title: "Raum West" })];
+    fixtures.focusedSignal = {
+      signal: {
+        _id: "signal-c-west", title: "Raum West", city: "Stuttgart", district: "West",
+        summary: "Ein heller Raum mit Lagerplatz.", priceEur: 280, pricePeriod: "month",
+        unknowns: ["Wochenendzugang noch offen"], requirements: [], isDemo: true,
+      },
+      evidence: [],
+    };
+    fixtures.focusedThread = {
+      header: {
+        conversationId: "c-west", savedNeedId: "need-current", signalId: "signal-c-west",
+        title: "Raum West", subtitle: "Stuttgart-West", channel: "platform", state: "waiting",
+        providerLabel: "Anbieter", offer: null, composer: { enabled: true },
+      },
+      items: [],
+    };
     let finishFocus: (() => void) | undefined;
     mutation("scout:setFocus").mockImplementationOnce(() => new Promise<void>(resolve => { finishFocus = resolve; }));
-    renderPage();
+    const view = renderPage();
     fireEvent.click(screen.getByRole("button", { name: /Raum West/ }));
     expect(mutation("scout:setFocus")).toHaveBeenCalledWith({ threadId: "thread", activeNeedId: "need-current", mode: "signal_advisor", focusedSignalId: "signal-c-west" });
     expect(fixtures.queries).not.toHaveBeenCalledWith("conversations:getMine", { conversationId: "c-west" });
     finishFocus?.();
+    fixtures.context = { ...fixtures.context, focusedSignalId: "signal-c-west", mode: "signal_advisor" };
+    view.rerender(<MemoryRouter><ScoutPage /></MemoryRouter>);
+    expect(screen.getByRole("heading", { name: "Raum West" })).toBeVisible();
+    expect(screen.getByText("Ein heller Raum mit Lagerplatz.")).toBeVisible();
+    expect(fixtures.queries).toHaveBeenCalledWith("signals:get", { signalId: "signal-c-west" });
+    expect(fixtures.queries).not.toHaveBeenCalledWith("conversations:getMine", { conversationId: "c-west" });
+    expect(mutation("conversations:markRead")).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Unterhaltung öffnen" }));
     await waitFor(() => expect(fixtures.queries).toHaveBeenCalledWith("conversations:getMine", { conversationId: "c-west" }));
+    await waitFor(() => expect(mutation("conversations:markRead")).toHaveBeenCalledWith({ conversationId: "c-west" }));
+    expect(screen.getByRole("region", { name: "Nachrichten" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Zurück zu den Raumdetails" }));
+    expect(screen.getByText("Ein heller Raum mit Lagerplatz.")).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Nachrichten" })).not.toBeInTheDocument();
     expect(fixtures.voice.setFocus).toHaveBeenLastCalledWith(expect.objectContaining({ focusedSignalId: "signal-c-west" }));
     expect(screen.getByText("Voice Scout session")).toBeInTheDocument();
     expect(fixtures.voice.disconnect).not.toHaveBeenCalled();
+  });
+
+  it("opens a budget-only candidate without contacting it and requires a global budget edit", async () => {
+    fixtures.needs = [{ ...need("active"), maxBudgetEur: 250, matchingRevision: 7 }];
+    fixtures.indexed = [{ candidateKey: "need-current:room-350", savedNeedId: "need-current", signalId: "room-350", kind: "near_budget", updatedAt: 2000, monthlyCostEur: 350, budgetDeltaEur: 100, monthlyCostBasis: "listed_monthly_base", contactEligible: false, reasons: ["Within your area"], uncertainties: ["Evenings unconfirmed"], signal: { title: "Room 350", city: "Stuttgart", summary: "Shared rehearsal room", isDemo: true, providerSimulation: "ai_simulated" } }];
+    const view = renderPage();
+    expect(screen.getByRole("navigation", { name: "Kandidaten" })).toHaveTextContent("Über eurem aktuellen Budget");
+    expect(screen.getByRole("button", { name: /Room 350/ })).not.toHaveTextContent("RoomScout-Demo");
+    expect(screen.queryByText("Fiktiver Raum · KI-simulierter Anbieter")).not.toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Räume über Budget anzeigen" })).toBeChecked();
+    fireEvent.click(screen.getByRole("switch", { name: "Räume über Budget anzeigen" }));
+    expect(screen.queryByRole("button", { name: /Room 350/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: "Räume über Budget anzeigen" }));
+    fireEvent.click(screen.getByRole("button", { name: /Room 350/ }));
+    await waitFor(() => expect(mutation("scout:setFocus")).toHaveBeenCalledWith(expect.objectContaining({ focusedSignalId: "room-350" })));
+    fixtures.context = { ...fixtures.context, focusedSignalId: "room-350", mode: "signal_advisor" };
+    view.rerender(<MemoryRouter><ScoutPage /></MemoryRouter>);
+    expect(screen.getByText(/100.*über eurem Monatsbudget/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Diesen Anbieter anfragen" })).not.toBeInTheDocument();
+    expect(mutation("providerConversations:startInitialInquiry")).not.toHaveBeenCalled();
+    expect(mutation("savedNeeds:update")).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Suchbudget anpassen" }));
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Maximales Budget pro Monat" }), { target: { value: "400" } });
+    fireEvent.click(screen.getByRole("button", { name: "Änderungen speichern" }));
+    await waitFor(() => expect(mutation("savedNeeds:update")).toHaveBeenCalledWith({ needId: "need-current", expectedRevision: 7, maxBudgetEur: 400 }));
+
+    // Reactive promotion preserves the selected room; merely displaying it sends nothing.
+    fixtures.needs = [{ ...need("active"), maxBudgetEur: 400, matchingRevision: 8 }];
+    fixtures.indexed = [{ ...fixtures.indexed[0], kind: "fit", budgetDeltaEur: -50, contactEligible: true }];
+    view.rerender(<MemoryRouter><ScoutPage /></MemoryRouter>);
+    expect(screen.getByRole("heading", { name: "Room 350" })).toBeInTheDocument();
+    expect(screen.queryByText(/über eurem Monatsbudget/)).not.toBeInTheDocument();
+    expect(mutation("providerConversations:startInitialInquiry")).not.toHaveBeenCalled();
+    mutation("providerConversations:startInitialInquiry").mockResolvedValue({ status: "queued" });
+    fireEvent.click(screen.getByRole("button", { name: "Diesen Anbieter anfragen" }));
+    await waitFor(() => expect(mutation("providerConversations:startInitialInquiry")).toHaveBeenCalledWith({ savedNeedId: "need-current", signalId: "room-350" }));
+  });
+
+  it("keeps a real indexed room readable while contact stays disabled in the demo", async () => {
+    fixtures.needs = [need("active")];
+    fixtures.indexed = [{ candidateKey: "need-current:real-room", savedNeedId: "need-current", signalId: "real-room", kind: "fit", updatedAt: 2000, monthlyCostEur: 250, monthlyCostBasis: "listed_monthly_base", contactEligible: true, reasons: ["Within your area"], uncertainties: [], signal: { title: "Real indexed room", city: "Stuttgart", summary: "Observed public listing", isDemo: false } }];
+    const view = renderPage();
+    expect(screen.getByRole("button", { name: /Real indexed room/ })).toHaveTextContent("Kontakt in der Demo deaktiviert");
+    fireEvent.click(screen.getByRole("button", { name: /Real indexed room/ }));
+    await waitFor(() => expect(mutation("scout:setFocus")).toHaveBeenCalled());
+    fixtures.context = { ...fixtures.context, focusedSignalId: "real-room", mode: "signal_advisor" };
+    view.rerender(<MemoryRouter><ScoutPage /></MemoryRouter>);
+    expect(screen.getByRole("heading", { name: "Real indexed room" })).toBeVisible();
+    expect(screen.getAllByText("Kontakt in der Demo deaktiviert").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "Diesen Anbieter anfragen" })).not.toBeInTheDocument();
+    expect(mutation("providerConversations:startInitialInquiry")).not.toHaveBeenCalled();
+  });
+
+  it("turns a server profile requirement into the visible completion path", async () => {
+    fixtures.needs = [need("active")];
+    fixtures.indexed = [{ candidateKey: "need-current:demo-room", savedNeedId: "need-current", signalId: "demo-room", kind: "fit", updatedAt: 2000, monthlyCostEur: 250, monthlyCostBasis: "listed_monthly_base", contactEligible: true, reasons: ["Within your area"], uncertainties: [], signal: { title: "Controlled room", city: "Stuttgart", summary: "Demo listing", isDemo: true } }];
+    const view = renderPage();
+    fireEvent.click(screen.getByRole("button", { name: /Controlled room/ }));
+    await waitFor(() => expect(mutation("scout:setFocus")).toHaveBeenCalled());
+    fixtures.context = { ...fixtures.context, focusedSignalId: "demo-room", mode: "signal_advisor" };
+    mutation("providerConversations:startInitialInquiry").mockRejectedValueOnce(new ConvexError({ code: "MUSICIAN_PROFILE_REQUIRED" }));
+    view.rerender(<MemoryRouter><ScoutPage /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "Diesen Anbieter anfragen" }));
+    expect(await screen.findByRole("link", { name: "Profil vervollständigen" })).toBeVisible();
+    expect(screen.queryByText("Die Aktion konnte nicht abgeschlossen werden.")).not.toBeInTheDocument();
   });
 
 });

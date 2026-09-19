@@ -48,6 +48,7 @@ describe("multi-entry extraction", () => {
             id: "a",
             title: "Band sucht Raum",
             url: "/ads/1?utm_source=feed",
+            imageUrl: "/demo-rooms/one.webp",
             summary: "Kontakt band@example.com",
             city: "Stuttgart",
           },
@@ -61,6 +62,7 @@ describe("multi-entry extraction", () => {
             id: "b",
             title: "Proberaum frei",
             url: "/ads/2",
+            imageUrl: "http://127.0.0.1/private.webp",
             summary: "Freitags frei",
             side: "supply",
           },
@@ -72,9 +74,11 @@ describe("multi-entry extraction", () => {
       canonicalUrl: "https://example.com/ads/1",
       side: "demand",
       contactDataPresent: true,
+      imageUrl: "https://example.com/demo-rooms/one.webp",
     });
     expect(entries[0]?.excerpt).not.toContain("band@example.com");
     expect(entries[1]?.side).toBe("supply");
+    expect(entries[1]?.imageUrl).toBeUndefined();
   });
 });
 

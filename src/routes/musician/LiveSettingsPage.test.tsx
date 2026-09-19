@@ -4,6 +4,7 @@ import { getFunctionName } from "convex/server";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LiveSettingsPage } from "./LiveSettingsPage";
+import { LocaleProvider } from "../../ui/copy";
 
 const useQuery = vi.fn();
 const mutation = vi.fn(async () => null);
@@ -23,10 +24,6 @@ vi.mock("convex/react", () => ({
   },
 }));
 
-vi.mock("../../ui/copy", () => ({
-  useCopy: () => ({ t: (key: string) => key }),
-}));
-
 vi.mock("../../ui/chrome/PanelDialog", () => ({
   PanelDialog: ({ children, groups, onOpenChange, onSelect, overlays }: {
     children: React.ReactNode;
@@ -43,11 +40,15 @@ vi.mock("../../ui/chrome/PanelDialog", () => ({
 
 vi.mock("../../components/memory/ContextImportDialog", () => ({ ContextImportDialog: () => null }));
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-function queryFixture(portals: unknown[] = [], connectable: unknown[] = [], selectedNeed?: Record<string, unknown>) {
+function queryFixture(portals: unknown[] = [], connectable: unknown[] = [], selectedNeed?: Record<string, unknown>, publicSources: unknown[] = []) {
   useQuery.mockReset();
-  const user = { _id: "user", username: "cooks", displayName: "The Cooks", role: "musician" };
+  const user = {
+    _id: "user", username: "cooks", displayName: "The Cooks", role: "musician",
+    firstName: "Alex", lastName: "Private-Surname", actKind: "band", actName: "The Cooks",
+    profileCompleted: true, providerDisplayName: "RoomScout for The Cooks", representedName: "The Cooks",
+  };
   const need = { _id: "need", title: "Search", status: "active", arrangement: [], schedule: [], requirements: [], ...selectedNeed };
   const results: Record<string, unknown> = {
     "users:current": user,
@@ -57,7 +58,7 @@ function queryFixture(portals: unknown[] = [], connectable: unknown[] = [], sele
     "mailboxes:getMine": null,
     "portalConnections:listMine": portals,
     "portalConnections:listConnectableSources": connectable,
-    "searchSources:listForNeed": { city: "Berlin", sources: [] },
+    "searchSources:listForNeed": { city: "Berlin", sources: publicSources },
     "autonomy:getMine": { rules: { mode: "autopilot", contact: true, viewings: true, publishAd: false, shareProfile: true, sharePrivate: false }, version: 0, contentHash: "hash", updatedAt: null },
     "searchSources:getPortalPreferences": [],
   };
@@ -65,63 +66,73 @@ function queryFixture(portals: unknown[] = [], connectable: unknown[] = [], sele
 }
 
 function renderRoute(section: string) {
-  return render(<MemoryRouter initialEntries={[`/app/settings/${section}`]}><Routes>
+  return render(<LocaleProvider><MemoryRouter initialEntries={[`/app/settings/${section}`]}><Routes>
     <Route path="/app/settings/:section" element={<LiveSettingsPage />} />
     <Route path="/app/runs/:runId" element={<p>Run route</p>} />
     <Route path="/app/scout" element={<p>Scout route</p>} />
-  </Routes></MemoryRouter>);
+  </Routes></MemoryRouter></LocaleProvider>);
 }
 
 describe("LiveSettingsPage", () => {
   beforeEach(() => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
     queryFixture(); mutation.mockClear(); recoverProfile.mockClear();
     startAuthentication.mockClear(); startRegistration.mockClear();
   });
 
-  it("keeps the design photo, gradient and grain stage behind settings", () => {
-    const { container } = renderRoute("sources");
-    const stage = container.querySelector('[data-slot="stage-background"]');
-    expect(stage).toHaveAttribute("data-position", "fixed");
-    expect(stage?.querySelector(".rs-bg")).toBeInTheDocument();
-    expect(stage?.querySelector(".rs-grain")).toBeInTheDocument();
-    expect(stage?.querySelector("header")).toBeInTheDocument();
-  });
-
   it("does not render pretend notification toggles when preferences are unavailable", () => {
     renderRoute("notifications");
-    expect(screen.getByText("liveSettings.notificationUnavailable")).toBeVisible();
+    expect(screen.getByText("Notifications currently appear only in RoomScout. Email, push, and browser settings are not available yet.")).toBeVisible();
     expect(screen.queryByRole("switch")).not.toBeInTheDocument();
   });
 
-  it("guards the panel close while the profile name has unsaved changes", () => {
+  it("guards the panel close while the provider identity has unsaved changes", () => {
     renderRoute("profile");
-    fireEvent.change(screen.getByLabelText("liveSettings.displayName"), { target: { value: "New Name" } });
+    fireEvent.change(screen.getByLabelText("Band or artist name (optional)"), { target: { value: "New Name" } });
     fireEvent.click(screen.getByRole("button", { name: "close-settings" }));
-    expect(screen.getByText("liveSettings.discardBody")).toBeVisible();
+    expect(screen.getByText("Your changes will be lost when you leave.")).toBeVisible();
     expect(screen.queryByText("Scout route")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "liveSettings.discard" }));
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
     expect(screen.getByText("Scout route")).toBeVisible();
+  });
+
+  it("saves the structured profile with the exact confirmed provider preview", async () => {
+    renderRoute("profile");
+    fireEvent.change(screen.getByLabelText("First name"), { target: { value: "Robin" } });
+    expect(screen.getByText("RoomScout for The Cooks")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Save profile" }));
+    expect(mutation).toHaveBeenCalledWith({
+      firstName: "Robin",
+      lastName: "Private-Surname",
+      actKind: "band",
+      actName: "The Cooks",
+      expectedProviderDisplayName: "RoomScout for The Cooks",
+    });
   });
 
   it("guards navigation away from an unsaved autonomy mode change", () => {
     renderRoute("autonomy");
-    expect(screen.getByRole("radio", { name: /settings.autonomy.mode.autopilot.title/ })).toHaveAttribute("aria-checked", "true");
-    fireEvent.click(screen.getByRole("radio", { name: /settings.autonomy.mode.review.title/ }));
-    fireEvent.click(screen.getByRole("button", { name: "settings.nav.item.sources" }));
-    expect(screen.getByText("liveSettings.discardBody")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "liveSettings.discard" }));
-    expect(screen.getByRole("heading", { name: "settings.sources.title" })).toBeVisible();
+    expect(screen.getByRole("radio", { name: /Autopilot/ })).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(screen.getByRole("radio", { name: /Review every action/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Sources & access" }));
+    expect(screen.getByText("Your changes will be lost when you leave.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(screen.getByRole("heading", { name: "Where may your Scout search?" })).toBeVisible();
     expect(mutation).not.toHaveBeenCalled();
   });
 
   it("localizes connection state and does not offer an already connected source again", () => {
     queryFixture([{ _id: "portal", sourceId: "source", sourceName: "roomscout.dev", baseUrl: "https://roomscout.dev", status: "active", policyDecision: "allowed", allowInboxPolling: true }], [{ sourceId: "source", name: "roomscout.dev", baseUrl: "https://roomscout.dev" }]);
     renderRoute("sources");
-    expect(screen.getByText("settings.sources.status.connected")).toBeVisible();
-    expect(screen.getByRole("heading", { name: "settings.sources.title" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "settings.sources.detail.manageConnection" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "liveSettings.remove" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "liveSettings.include" })).not.toBeInTheDocument();
+    expect(screen.getByText("Connected")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Where may your Scout search?" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Manage connection" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Include" })).not.toBeInTheDocument();
   });
 
   it("shows persisted Firecrawl registration progress and opens its actual run", () => {
@@ -134,20 +145,20 @@ describe("LiveSettingsPage", () => {
       },
     }]);
     renderRoute("sources");
-    expect(screen.getByText("liveSettings.registrationWaitingVerification")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "settings.sources.detail.manageConnection" }));
-    expect(screen.getByRole("button", { name: "liveSettings.viewRegistrationProgress" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "liveSettings.authenticate" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "liveSettings.registerScout" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "liveSettings.viewRegistrationProgress" }));
+    expect(screen.getByText("Waiting for verification email")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Manage connection" }));
+    expect(screen.getByRole("button", { name: "View progress" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Sign in securely" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Register Scout" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "View progress" }));
     expect(screen.getByText("Run route")).toBeVisible();
   });
 
   it.each([
-    ["queued", undefined, "liveSettings.registrationQueued"],
-    ["running", "opening_signup", "liveSettings.registrationOpening"],
-    ["running", "submitting_verification", "liveSettings.registrationSubmittingVerification"],
-    ["failed", "failed", "liveSettings.registrationFailed"],
+    ["queued", undefined, "Registration queued"],
+    ["running", "opening_signup", "Opening registration"],
+    ["running", "submitting_verification", "Checking verification code"],
+    ["failed", "failed", "Registration failed"],
   ])("projects persisted authentication phase %s/%s", (status, onboardingStage, expected) => {
     queryFixture([{
       _id: "portal", sourceId: "source", sourceName: "roomscout.dev", baseUrl: "https://roomscout.dev",
@@ -170,37 +181,62 @@ describe("LiveSettingsPage", () => {
       },
     }]);
     renderRoute("sources");
-    expect(screen.getByText("liveSettings.portalStatusNeedsAuth")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "settings.sources.detail.manageConnection" }));
-    expect(screen.getByText("liveSettings.firecrawlManualLoginUnsupported")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "liveSettings.recoverFirecrawlProfile" }));
+    expect(screen.getByText("Sign-in required")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Manage connection" }));
+    expect(screen.getByText("Manual sign-in for Firecrawl is not available here.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Check saved profile" }));
     expect(recoverProfile).toHaveBeenCalledWith({ connectionId: "portal" });
     expect(startAuthentication).not.toHaveBeenCalled();
     expect(startRegistration).not.toHaveBeenCalled();
   });
 
+  it("keeps real sources readable but disables connection and authentication actions", () => {
+    queryFixture(
+      [{ _id: "real-portal", sourceId: "real-source", sourceName: "Real portal", baseUrl: "https://real.example", status: "needs_auth", policyDecision: "allowed", allowInboxPolling: false }],
+      [{ sourceId: "new-real", name: "Another real portal", baseUrl: "https://another.example" }],
+      undefined,
+      [
+        { platformId: "indexed", name: "Indexed public source", domain: "indexed.example", platformStatus: "active", confidence: 1, preference: "neutral", hasIndexedEvidence: true },
+        { platformId: "reviewed", name: "Reviewed source", domain: "reviewed.example", platformStatus: "active", confidence: 1, preference: "neutral" },
+      ],
+    );
+    renderRoute("sources");
+    expect(screen.getByText("Indexed source")).toBeVisible();
+    expect(screen.getAllByText("Reviewed source").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Contact disabled in demo").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Manage connection" }));
+    expect(screen.queryByRole("button", { name: "Sign in securely" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Register Scout" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("button", { name: "View more sources" }));
+    expect(screen.getByRole("button", { name: "Contact disabled in demo" })).toBeDisabled();
+    expect(mutation).not.toHaveBeenCalled();
+  });
+
   it("shows facts from the Scout-selected search instead of a different saved search", () => {
     queryFixture([], [], { maxBudgetEur: 400, genres: ["Rock"] });
     renderRoute("knowledge");
-    expect(screen.getByText("Bis 400 € / Monat")).toBeVisible();
+    expect(screen.getByText("Up to €400 / month")).toBeVisible();
     expect(screen.getByText("Rock")).toBeVisible();
   });
 
   it("renders billing controls as disabled placeholders without inventing usage", () => {
     renderRoute("billing");
-    expect(screen.getByRole("button", { name: "Tarife ansehen" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Verwalten" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Hinzufügen" })).toBeDisabled();
-    expect(screen.getAllByText("Noch nicht erfasst")).toHaveLength(3);
+    expect(screen.getByRole("button", { name: "View plans" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Manage" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add" })).toBeDisabled();
+    expect(screen.getAllByText("Not tracked yet")).toHaveLength(3);
     expect(mutation).not.toHaveBeenCalled();
   });
 
   it("connects privacy navigation while export and account deletion remain disabled", () => {
     renderRoute("privacy");
-    expect(screen.getByRole("button", { name: "Daten exportieren" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Konto löschen" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "Portalzugänge verwalten" }));
-    expect(screen.getByRole("heading", { name: "settings.sources.title" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Export data" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Delete account" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Manage portal connections" }));
+    expect(screen.getByRole("heading", { name: "Where may your Scout search?" })).toBeVisible();
     expect(mutation).not.toHaveBeenCalled();
   });
 });
