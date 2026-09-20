@@ -75,14 +75,18 @@ function formatLivePhaseInstruction(
   context: ReturnType<typeof buildLiveDiscoveryContext>,
   locale: "en" | "de",
 ): string {
+  // A phase change arrives mid-call on the same provider session. Say so, or
+  // the model reads the fresh directive as a session start and greets again.
   if (locale === "de") {
+    const sameSession = "Dieselbe Sprachsitzung läuft weiter; das ist ein App-Update, keine neue Sitzung. Begrüße nicht erneut und wiederhole den SITZUNGSBEGINN nicht.";
     return context.discovery
-      ? `Wende jetzt die aktuelle verbindliche App-Phase an: Modus ${context.mode}, Phase ${context.phase}. Führe das Discovery-Gespräch und stelle jeweils eine nützliche unabhängige Frage.`
-      : `Wende jetzt die aktuelle verbindliche App-Phase an: Modus ${context.mode}, Phase ${context.phase}. Beende Discovery-Fragen und konzentriere dich auf die aktuelle Suche, den Kandidaten oder die Anbieteraufgabe.`;
+      ? `${sameSession} Wende jetzt die aktuelle verbindliche App-Phase an: Modus ${context.mode}, Phase ${context.phase}. Führe das Discovery-Gespräch und stelle jeweils eine nützliche unabhängige Frage.`
+      : `${sameSession} Wende jetzt die aktuelle verbindliche App-Phase an: Modus ${context.mode}, Phase ${context.phase}. Beende Discovery-Fragen und konzentriere dich auf die aktuelle Suche, den Kandidaten oder die Anbieteraufgabe.`;
   }
+  const sameSession = "Same voice session continues; this is an app update, not a new session. Do not greet again and do not repeat the SESSION OPENING.";
   return context.discovery
-    ? `Apply the latest authoritative app phase now: mode ${context.mode}, phase ${context.phase}. Lead discovery and ask one useful independent question at a time.`
-    : `Apply the latest authoritative app phase now: mode ${context.mode}, phase ${context.phase}. Stop discovery questions and focus on the current search, candidate, or outreach task.`;
+    ? `${sameSession} Apply the latest authoritative app phase now: mode ${context.mode}, phase ${context.phase}. Lead discovery and ask one useful independent question at a time.`
+    : `${sameSession} Apply the latest authoritative app phase now: mode ${context.mode}, phase ${context.phase}. Stop discovery questions and focus on the current search, candidate, or outreach task.`;
 }
 
 /** Live queries and actions; no scripted demo transitions or fabricated facts. */
@@ -270,7 +274,7 @@ export function ScoutPage() {
   const liveDiscoveryContextVersion = JSON.stringify(liveDiscoveryContext);
   const backgroundUpdates = JSON.stringify([
     { id: "discovery-phase", version: `${locale}:${liveDiscoveryContext.mode}:${liveDiscoveryContext.phase}:${liveDiscoveryContext.discovery}`,
-      speak: false, instruction: true, content: formatLivePhaseInstruction(liveDiscoveryContext, locale) },
+      speak: false, content: formatLivePhaseInstruction(liveDiscoveryContext, locale) },
     { id: `discovery:${need?._id ?? "none"}`, version: `${locale}:${liveDiscoveryContextVersion}`,
       speak: false, content: formatLiveDiscoveryContext(liveDiscoveryContext) },
     ...(liveDiscoveryContext.discovery && liveDiscoveryContext.search?.brief.readyForReview ? [{
@@ -383,7 +387,9 @@ export function ScoutPage() {
     if (!need || !threadId || changingFocus.current) return;
     const candidate = targetId ? railCandidates.find(row => row.conversationId === targetId || row.candidateKey === targetId) : undefined;
     if (targetId && !candidate) return;
-    setConversationSignalId(undefined);
+    // A row that carries an open Entscheidung lands on its provider thread, where
+    // the card is answerable, instead of the read-only room panel two clicks away.
+    setConversationSignalId(candidate?.hasOpenDecision && candidate.conversationId ? (candidate.signalId as Id<"signals">) : undefined);
     changingFocus.current = true;
     setError("");
     // A manual selection supersedes a focus supplied by a previous deep link.
@@ -640,7 +646,9 @@ export function ScoutPage() {
   // With voice active, the centre companion already contains the actionable
   // card when text chat or the selected provider thread shows this decision.
   // Keep the global card only as the fallback when neither panel owns it.
-  const surfaceDecisionSlot = showScoutChat || focusedThreadShowsDecision ? undefined : decisionSlot;
+  // While the opened thread is still loading, hold the global card back too so
+  // it does not flash above the thread and vanish once the thread's own arrives.
+  const surfaceDecisionSlot = showScoutChat || focusedThreadShowsDecision || (conversationOpen && focusedThread === undefined) ? undefined : decisionSlot;
   const voicePrimary = voiceOpen && !showScoutChat && !focusedConversationId && !focusedIndexed && !offerSlot && !openDecision;
   // Opening, connecting and connected calls share one transparent 720px shell;
   // provider state changes must not make the centre pane jump between cards.

@@ -189,6 +189,15 @@ type FailedInput = {
   refreshRequestId: boolean;
 };
 
+/**
+ * Queue entries the musician would recognise as their own waiting message.
+ * Fact-capture housekeeping re-arms itself every few seconds and waits behind
+ * most turns; counting it would label ordinary thinking as "your message is queued".
+ */
+function countPendingUserInputs(queue: readonly QueuedInput[]): number {
+  return queue.filter((input) => input.intent !== "capture_facts").length;
+}
+
 const LIVE_CLIENT_EVENT_TYPES = new Set([
   "session.input_audio.mute",
   "session.input_audio.unmute",
@@ -924,7 +933,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       : undefined;
     if (next.intent === "capture_facts" && !captureCandidate) {
       queueRef.current.shift();
-      setPendingInputCount(queueRef.current.length);
+      setPendingInputCount(countPendingUserInputs(queueRef.current));
       pumpRef.current();
       return;
     }
@@ -957,7 +966,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
             : [...current, { id: next.requestId, text: next.text! }],
         );
       }
-      setPendingInputCount(queueRef.current.length);
+      setPendingInputCount(countPendingUserInputs(queueRef.current));
       setBackendState("failed");
       setError(
         cause instanceof GptLiveContextOverflowError
@@ -972,7 +981,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       if (next.delegationId && !settledDelegationIdsRef.current.has(next.delegationId)) {
         parkedDelegationRef.current = next;
       }
-      setPendingInputCount(queueRef.current.length);
+      setPendingInputCount(countPendingUserInputs(queueRef.current));
       if (queueRef.current.length === 0) {
         setBackendState("idle");
         settleFlushWaiters(true);
@@ -983,7 +992,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
 
     queueRef.current.shift();
     activeInputRef.current = next;
-    setPendingInputCount(queueRef.current.length);
+    setPendingInputCount(countPendingUserInputs(queueRef.current));
     setBackendState("processing");
     if (next.source === "text") {
       setPendingTextInputs((current) => current.filter((entry) => entry.id !== next.requestId));
@@ -1178,7 +1187,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     } finally {
       if (generationRef.current === generation && activeInputRef.current?.requestId === next.requestId) {
         activeInputRef.current = undefined;
-        setPendingInputCount(queueRef.current.length);
+        setPendingInputCount(countPendingUserInputs(queueRef.current));
         if (!blockedByUnknownRef.current && !waitingForServerIdleRef.current) pumpRef.current();
         scheduleCaptureRef.current();
       }
@@ -1217,7 +1226,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       intent: "capture_facts",
       ...(allowQuietStreamEdge ? { allowQuietStreamEdgeCapture: true } : {}),
     });
-    setPendingInputCount(queueRef.current.length);
+    setPendingInputCount(countPendingUserInputs(queueRef.current));
     if (!activeInputRef.current) setBackendState("queued");
     pumpRef.current();
   }, [connectionState, earlyCaptureCadenceMs, earlyCaptureEnabled]);
@@ -1416,7 +1425,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
     parkedDelegationRef.current = undefined;
     parked.throughSequence = fragmentBufferRef.current.latestSequence();
     queueRef.current.unshift(parked);
-    setPendingInputCount(queueRef.current.length);
+    setPendingInputCount(countPendingUserInputs(queueRef.current));
     setBackendState("queued");
     pumpRef.current();
   }, []);
@@ -1480,7 +1489,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         };
         if (captureIndex >= 0) queueRef.current.splice(captureIndex, 0, delegationInput);
         else queueRef.current.push(delegationInput);
-        setPendingInputCount(queueRef.current.length);
+        setPendingInputCount(countPendingUserInputs(queueRef.current));
         setBackendState("queued");
         pumpRef.current();
         return;
@@ -1512,8 +1521,8 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
             event_id: eventId,
             delegation_id: null,
             content: localeRef.current === "en"
-              ? "Apply SESSION OPENING exactly once now. Welcome the musician in English with a brief, genuine RoomScout introduction. Speak first, then listen."
-              : "Wende SESSION OPENING jetzt genau einmal an. Begrüße die Musikerin oder den Musiker auf Deutsch mit einer kurzen, echten RoomScout-Vorstellung. Sprich zuerst und höre dann zu.",
+              ? "Apply the SESSION OPENING rule in English for your very first utterance of this session only. Speak first, then listen. Once spoken, the opening is finished for the rest of this session and must never be repeated, even after new instructions or context arrive."
+              : "Wende die Regel SESSION OPENING auf Deutsch nur für deinen allerersten Beitrag dieser Sitzung an. Sprich zuerst und höre dann zu. Danach ist die Eröffnung für den Rest dieser Sitzung abgeschlossen und darf nie wiederholt werden, auch nicht nach neuen Anweisungen oder neuem Kontext.",
           })) {
             pendingAppendIdsRef.current.add(eventId);
             openingInstructionEventRef.current = eventId;
@@ -1707,7 +1716,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       throughSequence: fragmentBufferRef.current.latestSequence(),
     });
     setPendingTextInputs((current) => [...current, { id: requestId, text: trimmed }]);
-    setPendingInputCount(queueRef.current.length);
+    setPendingInputCount(countPendingUserInputs(queueRef.current));
     setBackendState("queued");
     pumpRef.current();
     return true;
@@ -1731,7 +1740,7 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       );
     }
     queueRef.current.unshift(input);
-    setPendingInputCount(queueRef.current.length);
+    setPendingInputCount(countPendingUserInputs(queueRef.current));
     setBackendState("queued");
     pumpRef.current();
     return true;

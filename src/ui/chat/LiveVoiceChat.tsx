@@ -54,6 +54,12 @@ const BUSY_STATUSES: ReadonlySet<VoiceScoutStatus> = new Set([
   "creating_session",
 ])
 
+/**
+ * A single waiting item is usually the backend finishing the previous turn, not a
+ * stuck message. Only a real backlog, or a wait this long, earns the queued copy.
+ */
+const QUEUED_LABEL_DELAY_MS = 4_000
+
 const ACTIVE_STATUSES: ReadonlySet<VoiceScoutStatus> = new Set([
   "listening",
   "thinking",
@@ -142,13 +148,34 @@ function LiveVoiceChat({
               ? labels.error
               : labels.status
   )
+  const hasPending = voice.pendingInputCount > 0
+  const [queuedLongEnough, setQueuedLongEnough] = React.useState(false)
+  // The gate belongs to one stretch of pending work: when the queue empties, the
+  // next single item must wait its full turn again. Resetting from the previous
+  // render's value keeps the effect below free of synchronous state writes.
+  const [wasPending, setWasPending] = React.useState(hasPending)
+  if (wasPending !== hasPending) {
+    setWasPending(hasPending)
+    if (!hasPending) setQueuedLongEnough(false)
+  }
+  React.useEffect(() => {
+    // Keyed on the boolean so a count change 1 -> 2 does not restart the wait.
+    if (!hasPending) return
+    const timer = window.setTimeout(() => setQueuedLongEnough(true), QUEUED_LABEL_DELAY_MS)
+    return () => window.clearTimeout(timer)
+  }, [hasPending])
+  const showQueued = voice.pendingInputCount > 1 || (hasPending && queuedLongEnough)
+  // While the Scout is audibly speaking, background work is not news; the
+  // speaking status line already tells the musician what is happening.
   const backendStatusCopy = voice.backendState === "outcome_unknown"
     ? t("liveScout.voice.outcomeUnknown")
-    : voice.pendingInputCount > 0
-      ? t("liveScout.voice.queued")
-      : voice.backendState === "processing"
-        ? t("liveScout.voice.updating")
-        : undefined
+    : voice.status === "speaking"
+      ? undefined
+      : showQueued
+        ? t("liveScout.voice.queued")
+        : voice.backendState === "processing"
+          ? t("liveScout.voice.updating")
+          : undefined
   const pendingCopy = voice.error
     ? undefined
     : busy

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { VoiceSessionValue } from "@/components/voice/VoiceSessionContext"
@@ -212,6 +212,76 @@ describe("LiveVoiceChat", () => {
     expect(screen.getByText("Mikrofon aus")).toBeInTheDocument()
     expect(screen.queryByRole("heading", { name: "Erzähl mir, was ihr sucht." })).not.toBeInTheDocument()
     expect(screen.getAllByRole("status", { name: "Ich denke kurz nach" })).toHaveLength(1)
+  })
+
+  describe("queued copy", () => {
+    beforeEach(() => vi.useFakeTimers())
+    afterEach(() => vi.useRealTimers())
+
+    it("shows the backend update, not a queue, for one pending item until the wait is real", () => {
+      fixture.session = session({ connected: true, status: "thinking", backendState: "processing", pendingInputCount: 1 })
+      const view = render(<LiveVoiceChat compact primary />)
+      expect(screen.getByRole("status", { name: "Dein Suchauftrag wird aktualisiert …" })).toBeInTheDocument()
+      expect(screen.queryByText("Deine Nachricht wartet kurz …")).not.toBeInTheDocument()
+
+      act(() => { vi.advanceTimersByTime(3_999) })
+      expect(screen.queryByText("Deine Nachricht wartet kurz …")).not.toBeInTheDocument()
+      act(() => { vi.advanceTimersByTime(1) })
+      expect(screen.getByRole("status", { name: "Deine Nachricht wartet kurz …" })).toBeInTheDocument()
+      expect(screen.getAllByRole("status", { name: "Deine Nachricht wartet kurz …" })).toHaveLength(1)
+
+      // Returning to zero clears the gate; the next single item waits again.
+      fixture.session = session({ connected: true, status: "listening", backendState: "idle", pendingInputCount: 0 })
+      view.rerender(<LiveVoiceChat compact primary />)
+      expect(screen.queryByText("Deine Nachricht wartet kurz …")).not.toBeInTheDocument()
+      fixture.session = session({ connected: true, status: "thinking", backendState: "processing", pendingInputCount: 1 })
+      view.rerender(<LiveVoiceChat compact primary />)
+      expect(screen.getByRole("status", { name: "Dein Suchauftrag wird aktualisiert …" })).toBeInTheDocument()
+      expect(screen.queryByText("Deine Nachricht wartet kurz …")).not.toBeInTheDocument()
+    })
+
+    it("keeps the wait running while the backlog grows from one item to two", () => {
+      fixture.session = session({ connected: true, status: "thinking", backendState: "processing", pendingInputCount: 1 })
+      const view = render(<LiveVoiceChat compact primary />)
+      act(() => { vi.advanceTimersByTime(3_000) })
+      fixture.session = session({ connected: true, status: "thinking", backendState: "processing", pendingInputCount: 2 })
+      view.rerender(<LiveVoiceChat compact primary />)
+      // Two waiting messages are a real backlog: no gate at all.
+      expect(screen.getByRole("status", { name: "Deine Nachricht wartet kurz …" })).toBeInTheDocument()
+      fixture.session = session({ connected: true, status: "thinking", backendState: "processing", pendingInputCount: 1 })
+      view.rerender(<LiveVoiceChat compact primary />)
+      expect(screen.getByRole("status", { name: "Dein Suchauftrag wird aktualisiert …" })).toBeInTheDocument()
+      act(() => { vi.advanceTimersByTime(1_000) })
+      expect(screen.getByRole("status", { name: "Deine Nachricht wartet kurz …" })).toBeInTheDocument()
+    })
+
+    it("announces a real backlog of two messages immediately", () => {
+      fixture.session = session({ connected: true, status: "thinking", backendState: "processing", pendingInputCount: 2 })
+      render(<LiveVoiceChat compact primary />)
+      expect(screen.getByRole("status", { name: "Deine Nachricht wartet kurz …" })).toBeInTheDocument()
+    })
+
+    it("falls back to thinking for one item waiting on a queued backend", () => {
+      fixture.session = session({ connected: true, status: "thinking", backendState: "queued", pendingInputCount: 1 })
+      render(<LiveVoiceChat compact primary />)
+      expect(screen.getByRole("status", { name: "Ich denke kurz nach" })).toBeInTheDocument()
+      expect(screen.queryByText("Deine Nachricht wartet kurz …")).not.toBeInTheDocument()
+    })
+
+    it("lets the speaking status stand while background work runs", () => {
+      fixture.session = session({ connected: true, status: "speaking", backendState: "processing", pendingInputCount: 1 })
+      render(<LiveVoiceChat compact primary />)
+      act(() => { vi.advanceTimersByTime(5_000) })
+      expect(screen.queryByText("Dein Suchauftrag wird aktualisiert …")).not.toBeInTheDocument()
+      expect(screen.queryByText("Deine Nachricht wartet kurz …")).not.toBeInTheDocument()
+      expect(screen.getByText("Dein Scout spricht")).toBeInTheDocument()
+    })
+
+    it("still surfaces an unknown outcome while the Scout speaks", () => {
+      fixture.session = session({ connected: true, status: "speaking", backendState: "outcome_unknown", pendingInputCount: 0 })
+      render(<LiveVoiceChat compact primary />)
+      expect(screen.getByRole("status", { name: "Der letzte Schritt wird noch geprüft." })).toBeInTheDocument()
+    })
   })
 
   it("keeps call controls while the explicit text view suppresses live captions", () => {

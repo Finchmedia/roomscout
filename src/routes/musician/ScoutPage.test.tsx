@@ -444,9 +444,12 @@ describe("live Scout route", () => {
     expect(fixtures.voice.appendVerifiedBackgroundUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         id: "discovery-phase",
-        instruction: true,
+        speak: false,
         content: expect.stringContaining("mode search_discovery, phase discovery"),
       }),
+    )
+    expect(fixtures.voice.appendVerifiedBackgroundUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ id: "discovery-phase", instruction: true }),
     )
     expect(fixtures.voice.appendVerifiedBackgroundUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -471,11 +474,37 @@ describe("live Scout route", () => {
     expect(fixtures.voice.appendVerifiedBackgroundUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         id: "discovery-phase",
-        instruction: true,
+        speak: false,
         content: expect.stringContaining("phase search_active"),
       }),
     );
+    expect(fixtures.voice.appendVerifiedBackgroundUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ id: "discovery-phase", instruction: true }),
+    );
     expect(fixtures.voice.clearBackgroundUpdate).toHaveBeenCalledWith("brief-ready:need-current");
+  });
+
+  it("relays a phase change as same-session context, never as a fresh-session instruction", async () => {
+    fixtures.voice.connected = true;
+    const phaseUpdates = () => fixtures.voice.appendVerifiedBackgroundUpdate.mock.calls
+      .map(([update]) => update as { id: string; speak?: boolean; instruction?: boolean; content: string })
+      .filter((update) => update.id === "discovery-phase");
+    const view = renderPage();
+    await waitFor(() => expect(phaseUpdates()).not.toHaveLength(0));
+    const discovery = phaseUpdates().at(-1)!;
+    expect(discovery.instruction).toBeUndefined();
+    expect(discovery.speak).toBe(false);
+    expect(discovery.content).toMatch(/^Same voice session continues; this is an app update, not a new session\. Do not greet again and do not repeat the SESSION OPENING\. Apply the latest authoritative app phase now: mode search_discovery, phase discovery\./);
+
+    // Starting the search flips the phase; the founder heard "welcome back" here.
+    fixtures.needs = [need("active")];
+    view.rerender(<MemoryRouter><ScoutPage /></MemoryRouter>);
+    await waitFor(() => expect(phaseUpdates().at(-1)?.content).toContain("phase search_active"));
+    const active = phaseUpdates().at(-1)!;
+    expect(active.instruction).toBeUndefined();
+    expect(active.content).toContain("this is an app update, not a new session. Do not greet again");
+    expect(active.content).toContain("Stop discovery questions");
+    expect(phaseUpdates().every((update) => update.instruction === undefined)).toBe(true);
   });
 
   it("keeps the conversation mounted when the search starts", async () => {
@@ -645,7 +674,8 @@ describe("live Scout route", () => {
     await waitFor(() => expect(mutation("scout:setFocus")).toHaveBeenCalled());
     fixtures.context = { ...fixtures.context, focusedSignalId: "signal-conversation-2", mode: "signal_advisor" };
     view.rerender(<MemoryRouter><ScoutPage /></MemoryRouter>);
-    fireEvent.click(screen.getByRole("button", { name: "Unterhaltung öffnen" }));
+    // A row carrying an open Entscheidung lands on its thread directly; the
+    // card moves into the thread instead of doubling up with the global one.
     await waitFor(() => expect(screen.getByRole("region", { name: "Nachrichten" })).toBeInTheDocument());
     expect(screen.getAllByRole("group", { name: "Entscheidung" })).toHaveLength(1);
 
@@ -654,6 +684,67 @@ describe("live Scout route", () => {
     // The two visible conversation panels each retain their own canonical
     // context; the third floating/global copy is gone.
     expect(screen.getAllByRole("group", { name: "Entscheidung" })).toHaveLength(2);
+  });
+
+  /** A provider question tied to the „Raum West“ conversation, as `decisions.listOpenMine` returns it. */
+  function roomQuestion() {
+    return {
+      _id: "decision-conversation-2", kind: "scout_question", status: "open",
+      question: "Passt der Termin?", options: [{ id: "yes", label: "Ja, passt" }, { id: "no", label: "Nein" }],
+      refs: {}, conversationId: "conversation-2", createdAt: 1, updatedAt: 1,
+    };
+  }
+
+  it("keeps an open Entscheidung answerable above the focused room after a reload without voice", () => {
+    // After a reload the voice session is gone but the server still remembers the
+    // focused room, so the page lands on the room panel, not the voice companion.
+    fixtures.needs = [need("active")];
+    fixtures.voice.connected = false;
+    fixtures.decisions = [roomQuestion()];
+    fixtures.inbox = [candidate({ id: "conversation-2", title: "Raum West", openDecision: true })];
+    fixtures.context = { ...fixtures.context, focusedSignalId: "signal-conversation-2", mode: "signal_advisor" };
+    renderPage();
+    expect(screen.queryByText("Voice Scout session")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Nachrichten" })).not.toBeInTheDocument();
+    const room = screen.getByRole("heading", { name: "Raum West" });
+    const card = screen.getByRole("group", { name: "Entscheidung" });
+    expect(card).toHaveTextContent("Passt der Termin?");
+    expect(card.compareDocumentPosition(room) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("opens the provider thread with its Entscheidung straight from the candidate row", async () => {
+    const decision = roomQuestion();
+    fixtures.needs = [need("active")];
+    fixtures.decisions = [decision];
+    fixtures.inbox = [candidate({ id: "conversation-2", title: "Raum West", openDecision: true })];
+    fixtures.focusedThread = {
+      header: {
+        conversationId: "conversation-2", savedNeedId: "need-current", signalId: "signal-conversation-2",
+        title: "Raum West", subtitle: "Stuttgart", channel: "platform", state: "needs_attention",
+        providerLabel: "Anbieter", offer: null, composer: { enabled: true },
+      },
+      items: [{ kind: "decision", id: decision._id, at: 1, decision }],
+    };
+    const view = renderPage();
+    expect(screen.getAllByRole("group", { name: "Entscheidung" })).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /Raum West/ }));
+    await waitFor(() => expect(mutation("scout:setFocus")).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: "signal_advisor", focusedSignalId: "signal-conversation-2" }),
+    ));
+    fixtures.context = { ...fixtures.context, focusedSignalId: "signal-conversation-2", mode: "signal_advisor" };
+    view.rerender(<MemoryRouter><ScoutPage /></MemoryRouter>);
+    // One click: the thread, not the read-only room panel with its second „Unterhaltung öffnen“ step.
+    await waitFor(() => expect(screen.getByRole("region", { name: "Nachrichten" })).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Unterhaltung öffnen" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("group", { name: "Entscheidung" })).toHaveLength(1);
+
+    const answer = mutation("decisions:answer");
+    fireEvent.click(screen.getByRole("radio", { name: "Ja, passt" }));
+    fireEvent.click(screen.getByRole("button", { name: "Antworten" }));
+    await waitFor(() => expect(answer).toHaveBeenCalledWith(
+      expect.objectContaining({ decisionId: "decision-conversation-2", choice: "yes" }),
+    ));
   });
 
   it("sends a chat message as a mutation carrying the prompt", async () => {

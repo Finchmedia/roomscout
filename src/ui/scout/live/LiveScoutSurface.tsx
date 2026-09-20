@@ -255,7 +255,14 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
       </div>
     );
   } else if (props.detailSlot) {
-    content = <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-[var(--space-8)] overflow-y-auto overscroll-contain p-[var(--space-7)] [scrollbar-width:thin]">{props.detailSlot}</div>;
+    // A focused room replaces the stage chrome, so without a voice companion
+    // the open Entscheidung needs its own host here (for example after a reload).
+    content = (
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-[var(--space-8)] overflow-y-auto overscroll-contain p-[var(--space-7)] [scrollbar-width:thin]">
+        {props.decisionSlot ? <div className="mx-auto w-full max-w-[720px]" data-detail-decision-host>{props.decisionSlot}</div> : null}
+        {props.detailSlot}
+      </div>
+    );
   }
 
   return (

@@ -125,4 +125,24 @@ describe("prompt construction: GPT Live session opening", () => {
     expect(prompt).toContain(introduction);
     expect(prompt).not.toContain(staleGreeting);
   });
+
+  it.each([
+    ["en", { hasPriorContext: true, discovery: true }],
+    ["en", { hasPriorContext: false, discovery: true }],
+    ["en", { hasPriorContext: false, discovery: false }],
+    ["de", { hasPriorContext: true, discovery: true }],
+    ["de", { hasPriorContext: false, discovery: true }],
+    ["de", { hasPriorContext: false, discovery: false }],
+  ] as const)("makes the %s opening one-shot for %o", (locale, session) => {
+    const prompt = liveInstructions(locale, "phase=any", session);
+    const oneShot = locale === "de"
+      ? "Diese Eröffnung gilt nur für deinen allerersten Beitrag dieser Sitzung. Spätere Anweisungen oder Kontext-Updates der App starten keine neue Sitzung; begrüße nie erneut und sage den Eröffnungssatz nie wieder."
+      : "This opening belongs only to your very first utterance of this session. Later instruction or context updates from the app never restart the session; never greet again and never say the opening sentence again.";
+
+    expect(prompt).toContain(oneShot);
+    // The clause belongs to the opening rule itself, ahead of the trusted context block.
+    const rule = locale === "de" ? "SITZUNGSBEGINN:" : "SESSION OPENING:";
+    expect(prompt.indexOf(rule)).toBeLessThan(prompt.indexOf(oneShot));
+    expect(prompt.indexOf(oneShot)).toBeLessThan(prompt.indexOf("TRUSTED CURRENT ROOMSCOUT CONTEXT"));
+  });
 });

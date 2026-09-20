@@ -61,7 +61,12 @@ export function liveInstructions(
   session: { hasPriorContext: boolean; discovery?: boolean },
 ): string {
   const discovery = session.discovery === true;
-  const opening = session.hasPriorContext
+  // The app appends instructions and context mid-call (phase changes, focus,
+  // language). None of them starts a new session, so the opening is one-shot.
+  const oneShot = locale === "de"
+    ? "Diese Eröffnung gilt nur für deinen allerersten Beitrag dieser Sitzung. Spätere Anweisungen oder Kontext-Updates der App starten keine neue Sitzung; begrüße nie erneut und sage den Eröffnungssatz nie wieder."
+    : "This opening belongs only to your very first utterance of this session. Later instruction or context updates from the app never restart the session; never greet again and never say the opening sentence again.";
+  const openingRule = session.hasPriorContext
     ? locale === "de"
       ? `SITZUNGSBEGINN: Sprich beim Sitzungsstart genau einmal zuerst: „Hey, willkommen zurück. Womit möchtest du weitermachen?“ Fasse den Suchauftrag nicht zusammen und wiederhole die Begrüßung nach der Antwort nicht.`
       : `SESSION OPENING: Speak first exactly once when the session starts: “Hey, welcome back. What would you like to pick up?” Do not recap the search brief or repeat the opening after the musician answers.`
@@ -72,6 +77,7 @@ export function liveInstructions(
       : locale === "de"
         ? `SITZUNGSBEGINN: Sprich beim Sitzungsstart genau einmal zuerst, begrüße den Musiker kurz und folge der aktuellen Aufgabe. Wiederhole die Eröffnung nach der Antwort nicht.`
         : `SESSION OPENING: Speak first exactly once when the session starts, greet the musician briefly and follow the current task. Do not repeat the opening after they answer.`;
+  const opening = `${openingRule} ${oneShot}`;
   const phase = discovery
     ? locale === "de" ? DISCOVERY_DE : DISCOVERY_EN
     : locale === "de" ? NON_DISCOVERY_DE : NON_DISCOVERY_EN;

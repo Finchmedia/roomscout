@@ -29,7 +29,7 @@ export type VoiceSessionValue = {
   userSpeaking: boolean;
   scoutSpeaking: boolean;
   backendState: LiveBackendState;
-  /** Work waiting behind the current backend request; excludes the active request. */
+  /** Work waiting behind the current backend request; excludes the active request and fact-capture housekeeping. */
   pendingInputCount: number;
   pendingTextDraft: string;
   /** Increments after an automatic farewell has closed the provider session. */

@@ -115,6 +115,21 @@ describe("live Scout surface columns", () => {
     expect(screen.getAllByText("Soll ich das senden?")).toHaveLength(1);
   });
 
+  it.each(["working", "blocked", "offer"] as const)(
+    "hosts the Entscheidung above a focused room on the %s stage when no voice session carries it",
+    (stage) => {
+      renderSurface(stage, {
+        detailSlot: <div>Room panel</div>,
+        decisionSlot: <div>Soll ich das senden?</div>,
+      });
+      const decision = screen.getByText("Soll ich das senden?");
+      const detail = screen.getByText("Room panel");
+      expect(decision.parentElement).toHaveAttribute("data-detail-decision-host");
+      expect(decision.compareDocumentPosition(detail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(screen.getAllByText("Soll ich das senden?")).toHaveLength(1);
+    },
+  );
+
   it("keeps one pinned voice subtree while typing gives way to an interactive offer", () => {
     let mounts = 0;
     let unmounts = 0;

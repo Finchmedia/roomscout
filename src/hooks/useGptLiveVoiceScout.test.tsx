@@ -204,8 +204,8 @@ describe("useGptLiveVoiceScout", () => {
 
   it("triggers the server-owned session opening without imposing a client question", async () => {
     for (const [locale, expected] of [
-      ["en", /Welcome the musician in English.*Speak first, then listen/],
-      ["de", /Begrüße die Musikerin oder den Musiker auf Deutsch.*Sprich zuerst und höre dann zu/],
+      ["en", /SESSION OPENING rule in English for your very first utterance of this session only\. Speak first, then listen\..*must never be repeated/],
+      ["de", /Regel SESSION OPENING auf Deutsch nur für deinen allerersten Beitrag dieser Sitzung an\. Sprich zuerst und höre dann zu\..*nie wiederholt werden/],
     ] as const) {
       const hook = await connect(
         vi.fn().mockResolvedValue(completed("none", [])) as never,
@@ -215,6 +215,10 @@ describe("useGptLiveVoiceScout", () => {
       const opening = hook.sent.find((event) => event.type === "session.instructions.append");
       expect(String(opening?.content)).toMatch(expected);
       expect(String(opening?.content)).not.toMatch(/ask what matters|frage, was/i);
+      // The server prompt decides between "welcome back" and a self-introduction;
+      // the standing client cue must not prescribe an introduction the returning
+      // user's opening rule forbids, nor read as "apply the opening now" later.
+      expect(String(opening?.content)).not.toMatch(/introduction|Vorstellung|exactly once now|jetzt genau einmal/);
       expect(hook.sent.some((event) => event.type === "session.commentary.append")).toBe(false);
       act(() => serverEvent(hook.channel, {
         type: "session.instructions.appended",
@@ -909,6 +913,46 @@ describe("useGptLiveVoiceScout", () => {
     expect(result.current.backendState).toBe("processing");
     expect(result.current.pendingInputCount).toBe(0);
     await act(async () => resolveSecond(completed("second", [])));
+  });
+
+  it("does not count fact-capture housekeeping as pending input", async () => {
+    let resolveFirst!: (result: LiveDelegateResult) => void;
+    const delegate = vi.fn()
+      .mockImplementationOnce(
+        () => new Promise<LiveDelegateResult>((resolve) => { resolveFirst = resolve; }),
+      )
+      .mockImplementation(async (args: { requestId: string; intent?: string }) => ({
+        ...completed(args.requestId, []),
+        ...(args.intent ? { spokenSummary: undefined } : {}),
+      }));
+    const { result, channel } = await connect(delegate as never, {
+      enableEarlyFactCapture: true,
+      earlyFactCaptureCadenceMs: 0,
+    });
+    act(() => expect(result.current.sendText("Update the saved budget")).toBe(true));
+    await waitFor(() => expect(delegate).toHaveBeenCalledOnce());
+    expect(result.current.pendingInputCount).toBe(0);
+
+    // A spoken fact arms a capture_facts item behind the active request. It is
+    // background housekeeping, not a message the musician is waiting on.
+    act(() => serverEvent(channel, {
+      type: "session.input_transcript.delta",
+      event_id: "berlin-band",
+      delta: "We are a four-piece band in Berlin. We're",
+      start_ms: 100,
+      end_ms: 900,
+    }));
+    expect(delegate).toHaveBeenCalledOnce();
+    expect(result.current.backendState).toBe("processing");
+    expect(result.current.pendingInputCount).toBe(0);
+
+    act(() => expect(result.current.sendText("Then check availability")).toBe(true));
+    expect(result.current.pendingInputCount).toBe(1);
+
+    await act(async () => resolveFirst(completed("first", [])));
+    await waitFor(() => expect(delegate).toHaveBeenCalledWith(expect.objectContaining({ intent: "capture_facts" })));
+    await waitFor(() => expect(delegate).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(result.current.pendingInputCount).toBe(0));
   });
 
   it("keeps a deterministically rejected typed input for explicit manual retry", async () => {
