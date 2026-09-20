@@ -522,6 +522,17 @@ export const settingsDe = {
       title: "Konto löschen",
       body: "Im späteren Produkt würde hier die endgültige Löschung aller Kontodaten angestoßen. In dieser Demo gibt es dafür noch keine Funktion; der Demo-Neustart ersetzt sie nicht.",
     },
+    reset: {
+      title: "Suche und Unterhaltungen zurücksetzen",
+      subtitle: "Löscht eure gespeicherte Suche, Treffer, Anbieter-Unterhaltungen, den Scout-Chat, Entscheidungen, Erinnerungen und Benachrichtigungen. Konto, Profil, Portal-Registrierung, Postfach und Einstellungen bleiben erhalten.",
+      action: "Zurücksetzen",
+      confirmTitle: "Suche und Unterhaltungen zurücksetzen?",
+      confirmBody: "Damit werden eure gespeicherte Suche, Treffer, Anbieter-Unterhaltungen, der Scout-Chat, Entscheidungen, Erinnerungen und Benachrichtigungen endgültig gelöscht. Konto, Profil, Portal-Registrierung, Postfach und Einstellungen bleiben erhalten. Das lässt sich nicht rückgängig machen.",
+      confirm: "Jetzt zurücksetzen",
+      cancel: "Abbrechen",
+      running: "Wird zurückgesetzt … {count} gelöscht",
+      done: "Erledigt",
+    },
     vendors: {
       title: "Beteiligte Dienstleister",
       body: "Für Text und Auswertung, Quellenbeobachtung, Scout-Postfächer, Portal-Zugänge sowie Sprache: Convex, Firecrawl, AgentMail, Browserbase und OpenAI. Welche Daten dabei verarbeitet werden, hängt von der konkreten Funktion ab und wäre im Produkt einzeln erklärt.",

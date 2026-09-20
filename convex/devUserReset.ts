@@ -10,6 +10,7 @@ import {
   type QueryCtx,
 } from "./_generated/server";
 import { envValue } from "./integrations/env";
+import { hasActiveDemoReset } from "./lib/demoReset";
 import {
   portalBrowserProviderValidator,
   storedPortalBrowserProvider,
@@ -137,7 +138,12 @@ export async function isUserResetTombstoned(
 export const userMayRunWork = internalQuery({
   args: { userId: v.id("users") },
   returns: v.boolean(),
-  handler: async (ctx, args) => (await ctx.db.get(args.userId)) !== null && !await isUserResetTombstoned(ctx, args.userId),
+  // Tombstoned (full dev reset) users never run work again; a scheduled or
+  // running demo reset pauses their workers until it completes.
+  handler: async (ctx, args) =>
+    (await ctx.db.get(args.userId)) !== null &&
+    !await isUserResetTombstoned(ctx, args.userId) &&
+    !await hasActiveDemoReset(ctx, args.userId),
 });
 
 export const listCandidates = internalQuery({

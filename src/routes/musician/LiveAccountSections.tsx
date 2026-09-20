@@ -1,3 +1,5 @@
+import * as React from "react";
+import { ActionDialog } from "../../components/ui/ActionDialog";
 import { Button } from "../../components/ui/button";
 import { Icon, type IconName } from "../../components/ui/icon";
 import { Overline } from "../../components/ui/overline";
@@ -55,16 +57,28 @@ export function LiveBillingSection({ activity }: LiveBillingSectionProps) {
   </>;
 }
 
+/** Demo reset progress as the page projects it from `api.demoReset.statusMine`. */
+export interface LiveResetState {
+  phase: "idle" | "running" | "done";
+  deletedDocumentCount: number;
+  onStart: () => void;
+}
+
 export interface LivePrivacySectionProps {
   storedFactCount?: number;
   portalConnectionCount?: number;
   onKnowledge: () => void;
   onSources: () => void;
   onScout: () => void;
+  reset: LiveResetState;
 }
 
-export function LivePrivacySection({ storedFactCount, portalConnectionCount, onKnowledge, onSources, onScout }: LivePrivacySectionProps) {
+export function LivePrivacySection({ storedFactCount, portalConnectionCount, onKnowledge, onSources, onScout, reset }: LivePrivacySectionProps) {
   const { t } = useCopy();
+  const [resetOpen, setResetOpen] = React.useState(false);
+  const resetLabel = reset.phase === "running"
+    ? t("settings.privacy.reset.running", { count: reset.deletedDocumentCount })
+    : reset.phase === "done" ? t("settings.privacy.reset.done") : t("settings.privacy.reset.action");
   const storedCount = storedFactCount === undefined
     ? t("liveSettings.privacyStoredFallback")
     : t(storedFactCount === 1 ? "liveSettings.privacyStoredOne" : "liveSettings.privacyStoredMany", { count: storedFactCount });
@@ -81,6 +95,16 @@ export function LivePrivacySection({ storedFactCount, portalConnectionCount, onK
       <SettingsRow className="py-[var(--space-8)] max-[959px]:flex-col max-[959px]:items-start"><div><div className="text-[length:var(--text-body-lg-size)]">{t("liveSettings.privacyExportTitle")}</div><div className="mt-[2px] text-[length:var(--text-caption-size)] text-rs-ink-4">{t("liveSettings.privacyExportDetail")}</div></div><Button variant="secondary" size="xs" disabled>{t("liveSettings.privacyExport")}</Button></SettingsRow>
       <SettingsRow className="py-[var(--space-8)] max-[959px]:flex-col max-[959px]:items-start"><div><div className="text-[length:var(--text-body-lg-size)]">{t("liveSettings.privacyDeleteTitle")}</div><div className="mt-[2px] text-[length:var(--text-caption-size)] text-rs-ink-4">{t("liveSettings.privacyDeleteDetail")}</div></div><Button variant="secondary" size="xs" disabled>{t("liveSettings.privacyDelete")}</Button></SettingsRow>
       <div className="py-[var(--space-8)]"><div className="text-[length:var(--text-body-lg-size)]">{t("liveSettings.privacyVendorsTitle")}</div><div className="mt-[2px] text-[length:var(--text-caption-size)] leading-[var(--text-body-leading-relaxed)] text-rs-ink-4">{t("liveSettings.privacyVendorsDetail")}</div></div>
+      <SettingsRow data-testid="privacy-reset-row" className="border-t border-t-rs-border-divider border-b-0 py-[var(--space-8)] max-[959px]:flex-col max-[959px]:items-start"><div><div className="text-[length:var(--text-body-lg-size)]">{t("settings.privacy.reset.title")}</div><div className="mt-[2px] text-[length:var(--text-caption-size)] leading-[var(--text-body-leading-relaxed)] text-rs-ink-4">{t("settings.privacy.reset.subtitle")}</div></div><Button variant="danger" size="xs" disabled={reset.phase !== "idle"} aria-busy={reset.phase === "running"} onClick={() => setResetOpen(true)}>{resetLabel}</Button></SettingsRow>
     </div>
+    <ActionDialog
+      open={resetOpen}
+      onOpenChange={setResetOpen}
+      title={t("settings.privacy.reset.confirmTitle")}
+      footer={<>
+        <Button variant="secondary" onClick={() => setResetOpen(false)}>{t("settings.privacy.reset.cancel")}</Button>
+        <Button variant="danger" onClick={() => { setResetOpen(false); reset.onStart(); }}>{t("settings.privacy.reset.confirm")}</Button>
+      </>}
+    ><p>{t("settings.privacy.reset.confirmBody")}</p></ActionDialog>
   </>;
 }

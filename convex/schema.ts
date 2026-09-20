@@ -203,6 +203,22 @@ export default defineSchema({
     .index("by_target_user", ["targetUserId"])
     .index("by_status", ["status"]),
 
+  // Demo reset: wipes one musician's search and interactions while keeping the
+  // account, profile, portal registration, mailbox and settings. Not a tombstone.
+  demoResets: defineTable({
+    ownerId: v.id("users"),
+    status: v.union(
+      v.literal("scheduled"),
+      v.literal("running"),
+      v.literal("completed"),
+    ),
+    stage: v.number(),
+    deletedDocumentCount: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+  }).index("by_owner_and_created_at", ["ownerId", "createdAt"]),
+
   demoSourceChecks: defineTable({
     singletonKey: v.literal("global"),
     generation: v.string(),

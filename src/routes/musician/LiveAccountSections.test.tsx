@@ -19,6 +19,9 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
+const idleReset = { phase: "idle" as const, deletedDocumentCount: 0, onStart: () => undefined };
+const noop = () => undefined;
+
 describe("LiveBillingSection", () => {
   it("switches live billing copy while preserving disabled billing actions", () => {
     localStorage.removeItem("roomscout.locale");
@@ -48,7 +51,7 @@ describe("LivePrivacySection", () => {
   it("switches live privacy copy and keeps navigation actions working", () => {
     const onKnowledge = vi.fn(), onSources = vi.fn(), onScout = vi.fn();
     localStorage.removeItem("roomscout.locale");
-    render(<LocaleProvider><LanguageToggle /><LivePrivacySection onKnowledge={onKnowledge} onSources={onSources} onScout={onScout} /></LocaleProvider>);
+    render(<LocaleProvider><LanguageToggle /><LivePrivacySection onKnowledge={onKnowledge} onSources={onSources} onScout={onScout} reset={idleReset} /></LocaleProvider>);
     expect(screen.getByRole("heading", { name: "Your data, your control" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "View saved details" }));
     expect(onKnowledge).toHaveBeenCalledOnce();
@@ -60,7 +63,7 @@ describe("LivePrivacySection", () => {
 
   it("keeps real navigation active and placeholder data actions disabled", () => {
     const onKnowledge = vi.fn(), onSources = vi.fn(), onScout = vi.fn();
-    renderGerman(<LivePrivacySection onKnowledge={onKnowledge} onSources={onSources} onScout={onScout} />);
+    renderGerman(<LivePrivacySection onKnowledge={onKnowledge} onSources={onSources} onScout={onScout} reset={idleReset} />);
     fireEvent.click(screen.getByRole("button", { name: "Gespeicherte Angaben ansehen" }));
     fireEvent.click(screen.getByRole("button", { name: "Portalzugänge verwalten" }));
     fireEvent.click(screen.getByRole("button", { name: "Gespräche ansehen" }));
@@ -70,11 +73,44 @@ describe("LivePrivacySection", () => {
   });
 
   it("does not present fixture counts or claim storage is local-only", () => {
-    renderGerman(<LivePrivacySection onKnowledge={() => undefined} onSources={() => undefined} onScout={() => undefined} />);
+    renderGerman(<LivePrivacySection onKnowledge={noop} onSources={noop} onScout={noop} reset={idleReset} />);
     expect(screen.getByText("Angaben über eure Band und Suche")).toBeVisible();
     expect(screen.getByText("Verbindungen zu euren Portalen")).toBeVisible();
     expect(screen.queryByText("Noch nicht erfasst")).not.toBeInTheDocument();
     expect(screen.queryByText(/lokal speichert|nur lokal/i)).not.toBeInTheDocument();
     expect(screen.getByText(/in der Cloud speichert/)).toBeVisible();
+  });
+
+  it("offers the demo reset behind a confirmation and projects its progress", () => {
+    const onStart = vi.fn();
+    localStorage.removeItem("roomscout.locale");
+    const section = (phase: "idle" | "running" | "done", deletedDocumentCount = 0) =>
+      <LocaleProvider><LivePrivacySection onKnowledge={noop} onSources={noop} onScout={noop} reset={{ phase, deletedDocumentCount, onStart }} /></LocaleProvider>;
+    const view = render(section("idle"));
+    expect(screen.getByText("Reset search and conversations")).toBeVisible();
+    expect(screen.getByText(/Your account, profile, portal registration, mailbox and settings stay\./)).toBeVisible();
+    // The danger action asks first; cancelling starts nothing.
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    expect(screen.getByText("Reset search and conversations?")).toBeVisible();
+    expect(screen.getByText(/This cannot be undone\./)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onStart).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reset now" }));
+    expect(onStart).toHaveBeenCalledOnce();
+    // Progress and completion replace the action while the backend works.
+    view.rerender(section("running", 12));
+    expect(screen.getByRole("button", { name: "Resetting … 12 deleted" })).toBeDisabled();
+    view.rerender(section("done", 14));
+    expect(screen.getByRole("button", { name: "Done" })).toBeDisabled();
+  });
+
+  it("localizes the demo reset row", () => {
+    renderGerman(<LivePrivacySection onKnowledge={noop} onSources={noop} onScout={noop} reset={idleReset} />);
+    expect(screen.getByText("Suche und Unterhaltungen zurücksetzen")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Zurücksetzen" }));
+    expect(screen.getByText("Suche und Unterhaltungen zurücksetzen?")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Jetzt zurücksetzen" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Abbrechen" })).toBeVisible();
   });
 });

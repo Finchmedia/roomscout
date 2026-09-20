@@ -24,6 +24,7 @@ import type * as controlledSourceProofActions from "../controlledSourceProofActi
 import type * as conversations from "../conversations.js";
 import type * as crons from "../crons.js";
 import type * as decisions from "../decisions.js";
+import type * as demoReset from "../demoReset.js";
 import type * as demoSourceBootstrap from "../demoSourceBootstrap.js";
 import type * as demoSourceBootstrapActions from "../demoSourceBootstrapActions.js";
 import type * as demoSourceCheckActions from "../demoSourceCheckActions.js";
@@ -84,6 +85,7 @@ import type * as lib_corroboration from "../lib/corroboration.js";
 import type * as lib_currentSearchTruth from "../lib/currentSearchTruth.js";
 import type * as lib_decisions from "../lib/decisions.js";
 import type * as lib_demoProvenance from "../lib/demoProvenance.js";
+import type * as lib_demoReset from "../lib/demoReset.js";
 import type * as lib_liveDiscoveryContext from "../lib/liveDiscoveryContext.js";
 import type * as lib_matchAssessment from "../lib/matchAssessment.js";
 import type * as lib_matchValidity from "../lib/matchValidity.js";
@@ -174,6 +176,7 @@ declare const fullApi: ApiFromModules<{
   conversations: typeof conversations;
   crons: typeof crons;
   decisions: typeof decisions;
+  demoReset: typeof demoReset;
   demoSourceBootstrap: typeof demoSourceBootstrap;
   demoSourceBootstrapActions: typeof demoSourceBootstrapActions;
   demoSourceCheckActions: typeof demoSourceCheckActions;
@@ -234,6 +237,7 @@ declare const fullApi: ApiFromModules<{
   "lib/currentSearchTruth": typeof lib_currentSearchTruth;
   "lib/decisions": typeof lib_decisions;
   "lib/demoProvenance": typeof lib_demoProvenance;
+  "lib/demoReset": typeof lib_demoReset;
   "lib/liveDiscoveryContext": typeof lib_liveDiscoveryContext;
   "lib/matchAssessment": typeof lib_matchAssessment;
   "lib/matchValidity": typeof lib_matchValidity;

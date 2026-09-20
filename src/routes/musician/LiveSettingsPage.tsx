@@ -3,6 +3,7 @@ import { useAction, useMutation, useQuery } from "convex/react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { DEMO_RESET_STALL_MS, isDemoResetStalled } from "../../../convex/lib/demoReset";
 import { ContextImportDialog } from "../../components/memory/ContextImportDialog";
 import { MusicianProfileForm, type MusicianProfileDraft } from "../../components/profile/MusicianProfileForm";
 import { ActionDialog } from "../../components/ui/ActionDialog";
@@ -21,6 +22,8 @@ import { PageLead, PageTitle, SettingsRow } from "../../ui/settings/primitives";
 import type { AutonomyRules } from "../../ui/settings/state/useSettingsDemoState";
 
 const PAGES = ["sources", "autonomy", "knowledge", "profile", "notifications", "billing", "privacy"] as const;
+/** How long "Done" stays visible after a demo reset before the page returns to the Scout. */
+const RESET_DONE_DELAY_MS = 1200;
 type LiveSettingsSection = (typeof PAGES)[number];
 
 function sectionOf(value: string | undefined): LiveSettingsSection {
@@ -53,6 +56,7 @@ export function LiveSettingsPage() {
   const need = needs?.find((item) => item._id === scout?.activeNeedId && item.status !== "archived") ?? needs?.find((item) => item.status !== "archived");
   const sources = useQuery(api.searchSources.listForNeed, need ? { savedNeedId: need._id, limit: 50 } : "skip");
   const autonomy = useQuery(api.autonomy.getMine, user ? {} : "skip");
+  const resetStatus = useQuery(api.demoReset.statusMine, user ? {} : "skip");
   const portalPreferences = useQuery(api.searchSources.getPortalPreferences, need ? { savedNeedId: need._id } : "skip");
   const setPortalPreference = useMutation(api.searchSources.setPortalPreference);
   const saveAutonomy = useMutation(api.autonomy.save);
@@ -70,6 +74,7 @@ export function LiveSettingsPage() {
   const recoverFirecrawlProfile = useAction(api.firecrawlPortal.recoverProfile);
   const syncInbox = useAction(api.browserbasePortal.syncInboxNow);
   const disableConnection = useAction(api.browserbasePortal.disableConnection);
+  const startReset = useMutation(api.demoReset.startMine);
   const [profileDirty, setProfileDirty] = React.useState(false);
   const [profileFormVersion, setProfileFormVersion] = React.useState(0);
   const [autonomyDraft, setAutonomyDraft] = React.useState<AutonomyRules | null>(null);
@@ -79,6 +84,29 @@ export function LiveSettingsPage() {
   const [importOpen, setImportOpen] = React.useState(false);
   const [discardAction, setDiscardAction] = React.useState<(() => void) | null>(null);
   const [disableId, setDisableId] = React.useState<Id<"portalConnections"> | null>(null);
+  // Demo reset: the reset this page started or found running. Only its completion counts as
+  // "done"; an older completed row from a previous run must not send the musician away.
+  const [trackedResetId, setTrackedResetId] = React.useState<Id<"demoResets"> | null>(null);
+  const [, rerenderForStall] = React.useState(0);
+  const resetPending = resetStatus?.status === "scheduled" || resetStatus?.status === "running";
+  if (resetPending && resetStatus && trackedResetId !== resetStatus.resetId) setTrackedResetId(resetStatus.resetId);
+  // A pending reset whose pager stopped writing is stalled: the button re-enables and
+  // `startMine` resumes that same reset instead of reporting progress forever.
+  const resetStalled = resetPending && resetStatus !== undefined && resetStatus !== null && isDemoResetStalled(resetStatus, Date.now());
+  const resetRunning = resetPending && !resetStalled;
+  const resetDone = trackedResetId !== null && resetStatus?.resetId === trackedResetId && resetStatus.status === "completed";
+  const resetPhase: "idle" | "running" | "done" = resetDone ? "done" : resetStalled ? "idle" : resetRunning || trackedResetId !== null ? "running" : "idle";
+  const resetUpdatedAt = resetStatus?.updatedAt;
+  React.useEffect(() => {
+    if (!resetRunning || resetUpdatedAt === undefined) return;
+    const timer = window.setTimeout(() => rerenderForStall((tick) => tick + 1), Math.max(0, resetUpdatedAt + DEMO_RESET_STALL_MS - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [resetRunning, resetUpdatedAt]);
+  React.useEffect(() => {
+    if (!resetDone) return;
+    const timer = window.setTimeout(() => navigate("/app/scout"), RESET_DONE_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [resetDone, navigate]);
   const currentName = user?.displayName ?? user?.firstName ?? "";
   const autonomyDirty = autonomyDraft !== null && JSON.stringify(autonomyDraft) !== JSON.stringify(autonomy?.rules);
   const dirty = profileDirty || autonomyDirty;
@@ -91,6 +119,11 @@ export function LiveSettingsPage() {
   }
   function go(next: LiveSettingsSection) {
     guarded(() => navigate(`/app/settings/${next}`));
+  }
+  async function beginReset() {
+    setMessage("");
+    try { setTrackedResetId(await startReset({})); }
+    catch { setMessage(copy("actionFailed")); }
   }
   /** Runs one backend call behind the shared status line; resolves `true` on success. */
   async function run(key: string, operation: () => Promise<unknown>, success = copy("saved")): Promise<boolean> {
@@ -233,6 +266,7 @@ export function LiveSettingsPage() {
       onKnowledge={() => go("knowledge")}
       onSources={() => go("sources")}
       onScout={() => guarded(() => navigate("/app/scout"))}
+      reset={{ phase: resetPhase, deletedDocumentCount: resetStatus && resetStatus.resetId === trackedResetId ? resetStatus.deletedDocumentCount : 0, onStart: () => void beginReset() }}
     /> : null}
   </PanelDialog>
   </StageBackground>;

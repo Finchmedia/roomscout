@@ -41,10 +41,10 @@ export async function requireActionUserId(
   const userId = await ctx.runQuery(internal.users.resolveAuthSubject, {
     subject: identity.subject,
   });
+  // resolveAuthSubject already rejects unknown and tombstoned (dev-reset) users.
+  // The demo-reset pause (devUserReset.userMayRunWork) gates scheduled workers
+  // only; the owner's own actions keep working while their data is wiped.
   if (userId === null) {
-    throw new ConvexError({ code: "INVALID_IDENTITY" });
-  }
-  if (!await ctx.runQuery(internal.devUserReset.userMayRunWork, { userId })) {
     throw new ConvexError({ code: "INVALID_IDENTITY" });
   }
   return userId;

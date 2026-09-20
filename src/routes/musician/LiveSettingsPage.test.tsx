@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type React from "react";
 import { getFunctionName } from "convex/server";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -42,7 +42,7 @@ vi.mock("../../components/memory/ContextImportDialog", () => ({ ContextImportDia
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-function queryFixture(portals: unknown[] = [], connectable: unknown[] = [], selectedNeed?: Record<string, unknown>, publicSources: unknown[] = []) {
+function queryFixture(portals: unknown[] = [], connectable: unknown[] = [], selectedNeed?: Record<string, unknown>, publicSources: unknown[] = [], overrides: Record<string, unknown> = {}) {
   useQuery.mockReset();
   const user = {
     _id: "user", username: "cooks", displayName: "The Cooks", role: "musician",
@@ -61,16 +61,22 @@ function queryFixture(portals: unknown[] = [], connectable: unknown[] = [], sele
     "searchSources:listForNeed": { city: "Berlin", sources: publicSources },
     "autonomy:getMine": { rules: { mode: "autopilot", contact: true, viewings: true, publishAd: false, shareProfile: true, sharePrivate: false }, version: 0, contentHash: "hash", updatedAt: null },
     "searchSources:getPortalPreferences": [],
+    "demoReset:statusMine": null,
+    ...overrides,
   };
   useQuery.mockImplementation((reference) => results[getFunctionName(reference)]);
 }
 
-function renderRoute(section: string) {
-  return render(<LocaleProvider><MemoryRouter initialEntries={[`/app/settings/${section}`]}><Routes>
+function routeTree(section: string) {
+  return <LocaleProvider><MemoryRouter initialEntries={[`/app/settings/${section}`]}><Routes>
     <Route path="/app/settings/:section" element={<LiveSettingsPage />} />
     <Route path="/app/runs/:runId" element={<p>Run route</p>} />
     <Route path="/app/scout" element={<p>Scout route</p>} />
-  </Routes></MemoryRouter></LocaleProvider>);
+  </Routes></MemoryRouter></LocaleProvider>;
+}
+
+function renderRoute(section: string) {
+  return render(routeTree(section));
 }
 
 describe("LiveSettingsPage", () => {
@@ -238,5 +244,57 @@ describe("LiveSettingsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Manage portal connections" }));
     expect(screen.getByRole("heading", { name: "Where may your Scout search?" })).toBeVisible();
     expect(mutation).not.toHaveBeenCalled();
+  });
+
+  it("starts the demo reset from the privacy section only after confirmation", () => {
+    renderRoute("privacy");
+    expect(screen.getByRole("button", { name: "Reset" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    expect(screen.getByText("Reset search and conversations?")).toBeVisible();
+    expect(mutation).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Reset now" }));
+    expect(mutation).toHaveBeenCalledTimes(1);
+    expect(mutation).toHaveBeenCalledWith({});
+  });
+
+  it("shows a running demo reset as disabled progress and returns to the Scout once it completes", () => {
+    vi.useFakeTimers();
+    try {
+      const running = { resetId: "reset-1", status: "running", stage: 3, stageCount: 26, deletedDocumentCount: 7, updatedAt: Date.now() };
+      queryFixture([], [], undefined, [], { "demoReset:statusMine": running });
+      const view = renderRoute("privacy");
+      expect(screen.getByRole("button", { name: "Resetting … 7 deleted" })).toBeDisabled();
+      queryFixture([], [], undefined, [], { "demoReset:statusMine": { ...running, status: "completed", stage: 26, deletedDocumentCount: 14, updatedAt: Date.now(), completedAt: 1 } });
+      view.rerender(routeTree("privacy"));
+      expect(screen.getByRole("button", { name: "Done" })).toBeDisabled();
+      act(() => { vi.advanceTimersByTime(1200); });
+      expect(screen.getByText("Scout route")).toBeVisible();
+      expect(mutation).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("re-enables the reset once a running demo reset stalls, and resumes it through the same confirmation", () => {
+    vi.useFakeTimers();
+    try {
+      // The pager last wrote a moment ago: still healthy, so the button reports progress ...
+      const running = { resetId: "reset-1", status: "running", stage: 3, stageCount: 26, deletedDocumentCount: 7, updatedAt: Date.now() - 29_000 };
+      queryFixture([], [], undefined, [], { "demoReset:statusMine": running });
+      renderRoute("privacy");
+      expect(screen.getByRole("button", { name: "Resetting … 7 deleted" })).toBeDisabled();
+      // ... until the stall threshold passes without a newer write.
+      act(() => { vi.advanceTimersByTime(1_000); });
+      expect(screen.getByRole("button", { name: "Reset" })).toBeEnabled();
+      fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+      fireEvent.click(screen.getByRole("button", { name: "Reset now" }));
+      expect(mutation).toHaveBeenCalledTimes(1);
+      expect(screen.queryByText("Scout route")).not.toBeInTheDocument();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("does not treat an old completed demo reset as a fresh completion", () => {
+    queryFixture([], [], undefined, [], { "demoReset:statusMine": { resetId: "reset-0", status: "completed", stage: 26, stageCount: 26, deletedDocumentCount: 14, updatedAt: 1, completedAt: 1 } });
+    renderRoute("privacy");
+    expect(screen.getByRole("button", { name: "Reset" })).toBeEnabled();
+    expect(screen.queryByText("Scout route")).not.toBeInTheDocument();
   });
 });

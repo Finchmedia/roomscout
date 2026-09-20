@@ -366,6 +366,17 @@ export const settingsEn = {
       title: "Delete account",
       body: "The final product would permanently delete all account data here. This demo does not support that yet; restarting the demo does not replace deletion.",
     },
+    reset: {
+      title: "Reset search and conversations",
+      subtitle: "Deletes your saved search, matches, provider conversations, Scout chat, decisions, memories and notifications. Your account, profile, portal registration, mailbox and settings stay.",
+      action: "Reset",
+      confirmTitle: "Reset search and conversations?",
+      confirmBody: "This permanently deletes your saved search, matches, provider conversations, the Scout chat, decisions, memories and notifications. Your account, profile, portal registration, mailbox and settings are kept. This cannot be undone.",
+      confirm: "Reset now",
+      cancel: "Cancel",
+      running: "Resetting … {count} deleted",
+      done: "Done",
+    },
     vendors: {
       title: "Service providers",
       body: "RoomScout uses Convex, Firecrawl, AgentMail, Browserbase, and OpenAI for text and evaluation, source monitoring, Scout mailboxes, portal access, and voice. The data processed depends on the feature and would be explained separately in the product.",
