@@ -257,7 +257,11 @@ export const SEARCH_FACET_GUIDANCE =
   "Use values 'true'/'false' for yes/no facets and plain numbers for counts. Questions never establish facts, so do not update any field or facet merely because the musician asks whether something is true. " +
   "Equipment meanings are distinct: equipment.storage=true means the musician requires permission to leave their own gear onsite between visits; equipment.drums=true, equipment.pa=true, and equipment.backline=true mean that the room or provider must supply that equipment. " +
   "Never use a supplied-equipment facet for gear the musician owns, brings, is allowed to use, or wants permission to store. Example: 'we want to leave our own heavy amps there' means equipment.storage=true and a requirement preserving 'own heavy amplifiers may remain stored'; it never means equipment.backline=true. " +
-  "'Can our drum kit stay there?' is a question and causes no update. Put any meaning that these facets cannot preserve in requirements.";
+  "'Can our drum kit stay there?' is a question and causes no update. " +
+  "A requirement is a condition the room or the provider must meet. Put meaning that these facets cannot preserve in requirements only when it is such a condition. " +
+  "Descriptions of what the band brings, does, owns, wears, how often it rehearses, or does not need are context, never requirements; do not record them as requirements. " +
+  "Example: 'The drum kit stays, the rest we bring' yields exactly one requirement, permission and space to leave the drum kit onsite, plus equipment.storage=true; 'the rest we bring' is not a requirement and is not appended to one. " +
+  "Urgency and a wished start date are timing, not requirements: the search has no timing field, so keep them out of requirements and hold them with rememberFact as a room-search fact; 'we need a room quickly' never becomes a requirement.";
 
 export function createSearchDraftTool(
   ctx: Parameters<typeof runScoutTurn>[0],

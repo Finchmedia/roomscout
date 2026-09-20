@@ -183,6 +183,13 @@ describe("provider case instructions", () => {
     expect(providerCaseInstructions).toContain("until the musician explicitly accepts that equipment concession");
   });
 
+  it("judges only the demanding part of a requirement constraint, never band-side context", () => {
+    expect(providerCaseInstructions).toContain("evaluate only the part that demands something from the provider");
+    expect(providerCaseInstructions).toContain("never makes a constraint unsatisfied");
+    expect(providerCaseInstructions).toContain("a provider confirmation of the demanding part satisfies it");
+    expect(providerCaseInstructions).toContain('"The drum kit may stay onsite" satisfies a requirement');
+  });
+
   it("scopes the fictional-provider disclaimer without weakening real availability evidence", () => {
     const instructions = providerAssessmentContextInstructions({ controlledAiSimulation: true });
     expect(instructions).toContain("inside this controlled simulation");

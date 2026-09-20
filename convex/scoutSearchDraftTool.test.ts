@@ -31,6 +31,25 @@ describe("Scout search equipment extraction contract", () => {
     expect(tool.description).toContain("Never infer a radius from the place, an activation request, old chat, or a typical/default travel distance");
   });
 
+  it("defines a requirement as a provider-side condition and keeps band-side context and urgency out", () => {
+    expect(SEARCH_FACET_GUIDANCE).toContain("A requirement is a condition the room or the provider must meet");
+    expect(SEARCH_FACET_GUIDANCE).toContain(
+      "Descriptions of what the band brings, does, owns, wears, how often it rehearses, or does not need are context, never requirements",
+    );
+    expect(SEARCH_FACET_GUIDANCE).toContain(
+      "'The drum kit stays, the rest we bring' yields exactly one requirement, permission and space to leave the drum kit onsite, plus equipment.storage=true",
+    );
+    expect(SEARCH_FACET_GUIDANCE).toContain("'the rest we bring' is not a requirement");
+    expect(SEARCH_FACET_GUIDANCE).toContain("Urgency and a wished start date are timing, not requirements");
+    expect(SEARCH_FACET_GUIDANCE).toContain("'we need a room quickly' never becomes a requirement");
+    expect(SEARCH_FACET_GUIDANCE).not.toContain("Put any meaning that these facets cannot preserve in requirements");
+    const tool = createSearchDraftTool({} as never, {
+      ownerId: "owner" as Id<"users">,
+      needId: "need" as Id<"savedNeeds">,
+    });
+    expect(tool.description).toContain("'the rest we bring' is not a requirement");
+  });
+
   it("materializes only named changes and preserves lists and facets across early captures", async () => {
     // The former wide optional object admitted model-filled defaults alongside
     // one real fact. That shape is no longer a valid tool call.

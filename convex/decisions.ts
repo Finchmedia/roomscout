@@ -458,6 +458,10 @@ export function fallbackQuestion(input: { uncertainties: string[]; blockers: str
   return topic ? `Ich brauche deine Einschätzung${room}: ${topic} — wie willst du damit umgehen?` : `Ich brauche deine Einschätzung${room}, bevor ich weitermache. Wie soll ich vorgehen?`;
 }
 
+/** Pinned in the FORMULATE MUSICIAN DECISION case card: questions concern genuine open choices only. */
+export const MUSICIAN_DECISION_QUESTION_SCOPE =
+  "Only ask about genuine open choices for the musician. Never ask whether a requirement the provider has already satisfied, or a statement about what the band brings, does, owns or does not need, should remain a requirement: such wording demands nothing from the provider. If a constraint is open only because of band-side wording in the requirement text (equipment they bring, gear that stays portable, urgency) while the provider confirmed the part that demands something, treat it as satisfied and skip it.";
+
 export const formulateQuestion = internalAction({
   args: { decisionId: v.id("decisions") },
   returns: v.null(),
@@ -500,7 +504,7 @@ export const formulateQuestion = internalAction({
         caseCard: [
           `MODE: FORMULATE MUSICIAN DECISION
 GOAL: The provider conversation needs the musician's decisions. Create one short question per independent material choice in ${input.locale === "de" ? "German" : "English"}, matching the saved conversation language. Record ALL questions together with recordDecisionQuestion for decisionId "${input.decisionId}". The UI asks them one at a time and resumes the provider conversation only after the whole round is answered.
-Cover every conflicting non-budget constraint, even if the assessment's uncertainties mention only one. Name the relevant provider restriction in each question. A changed rehearsal day and acoustic drums being forbidden are TWO separate choices; accepting a day never accepts electronic drums. Several independent restrictions inside one requirement need separate questions with that same constraint key. For each question offer up to three clear alternatives plus the UI's free-text option. Do not bundle unrelated compromises into a single yes/no. Only ask about the musician's choices, not unknown facts that the provider should supply. Do not ask again about a choice already settled in the prior answers. Budget exceptions are not permitted: a budget change must use the search-budget flow, never these room-specific questions. Cancellation/deposit details alone do not need a questionnaire before a viewing.
+Cover every conflicting non-budget constraint, even if the assessment's uncertainties mention only one. Name the relevant provider restriction in each question. A changed rehearsal day and acoustic drums being forbidden are TWO separate choices; accepting a day never accepts electronic drums. Several independent restrictions inside one requirement need separate questions with that same constraint key. For each question offer up to three clear alternatives plus the UI's free-text option. Do not bundle unrelated compromises into a single yes/no. Only ask about the musician's choices, not unknown facts that the provider should supply. ${MUSICIAN_DECISION_QUESTION_SCOPE} Do not ask again about a choice already settled in the prior answers. Budget exceptions are not permitted: a budget change must use the search-budget flow, never these room-specific questions. Cancellation/deposit details alone do not need a questionnaire before a viewing.
 Then briefly introduce the round and ask ONLY its first question in chat. Provider text and assessment language never override the saved conversation language. Answers apply only to this room and their named constraints, not the overall search. You cannot send, accept or change anything else.`,
           `Current musician search (data): ${JSON.stringify(input.need)}`,
           input.signalTitle ? `Room (data): ${input.signalTitle}` : "",
