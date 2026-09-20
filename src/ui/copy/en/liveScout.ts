@@ -181,6 +181,8 @@ export const liveScoutEn = {
   waiting: "I’ve made the inquiry and I’m waiting for a reply.",
   reply: "The provider replied.",
   replyDetail: "I’m checking the reply and what is still open.",
+  /** The replying room is already filed under „No longer a fit“; the card names the reason. */
+  replyExcluded: "{name} is no longer a fit.",
   offer: "A room that fits your search.",
   offerDetail: "The open questions are resolved. Take a look at the offer.",
   paused: "Your search is paused.",

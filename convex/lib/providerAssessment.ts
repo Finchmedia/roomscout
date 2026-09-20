@@ -201,7 +201,8 @@ export function validateProviderAssessment(
 export function offerReadiness(assessment: ProviderAssessment, need: OfferNeed) {
   const blockers = [...assessment.uncertainties, ...assessment.contradictions.map((item) => item.explanation)];
   const hardBlockers: string[] = [];
-  if (assessment.availability.status !== "available") hardBlockers.push("Availability is not confirmed.");
+  if (assessment.availability.status === "unavailable") hardBlockers.push("The provider reports the room as not available.");
+  else if (assessment.availability.status !== "available") hardBlockers.push("Availability is not confirmed.");
   if (!assessment.availability.evidence.some((item) => item.sourceId.startsWith("mail:") || item.sourceId.startsWith("portal:"))) hardBlockers.push("A public listing alone is not a provider-confirmed offer.");
   if (!assessment.monthlyPrice.allRecurringCostsKnown || assessment.monthlyPrice.totalEur === null) hardBlockers.push("The total recurring price is not confirmed.");
   if (need.maxBudgetEur !== undefined && assessment.monthlyPrice.totalEur !== null && assessment.monthlyPrice.totalEur > need.maxBudgetEur) hardBlockers.push("The offer exceeds the musician's current budget.");

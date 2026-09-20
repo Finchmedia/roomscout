@@ -30,6 +30,8 @@ describe("prompt construction: search discovery case card", () => {
 
     expect(card).toContain(`SEARCH ALREADY LIVE: the attached search is ${status}, not a draft.`);
     expect(card).toContain("never ask them to start it again");
+    expect(card).toContain("Explicit corrections to saved search fields still go through updateSearchDraft");
+    expect(card).toContain("apply them only when the musician states the new value");
     expect(card).not.toContain("READY HANDOFF");
   });
 
@@ -38,6 +40,16 @@ describe("prompt construction: search discovery case card", () => {
 
     expect(card).toContain("READY HANDOFF");
     expect(card).toContain("No active structured search is attached.");
+  });
+});
+
+describe("prompt construction: signal advisor case card", () => {
+  it("applies an explicit musician correction on a live search but never a silent edit", () => {
+    const card = buildScoutCaseCard({ mode: "signal_advisor", need: need("active") });
+
+    expect(card).toContain("apply an explicit musician correction to a search field (for example a new budget) with updateSearchDraft");
+    expect(card).toContain("modify the search without an explicit musician instruction");
+    expect(card).not.toContain("modify the search silently");
   });
 });
 

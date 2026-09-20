@@ -218,19 +218,24 @@ function LiveVoiceChat({
       {!hideBlob && !compact ? <ScoutBlob state={blobState(voice.status)} size={160} /> : null}
       {!hideBlob && compact && primary ? <ScoutBlob className="shrink-0 self-center" state={blobState(voice.status)} size={96} /> : null}
 
-      {(title || stateLineCopy) ? <div className={cn("max-w-[38rem] shrink-0", compact && "flex w-full min-w-0 items-center gap-[var(--space-4)]")}>
+      {/* Compact mode keeps this row mounted: the status line empties while the
+          thinking indicator carries its copy, and a row that unmounts (with the
+          48px blob in companion mode) moved the whole card on every turn. */}
+      {(compact || title || stateLineCopy) ? <div className={cn("max-w-[38rem] shrink-0", compact && "flex w-full min-w-0 items-center gap-[var(--space-4)]")}>
         {!hideBlob && compact && !primary ? <ScoutBlob className="shrink-0" state={blobState(voice.status)} size={48} /> : null}
         <div className={cn(compact && "flex min-w-0 flex-1 items-center justify-between gap-[var(--space-4)]")}>
           {title ? <h2 className={cn("shrink-0 font-light text-rs-ink", compact ? "text-[length:var(--text-body-size)]" : "text-[length:var(--text-card-title-size)]")}>{title}</h2> : null}
-          {stateLineCopy ? <p
-            role={voice.error ? "alert" : "status"}
+          <p
+            role={voice.error ? "alert" : stateLineCopy ? "status" : undefined}
+            aria-hidden={stateLineCopy ? undefined : true}
+            data-voice-state-line
             className={cn(
-              compact ? "min-w-0 flex-1 truncate text-right text-[length:var(--text-micro-size)] text-rs-ink-6" : "mt-[var(--space-4)] text-[length:var(--text-body-sm-size)] text-rs-ink-6",
+              compact ? "min-h-[1.5em] min-w-0 flex-1 truncate text-right text-[length:var(--text-micro-size)] leading-[1.5] text-rs-ink-6" : "mt-[var(--space-4)] min-h-[1.5em] text-[length:var(--text-body-sm-size)] text-rs-ink-6",
               voice.error && "text-rs-red-text"
             )}
           >
-            {stateLineCopy}
-          </p> : null}
+            {stateLineCopy ?? "\u00a0"}
+          </p>
         </div>
       </div> : null}
 
@@ -241,7 +246,7 @@ function LiveVoiceChat({
         </div>
       ) : null}
 
-      {showTranscript && (latestTurns.length > 0 || pendingCopy) && (
+      {showTranscript && (
         <div
           ref={captionViewport}
           aria-label={t("liveScout.voice.transcript")}
@@ -252,15 +257,16 @@ function LiveVoiceChat({
               viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 24
           }}
           className={cn(
-            "flex w-full flex-col overflow-y-auto text-left",
+            // The component pins its own scroll position (no browser anchoring);
+            // the height is reserved per mode so the card does not grow turn by
+            // turn, and the first child floats down while the region is empty.
+            "flex w-full flex-col overflow-y-auto text-left [overflow-anchor:none] [&>*:first-child]:mt-auto",
             compact
               ? cn(
                   "min-h-0 flex-1 max-w-none gap-[var(--space-3)] px-1 py-[var(--space-2)]",
-                  latestTurns.length === 0
-                    ? "min-h-[4rem] flex-none justify-end"
-                    : primary
-                      ? "h-[clamp(16rem,44dvh,32rem)] flex-none max-h-[calc(100dvh-22rem)]"
-                      : "h-[clamp(8rem,20dvh,14rem)] flex-none max-h-[24dvh]"
+                  primary
+                    ? "h-[clamp(16rem,44dvh,32rem)] flex-none max-h-[calc(100dvh-22rem)]"
+                    : "h-[clamp(8rem,20dvh,14rem)] flex-none max-h-[24dvh]"
                 )
               : "max-h-[32vh] max-w-[var(--width-card)] gap-[var(--space-5)]"
           )}
@@ -273,7 +279,10 @@ function LiveVoiceChat({
               </ChatTurn>
             )
           })}
-          {pendingCopy ? <ScoutThinkingIndicator label={pendingCopy} text={pendingCopy} /> : null}
+          {/* Reserved row: the indicator swaps in and out without moving the captions above it. */}
+          <div className="min-h-6 shrink-0" data-voice-pending-row>
+            {pendingCopy ? <ScoutThinkingIndicator label={pendingCopy} text={pendingCopy} /> : null}
+          </div>
         </div>
       )}
 

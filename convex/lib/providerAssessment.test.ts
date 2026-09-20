@@ -84,6 +84,12 @@ describe("evidence-backed provider offers", () => {
     const listing = assessment(); listing.availability.evidence = [{ sourceId: "listing", quote }];
     expect(offerReadiness(listing, need).ready).toBe(false);
   });
+  it("names an explicitly unavailable room instead of calling its availability unconfirmed", () => {
+    const unavailable = assessment(); unavailable.availability.status = "unavailable";
+    expect(offerReadiness(unavailable, need)).toMatchObject({ ready: false, hardBlockers: ["The provider reports the room as not available."] });
+    const unknown = assessment(); unknown.availability.status = "unknown";
+    expect(offerReadiness(unknown, need)).toMatchObject({ ready: false, hardBlockers: ["Availability is not confirmed."] });
+  });
   it("keeps an offer unready without a present_offer action but does not surface that as a blocker", () => {
     const input = assessment(); input.nextAction = "ask_musician";
     expect(offerReadiness(input, need)).toEqual({ ready: false, blockers: [], hardBlockers: [] });

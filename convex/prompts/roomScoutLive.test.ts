@@ -62,9 +62,9 @@ describe("prompt construction: RoomScout Live policy", () => {
   );
 
   it.each([
-    ["en", "Discovery is not active", "Do not restart onboarding or ask a new search-criteria question", "DISCOVERY: You lead the conversation"],
-    ["de", "Discovery ist nicht aktiv", "stelle keine neue Frage zu Suchkriterien", "DISCOVERY: Du führst das Gespräch"],
-  ] as const)("does not restart %s discovery outside its trusted phase", (locale, inactive, noRestart, discovery) => {
+    ["en", "Discovery is not active", "Do not restart onboarding or ask a new search-criteria question", "DISCOVERY: You lead the conversation", "An explicit correction to a saved search fact (for example a new budget) is still a backend delegation, not a discovery question"],
+    ["de", "Discovery ist nicht aktiv", "stelle keine neue Frage zu Suchkriterien", "DISCOVERY: Du führst das Gespräch", "Eine ausdrückliche Korrektur eines gespeicherten Suchfakts (zum Beispiel ein neues Budget) ist weiterhin eine Backend-Delegation, keine Discovery-Frage"],
+  ] as const)("does not restart %s discovery outside its trusted phase", (locale, inactive, noRestart, discovery, correction) => {
     const prompt = liveInstructions(locale, "phase=offer; focused candidate=East Room", {
       hasPriorContext: true,
       discovery: false,
@@ -72,6 +72,7 @@ describe("prompt construction: RoomScout Live policy", () => {
 
     expect(prompt).toContain(inactive);
     expect(prompt).toContain(noRestart);
+    expect(prompt).toContain(correction);
     expect(prompt).not.toContain(discovery);
   });
 
@@ -88,13 +89,15 @@ describe("prompt construction: RoomScout Live policy", () => {
   });
 
   it.each([
-    ["en", "Treat only successful tool results as proof", "A saved requirement is not evidence of a room capability"],
-    ["de", "Nutze ausschließlich erfolgreiche Tool-Ergebnisse als Beleg", "Eine gespeicherte Anforderung belegt keine Eigenschaft eines Raums"],
-  ] as const)("keeps %s action and room claims evidence-bound", (locale, actionProof, capabilityProof) => {
+    ["en", "Treat only successful tool results as proof", "A saved requirement is not evidence of a room capability", "Apply explicit corrections to search facts with updateSearchDraft even when the search is already active; ask no follow-up discovery question and give no recap"],
+    ["de", "Nutze ausschließlich erfolgreiche Tool-Ergebnisse als Beleg", "Eine gespeicherte Anforderung belegt keine Eigenschaft eines Raums", "Wende ausdrückliche Korrekturen an Suchfakten mit updateSearchDraft an, auch wenn die Suche bereits aktiv ist; stelle danach keine Discovery-Anschlussfrage und gib kein Recap"],
+  ] as const)("keeps %s action and room claims evidence-bound", (locale, actionProof, capabilityProof, correction) => {
     const prompt = scoutVoiceInstructions(locale);
 
     expect(prompt).toContain(actionProof);
     expect(prompt).toContain(capabilityProof);
+    // A live search still takes explicit corrections; the draft-only readiness tool stays out.
+    expect(prompt).toContain(correction);
     expect(prompt).not.toContain("markSearchBriefReady");
   });
 });

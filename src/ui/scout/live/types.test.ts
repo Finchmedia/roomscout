@@ -20,6 +20,12 @@ describe("deriveLiveScoutStage", () => {
     expect(deriveLiveScoutStage({ blocked: true, hasConversation: true })).toBe("blocked");
   });
 
+  it("lets the rail's exclusion verdict replace the provider-update scene, but not a ready offer", () => {
+    expect(deriveLiveScoutStage({ providerExcluded: true, providerUpdate: true, working: true })).toBe("provider-excluded");
+    expect(deriveLiveScoutStage({ providerExcluded: true, offerReady: true })).toBe("offer");
+    expect(deriveLiveScoutStage({ providerExcluded: true, blocked: true })).toBe("blocked");
+  });
+
   it("defaults to welcome without live progress", () => {
     expect(deriveLiveScoutStage({})).toBe("welcome");
   });

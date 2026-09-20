@@ -31,9 +31,15 @@ const ACCEPTANCE_CONFIRM_WINDOW_MS = 3 * 60_000;
  * keep working; a host that already threads a `now` (the Nachrichten thread
  * does) passes it, and the render stays reproducible.
  */
-export function LiveProviderOffer({ conversation, title, hideMessagesLink = false, now, disclosure, contactDisabled = false }: {
+export function LiveProviderOffer({ conversation, title, hideMessagesLink = false, now, disclosure, contactDisabled = false, excludedLabel }: {
   conversation: Conversation; title?: string; hideMessagesLink?: boolean; now?: number;
   disclosure?: string; contactDisabled?: boolean;
+  /**
+   * The candidate rail already files this room as not a fit („Nicht verfügbar“,
+   * „Beendet“ …). The card then states that verdict instead of an interim
+   * „still checking“ state and offers no review.
+   */
+  excludedLabel?: string;
 }) {
   const { t, locale } = useCopy();
   // Read once, at mount: a `Date.now()` in the render body is impure, and a
@@ -83,7 +89,7 @@ export function LiveProviderOffer({ conversation, title, hideMessagesLink = fals
   const messagesLink = hideMessagesLink ? null
     : <Link className="mt-[var(--space-5)] text-sm text-rs-ink-4 underline underline-offset-4" to="/app/inbox">{t("liveScout.viewMessages")}</Link>;
   const head = <>
-    <Overline tone="accent">{t(interim ? "liveScout.interimLabel" : "liveScout.offerLabel")}</Overline>
+    <Overline tone={excludedLabel ? "muted" : "accent"}>{excludedLabel ?? t(interim ? "liveScout.interimLabel" : "liveScout.offerLabel")}</Overline>
     {disclosure ? <p className="mt-[var(--space-3)] inline-flex rounded-chip bg-rs-surface-subtle-2 px-3 py-1 text-[length:var(--text-caption-sm-size)] text-rs-ink-3">{disclosure}</p> : null}
     <h2 className="mt-[var(--space-8)] text-[length:var(--text-card-title-size)]">{roomTitle}</h2>
     <div className="mt-[var(--space-2)] text-[length:var(--text-price-size)] leading-[1.1]">
@@ -91,6 +97,18 @@ export function LiveProviderOffer({ conversation, title, hideMessagesLink = fals
     </div>
     <p className="mt-[var(--space-2)] text-rs-ink-4">{t(assessment.monthlyPrice.allRecurringCostsKnown ? "liveScout.allIn" : "liveScout.extrasUnknown")}</p>
   </>;
+  // The rail's verdict wins over the offer's own readiness: an excluded room is
+  // neither „still checking“ nor reviewable; its facts and thread remain.
+  if (excludedLabel) return <Card size="xl" padding={0} className="w-full overflow-hidden text-left">
+    <div className="grid min-[960px]:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
+      {roomPhoto}
+      <div className="flex min-w-0 flex-col justify-center px-[clamp(24px,3.4vw,56px)] py-[clamp(24px,3vw,44px)]">
+        {head}
+        <p className="mt-[var(--space-10)] leading-relaxed text-rs-ink-2">{assessment.summary}</p>
+        {messagesLink}
+      </div>
+    </div>
+  </Card>;
   // While the Scout still clarifies, show a compact interim state instead of a full offer card.
   if (interim) return <Card size="xl" padding={0} className="w-full overflow-hidden text-left">
     <div className="grid min-[960px]:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">

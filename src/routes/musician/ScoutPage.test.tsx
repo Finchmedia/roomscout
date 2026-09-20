@@ -3,6 +3,8 @@ import { getFunctionName } from "convex/server";
 import { ConvexError } from "convex/values";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { de } from "../../ui/copy/de";
+import { LocaleCtx } from "../../ui/copy/LocaleProvider";
 import { ScoutPage } from "./ScoutPage";
 
 const fixtures = vi.hoisted(() => ({
@@ -504,7 +506,27 @@ describe("live Scout route", () => {
     expect(active.instruction).toBeUndefined();
     expect(active.content).toContain("this is an app update, not a new session. Do not greet again");
     expect(active.content).toContain("Stop discovery questions");
+    // No new discovery questions, but a spoken budget change on the live search still reaches the backend.
+    expect(active.content).toContain("Explicit corrections to saved facts are still delegated to the backend.");
     expect(phaseUpdates().every((update) => update.instruction === undefined)).toBe(true);
+  });
+
+  it("relays the German phase change with the correction allowance the demo locale runs in", async () => {
+    fixtures.voice.connected = true;
+    fixtures.needs = [need("active")];
+    const phaseUpdates = () => fixtures.voice.appendVerifiedBackgroundUpdate.mock.calls
+      .map(([update]) => update as { id: string; content: string })
+      .filter((update) => update.id === "discovery-phase");
+    render(
+      <LocaleCtx.Provider value={{ locale: "de", dict: de, availableLocales: ["en", "de"], setLocale: vi.fn() }}>
+        <MemoryRouter><ScoutPage /></MemoryRouter>
+      </LocaleCtx.Provider>,
+    );
+    await waitFor(() => expect(phaseUpdates().at(-1)?.content).toContain("Phase search_active"));
+    const active = phaseUpdates().at(-1)!;
+    expect(active.content).toContain("Begrüße nicht erneut");
+    expect(active.content).toContain("Beende Discovery-Fragen");
+    expect(active.content).toContain("Ausdrückliche Korrekturen an gespeicherten Fakten werden weiterhin ans Backend delegiert.");
   });
 
   it("keeps the conversation mounted when the search starts", async () => {
@@ -553,6 +575,32 @@ describe("live Scout route", () => {
     renderPage();
     expect(screen.getByRole("navigation", { name: "Kandidaten" }))
       .toHaveTextContent("Noch keine passenden Räume. Ich suche weiter.");
+  });
+
+  it("states the rail's verdict instead of a provider update when the replying room is excluded", () => {
+    fixtures.needs = [need("active")];
+    const reply = providerConversation({ ready: false });
+    fixtures.conversations = [{
+      ...reply,
+      offer: {
+        ...reply.offer, blockers: ["The provider reports the room as not available."],
+        assessment: { ...reply.offer.assessment, availability: { status: "unavailable", evidence: [] } },
+      },
+    }];
+    // The same conversation as the rail sees it: filed under „Nicht mehr passend“.
+    fixtures.inbox = [{ ...candidate({ id: "conversation-2", title: "Nordresonanz" }), disposition: "not_fit", exclusionReason: "unavailable", progress: "reply_received" }];
+    renderPage();
+    expect(document.querySelector("[data-live-scout-stage]")).toHaveAttribute("data-live-scout-stage", "provider-excluded");
+    expect(screen.getByRole("heading", { name: "Nordresonanz passt nicht mehr." })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Der Anbieter hat geantwortet." })).not.toBeInTheDocument();
+    expect(screen.queryByText("Ich prüfe die Antwort und kläre, was noch offen ist.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Zwischenstand")).not.toBeInTheDocument();
+    expect(screen.queryByText("Ich kläre noch:")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Angebot prüfen" })).not.toBeInTheDocument();
+    // Rail and card agree on the verdict.
+    expect(screen.getByRole("navigation", { name: "Kandidaten" })).toHaveTextContent("Nicht verfügbar");
+    expect(screen.getByText("Nicht verfügbar", { selector: "[data-slot='overline']" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Nachrichten ansehen" })).toBeInTheDocument();
   });
 
   it("does not claim a provider reply merely because an outbound thread exists", () => {

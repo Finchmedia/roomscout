@@ -27,7 +27,7 @@ export const landingDe = {
     signIn: "Anmelden",
     start: "Suche starten",
     explore: "Öffentlichen Markt ansehen →",
-    demoDisclosure: "Interaktive Beispieldemo · synthetische Beispieldaten · es wird nichts versendet.",
+    demoDisclosure: "Echtes Produkt · fiktive Berliner Räume mit KI-Vermietern · es werden keine echten Musiker oder Vermieter kontaktiert.",
   },
   // §17.1 Header
   header: {

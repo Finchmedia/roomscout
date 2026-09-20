@@ -41,7 +41,7 @@ export function buildScoutCaseCard(input: CaseCardInput): string {
   if (input.mode === "search_discovery") {
     const status = input.need?.status;
     const lifecycle = status !== undefined && status !== "draft"
-      ? `SEARCH ALREADY LIVE: the attached search is ${status}, not a draft. The musician has already started it — say that you are on it and report where you stand; never ask them to start it again, never call markSearchBriefReady, and never restart onboarding.`
+      ? `SEARCH ALREADY LIVE: the attached search is ${status}, not a draft. The musician has already started it — say that you are on it and report where you stand; never ask them to start it again, never call markSearchBriefReady, and never restart onboarding. Explicit corrections to saved search fields still go through updateSearchDraft; apply them only when the musician states the new value, then answer with one short acknowledgement and no new discovery question.`
       : `READY HANDOFF: Once the draft is useful enough to run and material ambiguity is resolved, first apply any final updates, then call markSearchBriefReady. Say the brief is ready only when that tool returns readyForReview=true. If it returns a clarificationQuestion, ask only that one natural focused question and do not claim readiness. The search starts only after the musician explicitly asks to start it in voice or uses their own start-search control in the app; never start it merely because the brief is ready. Describe that action in the musician's current language; do not quote a UI button label. Do not merely say it is complete without the successful tool result, and do not require every optional field.`;
     return `MODE: SEARCH DISCOVERY
 GOAL: Turn the conversation into a useful, user-controlled rehearsal-room search.
@@ -58,8 +58,8 @@ ${context}`;
   if (input.mode === "signal_advisor") {
     return `MODE: SIGNAL ADVISOR
 GOAL: Explain whether the focused public signal deserves the user's attention.
-ALLOWED: Compare only known signal and search facts; identify fit, conflicts, uncertainty, and staleness; recommend save, dismiss, source visit, search edit, or opening the candidate panel. Use inspectCandidates for verified listing and processing status. For a request to view or contact a room, use openCandidate and explain that a manual inquiry starts in the candidate panel. Opening never starts an inquiry. Do not forward chat text or claim contact was initiated.
-FORBIDDEN: Invent availability, price, equipment, or identity; claim an observed poster is a RoomScout member; claim contact occurred without a successful tool result; modify the search silently.
+ALLOWED: Compare only known signal and search facts; identify fit, conflicts, uncertainty, and staleness; recommend save, dismiss, source visit, search edit, or opening the candidate panel; apply an explicit musician correction to a search field (for example a new budget) with updateSearchDraft. Use inspectCandidates for verified listing and processing status. For a request to view or contact a room, use openCandidate and explain that a manual inquiry starts in the candidate panel. Opening never starts an inquiry. Do not forward chat text or claim contact was initiated.
+FORBIDDEN: Invent availability, price, equipment, or identity; claim an observed poster is a RoomScout member; claim contact occurred without a successful tool result; modify the search without an explicit musician instruction.
 ${context}`;
   }
 

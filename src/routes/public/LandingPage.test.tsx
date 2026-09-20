@@ -34,13 +34,14 @@ function renderPage() {
 }
 
 describe("public landing route", () => {
-  it("separates the synthetic demo from real start and sign-in destinations", () => {
+  it("sends every demo call to action to sign-in, never to the design mocks", () => {
     renderPage();
     const demoLinks = [
       ...screen.getAllByRole("link", { name: /Start demo|Try the demo/ }),
       screen.getByRole("link", { name: "Review offer" }),
     ];
-    demoLinks.forEach((link) => expect(link).toHaveAttribute("href", "/design/scout"));
+    demoLinks.forEach((link) => expect(link).toHaveAttribute("href", "/sign-in?returnTo=%2Fapp%2Fscout"));
+    expect(document.querySelector('a[href^="/design"]')).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Start searching" })).toHaveAttribute("href", "/sign-up?returnTo=%2Fapp%2Fscout");
     expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/sign-in?returnTo=%2Fapp%2Fscout");
     expect(screen.getAllByRole("link", { name: "How it works" }).some((link) => link.getAttribute("href") === "/#how")).toBe(true);
@@ -78,7 +79,7 @@ describe("public landing route", () => {
 
   it("marks the scripted story and offer as examples without live claims", () => {
     renderPage();
-    expect(screen.getByText("Interactive sample demo · synthetic data · nothing will be sent.")).toBeInTheDocument();
+    expect(screen.getByText("Live product · fictional Berlin rooms with AI landlords · no real musicians or landlords are contacted.")).toBeInTheDocument();
     expect(screen.getByText("Sample offer")).toBeInTheDocument();
     expect(screen.getByText("Sample search · flow shortened for the demo")).toBeInTheDocument();
     expect(screen.getByText("Currently a controlled demo. No inquiries to third-party providers.")).toBeInTheDocument();

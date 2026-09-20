@@ -10,8 +10,11 @@ export function LandingPage() {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const isGuest = !isLoading && !isAuthenticated;
 
+  // Every demo call to action opens the real product: sign in first, never the design mocks.
+  const demoHref = isAuthenticated ? "/app/scout" : `/sign-in?returnTo=${SCOUT_RETURN_TO}`;
+
   return <ClaudeLandingPage
-    demoHref="/design/scout"
+    demoHref={demoHref}
     researchHref={`/sign-up?returnTo=${SCOUT_RETURN_TO}`}
     startHref={isGuest ? `/sign-up?returnTo=${SCOUT_RETURN_TO}` : "/app/scout"}
     signInHref={isLoading ? undefined : isAuthenticated ? "/app/scout" : `/sign-in?returnTo=${SCOUT_RETURN_TO}`}

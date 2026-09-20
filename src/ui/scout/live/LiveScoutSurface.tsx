@@ -33,6 +33,7 @@ const COLUMN_STAGES: ReadonlySet<LiveScoutStage> = new Set<LiveScoutStage>([
   "working",
   "blocked",
   "provider-update",
+  "provider-excluded",
   "paused",
   "offer",
   "complete",
@@ -58,22 +59,29 @@ function StageTitle({ children }: { children: React.ReactNode }) {
 
 function WorkChrome({ props, stage }: { props: LiveScoutSurfaceProps; stage: LiveScoutStage }) {
   const paused = stage === "paused";
-  const providerUpdate = stage === "provider-update";
+  // An excluded room keeps the provider card, but the headline states the
+  // verdict instead of announcing the reply as news.
+  const providerExcluded = stage === "provider-excluded";
+  const providerUpdate = stage === "provider-update" || providerExcluded;
   const blocked = stage === "blocked";
   const headline = paused
     ? props.copy.pausedHeadline
-    : providerUpdate
-      ? props.copy.providerUpdateHeadline
-      : blocked
-        ? props.copy.blockedHeadline
-        : props.copy.workingHeadline;
+    : providerExcluded
+      ? props.copy.providerExcludedHeadline ?? props.copy.providerUpdateHeadline
+      : providerUpdate
+        ? props.copy.providerUpdateHeadline
+        : blocked
+          ? props.copy.blockedHeadline
+          : props.copy.workingHeadline;
   const status = paused
     ? props.copy.pausedStatus
-    : providerUpdate
-      ? props.copy.providerUpdateStatus
-      : blocked
-        ? props.copy.blockedStatus
-        : props.copy.workingStatus;
+    : providerExcluded
+      ? props.copy.providerExcludedStatus
+      : providerUpdate
+        ? props.copy.providerUpdateStatus
+        : blocked
+          ? props.copy.blockedStatus
+          : props.copy.workingStatus;
 
   return (
     <div className={STAGE_SHELL} data-live-scout-stage={stage}>
@@ -114,14 +122,14 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
   const narrow = useNarrow();
   const [sheet, setSheet] = React.useState<"candidates" | "brief" | null>(null);
   const { stage, copy } = props;
-  const working = stage === "working" || stage === "blocked" || stage === "provider-update" || stage === "paused";
+  const working = stage === "working" || stage === "blocked" || stage === "provider-update" || stage === "provider-excluded" || stage === "paused";
   // The side columns exist only where there is something to put in them; a
   // screen that passes neither slot keeps the plain centred stage.
   const columns = (COLUMN_STAGES.has(stage) || Boolean(props.voiceSlot)) && Boolean(props.railSlot || props.asideSlot);
   const briefReview = typeof props.briefReviewSlot === "function"
     ? props.briefReviewSlot({ onReviewBrief: props.onReviewBrief, onActivate: props.onActivate })
     : props.briefReviewSlot;
-  const voiceDetailSlot = props.detailSlot ?? (stage === "offer" ? props.offerSlot : stage === "provider-update" ? props.providerUpdateSlot : null);
+  const voiceDetailSlot = props.detailSlot ?? (stage === "offer" ? props.offerSlot : stage === "provider-update" || stage === "provider-excluded" ? props.providerUpdateSlot : null);
   const voiceHasScrollableCompanion = Boolean(props.chatSlot || voiceDetailSlot);
   const conversationOpen = Boolean(props.chatSlot || props.voiceSlot);
 
@@ -192,6 +200,7 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
     case "working":
     case "blocked":
     case "provider-update":
+    case "provider-excluded":
     case "paused":
       content = <WorkChrome props={props} stage={stage} />;
       break;

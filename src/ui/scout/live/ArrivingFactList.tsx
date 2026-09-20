@@ -27,11 +27,13 @@ export interface ArrivingFactListProps {
   children?: React.ReactNode;
 }
 
-/** Short, decorative flights; every destination is already visible. */
-const FLIGHT_MS = 580;
+/** Unhurried, decorative flights; every destination is already visible. */
+const FLIGHT_MS = 900;
 const HIGHLIGHT_MS = 1000;
 /** One capsule at a time: the next fact leaves once the previous has landed. */
-const STAGGER_MS = 620;
+const STAGGER_MS = 950;
+/** The glow outlives the last landing, so a row never goes dark mid-flight. */
+const SETTLE_MS = 400;
 
 type Flags = { changed?: boolean };
 
@@ -102,11 +104,12 @@ export function ArrivingFactList({
 
     const updated = facts.filter(fact => previous.get(fact.id) !== fact.label);
     setFlags(Object.fromEntries(updated.map(fact => [fact.id, { changed: true }])));
-    schedule(HIGHLIGHT_MS, () => setFlags({}));
-    if (prefersReducedMotion()) return;
-
     // Keep a large extraction visually quiet; all other saved rows still highlight.
-    facts.filter(fact => !previous.has(fact.id)).slice(0, 3).forEach((fact, index) => {
+    const arriving = prefersReducedMotion() ? [] : facts.filter(fact => !previous.has(fact.id)).slice(0, 3);
+    const lastLanding = arriving.length ? (arriving.length - 1) * STAGGER_MS + FLIGHT_MS + SETTLE_MS : 0;
+    schedule(Math.max(HIGHLIGHT_MS, lastLanding), () => setFlags({}));
+
+    arriving.forEach((fact, index) => {
       const start = index * STAGGER_MS;
       schedule(start, () => setFlying({ ...fact, origin: measureOrigin() }));
       schedule(start + FLIGHT_MS, () => setFlying(current => current?.id === fact.id ? null : current));

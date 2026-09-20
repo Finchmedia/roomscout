@@ -8,6 +8,7 @@ export type LiveScoutStage =
   | "working"
   | "blocked"
   | "provider-update"
+  | "provider-excluded"
   | "offer"
   | "paused"
   | "complete";
@@ -19,6 +20,8 @@ export interface LiveScoutStageSignals {
   paused?: boolean;
   briefNeedsReview?: boolean;
   providerUpdate?: boolean;
+  /** The replying room is already filed as not a fit: the reply is a verdict, not news to act on. */
+  providerExcluded?: boolean;
   /** An open Entscheidung: the Scout needs the musician before it can go on. */
   blocked?: boolean;
   working?: boolean;
@@ -37,6 +40,7 @@ export function deriveLiveScoutStage(signals: LiveScoutStageSignals): LiveScoutS
   if (signals.paused) return "paused";
   if (signals.briefNeedsReview) return "brief";
   if (signals.blocked) return "blocked";
+  if (signals.providerExcluded) return "provider-excluded";
   if (signals.providerUpdate) return "provider-update";
   if (signals.working) return "working";
   if (signals.hasPartialReply || signals.hasConversation) return "discovery";
@@ -60,6 +64,9 @@ export interface LiveScoutCopy {
   blockedStatus: React.ReactNode;
   providerUpdateHeadline: React.ReactNode;
   providerUpdateStatus: React.ReactNode;
+  /** Headline when the replying room is excluded; falls back to `providerUpdateHeadline`. */
+  providerExcludedHeadline?: React.ReactNode;
+  providerExcludedStatus?: React.ReactNode;
   pausedHeadline: React.ReactNode;
   pausedStatus: React.ReactNode;
   pauseAction: string;

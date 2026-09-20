@@ -74,6 +74,11 @@ it("reports a completed acceptance as sent even after the search is paused and c
   expect(actionContext.caseCard).toContain("TRUSTED SEARCH LIFECYCLE STATUS: paused");
   expect(actionContext.caseCard).toContain("An active or paused search is not a draft");
   expect(actionContext.caseCard).toContain("do not restart onboarding");
+  // A live search still takes explicit corrections; only the draft-only handoff is off.
+  expect(actionContext.caseCard).toContain("apply it with updateSearchDraft");
+  // A correction bumps matchingRevision, which turns current offers non-current until reassessed.
+  expect(actionContext.caseCard).toContain("current provider offers are re-checked against the new value");
+  expect(actionContext.caseCard).not.toContain("update it as a draft");
 
   const context = await f.t.query(internal.providerConversations.getProgressContext, { ownerId: f.ownerId, savedNeedId: f.needId });
   expect(context).toContain('"acceptanceStatus":"sent"');

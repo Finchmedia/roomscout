@@ -104,6 +104,28 @@ describe("LiveProviderOffer acceptance gating", () => {
     expect(screen.queryByRole("button", { name: "liveScout.review" })).not.toBeInTheDocument();
   });
 
+  it("states the rail's verdict for an excluded room instead of still checking", () => {
+    const { rerender } = render(<MemoryRouter><LiveProviderOffer now={NOW} excludedLabel="Nicht verfügbar" conversation={conversation({
+      offer: { ...baseOffer, ready: false, blockers: ["The provider reports the room as not available."] },
+    })} /></MemoryRouter>);
+    expect(screen.getByText("Nicht verfügbar")).toBeVisible();
+    expect(screen.getByText("Nicht verfügbar")).toHaveAttribute("data-slot", "overline");
+    expect(screen.queryByText("liveScout.interimLabel")).not.toBeInTheDocument();
+    expect(screen.queryByText("liveScout.clarifying")).not.toBeInTheDocument();
+    expect(screen.queryByText("The provider reports the room as not available.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "liveScout.review" })).not.toBeInTheDocument();
+    // Price, summary and the thread link stay.
+    expect(screen.getByText("liveScout.perMonth")).toBeVisible();
+    expect(screen.getByText("Tuesday room")).toBeVisible();
+    expect(screen.getByRole("link", { name: "liveScout.viewMessages" })).toBeVisible();
+
+    // The verdict also outranks a ready offer: no review, no offer label.
+    rerender(<MemoryRouter><LiveProviderOffer now={NOW} excludedLabel="Beendet" conversation={conversation()} /></MemoryRouter>);
+    expect(screen.getByText("Beendet")).toBeVisible();
+    expect(screen.queryByText("liveScout.offerLabel")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "liveScout.review" })).not.toBeInTheDocument();
+  });
+
   it("renders the full offer card with review once the offer is ready on a platform thread", () => {
     expect(liveScoutDe.offerLabel).toBe("Angebot eingegangen");
     renderOffer(conversation());

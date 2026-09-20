@@ -203,6 +203,8 @@ export const liveScoutDe = {
   waiting: "Ich habe angefragt und warte auf die Antwort.",
   reply: "Der Anbieter hat geantwortet.",
   replyDetail: "Ich prüfe die Antwort und kläre, was noch offen ist.",
+  /** Der antwortende Raum steht schon unter „Nicht mehr passend“; die Karte nennt den Grund. */
+  replyExcluded: "{name} passt nicht mehr.",
   offer: "Ein Raum, der zu euch passt.",
   offerDetail: "Die offenen Punkte sind geklärt. Schaut euch das Angebot an.",
   paused: "Eure Suche macht eine Pause.",

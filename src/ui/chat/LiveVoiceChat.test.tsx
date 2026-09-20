@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { VoiceSessionValue } from "@/components/voice/VoiceSessionContext"
+import { liveScoutDe } from "@/ui/copy/de/liveScout"
 import { LiveVoiceChat } from "./LiveVoiceChat"
 
 const fixture = vi.hoisted(() => ({ session: {} as VoiceSessionValue }))
@@ -281,6 +282,61 @@ describe("LiveVoiceChat", () => {
       fixture.session = session({ connected: true, status: "speaking", backendState: "outcome_unknown", pendingInputCount: 0 })
       render(<LiveVoiceChat compact primary />)
       expect(screen.getByRole("status", { name: "Der letzte Schritt wird noch geprüft." })).toBeInTheDocument()
+    })
+  })
+
+  describe("stable layout across status flips", () => {
+    const turn = [{ id: "user", role: "user" as const, text: "Wednesday evening works.", final: true }]
+
+    it("keeps the status line mounted, empty and unannounced while the pending copy is shown", () => {
+      fixture.session = session({ connected: true, status: "thinking", transcript: turn })
+      const { container } = render(<LiveVoiceChat compact primary />)
+      const stateLine = container.querySelector<HTMLElement>("[data-voice-state-line]")!
+      expect(stateLine).toBeInTheDocument()
+      expect(stateLine).toHaveAttribute("aria-hidden", "true")
+      expect(stateLine).not.toHaveAttribute("role")
+      expect(stateLine.textContent).toBe("\u00a0")
+      // The thinking copy still appears exactly once, in the transcript.
+      expect(screen.getAllByRole("status", { name: "Ich denke kurz nach" })).toHaveLength(1)
+      expect(screen.getAllByText("Ich denke kurz nach")).toHaveLength(1)
+    })
+
+    it("announces the status line again once nothing is pending", () => {
+      fixture.session = session({ connected: true, status: "listening", transcript: turn })
+      const { container } = render(<LiveVoiceChat compact primary />)
+      const stateLine = container.querySelector<HTMLElement>("[data-voice-state-line]")!
+      expect(stateLine).toHaveAttribute("role", "status")
+      expect(stateLine).not.toHaveAttribute("aria-hidden")
+      expect(stateLine).toHaveTextContent(liveScoutDe.voice.listening)
+    })
+
+    it("reserves the pending row with and without pending copy", () => {
+      fixture.session = session({ connected: true, status: "listening", transcript: turn })
+      const view = render(<LiveVoiceChat compact primary />)
+      const row = () => view.container.querySelector<HTMLElement>("[data-voice-pending-row]")!
+      expect(row()).toBeInTheDocument()
+      expect(row()).toBeEmptyDOMElement()
+
+      fixture.session = session({ connected: true, status: "thinking", transcript: turn })
+      view.rerender(<LiveVoiceChat compact primary />)
+      expect(row()).toContainElement(screen.getByRole("status", { name: "Ich denke kurz nach" }))
+
+      fixture.session = session({ connected: true, status: "listening", transcript: turn })
+      view.rerender(<LiveVoiceChat compact primary />)
+      expect(row()).toBeEmptyDOMElement()
+      expect(screen.queryByText("Ich denke kurz nach")).not.toBeInTheDocument()
+    })
+
+    it("mounts the caption region at its reserved height before the first turn", () => {
+      fixture.session = session({ connected: true, status: "listening", transcript: [] })
+      const view = render(<LiveVoiceChat compact primary />)
+      const region = screen.getByLabelText("Letzte Gesprächsbeiträge")
+      expect(region).toHaveAttribute("data-voice-transcript-density", "compact")
+      expect(region).toHaveClass("h-[clamp(16rem,44dvh,32rem)]")
+      expect(region).not.toHaveClass("min-h-[4rem]")
+
+      view.rerender(<LiveVoiceChat compact />)
+      expect(screen.getByLabelText("Letzte Gesprächsbeiträge")).toHaveClass("h-[clamp(8rem,20dvh,14rem)]")
     })
   })
 

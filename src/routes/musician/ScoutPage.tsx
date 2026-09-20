@@ -81,12 +81,12 @@ function formatLivePhaseInstruction(
     const sameSession = "Dieselbe Sprachsitzung läuft weiter; das ist ein App-Update, keine neue Sitzung. Begrüße nicht erneut und wiederhole den SITZUNGSBEGINN nicht.";
     return context.discovery
       ? `${sameSession} Wende jetzt die aktuelle verbindliche App-Phase an: Modus ${context.mode}, Phase ${context.phase}. Führe das Discovery-Gespräch und stelle jeweils eine nützliche unabhängige Frage.`
-      : `${sameSession} Wende jetzt die aktuelle verbindliche App-Phase an: Modus ${context.mode}, Phase ${context.phase}. Beende Discovery-Fragen und konzentriere dich auf die aktuelle Suche, den Kandidaten oder die Anbieteraufgabe.`;
+      : `${sameSession} Wende jetzt die aktuelle verbindliche App-Phase an: Modus ${context.mode}, Phase ${context.phase}. Beende Discovery-Fragen und konzentriere dich auf die aktuelle Suche, den Kandidaten oder die Anbieteraufgabe. Ausdrückliche Korrekturen an gespeicherten Fakten werden weiterhin ans Backend delegiert.`;
   }
   const sameSession = "Same voice session continues; this is an app update, not a new session. Do not greet again and do not repeat the SESSION OPENING.";
   return context.discovery
     ? `${sameSession} Apply the latest authoritative app phase now: mode ${context.mode}, phase ${context.phase}. Lead discovery and ask one useful independent question at a time.`
-    : `${sameSession} Apply the latest authoritative app phase now: mode ${context.mode}, phase ${context.phase}. Stop discovery questions and focus on the current search, candidate, or outreach task.`;
+    : `${sameSession} Apply the latest authoritative app phase now: mode ${context.mode}, phase ${context.phase}. Stop discovery questions and focus on the current search, candidate, or outreach task. Explicit corrections to saved facts are still delegated to the backend.`;
 }
 
 /** Live queries and actions; no scripted demo transitions or fabricated facts. */
@@ -202,6 +202,20 @@ export function ScoutPage() {
   const accepted = conversations.find(row => (row.acceptedOfferId && row.acceptedAt !== undefined) || row.acceptanceStatus === "executed");
   const updated = conversations.find(row => row.offer?.current && row.assessmentFromProviderReply);
   const selected = accepted ?? ready ?? updated;
+  const exclusionLabels = {
+    unavailable: t("liveScout.candidateState.unavailable"), schedule: t("liveScout.candidateState.scheduleConflict"),
+    requirements: t("liveScout.candidateState.requirementsConflict"), closed: t("liveScout.candidateState.closed"),
+    not_fit: t("liveScout.candidateState.notFit"),
+  };
+  // The rail (conversations.listMine) may already file the replying room as
+  // not a fit; the stage and its card then carry that verdict instead of
+  // calling the same reply "still checking".
+  const selectedRail = candidates.find(row => row.conversationId === selected?.conversationId);
+  const selectedExcluded = selectedRail !== undefined &&
+    (selectedRail.disposition === "not_fit" || selectedRail.exclusionReason !== undefined || selectedRail.state === "closed");
+  const excludedLabel = selectedExcluded
+    ? exclusionLabels[selectedRail?.exclusionReason ?? (selectedRail?.state === "closed" ? "closed" : "not_fit")]
+    : undefined;
   // The newest open Entscheidung; every gate ask_user, provider question and portal human step raises one.
   const openDecision = Array.isArray(decisions) && decisions.length ? decisions[0] : undefined;
   const decisionOfferHash = openDecision?.kind === "offer_ready" && openDecision.refs.offerId
@@ -258,6 +272,7 @@ export function ScoutPage() {
     briefNeedsReview: need?.status === "draft" && (manualBrief || autoBrief),
     blocked: Boolean(openDecision),
     providerUpdate: need?.status === "active" && Boolean(updated),
+    providerExcluded: need?.status === "active" && Boolean(updated) && selectedExcluded,
     working: need?.status === "active",
     hasConversation: Boolean(threadId && (chatOpen || voiceOpen || history.results.length)),
   });
@@ -464,7 +479,7 @@ export function ScoutPage() {
     providerSimulation: selectedSignal?.providerSimulation ?? selected?.providerSimulation,
   };
   const offerSlot = selected ? <LiveProviderOffer key={selected.conversationId} conversation={selected} title={offerTitle}
-    disclosure={disclosureFor(selectedBoundary)} contactDisabled={selectedBoundary.isDemo !== true} /> : null;
+    disclosure={disclosureFor(selectedBoundary)} contactDisabled={selectedBoundary.isDemo !== true} excludedLabel={excludedLabel} /> : null;
   // Approval waits are Entscheidungen now (stage "blocked"); only a failed send still blocks here.
   const blocked = latestSend?.status === "failed";
   const workHeading = blocked ? t("liveScout.blocked") : latestSend?.status === "executed" ? t("liveScout.waiting") :
@@ -556,11 +571,6 @@ export function ScoutPage() {
   const focusedRailCandidate = railCandidates.find(row => row.signalId === context?.focusedSignalId);
   const focusedNotFit = focusedRailCandidate?.disposition === "not_fit" || focusedRailCandidate?.state === "closed";
   const focusedExclusion = focusedRailCandidate?.exclusionReason ?? (focusedRailCandidate?.state === "closed" ? "closed" : "not_fit");
-  const exclusionLabels = {
-    unavailable: t("liveScout.candidateState.unavailable"), schedule: t("liveScout.candidateState.scheduleConflict"),
-    requirements: t("liveScout.candidateState.requirementsConflict"), closed: t("liveScout.candidateState.closed"),
-    not_fit: t("liveScout.candidateState.notFit"),
-  };
   const focusedPublicSignal = focusedPublicResult?.signal;
   const focusedDetailSignal = focusedIndexed?.signal ?? focusedPublicSignal;
   const focusedDetailPrice = focusedIndexed?.monthlyCostEur ??
@@ -672,6 +682,8 @@ export function ScoutPage() {
       // The card states the question; the stage only frames it.
       blockedHeadline: t("liveScout.blocked"), blockedStatus: openDecision ? "" : t("liveScout.blockedDetail"),
       providerUpdateHeadline: t("liveScout.reply"), providerUpdateStatus: t("liveScout.replyDetail"),
+      // The card below names the reason („Nicht verfügbar“); the headline only states the verdict.
+      providerExcludedHeadline: t("liveScout.replyExcluded", { name: offerTitle || selectedRail?.title || t("liveScout.offerFallback") }), providerExcludedStatus: "",
       pausedHeadline: t("liveScout.paused"), pausedStatus: t("liveScout.pausedDetail"),
       pauseAction: t("scout.chrome.pause.pause"), resumeAction: t("scout.chrome.pause.resume"), settingsAction: t("scout.chrome.menu.settings"),
       briefReviewAction: t("liveScout.briefReviewAction"), activeStatus: t("liveScout.activeStatus"), pausedLabel: t("liveScout.pausedLabel"),

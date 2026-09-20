@@ -6,7 +6,7 @@ export const landingEn = {
     signIn: "Sign in",
     start: "Start searching",
     explore: "Explore the public market →",
-    demoDisclosure: "Interactive sample demo · synthetic data · nothing will be sent.",
+    demoDisclosure: "Live product · fictional Berlin rooms with AI landlords · no real musicians or landlords are contacted.",
   },
   header: {
     wordmark: "roomscout",

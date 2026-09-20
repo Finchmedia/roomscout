@@ -16,6 +16,7 @@ import { MAX_EVAL_ROUNDS } from "./contracts";
 const modules = import.meta.glob("../../convex/**/*.ts");
 function blockerCode(blocker: string): string {
   if (blocker === "Availability is not confirmed.") return "AVAILABILITY_NOT_CONFIRMED";
+  if (blocker === "The provider reports the room as not available.") return "AVAILABILITY_NOT_CONFIRMED";
   if (blocker === "A public listing alone is not a provider-confirmed offer.") return "PROVIDER_EVIDENCE_MISSING";
   if (blocker === "The total recurring price is not confirmed.") return "TOTAL_PRICE_NOT_CONFIRMED";
   if (blocker === "The offer exceeds the musician's current budget.") return "BUDGET_EXCEEDED";
