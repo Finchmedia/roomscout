@@ -11,7 +11,7 @@ import type { ProviderAssessment } from "./lib/providerAssessment";
 
 const modules = import.meta.glob("./**/*.ts");
 beforeEach(() => { vi.useFakeTimers(); });
-afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
+afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 /** Every owner-scoped table the demo reset empties, in stage order. */
 const WIPED_TABLES = [
@@ -110,6 +110,30 @@ const mayRunWork = (t: Harness, userId: Id<"users">) => t.query(internal.devUser
 const needStatus = (t: Harness, needId: Id<"savedNeeds">) => t.run(async (ctx) => (await ctx.db.get(needId))?.status ?? null);
 const pendingScheduled = async (t: Harness) =>
   (await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect())).filter((row) => row.state.kind === "pending" || row.state.kind === "inProgress");
+/** The pending deletion pagers only; the portal reset action scheduled next to them is counted separately. */
+const pendingPagers = async (t: Harness) => (await pendingScheduled(t)).filter((row) => row.name.endsWith("runPage"));
+const pendingPortalResets = async (t: Harness) => (await pendingScheduled(t)).filter((row) => row.name.endsWith("resetPortalConversations"));
+const mailboxAddress = (t: Harness, ownerId: Id<"users">) =>
+  t.run(async (ctx) => (await ctx.db.query("userMailboxes").withIndex("by_owner", (q) => q.eq("ownerId", ownerId)).first())?.emailAddress ?? null);
+const portalResetOf = (t: Harness, resetId: Id<"demoResets">) => t.run(async (ctx) => (await ctx.db.get(resetId))?.portalReset ?? null);
+const PORTAL_RESET_URL = "https://portal.example.convex.site/participant-reset";
+const PORTAL_RESET_SECRET = "portal-reset-test-secret";
+function stubPortalReset(url = PORTAL_RESET_URL, secret = PORTAL_RESET_SECRET) {
+  vi.stubEnv("PORTAL_RESET_URL", url);
+  vi.stubEnv("PORTAL_RESET_SECRET", secret);
+}
+/** A portal that answers every reset request with `status` and `body`; the mock records what the app sent. */
+function stubPortalFetch(status: number, body: unknown) {
+  const fetch = vi.fn(async () => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));
+  vi.stubGlobal("fetch", fetch);
+  return fetch;
+}
+function sentRequest(fetch: ReturnType<typeof stubPortalFetch>) {
+  expect(fetch).toHaveBeenCalledTimes(1);
+  const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
+  const headers = init.headers as Record<string, string>;
+  return { url, method: init.method, headers, body: JSON.parse(String(init.body)) as { emailAddresses: string[] } };
+}
 /** Fires the scheduled pages that are due right now and waits for them; pages they schedule stay pending. */
 async function runDuePages(t: Harness) {
   vi.runOnlyPendingTimers();
@@ -154,7 +178,8 @@ describe("demoReset", () => {
     // A second start while the reset is healthy returns the same reset and adds no second pager.
     expect(await musicianA.mutation(api.demoReset.startMine, {})).toBe(resetId);
     expect(await t.run((ctx) => ctx.db.query("demoResets").collect())).toHaveLength(1);
-    expect(await pendingScheduled(t)).toHaveLength(1);
+    expect(await pendingPagers(t)).toHaveLength(1);
+    expect(await pendingPortalResets(t)).toHaveLength(1);
 
     // The first page quiesces A's active needs before anything is deleted, so the
     // ungated matching and orchestration workers stop producing rows behind the wipe.
@@ -184,6 +209,8 @@ describe("demoReset", () => {
     const status = await musicianA.query(api.demoReset.statusMine, {});
     expect(status).toMatchObject({ resetId, status: "completed", stage: WIPED_TABLES.length, stageCount: WIPED_TABLES.length, deletedDocumentCount: seededDocumentsA });
     expect(status?.completedAt).toEqual(expect.any(Number));
+    // No PORTAL_RESET_URL / PORTAL_RESET_SECRET in this test: the portal side is skipped, not failed.
+    expect(status?.portalReset).toEqual({ status: "skipped_not_configured", at: expect.any(Number) });
     expect(await mayRunWork(t, a.ownerId)).toBe(true);
     expect(await pendingScheduled(t)).toEqual([]);
 
@@ -208,11 +235,14 @@ describe("demoReset", () => {
     expect(await requireActionUserId(actionCtxFor(t, a.ownerId))).toBe(a.ownerId);
 
     expect(await musicianA.mutation(api.demoReset.startMine, {})).toBe(resetId);
-    expect(await pendingScheduled(t)).toHaveLength(1);
+    expect(await pendingPagers(t)).toHaveLength(1);
+    // The portal call recorded nothing before the chain died, so the resume retries it too.
+    expect(await pendingPortalResets(t)).toHaveLength(1);
     expect(await musicianA.query(api.demoReset.statusMine, {})).toMatchObject({ resetId, status: "running", stage: 0, updatedAt: Date.now() });
     // The resume is marked, so a repeated start within the threshold does not add a pager.
     expect(await musicianA.mutation(api.demoReset.startMine, {})).toBe(resetId);
-    expect(await pendingScheduled(t)).toHaveLength(1);
+    expect(await pendingPagers(t)).toHaveLength(1);
+    expect(await pendingPortalResets(t)).toHaveLength(1);
 
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     expect(await musicianA.query(api.demoReset.statusMine, {})).toMatchObject({ resetId, status: "completed", stage: WIPED_TABLES.length });
@@ -221,5 +251,128 @@ describe("demoReset", () => {
     expect(await ownedCounts(t, b.ownerId, WIPED_TABLES)).toEqual(seededB);
     expect(await mayRunWork(t, a.ownerId)).toBe(true);
     expect(await pendingScheduled(t)).toEqual([]);
+  });
+
+  describe("portal reset", () => {
+    it("asks the portal to reset the owner's participants by mailbox address and records the match", async () => {
+      stubPortalReset();
+      const fetch = stubPortalFetch(202, { resetIds: ["portal-reset-1"], matched: 1 });
+      const t = setup();
+      const { a, b } = await seed(t);
+      // The registered login is compared case-insensitively on the portal; the app sends it lowercased.
+      await t.run(async (ctx) => {
+        const mailbox = await ctx.db.query("userMailboxes").withIndex("by_owner", (q) => q.eq("ownerId", a.ownerId)).first();
+        await ctx.db.patch(mailbox!._id, { emailAddress: "Demo-A@AgentMail.to" });
+      });
+      const musicianA = t.withIdentity({ subject: a.ownerId });
+      const resetId = await musicianA.mutation(api.demoReset.startMine, {});
+      expect(await pendingPortalResets(t)).toHaveLength(1);
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+      const request = sentRequest(fetch);
+      expect(request.url).toBe(PORTAL_RESET_URL);
+      expect(request.method).toBe("POST");
+      expect(request.headers["X-RoomScout-Reset-Secret"]).toBe(PORTAL_RESET_SECRET);
+      expect(request.headers["Content-Type"]).toBe("application/json");
+      expect(request.body).toEqual({ emailAddresses: ["demo-a@agentmail.to"] });
+      expect(await mailboxAddress(t, b.ownerId)).toBe("demo-b@agentmail.to"); // B's identity is never sent.
+
+      expect(await portalResetOf(t, resetId)).toEqual({ status: "done", matched: 1, resetIds: ["portal-reset-1"], at: expect.any(Number) });
+      const status = await musicianA.query(api.demoReset.statusMine, {});
+      expect(status).toMatchObject({ resetId, status: "completed", portalReset: { status: "done", matched: 1, resetIds: ["portal-reset-1"] } });
+      expect(await ownedCounts(t, a.ownerId, WIPED_TABLES)).toEqual(zeroCounts);
+      expect(await ownedCounts(t, a.ownerId, KEPT_TABLES)).toEqual(keptCounts);
+      expect(await pendingScheduled(t)).toEqual([]);
+    });
+
+    it("records done when the portal accepts with 202 but the reply body cannot be parsed", async () => {
+      stubPortalReset();
+      // Headers arrive, then the body is cut off or is not JSON: the 202 alone proves acceptance.
+      const fetch = vi.fn(async () => new Response("<not json", { status: 202, headers: { "Content-Type": "application/json" } }));
+      vi.stubGlobal("fetch", fetch);
+      const t = setup();
+      const { a } = await seed(t);
+      const musicianA = t.withIdentity({ subject: a.ownerId });
+      const resetId = await musicianA.mutation(api.demoReset.startMine, {});
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      expect(sentRequest(fetch).body).toEqual({ emailAddresses: ["demo-a@agentmail.to"] });
+      expect(await portalResetOf(t, resetId)).toEqual({ status: "done", matched: 0, resetIds: [], at: expect.any(Number) });
+      expect(await musicianA.query(api.demoReset.statusMine, {})).toMatchObject({ resetId, status: "completed", portalReset: { status: "done" } });
+      expect(await ownedCounts(t, a.ownerId, WIPED_TABLES)).toEqual(zeroCounts);
+    });
+
+    it("records none_matched when the portal knows no such participant", async () => {
+      stubPortalReset();
+      const fetch = stubPortalFetch(200, { resetIds: [], matched: 0 });
+      const t = setup();
+      const { a } = await seed(t);
+      const musicianA = t.withIdentity({ subject: a.ownerId });
+      const resetId = await musicianA.mutation(api.demoReset.startMine, {});
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      expect(sentRequest(fetch).body).toEqual({ emailAddresses: ["demo-a@agentmail.to"] });
+      expect(await portalResetOf(t, resetId)).toEqual({ status: "none_matched", matched: 0, resetIds: [], at: expect.any(Number) });
+      expect(await musicianA.query(api.demoReset.statusMine, {})).toMatchObject({ resetId, status: "completed" });
+      expect(await ownedCounts(t, a.ownerId, WIPED_TABLES)).toEqual(zeroCounts);
+    });
+
+    it("records a portal failure without failing or blocking the app reset", async () => {
+      stubPortalReset();
+      const fetch = stubPortalFetch(500, { error: "boom" });
+      const t = setup();
+      const { a } = await seed(t);
+      const musicianA = t.withIdentity({ subject: a.ownerId });
+      const resetId = await musicianA.mutation(api.demoReset.startMine, {});
+      await expect(t.finishAllScheduledFunctions(vi.runAllTimers)).resolves.toBeUndefined();
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(await portalResetOf(t, resetId)).toEqual({ status: "failed", error: "PORTAL_HTTP_500", at: expect.any(Number) });
+      expect(await musicianA.query(api.demoReset.statusMine, {})).toMatchObject({ resetId, status: "completed", stage: WIPED_TABLES.length, portalReset: { status: "failed", error: "PORTAL_HTTP_500" } });
+      expect(await ownedCounts(t, a.ownerId, WIPED_TABLES)).toEqual(zeroCounts);
+      expect(await ownedCounts(t, a.ownerId, KEPT_TABLES)).toEqual(keptCounts);
+      expect(await mayRunWork(t, a.ownerId)).toBe(true);
+      expect(await pendingScheduled(t)).toEqual([]);
+    });
+
+    it("records a network failure as a code, not a message", async () => {
+      stubPortalReset();
+      const fetch = vi.fn(async () => { throw new TypeError("fetch failed: ECONNREFUSED portal.example"); });
+      vi.stubGlobal("fetch", fetch);
+      const t = setup();
+      const { a } = await seed(t);
+      const musicianA = t.withIdentity({ subject: a.ownerId });
+      const resetId = await musicianA.mutation(api.demoReset.startMine, {});
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      expect(await portalResetOf(t, resetId)).toEqual({ status: "failed", error: "NETWORK", at: expect.any(Number) });
+      expect(await musicianA.query(api.demoReset.statusMine, {})).toMatchObject({ resetId, status: "completed" });
+    });
+
+    it("skips the portal when the endpoint or secret is not configured", async () => {
+      vi.stubEnv("PORTAL_RESET_URL", PORTAL_RESET_URL); // secret missing
+      const fetch = stubPortalFetch(202, { resetIds: ["never"], matched: 1 });
+      const t = setup();
+      const { a } = await seed(t);
+      const musicianA = t.withIdentity({ subject: a.ownerId });
+      const resetId = await musicianA.mutation(api.demoReset.startMine, {});
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      expect(fetch).not.toHaveBeenCalled();
+      expect(await portalResetOf(t, resetId)).toEqual({ status: "skipped_not_configured", at: expect.any(Number) });
+      expect(await musicianA.query(api.demoReset.statusMine, {})).toMatchObject({ resetId, status: "completed", portalReset: { status: "skipped_not_configured" } });
+      expect(await ownedCounts(t, a.ownerId, WIPED_TABLES)).toEqual(zeroCounts);
+    });
+
+    it("records none_matched without calling the portal when the owner has no mailbox address", async () => {
+      stubPortalReset();
+      const fetch = stubPortalFetch(202, { resetIds: ["never"], matched: 1 });
+      const t = setup();
+      const { a } = await seed(t);
+      await t.run(async (ctx) => {
+        const mailbox = await ctx.db.query("userMailboxes").withIndex("by_owner", (q) => q.eq("ownerId", a.ownerId)).first();
+        await ctx.db.patch(mailbox!._id, { emailAddress: undefined });
+      });
+      const musicianA = t.withIdentity({ subject: a.ownerId });
+      const resetId = await musicianA.mutation(api.demoReset.startMine, {});
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      expect(fetch).not.toHaveBeenCalled();
+      expect(await portalResetOf(t, resetId)).toEqual({ status: "none_matched", matched: 0, resetIds: [], at: expect.any(Number) });
+    });
   });
 });

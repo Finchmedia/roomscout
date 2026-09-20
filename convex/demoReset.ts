@@ -1,9 +1,23 @@
 import { v } from "convex/values";
 import { components, internal } from "./_generated/api";
 import type { Id, TableNames } from "./_generated/dataModel";
-import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
+import {
+  internalAction,
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+  type MutationCtx,
+} from "./_generated/server";
 import { requireUserId } from "./integrations/authz";
+import { envValue } from "./integrations/env";
 import { isDemoResetStalled, latestDemoReset } from "./lib/demoReset";
+import {
+  parsePortalResetReply,
+  portalIdentities,
+  portalResetValidator,
+  type PortalReset,
+} from "./lib/portalReset";
 
 /**
  * Demo reset: the musician wipes their own search and every interaction so a
@@ -15,6 +29,13 @@ import { isDemoResetStalled, latestDemoReset } from "./lib/demoReset";
  * Deletion runs in owner-indexed pages of DELETE_BATCH_SIZE rows, one stage at
  * a time, rescheduling itself until a stage is empty; the pattern mirrors
  * devUserReset.ts, which is the development-only FULL account deletion.
+ *
+ * The same button also resets the band's side on the property portal (a
+ * separate Convex deployment): `resetPortalConversations` POSTs the owner's
+ * portal identities to the portal's participant-reset webhook, which wipes its
+ * threads, messages and landlord-agent state for them, so every landlord starts
+ * again from its scenario's default state. Its outcome lands in `portalReset`
+ * on the demoResets row; it never blocks or fails the app-side wipe.
  */
 const DELETE_BATCH_SIZE = 50;
 
@@ -65,7 +86,11 @@ const summaryValidator = v.object({
   deletedDocumentCount: v.number(),
   updatedAt: v.number(),
   completedAt: v.optional(v.number()),
+  portalReset: v.optional(portalResetValidator),
 });
+
+/** Portal reset request: 10 s is generous for a webhook that only enqueues work. */
+const PORTAL_RESET_TIMEOUT_MS = 10_000;
 
 export const startMine = mutation({
   args: {},
@@ -82,6 +107,10 @@ export const startMine = mutation({
       if (isDemoResetStalled(latest, now)) {
         await ctx.db.patch(latest._id, { updatedAt: now });
         await ctx.scheduler.runAfter(0, internal.demoReset.runPage, { resetId: latest._id });
+        // The portal call died with the chain if it never recorded an outcome.
+        if (latest.portalReset === undefined) {
+          await ctx.scheduler.runAfter(0, internal.demoReset.resetPortalConversations, { resetId: latest._id });
+        }
       }
       return latest._id;
     }
@@ -94,6 +123,8 @@ export const startMine = mutation({
       updatedAt: now,
     });
     await ctx.scheduler.runAfter(0, internal.demoReset.runPage, { resetId });
+    // Scheduled before any deletion: the portal wipe runs alongside the app wipe.
+    await ctx.scheduler.runAfter(0, internal.demoReset.resetPortalConversations, { resetId });
     return resetId;
   },
 });
@@ -113,7 +144,108 @@ export const statusMine = query({
       deletedDocumentCount: latest.deletedDocumentCount,
       updatedAt: latest.updatedAt,
       ...(latest.completedAt !== undefined ? { completedAt: latest.completedAt } : {}),
+      ...(latest.portalReset !== undefined ? { portalReset: latest.portalReset } : {}),
     };
+  },
+});
+
+/**
+ * The owner's portal identities: the address of every mailbox the app
+ * provisioned for them, which is the login the band registered with on the
+ * portal. Null when the reset row is gone.
+ */
+export const portalIdentitiesForReset = internalQuery({
+  args: { resetId: v.id("demoResets") },
+  returns: v.union(v.null(), v.array(v.string())),
+  handler: async (ctx, args) => {
+    const reset = await ctx.db.get(args.resetId);
+    if (reset === null) return null;
+    const mailboxes = await ctx.db
+      .query("userMailboxes")
+      .withIndex("by_owner", (q) => q.eq("ownerId", reset.ownerId))
+      .collect();
+    return portalIdentities(mailboxes.map((mailbox) => mailbox.emailAddress));
+  },
+});
+
+export const recordPortalReset = internalMutation({
+  args: { resetId: v.id("demoResets"), portalReset: portalResetValidator },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const reset = await ctx.db.get(args.resetId);
+    if (reset === null) return null;
+    await ctx.db.patch(reset._id, { portalReset: args.portalReset });
+    return null;
+  },
+});
+
+/** Maps a thrown fetch failure to a code; the message never reaches the row. */
+function portalResetErrorCode(error: unknown): string {
+  const name = error instanceof Error ? error.name : "";
+  if (name === "AbortError" || name === "TimeoutError") return "TIMEOUT";
+  return "NETWORK";
+}
+
+/**
+ * Asks the property portal (its own Convex deployment) to reset every
+ * participant registered under one of the owner's portal identities. Per the
+ * contract: POST {PORTAL_RESET_URL} with header X-RoomScout-Reset-Secret and
+ * body { emailAddresses: string[] }; 202 { resetIds, matched } when at least
+ * one portal user matched, 200 { resetIds: [], matched: 0 } when none did.
+ * Missing configuration is "skipped", never a failure; every other outcome is
+ * recorded on the row and nothing here throws, so the app wipe is unaffected.
+ */
+export const resetPortalConversations = internalAction({
+  args: { resetId: v.id("demoResets") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const record = async (portalReset: Omit<PortalReset, "at">) =>
+      await ctx.runMutation(internal.demoReset.recordPortalReset, {
+        resetId: args.resetId,
+        portalReset: { ...portalReset, at: Date.now() },
+      });
+    const url = envValue("PORTAL_RESET_URL")?.trim();
+    const secret = envValue("PORTAL_RESET_SECRET")?.trim();
+    if (!url || !secret) {
+      await record({ status: "skipped_not_configured" });
+      return null;
+    }
+    const emailAddresses = await ctx.runQuery(internal.demoReset.portalIdentitiesForReset, { resetId: args.resetId });
+    if (emailAddresses === null) return null;
+    if (emailAddresses.length === 0) {
+      await record({ status: "none_matched", matched: 0, resetIds: [] });
+      return null;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), PORTAL_RESET_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-RoomScout-Reset-Secret": secret,
+        },
+        body: JSON.stringify({ emailAddresses }),
+        signal: controller.signal,
+      });
+      if (response.status !== 200 && response.status !== 202) {
+        await record({ status: "failed", error: `PORTAL_HTTP_${response.status}` });
+        return null;
+      }
+      // Per the contract 202 alone proves the portal accepted the reset (matched >= 1); the body only
+      // adds detail, so an unreadable or truncated body must never demote an accepted reset.
+      const reply = parsePortalResetReply(await response.json().catch(() => null));
+      await record({
+        status: response.status === 202 ? "done" : "none_matched",
+        matched: reply.matched,
+        resetIds: reply.resetIds,
+      });
+    } catch (error) {
+      await record({ status: "failed", error: portalResetErrorCode(error) });
+    } finally {
+      clearTimeout(timer);
+    }
+    return null;
   },
 });
 

@@ -4,6 +4,7 @@ import { matchAssessmentValidator } from "./lib/matchAssessment";
 import { providerAssessmentValidator } from "./lib/providerAssessment";
 import { messageSafetyValidator } from "./lib/messageSafety";
 import { decisionQuestionValidator } from "./lib/decisions";
+import { portalResetValidator } from "./lib/portalReset";
 
 const role = v.union(v.literal("musician"), v.literal("operator"));
 const signalSide = v.union(v.literal("supply"), v.literal("demand"));
@@ -217,6 +218,8 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
     completedAt: v.optional(v.number()),
+    /** Outcome of the portal-side participant reset triggered alongside this reset. */
+    portalReset: v.optional(portalResetValidator),
   }).index("by_owner_and_created_at", ["ownerId", "createdAt"]),
 
   demoSourceChecks: defineTable({

@@ -93,6 +93,7 @@ import type * as lib_messageSafety from "../lib/messageSafety.js";
 import type * as lib_musicianIdentity from "../lib/musicianIdentity.js";
 import type * as lib_needLifecycle from "../lib/needLifecycle.js";
 import type * as lib_offerAcceptance from "../lib/offerAcceptance.js";
+import type * as lib_portalReset from "../lib/portalReset.js";
 import type * as lib_privacy from "../lib/privacy.js";
 import type * as lib_providerAssessment from "../lib/providerAssessment.js";
 import type * as lib_providerPortal from "../lib/providerPortal.js";
@@ -245,6 +246,7 @@ declare const fullApi: ApiFromModules<{
   "lib/musicianIdentity": typeof lib_musicianIdentity;
   "lib/needLifecycle": typeof lib_needLifecycle;
   "lib/offerAcceptance": typeof lib_offerAcceptance;
+  "lib/portalReset": typeof lib_portalReset;
   "lib/privacy": typeof lib_privacy;
   "lib/providerAssessment": typeof lib_providerAssessment;
   "lib/providerPortal": typeof lib_providerPortal;
