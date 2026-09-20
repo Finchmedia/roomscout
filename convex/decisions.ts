@@ -460,7 +460,7 @@ export function fallbackQuestion(input: { uncertainties: string[]; blockers: str
 
 /** Pinned in the FORMULATE MUSICIAN DECISION case card: questions concern genuine open choices only. */
 export const MUSICIAN_DECISION_QUESTION_SCOPE =
-  "Only ask about genuine open choices for the musician. Never ask whether a requirement the provider has already satisfied, or a statement about what the band brings, does, owns or does not need, should remain a requirement: such wording demands nothing from the provider. If a constraint is open only because of band-side wording in the requirement text (equipment they bring, gear that stays portable, urgency) while the provider confirmed the part that demands something, treat it as satisfied and skip it.";
+  "Only ask about genuine open choices for the musician. A single date and time the musician gives for a viewing fully answers a viewing-time question; never ask for a second or alternative slot. Never ask whether a requirement the provider has already satisfied, or a statement about what the band brings, does, owns or does not need, should remain a requirement: such wording demands nothing from the provider. If a constraint is open only because of band-side wording in the requirement text (equipment they bring, gear that stays portable, urgency) while the provider confirmed the part that demands something, treat it as satisfied and skip it.";
 
 export const formulateQuestion = internalAction({
   args: { decisionId: v.id("decisions") },
