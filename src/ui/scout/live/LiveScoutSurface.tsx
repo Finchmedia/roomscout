@@ -192,8 +192,8 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
         <div className={STAGE_SHELL} data-live-scout-stage={stage}>
           <ScoutBlob size={96} className="mb-[var(--space-10)]" />
           <StageTitle>{copy.briefHeadline}</StageTitle>
-          {props.briefFacts ? <div className="mt-[var(--space-12)] w-[min(var(--width-card),100%)]">{props.briefFacts}</div> : null}
-          {briefReview ? <div className="mt-[var(--space-8)] w-[min(var(--width-card),100%)]">{briefReview}</div> : null}
+          {props.briefFacts ? <div className="mt-[var(--space-12)] flex w-[min(var(--width-card),100%)] flex-col items-center">{props.briefFacts}</div> : null}
+          {briefReview ? <div className="mt-[var(--space-8)] flex w-[min(var(--width-card),100%)] flex-col items-center">{briefReview}</div> : null}
         </div>
       );
       break;
@@ -339,7 +339,7 @@ export function LiveScoutSurface(props: LiveScoutSurfaceProps) {
               {columns && props.asideSlot ? <Button variant="ghost" size="sm" className="min-[1100px]:hidden" onClick={() => setSheet("brief")}>{copy.openBrief}</Button> : null}
               {stage !== "brief" && !columns ? <Button variant="ghost" size="sm" onClick={props.onReviewBrief} aria-expanded={props.briefExpanded}>{copy.briefReviewAction}</Button> : null}
             </div>
-            {stage !== "brief" && !columns && props.briefExpanded ? <div className="w-full">{briefReview}</div> : null}
+            {stage !== "brief" && !columns && props.briefExpanded ? <div className="flex w-full flex-col items-center">{briefReview}</div> : null}
           </div>
         ) : null}
       </main>
