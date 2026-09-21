@@ -4,6 +4,7 @@ import { ConvexError } from "convex/values";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { de } from "../../ui/copy/de";
+import { splitLiveAppendContent } from "../../hooks/useGptLiveVoiceScout";
 import { LocaleCtx } from "../../ui/copy/LocaleProvider";
 import { ScoutPage } from "./ScoutPage";
 
@@ -742,6 +743,144 @@ describe("live Scout route", () => {
       refs: {}, conversationId: "conversation-2", createdAt: 1, updatedAt: 1,
     };
   }
+
+  const decisionUpdates = () => fixtures.voice.appendVerifiedBackgroundUpdate.mock.calls
+    .map(([update]) => update as { id: string; version: string; speak?: boolean; content: string })
+    .filter((update) => update.id.startsWith("decision:") || update.id.startsWith("decision-voice:"));
+
+  it("announces the bound room question by voice with its question, options and room, and binds it", async () => {
+    fixtures.needs = [need("active")]; fixtures.voice.connected = true;
+    fixtures.decisions = [roomQuestion()];
+    fixtures.inbox = [candidate({ id: "conversation-2", title: "Raum West", openDecision: true })];
+    renderPage();
+    await waitFor(() => expect(decisionUpdates()).toHaveLength(1));
+    const [update] = decisionUpdates();
+    expect(update).toEqual(expect.objectContaining({ id: "decision-voice:decision-conversation-2", version: "en:1", speak: true }));
+    expect(update!.content).toContain("about Raum West");
+    expect(update!.content).toContain("Question: Passt der Termin?");
+    expect(update!.content).toContain("Ja, passt");
+    expect(update!.content).toContain("Nein");
+    expect(update!.content).toContain("or their own answer");
+    expect(update!.content).toContain("Raise it once at the next pause");
+    expect(update!.content).not.toContain("decision-conversation-2");
+    // One commentary append, so the model gets one speakable item per decision.
+    expect(splitLiveAppendContent(update!.content)).toHaveLength(1);
+    expect(fixtures.voice.setFocus).toHaveBeenLastCalledWith(expect.objectContaining({ decisionId: "decision-conversation-2" }));
+  });
+
+  it("keeps the generic notice for a portal human step and binds no decision to voice", async () => {
+    fixtures.needs = [need("active")]; fixtures.voice.connected = true;
+    fixtures.decisions = [{
+      _id: "decision-3", kind: "human_step", status: "open",
+      question: "Bitte melde dich einmal selbst im Portal an.", options: [],
+      refs: {}, createdAt: 1, updatedAt: 1,
+    }];
+    renderPage();
+    await waitFor(() => expect(decisionUpdates()).toHaveLength(1));
+    expect(decisionUpdates()[0]).toEqual(expect.objectContaining({
+      id: "decision:decision-3", speak: true,
+      content: expect.stringContaining("visible in the UI"),
+    }));
+    expect(decisionUpdates()[0]!.content).not.toContain("Quick one");
+    expect(fixtures.voice.setFocus).toHaveBeenCalled();
+    expect(fixtures.voice.setFocus.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({ decisionId: undefined }));
+  });
+
+  it("announces nothing for a Scout question that is still being formulated", async () => {
+    fixtures.needs = [need("active")]; fixtures.voice.connected = true;
+    fixtures.decisions = [{ _id: "decision-4", kind: "scout_question", status: "open", question: "", options: [], refs: {}, conversationId: "conversation-2", createdAt: 1, updatedAt: 1 }];
+    fixtures.inbox = [candidate({ id: "conversation-2", title: "Raum West", openDecision: true })];
+    renderPage();
+    await waitFor(() => expect(fixtures.voice.appendVerifiedBackgroundUpdate).toHaveBeenCalled());
+    expect(decisionUpdates()).toEqual([]);
+    expect(fixtures.voice.setFocus.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({ decisionId: undefined }));
+  });
+
+  it("announces a Freigabeprüfung decision with no and a wording instruction only, never yes", async () => {
+    fixtures.needs = [need("active")]; fixtures.voice.connected = true;
+    fixtures.decisions = [reviewDecision()];
+    fixtures.inbox = [candidate({ id: "conversation-2", title: "Raum West", openDecision: true })];
+    renderPage();
+    await waitFor(() => expect(decisionUpdates()).toHaveLength(1));
+    const [update] = decisionUpdates();
+    expect(update!.id).toBe("decision-voice:decision-1");
+    expect(update!.content).toContain("about Raum West");
+    expect(update!.content).toContain("Soll ich diese Nachricht so senden?");
+    expect(update!.content).toContain("only in the app review");
+    expect(update!.content).toContain("no, or a different wording");
+    expect(update!.content).not.toContain("Ja, so senden");
+    expect(update!.content).not.toContain("Hallo, ist der Raum noch frei?");
+    expect(splitLiveAppendContent(update!.content)).toHaveLength(1);
+    expect(fixtures.voice.setFocus).toHaveBeenLastCalledWith(expect.objectContaining({ decisionId: "decision-1" }));
+  });
+
+  it("binds the first answerable decision to voice, not a newer human step", async () => {
+    fixtures.needs = [need("active")]; fixtures.voice.connected = true;
+    fixtures.decisions = [{
+      _id: "decision-3", kind: "human_step", status: "open",
+      question: "Bitte melde dich einmal selbst im Portal an.", options: [],
+      refs: {}, createdAt: 2, updatedAt: 2,
+    }, roomQuestion()];
+    fixtures.inbox = [candidate({ id: "conversation-2", title: "Raum West", openDecision: true })];
+    renderPage();
+    await waitFor(() => expect(decisionUpdates()).toHaveLength(2));
+    expect(fixtures.voice.setFocus).toHaveBeenLastCalledWith(expect.objectContaining({ decisionId: "decision-conversation-2" }));
+    expect(decisionUpdates().find((update) => update.id === "decision-voice:decision-conversation-2")?.content)
+      .toContain("an open question about Raum West");
+    expect(decisionUpdates().find((update) => update.id === "decision:decision-3")?.content).toContain("visible in the UI");
+    // The stage still blocks on the newest Entscheidung.
+    expect(document.querySelector("[data-live-scout-stage]")).toHaveAttribute("data-live-scout-stage", "blocked");
+  });
+
+  it("binds no decision of another search, even when it is the only answerable one", async () => {
+    fixtures.needs = [need("active")]; fixtures.voice.connected = true;
+    // listOpenMine is owner-wide: this question belongs to a room of an older
+    // search, so the delegate could only answer it with "not_active".
+    fixtures.decisions = [{ ...roomQuestion(), _id: "decision-stale", conversationId: "conversation-old" }];
+    fixtures.inbox = [candidate({ id: "conversation-2", title: "Raum West" })];
+    renderPage();
+    await waitFor(() => expect(fixtures.voice.appendVerifiedBackgroundUpdate).toHaveBeenCalled());
+    expect(decisionUpdates()).toEqual([]);
+    expect(fixtures.voice.setFocus.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({ decisionId: undefined }));
+  });
+
+  it("announces a second decision by voice once it becomes the bound one", async () => {
+    fixtures.needs = [need("active")]; fixtures.voice.connected = true;
+    // The Freigabeprüfung is relayed as the generic notice while the Scout
+    // question holds the binding; its updatedAt never changes.
+    fixtures.decisions = [roomQuestion(), reviewDecision()];
+    fixtures.inbox = [candidate({ id: "conversation-2", title: "Raum West", openDecision: true })];
+    const view = renderPage();
+    await waitFor(() => expect(decisionUpdates()).toHaveLength(2));
+    expect(decisionUpdates().find((update) => update.id === "decision:decision-1")?.content).toContain("visible in the UI");
+
+    // The musician answers the bound question by voice; it leaves listOpenMine.
+    fixtures.decisions = [reviewDecision()];
+    view.rerender(<MemoryRouter><ScoutPage /></MemoryRouter>);
+
+    await waitFor(() => expect(decisionUpdates().some((update) => update.id === "decision-voice:decision-1")).toBe(true));
+    expect(decisionUpdates().find((update) => update.id === "decision-voice:decision-1")?.content)
+      .toContain("Soll ich diese Nachricht so senden?");
+    expect(fixtures.voice.clearBackgroundUpdate).toHaveBeenCalledWith("decision:decision-1");
+    expect(fixtures.voice.setFocus).toHaveBeenLastCalledWith(expect.objectContaining({ decisionId: "decision-1" }));
+  });
+
+  it("does not re-announce a question round the delegate already advanced by voice", async () => {
+    fixtures.needs = [need("active")]; fixtures.voice.connected = true;
+    fixtures.decisions = [{
+      ...roomQuestion(), question: "Reicht ein E-Drum-Set?", options: [{ id: "no", label: "Nein, akustisch" }], updatedAt: 5,
+      questions: [
+        { id: "schedule", constraintKeys: ["schedule"], question: "Passt der Termin?", options: [{ id: "yes", label: "Ja, passt" }], answer: { choice: "yes", at: 4 } },
+        { id: "equipment", constraintKeys: ["requirement:0"], question: "Reicht ein E-Drum-Set?", options: [{ id: "no", label: "Nein, akustisch" }] },
+      ],
+    }];
+    fixtures.inbox = [candidate({ id: "conversation-2", title: "Raum West", openDecision: true })];
+    renderPage();
+    await waitFor(() => expect(fixtures.voice.appendVerifiedBackgroundUpdate).toHaveBeenCalled());
+    expect(decisionUpdates()).toEqual([]);
+    // The delegate can still answer the next question under the bound decision.
+    expect(fixtures.voice.setFocus).toHaveBeenLastCalledWith(expect.objectContaining({ decisionId: "decision-conversation-2" }));
+  });
 
   it("keeps an open Entscheidung answerable above the focused room after a reload without voice", () => {
     // After a reload the voice session is gone but the server still remembers the

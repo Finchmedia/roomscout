@@ -1073,6 +1073,13 @@ export default defineSchema({
       requestId: v.string(),
       resolvedEventIds: v.array(v.string()),
       delivery: v.optional(v.union(v.literal("silent"), v.literal("spoken"))),
+      responseKind: v.optional(v.union(
+        v.literal("routine_update"),
+        v.literal("answer"),
+        v.literal("clarification"),
+        v.literal("action_result"),
+        v.literal("decision_result"),
+      )),
       spokenSummary: v.optional(v.string()),
       locale: v.union(v.literal("en"), v.literal("de")),
       revision: v.optional(v.number()),

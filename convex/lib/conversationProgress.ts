@@ -8,6 +8,29 @@ export const conversationProgressValidator = v.union(
   v.literal("needs_attention"), v.literal("closed"),
 );
 
+const PROVIDER_REPLY_EXCERPT_CHARS = 400;
+
+/** Whitespace-normalised, capped provider text; the caller wraps it as untrusted data. */
+export function providerReplyExcerpt(text: string): string {
+  return text.replace(/\s+/g, " ").trim().slice(0, PROVIDER_REPLY_EXCERPT_CHARS);
+}
+
+/**
+ * The provider's own latest words for "what did they say", separate from
+ * conversationProgress() whose shape is pinned by the listMine returns validator.
+ */
+export async function latestProviderReplyExcerpt(ctx: QueryCtx, conversation: Doc<"providerConversations">): Promise<string | null> {
+  const inbound = conversation.platformThreadId
+    ? await ctx.db.query("platformMessages").withIndex("by_thread_and_direction_and_sent_at", q =>
+      q.eq("threadId", conversation.platformThreadId!).eq("direction", "inbound")).order("desc").first()
+    : conversation.mailThreadId
+      ? await ctx.db.query("mailMessages").withIndex("by_thread_and_direction_and_received_at", q =>
+        q.eq("threadId", conversation.mailThreadId!).eq("direction", "inbound")).order("desc").first()
+      : null;
+  if (!inbound) return null;
+  return providerReplyExcerpt("bodyText" in inbound ? inbound.bodyText : inbound.body);
+}
+
 export function messageOutcomeUnknown(request: Pick<Doc<"actionRequests">, "status" | "error">): boolean {
   return request.status === "executing" &&
     ["SUBMIT_RESULT_UNKNOWN", "EXECUTION_STALE_PROVIDER_OUTCOME_UNKNOWN"].includes(request.error ?? "");

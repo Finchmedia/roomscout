@@ -33,6 +33,31 @@ export function voiceNeedSnapshot(need: Doc<"savedNeeds">): string {
   });
 }
 
+/**
+ * Mirrors the Scout's focus into every active Live session of the thread, in
+ * the same transaction as the scoutContexts change, so claim fences and
+ * finishRequest compare the same target the Scout is now looking at.
+ */
+export async function syncVoiceSessionFocus(
+  ctx: MutationCtx,
+  args: {
+    ownerId: Id<"users">;
+    threadId: string;
+    activeNeedId?: Id<"savedNeeds">;
+    focusedSignalId?: Id<"signals">;
+    now?: number;
+  },
+): Promise<void> {
+  const now = args.now ?? Date.now();
+  const sessions = await ctx.db.query("voiceSessions").withIndex("by_owner_and_started_at", (q) =>
+    q.eq("ownerId", args.ownerId),
+  ).order("desc").take(10);
+  for (const session of sessions) {
+    if (session.status !== "active" || session.threadId !== args.threadId || session.activeNeedId !== args.activeNeedId) continue;
+    await ctx.db.patch(session._id, { focusedSignalId: args.focusedSignalId, updatedAt: now });
+  }
+}
+
 /** Transaction-time fence for every mutation a Live Scout tool can execute. */
 export async function assertVoiceClaim(
   ctx: MutationCtx,

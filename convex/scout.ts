@@ -11,7 +11,7 @@ import { openDecisionCards } from "./decisions";
 import { buildDecisionCaseCard, buildScoutCaseCard } from "./scoutCaseCards";
 import { runScoutTurn, scoutAgent } from "./scoutRuntime";
 import { isUserResetTombstoned } from "./devUserReset";
-import { assertVoiceClaim, voiceClaimValidator, type VoiceClaimRef } from "./lib/voiceClaim";
+import { assertVoiceClaim, syncVoiceSessionFocus, voiceClaimValidator, type VoiceClaimRef } from "./lib/voiceClaim";
 import { currentSearchTruth } from "./lib/currentSearchTruth";
 import {
   getSavedNeedActivationReadiness,
@@ -613,13 +613,7 @@ export const setFocus = mutation({
         : {}),
       updatedAt: now,
     });
-    const sessions = await ctx.db.query("voiceSessions").withIndex("by_owner_and_started_at", (q) =>
-      q.eq("ownerId", ownerId),
-    ).order("desc").take(10);
-    for (const session of sessions) {
-      if (session.status !== "active" || session.threadId !== context.threadId || session.activeNeedId !== activeNeedId) continue;
-      await ctx.db.patch(session._id, { focusedSignalId, updatedAt: now });
-    }
+    await syncVoiceSessionFocus(ctx, { ownerId, threadId: context.threadId, activeNeedId, focusedSignalId, now });
     return null;
   },
 });
@@ -779,6 +773,46 @@ export const getActionContext = internalQuery({
   },
 });
 
+/**
+ * Every answerDecision failure a voice turn can provoke. Anything else stays an
+ * exception: the tool turns only these into deliberate sentences, because the
+ * model verbalises a raw tool error verbatim, code and all.
+ */
+const VOICE_DECISION_ERROR_CODES = [
+  "VOICE_DECISION_UI_ONLY",
+  "VOICE_DECISION_SUPERSEDED",
+  "TEXT_REQUIRED",
+  "INVALID_CHOICE",
+] as const;
+
+function convexErrorCode(error: unknown): string | undefined {
+  if (error instanceof ConvexError && typeof error.data === "object" && error.data !== null && "code" in error.data) {
+    return String((error.data as { code?: unknown }).code);
+  }
+  const message = error instanceof Error ? error.message : "";
+  return VOICE_DECISION_ERROR_CODES.find((code) => message.includes(code));
+}
+
+/** What the voice model is told instead of the error code, one sentence each. */
+const VOICE_DECISION_OUTCOMES: Record<string, { action: string; reason: string } | undefined> = {
+  VOICE_DECISION_UI_ONLY: {
+    action: "ui_only",
+    reason: "Sending or accepting requires the review in the app. The musician can say no or give a different wording.",
+  },
+  VOICE_DECISION_SUPERSEDED: {
+    action: "superseded",
+    reason: "That question already moved on; it was answered or advanced meanwhile. Ask the musician the next question in a new turn instead of answering this one again.",
+  },
+  TEXT_REQUIRED: {
+    action: "text_required",
+    reason: "A custom answer needs the musician's own wording as text. Repeat what they said and call this tool again with it.",
+  },
+  INVALID_CHOICE: {
+    action: "invalid_choice",
+    reason: "That choice does not exist on this decision. Use an option id from the case card, no, or custom with the musician's wording as text.",
+  },
+};
+
 /** The tool every turn gets while an Entscheidung is open, regardless of mode. */
 function decisionTools(
   ctx: Parameters<typeof runScoutTurn>[0],
@@ -792,7 +826,7 @@ function decisionTools(
 ): ToolSet {
   if (!hasOpenDecision || (options?.voiceClaim && !options.decisionId)) return {};
   const answerDecisionTool = createTool({
-    description: "Answer only the current question of an open Entscheidung from the case card with the musician's actual words: choice is the matching option id (for message kinds: yes | no), or \"custom\" with text. If the case card supplies questionId, copy that exact id; never infer answers for sibling questions. The result says whether more answers are awaited. Sent is always false — never claim delivery.",
+    description: "Answer only the current question of an open Entscheidung from the case card with the musician's actual words: choice is the matching option id (for message kinds: yes | no), or \"custom\" with text. If the case card supplies questionId, copy that exact id; never infer answers for sibling questions. The result says whether more answers are awaited. Sent is always false — never claim delivery. In voice, choose option ids, no, or custom (a wording instruction as text); yes/send and the offer review happen only in the app, and a ui_only result means exactly that.",
     inputSchema: z.object({
       decisionId: z.string(),
       questionId: z.string().optional(),
@@ -802,17 +836,29 @@ function decisionTools(
     execute: async (_toolCtx, input) => {
       const decisionId = input.decisionId as Id<"decisions">;
       if (options?.voiceClaim) {
+        // Structured outcomes instead of raw tool errors: the model then says a
+        // deliberate sentence rather than verbalising an error code.
         if (!options.decisionId || decisionId !== options.decisionId) {
-          throw new ConvexError({ code: "VOICE_DECISION_TARGET_MISMATCH" });
+          return {
+            decisionId, status: "open" as const, action: "not_active",
+            reason: "Only the decision bound to this voice turn can be answered right now; it is the one in the case card.",
+          };
         }
-        const result = await ctx.runMutation(internal.decisions.answerNonbindingFromVoice, {
-          ownerId,
-          ...options.voiceClaim,
-          decisionId,
-          ...(input.questionId ? { questionId: input.questionId } : {}),
-          choice: input.choice,
-          ...(input.text ? { text: input.text } : {}),
-        });
+        let result;
+        try {
+          result = await ctx.runMutation(internal.decisions.answerNonbindingFromVoice, {
+            ownerId,
+            ...options.voiceClaim,
+            decisionId,
+            ...(input.questionId ? { questionId: input.questionId } : {}),
+            choice: input.choice,
+            ...(input.text ? { text: input.text } : {}),
+          });
+        } catch (error) {
+          const outcome = VOICE_DECISION_OUTCOMES[convexErrorCode(error) ?? ""];
+          if (outcome) return { decisionId, status: "open" as const, ...outcome };
+          throw error;
+        }
         options.onEffect?.("decision", ["decision"], [
           `decision.status=${result.status}`,
           `decision.action=${result.action}`,

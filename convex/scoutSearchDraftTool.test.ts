@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { asSchema } from "ai";
+import { ConvexError } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { currentSearchAuthority } from "./lib/currentSearchTruth";
 import {
@@ -253,6 +254,65 @@ describe("Scout search equipment extraction contract", () => {
       "decision.nextQuestionId=equipment",
       'decision.nextQuestion="Would an electronic drum kit work?"',
     ]);
+  });
+
+  it("turns UI-only and unbound voice decision answers into structured results instead of tool errors", async () => {
+    const runMutation = vi.fn().mockRejectedValue(new ConvexError({ code: "VOICE_DECISION_UI_ONLY" }));
+    const onEffect = vi.fn();
+    const tools = buildScoutTools({ runMutation } as never, {
+      ownerId: "owner" as Id<"users">,
+      threadId: "thread",
+      context: { mode: "signal_advisor", activeNeedId: "need" as Id<"savedNeeds">, hasOpenDecision: true },
+      voiceClaim: {
+        voiceSessionId: "voice" as Id<"voiceSessions">,
+        requestId: "answer-slot",
+        generation: 1,
+      },
+      decisionId: "decision" as Id<"decisions">,
+      onEffect,
+    });
+    const tool = tools.answerDecision;
+    if (!tool?.execute) throw new Error("answerDecision is not executable");
+    const execute = (input: Record<string, unknown>) =>
+      tool.execute!.call({ ...tool, ctx: {} } as never, input, {} as never);
+
+    await expect(execute({ decisionId: "decision", choice: "yes" })).resolves.toMatchObject({
+      decisionId: "decision",
+      status: "open",
+      action: "ui_only",
+      reason: expect.stringContaining("review in the app"),
+    });
+    await expect(execute({ decisionId: "other-decision", choice: "no" })).resolves.toMatchObject({
+      status: "open",
+      action: "not_active",
+    });
+    expect(runMutation).toHaveBeenCalledOnce();
+    expect(onEffect).not.toHaveBeenCalled();
+    expect(tool.description).toContain("yes/send and the offer review happen only in the app");
+
+    // Every failure a voice answer can provoke becomes a sentence the model can
+    // say; only a genuine bug still reaches the model as a tool error.
+    runMutation.mockRejectedValueOnce(new ConvexError({ code: "VOICE_DECISION_SUPERSEDED" }));
+    await expect(execute({ decisionId: "decision", choice: "no" })).resolves.toMatchObject({
+      status: "open", action: "superseded", reason: expect.stringContaining("next question in a new turn"),
+    });
+    runMutation.mockRejectedValueOnce(new ConvexError({ code: "TEXT_REQUIRED" }));
+    await expect(execute({ decisionId: "decision", choice: "custom" })).resolves.toMatchObject({
+      status: "open", action: "text_required", reason: expect.stringContaining("own wording as text"),
+    });
+    runMutation.mockRejectedValueOnce(new ConvexError({ code: "INVALID_CHOICE" }));
+    await expect(execute({ decisionId: "decision", choice: "maybe" })).resolves.toMatchObject({
+      status: "open", action: "invalid_choice", reason: expect.stringContaining("option id from the case card"),
+    });
+    // A Convex error surfaced as a plain message (action boundary) maps too.
+    runMutation.mockRejectedValueOnce(new Error("Uncaught ConvexError: TEXT_REQUIRED"));
+    await expect(execute({ decisionId: "decision", choice: "custom" })).resolves.toMatchObject({
+      status: "open", action: "text_required",
+    });
+    expect(onEffect).not.toHaveBeenCalled();
+
+    runMutation.mockRejectedValueOnce(new Error("WRITE_CONFLICT"));
+    await expect(execute({ decisionId: "decision", choice: "no" })).rejects.toThrow(/WRITE_CONFLICT/);
   });
 
   it.each(["search_discovery", "signal_advisor", "outreach_drafting"] as const)(

@@ -1,8 +1,10 @@
 /// <reference types="vite/client" />
 import agentTest from "@convex-dev/agent/test";
+import workpoolTest from "@convex-dev/workpool/test";
 import { listMessages } from "@convex-dev/agent";
 import { convexTest } from "convex-test";
 import { makeFunctionReference } from "convex/server";
+import { ConvexError } from "convex/values";
 import { expect, it } from "vitest";
 import { api, components, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
@@ -11,6 +13,7 @@ import { scoutAgent } from "./scoutRuntime";
 import {
   captureFactsCapabilities,
   composeVoiceInput,
+  failureSpokenSummary,
   hasMeaningfulSavedNeed,
   resolveLiveDelivery,
 } from "./voiceLive";
@@ -74,6 +77,7 @@ type Result = {
   promptMessageId?: string;
   assistantMessageId?: string;
   delivery?: "silent" | "spoken";
+  responseKind?: "routine_update" | "answer" | "clarification" | "action_result" | "decision_result";
   spokenSummary?: string;
   changedFields?: string[];
   verifiedFacts?: string[];
@@ -150,6 +154,8 @@ const recordTranscriptSegment = makeFunctionReference<"mutation", {
 async function fixture() {
   const t = convexTest(schema, modules);
   agentTest.register(t);
+  // A voice "custom" on a message decision enqueues the provider re-draft turn.
+  workpoolTest.register(t, "scoutWorkpool");
   const data = await t.run(async (ctx) => {
     const now = 1_000;
     const ownerId = await ctx.db.insert("users", {
@@ -529,7 +535,7 @@ it("uses the same-turn semantic envelope with action and clarification guards", 
     hasEndCall: false,
     requiresSpoken: false,
     requiresClarification: false,
-  })).toEqual({ delivery: "silent", status: "completed" });
+  })).toEqual({ delivery: "silent", status: "completed", responseKind: "routine_update" });
 
   expect(resolveLiveDelivery({
     semantic: { delivery: "spoken", responseKind: "clarification", spokenSummary: "What radius around Berlin should I use?" },
@@ -540,7 +546,21 @@ it("uses the same-turn semantic envelope with action and clarification guards", 
   })).toEqual({
     delivery: "spoken",
     status: "needs_clarification",
+    responseKind: "clarification",
     spokenSummary: "What radius around Berlin should I use?",
+  });
+
+  expect(resolveLiveDelivery({
+    semantic: { delivery: "spoken", responseKind: "answer", spokenSummary: "Modul Ost confirmed Tuesday evenings." },
+    captureFacts: false,
+    hasEndCall: false,
+    requiresSpoken: false,
+    requiresClarification: false,
+  })).toEqual({
+    delivery: "spoken",
+    status: "completed",
+    responseKind: "answer",
+    spokenSummary: "Modul Ost confirmed Tuesday evenings.",
   });
 
   expect(resolveLiveDelivery({
@@ -565,7 +585,7 @@ it("uses the same-turn semantic envelope with action and clarification guards", 
     hasEndCall: true,
     requiresSpoken: true,
     requiresClarification: false,
-  })).toEqual({ delivery: "spoken", status: "completed", spokenSummary: "The budget is updated." });
+  })).toEqual({ delivery: "spoken", status: "completed", responseKind: "action_result", spokenSummary: "The budget is updated." });
 
   expect(resolveLiveDelivery({
     semantic: {
@@ -582,7 +602,7 @@ it("uses the same-turn semantic envelope with action and clarification guards", 
       action: "pause",
       result: { status: "paused", changed: true },
     },
-  })).toEqual({ delivery: "spoken", status: "completed", spokenSummary: "The search is now paused." });
+  })).toEqual({ delivery: "spoken", status: "completed", responseKind: "action_result", spokenSummary: "The search is now paused." });
 
   expect(resolveLiveDelivery({
     semantic: { delivery: "spoken", responseKind: "action_result", spokenSummary: "stale" },
@@ -595,7 +615,50 @@ it("uses the same-turn semantic envelope with action and clarification guards", 
       action: "pause",
       result: { status: "paused", changed: false },
     },
-  })).toEqual({ delivery: "spoken", status: "completed", spokenSummary: "The search is already paused." });
+  })).toEqual({ delivery: "spoken", status: "completed", responseKind: "action_result", spokenSummary: "The search is already paused." });
+
+  // A verified decision effect outranks the model's own label: the client
+  // would drop a late routine_update, silencing the confirmation.
+  expect(resolveLiveDelivery({
+    semantic: { delivery: "silent", responseKind: "routine_update", spokenSummary: "I'll take that as your answer for Modul Ost." },
+    captureFacts: false,
+    hasEndCall: false,
+    requiresSpoken: true,
+    requiresClarification: false,
+    spokenEffectKinds: ["decision"],
+  })).toEqual({
+    delivery: "spoken",
+    status: "completed",
+    responseKind: "decision_result",
+    spokenSummary: "I'll take that as your answer for Modul Ost.",
+  });
+
+  expect(resolveLiveDelivery({
+    semantic: { delivery: "spoken", responseKind: "answer", spokenSummary: "Noted for Modul Ost; they asked about the drum kit next." },
+    captureFacts: false,
+    hasEndCall: false,
+    requiresSpoken: true,
+    requiresClarification: false,
+    spokenEffectKinds: ["decision"],
+  })).toMatchObject({ responseKind: "answer" });
+
+  expect(resolveLiveDelivery({
+    semantic: { delivery: "silent", responseKind: "routine_update", spokenSummary: "Raum West is open." },
+    captureFacts: false,
+    hasEndCall: false,
+    requiresSpoken: true,
+    requiresClarification: false,
+    spokenEffectKinds: ["candidate"],
+  })).toMatchObject({ delivery: "spoken", responseKind: "action_result" });
+
+  expect(resolveLiveDelivery({
+    semantic: { delivery: "spoken", responseKind: "routine_update", spokenSummary: "The budget is saved." },
+    captureFacts: false,
+    hasEndCall: false,
+    requiresSpoken: false,
+    requiresClarification: false,
+    spokenEffectKinds: [],
+  })).toMatchObject({ responseKind: "routine_update" });
 
   expect(resolveLiveDelivery({
     semantic: { delivery: "spoken", responseKind: "action_result", spokenSummary: "stale" },
@@ -615,8 +678,73 @@ it("uses the same-turn semantic envelope with action and clarification guards", 
   })).toEqual({
     delivery: "spoken",
     status: "needs_clarification",
+    responseKind: "clarification",
     spokenSummary: "Welchen Umkreis um Berlin soll ich verwenden?",
   });
+});
+
+it("names the failure category honestly instead of a generic apology", () => {
+  const named = (name: string, message = name) => Object.assign(new Error(message), { name });
+  expect(failureSpokenSummary("en", named("AI_NoOutputGeneratedError", "No output generated.")))
+    .toBe("I couldn't get that from the backend just now, the answer came back in a form I couldn't hand over. The panel shows the current status, or ask me once more.");
+  expect(failureSpokenSummary("en", new Error("No object generated: response did not match schema.")))
+    .toContain("in a form I couldn't hand over");
+  expect(failureSpokenSummary("en", new Error("VOICE_ENVELOPE_MISSING"))).toContain("in a form I couldn't hand over");
+  expect(failureSpokenSummary("en", named("TimeoutError", "The operation was aborted due to timeout")))
+    .toBe("I couldn't get that from the backend just now, it took too long. The panel shows the current status, or ask me once more.");
+  expect(failureSpokenSummary("en", named("AbortError", "This operation was aborted"))).toContain("it took too long");
+  expect(failureSpokenSummary("en", new ConvexError({ code: "NEED_NOT_FOUND" })))
+    .toBe("I couldn't get that from the backend just now, something changed underneath. The panel shows the current status, or ask me once more.");
+  expect(failureSpokenSummary("en", new Error("boom")))
+    .toBe("I couldn't get that from the backend just now, an error stopped it. The panel shows the current status, or ask me once more.");
+  expect(failureSpokenSummary("de", new Error("boom")))
+    .toBe("Das konnte ich gerade nicht vom Backend bekommen, ein Fehler hat es gestoppt. Das Panel zeigt den aktuellen Stand, oder frag mich noch einmal.");
+  expect(failureSpokenSummary("de", named("AI_NoObjectGeneratedError", "No object generated")))
+    .toContain("in einer Form zurück, die ich nicht weitergeben konnte");
+  for (const error of [new Error("boom"), named("TimeoutError"), new ConvexError({ code: "X" })]) {
+    expect(failureSpokenSummary("en", error)).not.toMatch(/sent|saved|started/);
+  }
+
+  // outcome_unknown: a write may have landed and the client blocks the next
+  // turn, so this sentence must not invite a repeat the app would refuse.
+  expect(failureSpokenSummary("en", named("TimeoutError", "The operation was aborted due to timeout"), true))
+    .toBe("I can't tell yet whether that last step went through, it took too long. It is still being checked; the panel shows the current status, so please look there before repeating it.");
+  expect(failureSpokenSummary("de", new Error("boom"), true))
+    .toBe("Ich kann noch nicht sagen, ob der letzte Schritt durchgegangen ist, ein Fehler hat es gestoppt. Das wird gerade geprüft; das Panel zeigt den aktuellen Stand, schau bitte dort nach, bevor du es wiederholst.");
+  for (const locale of ["en", "de"] as const) {
+    expect(failureSpokenSummary(locale, new Error("boom"), true)).not.toMatch(/ask me once more|frag mich noch einmal/);
+    expect(failureSpokenSummary(locale, new Error("boom"), true)).not.toMatch(/sent|saved|started|gesendet|gespeichert/);
+  }
+});
+
+it("keeps responseKind through finishRequest, the cached replay and the session state", async () => {
+  const f = await fixture();
+  const claim = await f.t.mutation(claimRequest, claimArgs(f, "status-answer"));
+  if (claim.kind !== "accepted") throw new Error("claim not accepted");
+  const result = await f.t.mutation(finishRequest, {
+    ownerId: f.ownerId,
+    voiceSessionId: f.voiceSessionId,
+    requestId: "status-answer",
+    generation: claim.generation,
+    expectedLocale: "en",
+    result: {
+      status: "completed",
+      requestId: "status-answer",
+      resolvedEventIds: ["event:status-answer"],
+      locale: "en",
+      promptMessageId: claim.promptMessageId,
+      delivery: "spoken",
+      responseKind: "answer",
+      spokenSummary: "First room: the provider confirmed Tuesday evenings.",
+    },
+  });
+  expect(result).toMatchObject({ status: "completed", delivery: "spoken", responseKind: "answer" });
+  expect(await f.t.mutation(claimRequest, claimArgs(f, "status-answer"))).toMatchObject({
+    kind: "result",
+    result: { status: "completed", responseKind: "answer", spokenSummary: "First room: the provider confirmed Tuesday evenings." },
+  });
+  const state = await f.owner.query(api.voiceLive.getSessionState, { voiceSessionId: f.voiceSessionId });
+  expect(state.lastResult).toMatchObject({ requestId: "status-answer", responseKind: "answer" });
 });
 
 it("preserves the first facts and exact spacing across more than one hundred deltas", () => {
@@ -808,19 +936,54 @@ it("preserves a spoken answer in the new locale after the claimed language tool 
   expect(result.assistantMessageId).toBeUndefined();
 });
 
-it("denies a binding decision even when it was explicitly bound to the claim", async () => {
+/** A Freigabeprüfung decision on a drafted provider message, with the request it guards. */
+async function reviewMessageDecision(f: Awaited<ReturnType<typeof fixture>>) {
+  return await f.t.run(async (ctx) => {
+    const conversationId = await ctx.db.insert("providerConversations", {
+      ownerId: f.ownerId,
+      conversationKey: "voice-review",
+      savedNeedId: f.needId,
+      signalId: f.firstSignalId,
+      agentThreadId: "voice-review-thread",
+      revision: 1,
+      state: "needs_attention",
+      createdAt: 2_000,
+      updatedAt: 2_000,
+    });
+    const requestId = await ctx.db.insert("actionRequests", {
+      ownerId: f.ownerId,
+      savedNeedId: f.needId,
+      providerConversationId: conversationId,
+      automationMode: "exact_once",
+      requestedActionType: "send_email",
+      personalDataScopes: [],
+      payload: { kind: "email_message", recipientName: "Provider", recipientEmail: "provider@example.test", subject: "Room", body: "Is the room still available?" },
+      contentVersion: 1,
+      contentHash: "voice-review-hash",
+      status: "awaiting_approval",
+      gate: { outcome: "ask_user", reason: "review_mode", autonomyVersion: 1, autonomyHash: "hash", decidedAt: 2_000 },
+      createdAt: 2_000,
+      updatedAt: 2_000,
+    });
+    const decisionId = await ctx.db.insert("decisions", {
+      ownerId: f.ownerId,
+      savedNeedId: f.needId,
+      conversationId,
+      kind: "review_message",
+      status: "open",
+      question: "Send this message?",
+      options: [{ id: "yes", label: "Yes" }, { id: "no", label: "No" }],
+      refs: { requestId },
+      createdAt: 2_000,
+      updatedAt: 2_000,
+    });
+    return { conversationId, requestId, decisionId };
+  });
+}
+
+it("keeps sending UI-only: a bound message decision refuses yes from voice as VOICE_DECISION_UI_ONLY", async () => {
   const f = await fixture();
-  const decisionId = await f.t.run((ctx) => ctx.db.insert("decisions", {
-    ownerId: f.ownerId,
-    savedNeedId: f.needId,
-    kind: "review_message",
-    status: "open",
-    question: "Send this message?",
-    options: [{ id: "yes", label: "Yes" }, { id: "no", label: "No" }],
-    refs: {},
-    createdAt: 2_000,
-    updatedAt: 2_000,
-  }));
+  const { decisionId, requestId } = await reviewMessageDecision(f);
   const claim = await f.t.mutation(claimRequest, { ...claimArgs(f, "binding"), decisionId });
   if (claim.kind !== "accepted") throw new Error("claim not accepted");
 
@@ -831,9 +994,88 @@ it("denies a binding decision even when it was explicitly bound to the claim", a
     generation: claim.generation,
     decisionId,
     choice: "yes",
-  })).rejects.toThrow(/VOICE_DECISION_SUPERSEDED/);
-  const decision = await f.t.run((ctx) => ctx.db.get(decisionId));
-  expect(decision?.status).toBe("open");
+  })).rejects.toThrow(/VOICE_DECISION_UI_ONLY/);
+  expect(await f.t.run((ctx) => ctx.db.get(decisionId))).toMatchObject({ status: "open" });
+  expect(await f.t.run((ctx) => ctx.db.get(requestId))).toMatchObject({ status: "awaiting_approval" });
+  expect(await f.t.run((ctx) => ctx.db.query("actionApprovals").collect())).toEqual([]);
+});
+
+it("lets voice say no to a message decision: the request is rejected and nothing is dispatched", async () => {
+  const f = await fixture();
+  const { decisionId, requestId } = await reviewMessageDecision(f);
+  const claim = await f.t.mutation(claimRequest, { ...claimArgs(f, "voice-no"), decisionId });
+  if (claim.kind !== "accepted") throw new Error("claim not accepted");
+
+  await expect(f.t.mutation(answerNonbindingFromVoice, {
+    ownerId: f.ownerId,
+    voiceSessionId: f.voiceSessionId,
+    requestId: "voice-no",
+    generation: claim.generation,
+    decisionId,
+    choice: "no",
+  })).resolves.toMatchObject({ status: "answered", action: "rejected", requestId });
+  expect(await f.t.run((ctx) => ctx.db.get(decisionId))).toMatchObject({ status: "answered", answer: { choice: "no" } });
+  expect(await f.t.run((ctx) => ctx.db.get(requestId))).toMatchObject({ status: "rejected" });
+  expect(await f.t.run((ctx) => ctx.db.query("actionExecutions").collect())).toEqual([]);
+  expect(await f.t.run((ctx) => ctx.db.query("providerTurns").collect())).toEqual([]);
+});
+
+it("lets voice give a wording instruction: the draft is withdrawn and re-drafted through the Freigabeprüfung, nothing is sent", async () => {
+  const f = await fixture();
+  const { decisionId, requestId, conversationId } = await reviewMessageDecision(f);
+  const claim = await f.t.mutation(claimRequest, { ...claimArgs(f, "voice-custom"), decisionId });
+  if (claim.kind !== "accepted") throw new Error("claim not accepted");
+
+  await expect(f.t.mutation(answerNonbindingFromVoice, {
+    ownerId: f.ownerId,
+    voiceSessionId: f.voiceSessionId,
+    requestId: "voice-custom",
+    generation: claim.generation,
+    decisionId,
+    choice: "custom",
+    text: "Please also ask about the deposit.",
+  })).resolves.toMatchObject({ status: "answered", action: "reassessing", requestId, sent: false });
+  expect(await f.t.run((ctx) => ctx.db.get(requestId))).toMatchObject({ status: "rejected" });
+  expect(await f.t.run((ctx) => ctx.db.query("actionRequests").collect())).toHaveLength(1);
+  const turns = await f.t.run((ctx) => ctx.db.query("providerTurns").collect());
+  expect(turns).toContainEqual(expect.objectContaining({ conversationId, kind: "musician_input", decisionId }));
+});
+
+it("lets voice decline a ready offer but keeps the offer review in the app", async () => {
+  const f = await fixture();
+  const offerDecision = () => f.t.run((ctx) => ctx.db.insert("decisions", {
+    ownerId: f.ownerId,
+    savedNeedId: f.needId,
+    kind: "offer_ready",
+    status: "open",
+    question: "An offer is ready. Review it?",
+    options: [{ id: "review", label: "Review the offer" }, { id: "no", label: "Not this one" }],
+    refs: {},
+    createdAt: 2_000,
+    updatedAt: 2_000,
+  }));
+  const reviewId = await offerDecision();
+  const first = await f.t.mutation(claimRequest, { ...claimArgs(f, "offer-review"), decisionId: reviewId });
+  if (first.kind !== "accepted") throw new Error("claim not accepted");
+  await expect(f.t.mutation(answerNonbindingFromVoice, {
+    ownerId: f.ownerId,
+    voiceSessionId: f.voiceSessionId,
+    requestId: "offer-review",
+    generation: first.generation,
+    decisionId: reviewId,
+    choice: "review",
+  })).rejects.toThrow(/VOICE_DECISION_UI_ONLY/);
+  expect(await f.t.run((ctx) => ctx.db.get(reviewId))).toMatchObject({ status: "open" });
+  await expect(f.t.mutation(answerNonbindingFromVoice, {
+    ownerId: f.ownerId,
+    voiceSessionId: f.voiceSessionId,
+    requestId: "offer-review",
+    generation: first.generation,
+    decisionId: reviewId,
+    choice: "no",
+    text: "Too far out.",
+  })).resolves.toMatchObject({ status: "answered", action: "declined" });
+  expect(await f.t.run((ctx) => ctx.db.get(reviewId))).toMatchObject({ status: "answered", answer: { choice: "no", text: "Too far out." } });
 });
 
 it("returns the next decision question and accepts it only under a fresh voice claim", async () => {
@@ -958,6 +1200,60 @@ it("fences a claimed write after focus changes", async () => {
   expect(reconciled).toMatchObject({ status: "superseded" });
   expect(reconciled.spokenSummary).toBeUndefined();
   expect(reconciled.endCall).toBeUndefined();
+});
+
+it.each([false, true])("keeps the claim valid after the Scout opens a room by voice (claim carries focus: %s)", async (withFocus) => {
+  const f = await fixture();
+  await f.t.run((ctx) => ctx.db.insert("providerConversations", {
+    ownerId: f.ownerId,
+    conversationKey: "voice-open-second",
+    savedNeedId: f.needId,
+    signalId: f.secondSignalId,
+    agentThreadId: "voice-open-second-thread",
+    revision: 0,
+    state: "waiting",
+    createdAt: 2_000,
+    updatedAt: 2_000,
+  }));
+  const claim = await f.t.mutation(claimRequest, {
+    ...claimArgs(f, "open-room"),
+    ...(withFocus ? { focusedSignalId: f.firstSignalId } : {}),
+  });
+  if (claim.kind !== "accepted") throw new Error("claim not accepted");
+  const voiceClaim = { voiceSessionId: f.voiceSessionId, requestId: "open-room", generation: claim.generation };
+
+  await expect(f.t.mutation(internal.scoutCandidates.open, {
+    ownerId: f.ownerId, threadId: f.threadId, savedNeedId: f.needId, signalId: f.secondSignalId, voiceClaim,
+  })).resolves.toMatchObject({ opened: true, signalId: f.secondSignalId });
+  expect(await f.t.run((ctx) => ctx.db.get(f.voiceSessionId))).toMatchObject({
+    focusedSignalId: f.secondSignalId,
+    activeClaim: { requestId: "open-room", focusedSignalId: f.secondSignalId },
+  });
+  // A later claimed write in the same turn still passes the fence.
+  await expect(f.t.mutation(updateFromScout, {
+    ownerId: f.ownerId, needId: f.needId, schedule: ["Tuesday evening"], voiceClaim,
+  })).resolves.toMatchObject({ changedFields: ["schedule"] });
+
+  const result = await f.t.mutation(finishRequest, {
+    ownerId: f.ownerId,
+    voiceSessionId: f.voiceSessionId,
+    requestId: "open-room",
+    generation: claim.generation,
+    expectedLocale: "en",
+    result: {
+      status: "completed",
+      requestId: "open-room",
+      resolvedEventIds: ["event:open-room"],
+      locale: "en",
+      delivery: "spoken",
+      responseKind: "answer",
+      spokenSummary: "Second room is open; the provider has not replied yet.",
+    },
+  });
+  expect(result).toMatchObject({ status: "completed", delivery: "spoken", spokenSummary: "Second room is open; the provider has not replied yet." });
+  // The next turn, now about the opened room, is accepted instead of refused as superseded.
+  const next = await f.t.mutation(claimRequest, { ...claimArgs(f, "after-open"), focusedSignalId: f.secondSignalId });
+  expect(next.kind).toBe("accepted");
 });
 
 it("syncs candidate focus into the Live session before an advisor claim can pause and update the current search", async () => {

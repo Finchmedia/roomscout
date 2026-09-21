@@ -41,6 +41,13 @@ export type LiveBackendState =
   | "failed"
   | "outcome_unknown";
 
+export type LiveResponseKind =
+  | "routine_update"
+  | "answer"
+  | "clarification"
+  | "action_result"
+  | "decision_result";
+
 export type LiveDelegateResult = {
   status:
     | "in_progress"
@@ -54,6 +61,7 @@ export type LiveDelegateResult = {
   resolvedEventIds: string[];
   spokenSummary?: string;
   delivery?: "silent" | "spoken";
+  responseKind?: LiveResponseKind;
   locale: LiveLocale;
   revision?: number;
   promptMessageId?: string;
@@ -386,6 +394,43 @@ function resultLocaleBelongsToRequest(
     (result.status === "completed" || result.status === "needs_clarification") &&
     result.changedFields?.includes("conversationLocale") === true
   );
+}
+
+const LATE_ANSWER_PREFIX: Record<LiveLocale, string> = {
+  en: "Answer to the earlier question: ",
+  de: "Antwort auf die frühere Frage: ",
+};
+
+/**
+ * What the Live model is told to say for a spoken backend result, or nothing.
+ * A fresh result is spoken as is. An answer, clarification, decision result or
+ * failure is never dropped: a pure status answer leaves no receipt, so silence
+ * would lose it entirely. It still yields to queued typed input and to a
+ * language switch, and a genuinely newer utterance earns a prefix so the model
+ * frames it as the earlier question's answer. Write acknowledgements
+ * (routine_update, action_result) keep yielding to any newer speech or focus.
+ */
+export function spokenResultContent(args: {
+  result: LiveDelegateResult;
+  locale: LiveLocale;
+  contextIsCurrent: boolean;
+  localeStillCurrent: boolean;
+  hasNewerInput: boolean;
+  hasNewerTypedInput: boolean;
+  honoredEndCall: boolean;
+}): string | undefined {
+  const { result } = args;
+  if (!result.spokenSummary || result.delivery === "silent" || args.honoredEndCall) return undefined;
+  if (args.contextIsCurrent && !args.hasNewerInput && !args.hasNewerTypedInput) return result.spokenSummary;
+  const speakable =
+    result.status === "failed" ||
+    result.responseKind === "answer" ||
+    result.responseKind === "clarification" ||
+    result.responseKind === "decision_result";
+  if (!speakable || !args.localeStillCurrent || args.hasNewerTypedInput) return undefined;
+  return args.hasNewerInput
+    ? `${LATE_ANSWER_PREFIX[args.locale]}${result.spokenSummary}`
+    : result.spokenSummary;
 }
 
 export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) {
@@ -1059,10 +1104,10 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         );
       }
       setTranscript(toTranscript(fragmentBufferRef.current.captions()));
-      const contextIsCurrent =
-        contextEpochRef.current === contextEpoch &&
+      const localeStillCurrent =
         localeRef.current === requestLocale &&
         resultLocaleBelongsToRequest(result, requestLocale);
+      const contextIsCurrent = contextEpochRef.current === contextEpoch && localeStillCurrent;
       if (contextIsCurrent) {
         setSessionLocale(result.locale);
         localeRef.current = result.locale;
@@ -1140,17 +1185,18 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
       ) {
         appendContext(priorReceipt, false);
       }
-      if (
-        next.intent !== "capture_facts" &&
-        result.spokenSummary &&
-        result.delivery !== "silent" &&
-        !honoredEndCall &&
-        !hasNewerInput &&
-        !hasNewerTypedInput &&
-        contextIsCurrent
-      ) {
-        appendContext(result.spokenSummary, true, next.delegationId ?? null);
-      }
+      const spoken = next.intent === "capture_facts"
+        ? undefined
+        : spokenResultContent({
+            result,
+            locale: localeRef.current,
+            contextIsCurrent,
+            localeStillCurrent,
+            hasNewerInput,
+            hasNewerTypedInput,
+            honoredEndCall,
+          });
+      if (spoken) appendContext(spoken, true, next.delegationId ?? null);
     } catch (cause) {
       if (generationRef.current !== generation || voiceSessionIdRef.current !== sessionId) return;
       if (isRetryablePreclaimFailure(cause)) {
@@ -1267,10 +1313,10 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
           settleFlushWaiters(false);
           return;
         }
-        const contextIsCurrent =
-          contextEpochRef.current === uncertain.contextEpoch &&
+        const localeStillCurrent =
           localeRef.current === uncertain.locale &&
           resultLocaleBelongsToRequest(result, uncertain.locale);
+        const contextIsCurrent = contextEpochRef.current === uncertain.contextEpoch && localeStillCurrent;
         if (contextIsCurrent) {
           setSessionLocale(result.locale);
           localeRef.current = result.locale;
@@ -1352,17 +1398,18 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
             uncertain.input.delegationId ?? null,
           );
         }
-        if (
-          uncertain.input.intent !== "capture_facts" &&
-          result.spokenSummary &&
-          result.delivery !== "silent" &&
-          !honoredEndCall &&
-          !hasNewerInput &&
-          !hasNewerTypedInput &&
-          contextIsCurrent
-        ) {
-          appendContext(result.spokenSummary, true, uncertain.input.delegationId ?? null);
-        }
+        const spoken = uncertain.input.intent === "capture_facts"
+          ? undefined
+          : spokenResultContent({
+              result,
+              locale: localeRef.current,
+              contextIsCurrent,
+              localeStillCurrent,
+              hasNewerInput,
+              hasNewerTypedInput,
+              honoredEndCall,
+            });
+        if (spoken) appendContext(spoken, true, uncertain.input.delegationId ?? null);
         const priorReceipt = verifiedPriorRequestReceipt(result);
         if (
           uncertain.input.intent !== "capture_facts" &&
@@ -1478,6 +1525,15 @@ export function useGptLiveVoiceScout(options: UseGptLiveVoiceScoutOptions = {}) 
         const captureIndex = queueRef.current.findIndex((input) => input.intent === "capture_facts");
         if (fragmentBufferRef.current.unresolvedUserFragments().length > 0) {
           parkedDelegationRef.current = undefined;
+        }
+        // A new delegation is the musician asking again, which is exactly what
+        // the spoken failure sentence invites them to do. A parked voice input
+        // must not keep the pump closed against it: its fragments are still
+        // unresolved, so this snapshot carries them along. A typed input keeps
+        // its composer retry, and an unknown outcome keeps blocking.
+        if (failedInputRef.current?.input.source === "voice") {
+          failedInputRef.current = undefined;
+          setError(undefined);
         }
         const delegationInput: QueuedInput = {
           requestId: event.delegation.id,

@@ -102,6 +102,31 @@ describe("prompt construction: RoomScout Live policy", () => {
   });
 });
 
+describe("prompt construction: backend answers and voice decisions", () => {
+  it.each([
+    ["en", "RESULT DELIVERY: When the app appends a commentary for a delegation, that is the backend answer", "never say you are still waiting once the answer arrived", "never answer it from memory or defer it to the panel", "An announced decision is answered only through the backend"],
+    ["de", "ERGEBNISWIEDERGABE: Wenn die App zu einer Delegation einen Kommentar anhängt, ist das die Backend-Antwort", "sage nie, du wartest noch, sobald die Antwort da ist", "beantworte es nie aus dem Gedächtnis und verweise nicht aufs Panel", "Eine angekündigte Entscheidung wird nur über das Backend beantwortet"],
+  ] as const)("speaks %s backend answers on arrival and delegates status questions", (locale, delivery, noWaiting, noMemory, decision) => {
+    for (const session of [{ hasPriorContext: true, discovery: true }, { hasPriorContext: false, discovery: false }]) {
+      const prompt = liveInstructions(locale, "phase=any", session);
+      expect(prompt).toContain(delivery);
+      expect(prompt).toContain(noWaiting);
+      expect(prompt).toContain(noMemory);
+      expect(prompt).toContain(decision);
+    }
+  });
+
+  it.each([
+    ["en", "I'll take that as your answer for Modul Ost", "if the result is ui_only, say that sending or accepting happens in the app", "Never claim anything was sent"],
+    ["de", "Das nehme ich als deine Antwort für Modul Ost", "ist das Ergebnis ui_only, sage, dass Senden oder Annehmen in der App passiert", "Behaupte nie, etwas sei gesendet worden"],
+  ] as const)("confirms a %s voice decision answer without claiming a send", (locale, confirmation, uiOnly, noSend) => {
+    const prompt = scoutVoiceInstructions(locale);
+    expect(prompt).toContain(confirmation);
+    expect(prompt).toContain(uiOnly);
+    expect(prompt).toContain(noSend);
+  });
+});
+
 describe("prompt construction: GPT Live session opening", () => {
   it.each([
     ["en", "Hey, welcome back. What would you like to pick up?", "Do not recap the search brief"],

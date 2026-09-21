@@ -268,7 +268,19 @@ export const answerFromScout = internalMutation({
   handler: async (ctx, args) => await answerDecision(ctx, { ...args, fromChat: true }),
 });
 
-/** Live Voice may answer only the nonbinding Scout question bound when its claim was accepted. */
+/**
+ * Live Voice may answer only the decision bound when its claim was accepted, and
+ * only non-binding choices: every option of a Scout question, "no" or a wording
+ * instruction ("custom") on a message decision, "no" on a ready offer. Sending
+ * ("yes"), reviewing an offer and portal human steps stay in the app's review.
+ */
+export function voiceMayAnswer(decision: Pick<Doc<"decisions">, "kind">, choice: string): boolean {
+  if (decision.kind === "scout_question") return true;
+  if (MESSAGE_DECISION_KINDS.has(decision.kind)) return choice === "no" || choice === "custom";
+  if (decision.kind === "offer_ready") return choice === "no";
+  return false;
+}
+
 export const answerNonbindingFromVoice = internalMutation({
   args: {
     ownerId: v.id("users"),
@@ -290,10 +302,12 @@ export const answerNonbindingFromVoice = internalMutation({
     const decision = await ctx.db.get(args.decisionId);
     if (
       !decision || decision.ownerId !== args.ownerId || decision.status !== "open" ||
-      decision.kind !== "scout_question" ||
       decision.updatedAt !== claim.decisionUpdatedAt
     ) {
       throw new ConvexError({ code: "VOICE_DECISION_SUPERSEDED" });
+    }
+    if (!voiceMayAnswer(decision, args.choice.trim())) {
+      throw new ConvexError({ code: "VOICE_DECISION_UI_ONLY" });
     }
     return await answerDecision(ctx, {
       ownerId: args.ownerId,

@@ -53,6 +53,10 @@ it("includes the current provider offer in Scout chat context without requiring 
   expect(context).toContain('"currentAssessment"');
   expect(context).toContain("Provider confirmed availability and the monthly price.");
   expect(context).toContain("TRUSTED ACCEPTANCE RULE:");
+  // No provider thread yet: the Scout sees that nothing was said, not an invented reply.
+  expect(context).toContain('"latestProviderReplyExcerpt":null');
+  expect(context).toContain('"openQuestion":null');
+  expect(context).toContain("TRUSTED PROVIDER REPLY RULE:");
 
   const focused = await f.t.query(internal.providerConversations.getProgressContext, {
     ownerId: f.ownerId, savedNeedId: f.needId, focusedSignalId: (await f.t.run(async (ctx) => (await ctx.db.get(f.conversationId))!)).signalId,

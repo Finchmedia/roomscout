@@ -5,6 +5,7 @@ import {
   createGptLiveSession,
   resolveLiveSessionEndpoint,
   splitLiveAppendContent,
+  spokenResultContent,
   useGptLiveVoiceScout,
 } from "./useGptLiveVoiceScout";
 
@@ -165,6 +166,43 @@ it("resolves the Live endpoint from the active Convex deployment before stale ov
     "https://voice.roomscout.example/",
   )).toBe("https://voice.roomscout.example/api/live/session");
   expect(resolveLiveSessionEndpoint(undefined, undefined)).toBe("/api/live/session");
+});
+
+describe("spokenResultContent", () => {
+  const answer: LiveDelegateResult = {
+    status: "completed", requestId: "r", resolvedEventIds: ["e"], locale: "en",
+    delivery: "spoken", responseKind: "answer", spokenSummary: "Modul Ost confirmed Tuesday evenings.",
+  };
+  const fresh = { locale: "en" as const, contextIsCurrent: true, localeStillCurrent: true, hasNewerInput: false, hasNewerTypedInput: false, honoredEndCall: false };
+
+  it("speaks a fresh result as is and never a silent one or an honoured farewell", () => {
+    expect(spokenResultContent({ ...fresh, result: answer })).toBe("Modul Ost confirmed Tuesday evenings.");
+    expect(spokenResultContent({ ...fresh, result: { ...answer, delivery: "silent" } })).toBeUndefined();
+    expect(spokenResultContent({ ...fresh, result: { ...answer, spokenSummary: undefined } })).toBeUndefined();
+    expect(spokenResultContent({ ...fresh, result: answer, honoredEndCall: true })).toBeUndefined();
+  });
+
+  it("keeps answers, clarifications, decision results and failures after a newer utterance, with a prefix", () => {
+    for (const responseKind of ["answer", "clarification", "decision_result"] as const) {
+      expect(spokenResultContent({ ...fresh, result: { ...answer, responseKind }, contextIsCurrent: false, hasNewerInput: true }))
+        .toBe("Answer to the earlier question: Modul Ost confirmed Tuesday evenings.");
+    }
+    expect(spokenResultContent({ ...fresh, locale: "de", result: { ...answer, status: "failed", responseKind: undefined }, contextIsCurrent: false, hasNewerInput: true }))
+      .toBe("Antwort auf die frühere Frage: Modul Ost confirmed Tuesday evenings.");
+  });
+
+  it("treats a focus-only context change as fresh for an answer, without a prefix", () => {
+    expect(spokenResultContent({ ...fresh, result: answer, contextIsCurrent: false })).toBe("Modul Ost confirmed Tuesday evenings.");
+  });
+
+  it("still drops write acknowledgements, and every kind behind typed input or a language switch", () => {
+    for (const responseKind of ["routine_update", "action_result", undefined] as const) {
+      expect(spokenResultContent({ ...fresh, result: { ...answer, responseKind }, hasNewerInput: true })).toBeUndefined();
+      expect(spokenResultContent({ ...fresh, result: { ...answer, responseKind }, contextIsCurrent: false })).toBeUndefined();
+    }
+    expect(spokenResultContent({ ...fresh, result: answer, hasNewerTypedInput: true })).toBeUndefined();
+    expect(spokenResultContent({ ...fresh, result: answer, contextIsCurrent: false, localeStillCurrent: false })).toBeUndefined();
+  });
 });
 
 describe("useGptLiveVoiceScout", () => {
@@ -402,6 +440,300 @@ describe("useGptLiveVoiceScout", () => {
       });
     });
     await act(async () => resolveDelegate(completed("delegation-budget", ["budget-300"])));
+    expect(sent.some((event) => event.type === "session.commentary.append")).toBe(false);
+  });
+
+  it("speaks a late status answer when only a backchannel arrived meanwhile", async () => {
+    let resolveDelegate!: (result: LiveDelegateResult) => void;
+    const delegate = vi.fn(
+      () => new Promise<LiveDelegateResult>((resolve) => { resolveDelegate = resolve; }),
+    );
+    const { channel, result, sent } = await connect(delegate as never);
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "status-question",
+        delta: "What's the status of Modul Ost?",
+        start_ms: 100,
+        end_ms: 400,
+      });
+      serverEvent(channel, {
+        type: "session.delegation.created",
+        delegation: { id: "delegation-status", type: "delegation", target: "client" },
+      });
+    });
+    await waitFor(() => expect(delegate).toHaveBeenCalledOnce());
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "backchannel-okay",
+        delta: "okay",
+        start_ms: 410,
+        end_ms: 500,
+      });
+    });
+    await act(async () => resolveDelegate({
+      ...completed("delegation-status", ["status-question"]),
+      responseKind: "answer",
+      spokenSummary: "Modul Ost: the provider confirmed Tuesday evenings and asked about storage.",
+    }));
+    expect(sent).toContainEqual(expect.objectContaining({
+      type: "session.commentary.append",
+      delegation_id: "delegation-status",
+      content: "Answer to the earlier question: Modul Ost: the provider confirmed Tuesday evenings and asked about storage.",
+    }));
+    expect(result.current.backendState).toBe("idle");
+  });
+
+  it("still drops a late write acknowledgement when a newer correction arrived", async () => {
+    let resolveDelegate!: (result: LiveDelegateResult) => void;
+    const delegate = vi.fn(
+      () => new Promise<LiveDelegateResult>((resolve) => { resolveDelegate = resolve; }),
+    );
+    const { channel, sent } = await connect(delegate as never);
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "budget-300-ack",
+        delta: "Three hundred euros",
+        start_ms: 100,
+        end_ms: 400,
+      });
+      serverEvent(channel, {
+        type: "session.delegation.created",
+        delegation: { id: "delegation-budget-ack", type: "delegation", target: "client" },
+      });
+    });
+    await waitFor(() => expect(delegate).toHaveBeenCalledOnce());
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "budget-280-ack",
+        delta: "Actually two eighty",
+        start_ms: 410,
+        end_ms: 650,
+      });
+    });
+    await act(async () => resolveDelegate({
+      ...completed("delegation-budget-ack", ["budget-300-ack"]),
+      responseKind: "action_result",
+      spokenSummary: "The budget is set to 300 euros.",
+    }));
+    expect(sent.some((event) => event.type === "session.commentary.append")).toBe(false);
+  });
+
+  it("speaks a failed backend result even after newer speech", async () => {
+    let resolveDelegate!: (result: LiveDelegateResult) => void;
+    const delegate = vi.fn(
+      () => new Promise<LiveDelegateResult>((resolve) => { resolveDelegate = resolve; }),
+    );
+    const { channel, result, sent } = await connect(delegate as never);
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "status-question-failed",
+        delta: "What did the provider say?",
+        start_ms: 100,
+        end_ms: 400,
+      });
+      serverEvent(channel, {
+        type: "session.delegation.created",
+        delegation: { id: "delegation-failed", type: "delegation", target: "client" },
+      });
+    });
+    await waitFor(() => expect(delegate).toHaveBeenCalledOnce());
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "hmm",
+        delta: "hmm",
+        start_ms: 410,
+        end_ms: 450,
+      });
+    });
+    await act(async () => resolveDelegate({
+      status: "failed",
+      requestId: "delegation-failed",
+      resolvedEventIds: [],
+      locale: "en",
+      delivery: "spoken",
+      spokenSummary: "I couldn't get that from the backend just now, it took too long. The panel shows the current status, or ask me once more.",
+    }));
+    expect(result.current.backendState).toBe("failed");
+    expect(sent).toContainEqual(expect.objectContaining({
+      type: "session.commentary.append",
+      delegation_id: "delegation-failed",
+      content: expect.stringMatching(/^Answer to the earlier question: I couldn't get that from the backend just now, it took too long\./),
+    }));
+  });
+
+  it("delegates the repeated question after a failed voice result, as the spoken sentence promises", async () => {
+    let resolveDelegate!: (result: LiveDelegateResult) => void;
+    const delegate = vi.fn().mockImplementation(
+      () => new Promise<LiveDelegateResult>((resolve) => { resolveDelegate = resolve; }),
+    );
+    const { channel, result } = await connect(delegate as never);
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "status-first",
+        delta: "What did the provider say?",
+        start_ms: 100,
+        end_ms: 400,
+      });
+      serverEvent(channel, {
+        type: "session.delegation.created",
+        delegation: { id: "delegation-first", type: "delegation", target: "client" },
+      });
+    });
+    await waitFor(() => expect(delegate).toHaveBeenCalledOnce());
+    await act(async () => resolveDelegate({
+      status: "failed",
+      requestId: "delegation-first",
+      resolvedEventIds: [],
+      locale: "en",
+      delivery: "spoken",
+      spokenSummary: "I couldn't get that from the backend just now, it took too long. The panel shows the current status, or ask me once more.",
+    }));
+    expect(result.current.backendState).toBe("failed");
+
+    // "ask me once more": the next genuine utterance must go through without
+    // the on-screen Retry link, carrying the unresolved first question along.
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "status-again",
+        delta: "What did the provider say?",
+        start_ms: 900,
+        end_ms: 1_200,
+      });
+      serverEvent(channel, {
+        type: "session.delegation.created",
+        delegation: { id: "delegation-again", type: "delegation", target: "client" },
+      });
+    });
+    await waitFor(() => expect(delegate).toHaveBeenCalledTimes(2));
+    expect(result.current.error).toBeUndefined();
+    expect(delegate.mock.calls[1]?.[0]).toEqual(expect.objectContaining({ delegationId: "delegation-again" }));
+    expect(delegate.mock.calls[1]?.[0].fragments.map((fragment: { eventId: string }) => fragment.eventId))
+      .toEqual(expect.arrayContaining(["status-first", "status-again"]));
+    await act(async () => resolveDelegate({
+      ...completed("delegation-again", ["status-first", "status-again"]),
+      responseKind: "answer",
+      delivery: "spoken",
+      spokenSummary: "Modul Ost confirmed Tuesday evenings.",
+    }));
+    await waitFor(() => expect(result.current.backendState).toBe("idle"));
+  });
+
+  it("keeps blocking after an unknown outcome, where the spoken sentence does not invite a repeat", async () => {
+    let resolveDelegate!: (result: LiveDelegateResult) => void;
+    const delegate = vi.fn(
+      () => new Promise<LiveDelegateResult>((resolve) => { resolveDelegate = resolve; }),
+    );
+    const { channel, result } = await connect(delegate as never);
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "send-it",
+        delta: "Tell them Tuesday works",
+        start_ms: 100,
+        end_ms: 400,
+      });
+      serverEvent(channel, {
+        type: "session.delegation.created",
+        delegation: { id: "delegation-unknown", type: "delegation", target: "client" },
+      });
+    });
+    await waitFor(() => expect(delegate).toHaveBeenCalledOnce());
+    await act(async () => resolveDelegate({
+      status: "outcome_unknown",
+      requestId: "delegation-unknown",
+      resolvedEventIds: [],
+      locale: "en",
+      delivery: "spoken",
+      spokenSummary: "I can't tell yet whether that last step went through, it took too long. It is still being checked; the panel shows the current status, so please look there before repeating it.",
+    }));
+    expect(result.current.backendState).toBe("outcome_unknown");
+
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "send-it-again",
+        delta: "Did that go out?",
+        start_ms: 900,
+        end_ms: 1_200,
+      });
+      serverEvent(channel, {
+        type: "session.delegation.created",
+        delegation: { id: "delegation-unknown-again", type: "delegation", target: "client" },
+      });
+    });
+    await waitFor(() => expect(result.current.pendingInputCount).toBe(1));
+    expect(delegate).toHaveBeenCalledOnce();
+  });
+
+  it("speaks an answer without a prefix when only the focus changed while it ran", async () => {
+    let resolveDelegate!: (result: LiveDelegateResult) => void;
+    const delegate = vi.fn(
+      () => new Promise<LiveDelegateResult>((resolve) => { resolveDelegate = resolve; }),
+    );
+    const { channel, result, sent } = await connect(delegate as never);
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "open-and-ask",
+        delta: "Open Raum West, what did they say?",
+        start_ms: 100,
+        end_ms: 500,
+      });
+      serverEvent(channel, {
+        type: "session.delegation.created",
+        delegation: { id: "delegation-open", type: "delegation", target: "client" },
+      });
+    });
+    await waitFor(() => expect(delegate).toHaveBeenCalledOnce());
+    // The Scout's own openCandidate moved the server focus mid-turn.
+    act(() => result.current.setFocus({ summary: "The user is viewing candidate Raum West." }));
+    await act(async () => resolveDelegate({
+      ...completed("delegation-open", ["open-and-ask"]),
+      responseKind: "answer",
+      spokenSummary: "Raum West is open. The provider offered Tuesday evenings.",
+    }));
+    expect(sent).toContainEqual(expect.objectContaining({
+      type: "session.commentary.append",
+      delegation_id: "delegation-open",
+      content: "Raum West is open. The provider offered Tuesday evenings.",
+    }));
+  });
+
+  it("keeps an answer in the old language quiet after a mid-request language switch", async () => {
+    let resolveDelegate!: (result: LiveDelegateResult) => void;
+    const delegate = vi.fn(
+      () => new Promise<LiveDelegateResult>((resolve) => { resolveDelegate = resolve; }),
+    );
+    const { channel, result, sent } = await connect(delegate as never);
+    act(() => {
+      serverEvent(channel, {
+        type: "session.input_transcript.delta",
+        event_id: "status-before-switch",
+        delta: "What's the status?",
+        start_ms: 100,
+        end_ms: 400,
+      });
+      serverEvent(channel, {
+        type: "session.delegation.created",
+        delegation: { id: "delegation-switch", type: "delegation", target: "client" },
+      });
+    });
+    await waitFor(() => expect(delegate).toHaveBeenCalledOnce());
+    act(() => result.current.setLanguage("de"));
+    await act(async () => resolveDelegate({
+      ...completed("delegation-switch", ["status-before-switch"]),
+      responseKind: "answer",
+      spokenSummary: "Two rooms replied; one is waiting for your answer.",
+    }));
+    expect(result.current.sessionLocale).toBe("de");
     expect(sent.some((event) => event.type === "session.commentary.append")).toBe(false);
   });
 

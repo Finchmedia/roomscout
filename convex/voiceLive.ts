@@ -74,11 +74,20 @@ const fragmentValidator = v.object({
   startMs: v.number(),
   endMs: v.number(),
 });
+const responseKindValidator = v.union(
+  v.literal("routine_update"),
+  v.literal("answer"),
+  v.literal("clarification"),
+  v.literal("action_result"),
+  v.literal("decision_result"),
+);
 const delegateResultValidator = v.object({
   status: delegateStatusValidator,
   requestId: v.string(),
   resolvedEventIds: v.array(v.string()),
   delivery: v.optional(v.union(v.literal("silent"), v.literal("spoken"))),
+  /** The semantic kind of a spoken result: the client never drops an answer, a clarification or a decision result. */
+  responseKind: v.optional(responseKindValidator),
   spokenSummary: v.optional(v.string()),
   locale: localeValidator,
   revision: v.optional(v.number()),
@@ -93,11 +102,13 @@ const delegateResultValidator = v.object({
 });
 
 type TerminalStatus = "completed" | "needs_clarification" | "superseded" | "failed" | "outcome_unknown";
+export type VoiceResponseKind = "routine_update" | "answer" | "clarification" | "action_result" | "decision_result";
 type DelegateResult = {
   status: "in_progress" | "busy" | TerminalStatus;
   requestId: string;
   resolvedEventIds: string[];
   delivery?: "silent" | "spoken";
+  responseKind?: VoiceResponseKind;
   spokenSummary?: string;
   locale: ConversationLocale;
   revision?: number;
@@ -635,6 +646,7 @@ export const claimRequest = internalMutation({
             requestId: cached.requestId,
             resolvedEventIds: cached.resolvedEventIds,
             delivery: cached.delivery,
+            responseKind: cached.responseKind,
             spokenSummary: cached.spokenSummary,
             locale: cached.locale,
             revision: cached.revision,
@@ -879,6 +891,7 @@ export const getSessionState = query({
       requestId: cached.requestId,
       resolvedEventIds: cached.resolvedEventIds,
       delivery: cached.delivery,
+      responseKind: cached.responseKind,
       spokenSummary: cached.spokenSummary,
       locale: cached.locale,
       revision: cached.revision,
@@ -953,9 +966,54 @@ function shortSummary(text: string): string | undefined {
 
 type VoiceSemanticResult = {
   delivery: "silent" | "spoken";
-  responseKind: "routine_update" | "answer" | "clarification" | "action_result" | "decision_result";
+  responseKind: VoiceResponseKind;
   spokenSummary: string;
 };
+
+/**
+ * The spoken sentence for a delegate that threw out of the Scout turn. It names
+ * the category honestly so the musician knows whether to ask again; the panel
+ * always shows the real state. Nothing here claims a side effect.
+ *
+ * `sideEffect` marks the outcome_unknown case: a write may have landed and the
+ * client blocks the next turn until the receipt arrives, so that sentence must
+ * not invite a repeat. Only the plain failure says "ask me once more" — and the
+ * hook makes that true by dropping the parked voice input on the next utterance.
+ */
+export function failureSpokenSummary(locale: ConversationLocale, error: unknown, sideEffect = false): string {
+  const name = error instanceof Error ? error.name : "";
+  const message = error instanceof Error ? error.message : String(error);
+  const category = name === "AI_NoOutputGeneratedError" || name === "AI_NoObjectGeneratedError" ||
+      message.startsWith("No output generated") || message.startsWith("No object generated") ||
+      message.includes("VOICE_ENVELOPE_MISSING")
+    ? "envelope"
+    : name === "AbortError" || name === "TimeoutError" || /\b(timed out|timeout|aborted)\b/i.test(message)
+      ? "timeout"
+      : error instanceof ConvexError
+        ? "state"
+        : "error";
+  const reason = locale === "de"
+    ? {
+        envelope: "die Antwort kam in einer Form zurück, die ich nicht weitergeben konnte",
+        timeout: "es hat zu lange gedauert",
+        state: "darunter hat sich etwas geändert",
+        error: "ein Fehler hat es gestoppt",
+      }[category]
+    : {
+        envelope: "the answer came back in a form I couldn't hand over",
+        timeout: "it took too long",
+        state: "something changed underneath",
+        error: "an error stopped it",
+      }[category];
+  if (sideEffect) {
+    return locale === "de"
+      ? `Ich kann noch nicht sagen, ob der letzte Schritt durchgegangen ist, ${reason}. Das wird gerade geprüft; das Panel zeigt den aktuellen Stand, schau bitte dort nach, bevor du es wiederholst.`
+      : `I can't tell yet whether that last step went through, ${reason}. It is still being checked; the panel shows the current status, so please look there before repeating it.`;
+  }
+  return locale === "de"
+    ? `Das konnte ich gerade nicht vom Backend bekommen, ${reason}. Das Panel zeigt den aktuellen Stand, oder frag mich noch einmal.`
+    : `I couldn't get that from the backend just now, ${reason}. The panel shows the current status, or ask me once more.`;
+}
 
 export function resolveLiveDelivery(args: {
   semantic: VoiceSemanticResult;
@@ -963,6 +1021,13 @@ export function resolveLiveDelivery(args: {
   hasEndCall: boolean;
   requiresSpoken: boolean;
   requiresClarification: boolean;
+  /**
+   * Verified effect kinds that force a spoken delivery. The model's own label
+   * is unguided, so a decision answer must not be filed as a routine update:
+   * the client drops a late routine_update, which would silence exactly the
+   * "I'll take that as your answer" confirmation this turn exists for.
+   */
+  spokenEffectKinds?: readonly string[];
   searchStatus?: {
     locale: ConversationLocale;
     action: "start" | "pause";
@@ -972,7 +1037,7 @@ export function resolveLiveDelivery(args: {
       clarificationQuestion?: string;
     };
   };
-}): Pick<DelegateResult, "delivery" | "spokenSummary"> & { status: "completed" | "needs_clarification" } {
+}): Pick<DelegateResult, "delivery" | "spokenSummary" | "responseKind"> & { status: "completed" | "needs_clarification" } {
   if (args.captureFacts) {
     return { delivery: "silent", status: "completed" };
   }
@@ -982,6 +1047,7 @@ export function resolveLiveDelivery(args: {
       return {
         delivery: "spoken",
         status: "needs_clarification",
+        responseKind: "clarification",
         spokenSummary: result.clarificationQuestion ?? (locale === "de"
           ? "Ich brauche noch eine Pflichtangabe, bevor ich die Suche starten kann."
           : "I still need one required detail before I can start the search."),
@@ -994,7 +1060,7 @@ export function resolveLiveDelivery(args: {
       : result.status === "active"
         ? result.changed ? "The search is now active." : "The search is already active."
         : result.changed ? "The search is now paused." : "The search is already paused.";
-    return { delivery: "spoken", status: "completed", spokenSummary };
+    return { delivery: "spoken", status: "completed", responseKind: "action_result", spokenSummary };
   }
   const semanticSummary = shortSummary(args.semantic.spokenSummary);
   // The separately validated farewell is already a complete client-facing
@@ -1010,7 +1076,17 @@ export function resolveLiveDelivery(args: {
   if (delivery === "spoken" && !spokenSummary) {
     throw new Error("VOICE_SPOKEN_SUMMARY_REQUIRED");
   }
-  return { delivery, status, ...(spokenSummary ? { spokenSummary } : {}) };
+  // A verified effect outranks the model's own label. "answer" and
+  // "clarification" already survive a late delivery, so only the two kinds the
+  // client would drop are rewritten.
+  const effects = args.spokenEffectKinds ?? [];
+  const semanticKind = args.semantic.responseKind;
+  const responseKind = effects.includes("decision") && semanticKind !== "answer" && semanticKind !== "clarification"
+    ? "decision_result" as const
+    : effects.length > 0 && semanticKind === "routine_update"
+      ? "action_result" as const
+      : semanticKind;
+  return { delivery, status, responseKind, ...(spokenSummary ? { spokenSummary } : {}) };
 }
 
 export const delegate = action({
@@ -1242,10 +1318,12 @@ export const delegate = action({
       const semantic = "output" in turn && turn.output
         ? turn.output
         : { delivery: "silent" as const, responseKind: "routine_update" as const, spokenSummary: "" };
-      const guardedSpokenEffect = [...effectKinds].some((kind) =>
+      const guardedEffectKinds = [...effectKinds].filter((kind) =>
         kind !== "search" && kind !== "memory" && kind !== "brief");
+      const guardedSpokenEffect = guardedEffectKinds.length > 0;
       const deliveryResult = resolveLiveDelivery({
         semantic,
+        spokenEffectKinds: guardedEffectKinds,
         captureFacts,
         hasEndCall: Boolean(endCall),
         requiresSpoken: requiresSpoken || guardedSpokenEffect,
@@ -1280,14 +1358,19 @@ export const delegate = action({
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const superseded = message.includes("VOICE_CLAIM_SUPERSEDED") || message.includes("VOICE_TARGET_SUPERSEDED") || message.includes("VOICE_FIELD_CONFLICT") || message.includes("VOICE_DECISION_TARGET");
-      console.error("LIVE_DELEGATE_FAILED", { requestId, sideEffect, error: message });
+      const errorName = error instanceof Error ? error.name : typeof error;
+      const cause = error instanceof Error ? error.cause : undefined;
+      const finishReason = error !== null && typeof error === "object" && "finishReason" in error
+        ? (error as { finishReason?: unknown }).finishReason
+        : cause !== null && typeof cause === "object" && "finishReason" in cause
+          ? (cause as { finishReason?: unknown }).finishReason
+          : undefined;
+      console.error("LIVE_DELEGATE_FAILED", { requestId, sideEffect, errorName, finishReason, error: message });
       const endCall = endCallReason
         ? { reason: endCallReason, farewell: voiceEndFarewell(claimed.locale, endCallReason) }
         : undefined;
       const failedStatus = superseded ? "superseded" : sideEffect ? "outcome_unknown" : "failed";
-      const failureSummary = claimed.locale === "de"
-        ? "Das konnte ich gerade nicht zuverlässig abschließen."
-        : "I couldn't finish that reliably just now.";
+      const failureSummary = failureSpokenSummary(claimed.locale, error, failedStatus === "outcome_unknown");
       return await ctx.runMutation(internal.voiceLive.finishRequest, {
         ownerId,
         voiceSessionId: args.voiceSessionId,

@@ -5,8 +5,9 @@ import { projectSignal } from "./signals";
 import { listCandidatesForOwner } from "./matches";
 import { canonicalizeUrl } from "./integrations/urlCanonicalization";
 import { signalMatchRevision } from "./lib/matchValidity";
-import { assertVoiceClaim, voiceClaimValidator } from "./lib/voiceClaim";
-import { conversationProgress } from "./lib/conversationProgress";
+import { assertVoiceClaim, syncVoiceSessionFocus, voiceClaimValidator } from "./lib/voiceClaim";
+import { conversationProgress, latestProviderReplyExcerpt } from "./lib/conversationProgress";
+import { delimitUntrustedData } from "./lib/privacy";
 
 async function ownedNeed(ctx: QueryCtx, ownerId: Id<"users">, savedNeedId: Id<"savedNeeds">) {
   const need = await ctx.db.get(savedNeedId);
@@ -42,12 +43,14 @@ export const inspect = internalQuery({
           ctx.db.query("actionRequests").withIndex("by_provider_conversation_and_updated_at", (q) =>
             q.eq("providerConversationId", conversation._id)).order("desc").take(20),
         ]);
+        const excerpt = await latestProviderReplyExcerpt(ctx, conversation);
         return {
           conversationId: conversation._id,
           signalId: conversation.signalId,
           title: signal?.title ?? "",
           state: conversation.state,
           ...await conversationProgress(ctx, conversation, requests),
+          latestProviderReplyExcerpt: excerpt === null ? null : delimitUntrustedData("provider_reply_excerpt", excerpt),
         };
       }))).filter((row): row is NonNullable<typeof row> => row !== null);
       return JSON.stringify({ status: "indexed_candidates", candidates, conversations, manualContact: "candidate_panel_only" });
@@ -59,10 +62,15 @@ export const inspect = internalQuery({
     const conversation = await ctx.db.query("providerConversations").withIndex("by_need_and_signal", q => q.eq("savedNeedId", need._id).eq("signalId", signalId!)).order("desc").first();
     const ownedConversation = conversation?.ownerId === args.ownerId ? conversation : null;
     const requests = ownedConversation ? await ctx.db.query("actionRequests").withIndex("by_provider_conversation_and_updated_at", q => q.eq("providerConversationId", ownedConversation._id)).order("desc").take(20) : [];
+    const excerpt = ownedConversation ? await latestProviderReplyExcerpt(ctx, ownedConversation) : null;
     return JSON.stringify({
       status: "indexed", signal: projectSignal(signal),
       match: current ? { eligible: match.eligible, contactEligible: match.contactEligible, reasons: match.reasons, uncertainties: match.uncertainties, dismissed: match.status === "dismissed" } : null,
-      conversation: ownedConversation ? { conversationId: ownedConversation._id, ...await conversationProgress(ctx, ownedConversation, requests) } : null,
+      conversation: ownedConversation ? {
+        conversationId: ownedConversation._id,
+        ...await conversationProgress(ctx, ownedConversation, requests),
+        latestProviderReplyExcerpt: excerpt === null ? null : delimitUntrustedData("provider_reply_excerpt", excerpt),
+      } : null,
       manualContact: "candidate_panel_only", source: "public_index",
     });
   },
@@ -76,7 +84,7 @@ export const open = internalMutation({
     const need = await ownedNeed(ctx, args.ownerId, args.savedNeedId);
     const context = await ctx.db.query("scoutContexts").withIndex("by_thread_id", q => q.eq("threadId", args.threadId)).unique();
     if (!context || context.ownerId !== args.ownerId || context.activeNeedId !== need._id) throw new ConvexError({ code: "THREAD_NOT_FOUND" });
-    if (args.voiceClaim) await assertVoiceClaim(ctx, args.ownerId, args.voiceClaim, { savedNeedId: need._id });
+    const voice = args.voiceClaim ? await assertVoiceClaim(ctx, args.ownerId, args.voiceClaim, { savedNeedId: need._id }) : undefined;
     const signal = await ctx.db.get(args.signalId);
     const match = await ctx.db.query("signalMatches").withIndex("by_saved_need_and_signal", q => q.eq("savedNeedId", need._id).eq("signalId", args.signalId)).unique();
     const conversation = await ctx.db.query("providerConversations").withIndex("by_need_and_signal", q => q.eq("savedNeedId", need._id).eq("signalId", args.signalId)).first();
@@ -90,7 +98,20 @@ export const open = internalMutation({
     if (!signal || !["published", "stale"].includes(signal.status) || (!current && conversation?.ownerId !== args.ownerId)) {
       return { opened: false, signalId: args.signalId, reason: "not_current_candidate", sent: false as const };
     }
-    await ctx.db.patch(context._id, { mode: "signal_advisor", focusedSignalId: args.signalId, updatedAt: Date.now() });
+    const now = Date.now();
+    await ctx.db.patch(context._id, { mode: "signal_advisor", focusedSignalId: args.signalId, updatedAt: now });
+    // Same transaction as the focus change: otherwise the Live session still
+    // points at the old room, finishRequest marks this very turn superseded and
+    // every later claim is refused until the musician clicks a room.
+    await syncVoiceSessionFocus(ctx, { ownerId: args.ownerId, threadId: args.threadId, activeNeedId: need._id, focusedSignalId: args.signalId, now });
+    if (voice) {
+      // The claim itself moved the focus, so its own fence follows the new room.
+      await ctx.db.patch(voice.session._id, {
+        focusedSignalId: args.signalId,
+        activeClaim: { ...voice.claim, focusedSignalId: args.signalId },
+        updatedAt: now,
+      });
+    }
     return { opened: true, signalId: args.signalId, sent: false as const };
   },
 });

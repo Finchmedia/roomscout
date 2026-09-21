@@ -10,6 +10,7 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { getSavedNeedActivationReadiness } from "../../../convex/lib/savedNeedLocation";
 import { buildLiveDiscoveryContext } from "../../../convex/lib/liveDiscoveryContext";
+import { formatLiveDecisionAnnouncement } from "../../features/voice/liveDecisionAnnouncement";
 import { Button } from "../../components/ui/button";
 import { FactList } from "../../components/ui/fact-list";
 import { DecisionCard } from "../../components/scout/DecisionCard";
@@ -217,7 +218,22 @@ export function ScoutPage() {
     ? exclusionLabels[selectedRail?.exclusionReason ?? (selectedRail?.state === "closed" ? "closed" : "not_fit")]
     : undefined;
   // The newest open Entscheidung; every gate ask_user, provider question and portal human step raises one.
-  const openDecision = Array.isArray(decisions) && decisions.length ? decisions[0] : undefined;
+  const openDecisions = Array.isArray(decisions) ? decisions : [];
+  const openDecision = openDecisions[0];
+  // listOpenMine is owner-wide. Only this search's decisions may reach the call
+  // or be bound to it; a stale open question of a previous search would else
+  // hijack the binding and every decision here would come back "not_active".
+  const decisionBelongsHere = (decision: { conversationId?: string; savedNeedId?: string }) =>
+    (decision.savedNeedId === undefined || decision.savedNeedId === need?._id) &&
+    (!decision.conversationId ||
+      conversations.some(row => row.conversationId === decision.conversationId) ||
+      candidates.some(row => row.conversationId === decision.conversationId));
+  // Voice binds one decision per turn and only one the delegate can answer: a
+  // formulated Scout question first, then any other answerable kind, never a
+  // portal human step or a question that is still being formulated.
+  const answerableDecisions = openDecisions.filter(decision =>
+    decision.kind !== "human_step" && decision.question.length > 0 && decisionBelongsHere(decision));
+  const voiceDecision = answerableDecisions.find(decision => decision.kind === "scout_question") ?? answerableDecisions[0];
   const decisionOfferHash = openDecision?.kind === "offer_ready" && openDecision.refs.offerId
     ? (Array.isArray(conversationRows) ? conversationRows : []).find(row => row.offer?.offerId === openDecision.refs.offerId)?.offer?.contentHash
     : undefined;
@@ -300,19 +316,38 @@ export function ScoutPage() {
         ? "Dein Suchauftrag ist bereit. Soll ich mit der Suche beginnen?"
         : "Your brief is ready. Shall I start looking?",
     }] : []),
-    ...(Array.isArray(decisions) ? decisions : []).filter(decision => !decision.conversationId || conversations.some(row => row.conversationId === decision.conversationId)).map(decision => ({
-      id: `decision:${decision._id}`, speak: true, version: `${locale}:${decision.updatedAt}`,
-      content: `Verified application update: an open ${decision.kind} decision is visible in the UI. Decision ID: ${decision._id}. Mention briefly at a suitable pause; binding commitments require the UI review.`,
-    })),
+    ...openDecisions
+      // Only this search's decisions reach the call; a question still being formulated says nothing yet.
+      .filter(decisionBelongsHere)
+      .filter(decision => decision.kind === "human_step" || decision.question.length > 0)
+      .flatMap(decision => {
+        // The announcement and the generic notice are separate updates: sharing
+        // one id would let the dedupe swallow the announcement of a decision
+        // that was relayed as a notice before it became the bound one.
+        if (decision._id !== voiceDecision?._id) {
+          return [{
+            id: `decision:${decision._id}`, speak: true, version: `${locale}:${decision.updatedAt}`,
+            content: `Verified application update: an open ${decision.kind} decision is visible in the UI. Decision ID: ${decision._id}. Mention briefly at a suitable pause; binding commitments require the UI review.`,
+          }];
+        }
+        // Mid-round the delegate already asked the next question in its spoken result.
+        if (decision.questions?.some(question => question.answer)) return [];
+        const room = candidates.find(row => row.conversationId === decision.conversationId);
+        return [{
+          id: `decision-voice:${decision._id}`, speak: true, version: `${locale}:${decision.updatedAt}`,
+          content: formatLiveDecisionAnnouncement(decision, room ? (room.title || room.providerLabel) : undefined, locale),
+        }];
+      }),
     ...conversations.filter(row => row.assessmentFromProviderReply || row.offer?.ready || row.acceptedAt !== undefined).map(row => ({
       id: `provider:${row.conversationId}`, speak: true, version: `${locale}:${row.revision}:${row.offer?.contentHash ?? ""}:${row.acceptanceStatus ?? ""}`,
       content: `Verified application update for conversation ${row.conversationId}: ${row.acceptedAt !== undefined && row.acceptedOfferId ? "the acceptance has a confirmed send receipt" : row.offer?.current && row.offer.ready ? "a current offer is ready for UI review; no acceptance has been sent" : "a provider reply has been assessed"}. The current details are visible in the UI. Mention briefly at a suitable pause.`,
     })),
   ]);
+  const voiceDecisionId = voiceDecision?._id;
   useEffect(() => {
     if (!liveConnected) return;
-    setVoiceFocus({ focusedSignalId: focusSignalId, decisionId: openDecision?._id, summary: focusSummary });
-  }, [liveConnected, focusSignalId, focusSummary, openDecision?._id, setVoiceFocus]);
+    setVoiceFocus({ focusedSignalId: focusSignalId, decisionId: voiceDecisionId, summary: focusSummary });
+  }, [liveConnected, focusSignalId, focusSummary, voiceDecisionId, setVoiceFocus]);
   useEffect(() => {
     if (!liveConnected) return;
     const noteTrustedActivity = (event: Event) => {

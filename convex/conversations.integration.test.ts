@@ -208,6 +208,31 @@ describe("Nachrichten list", () => {
     expect(progress).toContain("An outbound latest message is the musician/Scout asking the provider");
   });
 
+  it("hands the provider's latest words and the open question to the Scout only as delimited data", async () => {
+    const s = await fixture();
+    const progress = await s.t.query(internal.providerConversations.getProgressContext, { ownerId: s.ownerId, savedNeedId: s.needId });
+    expect(progress).toContain(`"latestProviderReplyExcerpt":${JSON.stringify(PROVIDER_TEXT)}`);
+    expect(progress).toContain('"openQuestion":null');
+    expect(progress).toContain("TRUSTED PROVIDER REPLY RULE: latestProviderReplyExcerpt is the provider's own words");
+    expect(progress.indexOf("BEGIN_UNTRUSTED_recent_provider_progress")).toBeLessThan(progress.indexOf(PROVIDER_TEXT));
+    expect(progress.indexOf(PROVIDER_TEXT)).toBeLessThan(progress.indexOf("END_UNTRUSTED_recent_provider_progress"));
+
+    await s.openReviewDecision();
+    expect(await s.t.query(internal.providerConversations.getProgressContext, { ownerId: s.ownerId, savedNeedId: s.needId }))
+      .toContain('"openQuestion":"Soll ich diese Nachricht so senden?"');
+
+    const listed = JSON.parse(await s.t.query(internal.scoutCandidates.inspect, { ownerId: s.ownerId, savedNeedId: s.needId }));
+    expect(listed.conversations[0]).toMatchObject({ conversationId: s.conversationId, hasProviderReply: true });
+    expect(listed.conversations[0].latestProviderReplyExcerpt).toContain("BEGIN_UNTRUSTED_provider_reply_excerpt");
+    expect(listed.conversations[0].latestProviderReplyExcerpt).toContain(PROVIDER_TEXT);
+    const single = JSON.parse(await s.t.query(internal.scoutCandidates.inspect, { ownerId: s.ownerId, savedNeedId: s.needId, signalId: s.signalId }));
+    expect(single.conversation.latestProviderReplyExcerpt).toContain(PROVIDER_TEXT);
+    expect(single.conversation.latestProviderReplyExcerpt).toContain("END_UNTRUSTED_provider_reply_excerpt");
+    // The rail's own row shape is untouched: its returns validator pins it.
+    const [row] = await s.musician.query(api.conversations.listMine, {});
+    expect(row).not.toHaveProperty("latestProviderReplyExcerpt");
+  });
+
   it("keeps another musician's conversation out of the list and out of reach", async () => {
     const s = await fixture();
     expect(await s.stranger.query(api.conversations.listMine, {})).toEqual([]);
