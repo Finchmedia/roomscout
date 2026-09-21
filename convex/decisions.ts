@@ -474,7 +474,7 @@ export function fallbackQuestion(input: { uncertainties: string[]; blockers: str
 
 /** Pinned in the FORMULATE MUSICIAN DECISION case card: questions concern genuine open choices only. */
 export const MUSICIAN_DECISION_QUESTION_SCOPE =
-  "Only ask about genuine open choices for the musician. A single date and time the musician gives for a viewing fully answers a viewing-time question; never ask for a second or alternative slot. Never ask whether a requirement the provider has already satisfied, or a statement about what the band brings, does, owns or does not need, should remain a requirement: such wording demands nothing from the provider. If a constraint is open only because of band-side wording in the requirement text (equipment they bring, gear that stays portable, urgency) while the provider confirmed the part that demands something, treat it as satisfied and skip it.";
+  "Only ask about genuine open choices for the musician. A single date and time the musician gives for a viewing fully answers a viewing-time question; never ask for a second or alternative slot. Never ask whether a requirement the provider has already satisfied, or a statement about what the band brings, does, owns or does not need, should remain a requirement: such wording demands nothing from the provider. If a constraint is open only because of band-side wording in the requirement text (equipment they bring, gear that stays portable, urgency) while the provider confirmed the part that demands something, treat it as satisfied and skip it. Never ask whether the Scout should request a fact from the provider (an address, a price detail, availability, house rules): requesting facts is the Scout's job, not a musician choice. Skip such an item and ask only the genuine choice behind it, typically whether to arrange a viewing.";
 
 export const formulateQuestion = internalAction({
   args: { decisionId: v.id("decisions") },
@@ -538,6 +538,9 @@ Then briefly introduce the round and ask ONLY its first question in chat. Provid
     }
     if (!recorded) {
       const conflicts = input.constraints.filter((item) => item.verdict === "conflict" && item.key !== "budget");
+      // Without a constraint conflict an uncertainty is free assessment text and may well be a
+      // fact the provider should supply ("the exact address is unknown"). The deterministic round
+      // must never turn that into a musician question, so it asks only the generic next step.
       const questions = conflicts.length ? conflicts.map((item, index) => ({
         id: `constraint-${index + 1}`, constraintKeys: [item.key],
         question: fallbackQuestion({ ...input, uncertainties: [item.explanation], blockers: [] }),
@@ -545,7 +548,7 @@ Then briefly introduce the round and ask ONLY its first question in chat. Provid
           { id: "accept", label: input.locale === "de" ? "Diese Abweichung ist für diesen Raum okay" : "This alternative works for this room", constraintEffect: "accept_alternative" as const },
           { id: "keep", label: input.locale === "de" ? "Wir bleiben bei unserer Anforderung" : "We need to keep our original requirement", constraintEffect: "keep_requirement" as const },
         ],
-      })) : [{ id: "next-step", constraintKeys: [], question: fallbackQuestion(input), options: [] }];
+      })) : [{ id: "next-step", constraintKeys: [], question: fallbackQuestion({ ...input, uncertainties: [], blockers: [] }), options: [] }];
       await ctx.runMutation(internal.decisions.recordDecisionQuestions, { decisionId: input.decisionId, questions });
       text = questions[0]!.question;
       assistantMessageId = undefined;

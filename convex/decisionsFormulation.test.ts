@@ -10,4 +10,12 @@ describe("musician decision formulation case card", () => {
     expect(MUSICIAN_DECISION_QUESTION_SCOPE).toContain("open only because of band-side wording");
     expect(MUSICIAN_DECISION_QUESTION_SCOPE).toContain("treat it as satisfied and skip it");
   });
+
+  it("never turns a fact the provider can supply into a musician question", () => {
+    expect(MUSICIAN_DECISION_QUESTION_SCOPE).toContain(
+      "Never ask whether the Scout should request a fact from the provider (an address, a price detail, availability, house rules)",
+    );
+    expect(MUSICIAN_DECISION_QUESTION_SCOPE).toContain("requesting facts is the Scout's job, not a musician choice");
+    expect(MUSICIAN_DECISION_QUESTION_SCOPE).toContain("typically whether to arrange a viewing");
+  });
 });

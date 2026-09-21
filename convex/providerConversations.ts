@@ -12,7 +12,7 @@ import { delimitUntrustedData } from "./lib/privacy";
 import { providerReplyExcerpt } from "./lib/conversationProgress";
 import { listingEvidence } from "./lib/matchAssessment";
 import {
-  assessmentCitations, offerConstraints, offerEvidenceValidator, offerReadiness,
+  assessmentCitations, describeListingLocation, offerConstraints, offerEvidenceValidator, offerReadiness,
   providerAssessmentSchema, providerAssessmentValidator, providerCaseInstructions,
   providerAssessmentContextInstructions, providerAssessmentValidationIssue,
   PROVIDER_ASSESSMENT_VERSION, validateProviderAssessment,
@@ -36,6 +36,8 @@ const inputValidator = v.object({
   threadId: v.string(), promptMessageId: v.optional(v.string()), revision: v.number(),
   needRevision: v.number(), signalRevision: v.string(), need: needValidator,
   evidence: v.array(offerEvidenceValidator),
+  /** Listing place plus the server-computed distance to the search centre. Context, never citable evidence. */
+  listingLocation: v.optional(v.string()),
   /** Recent messages sent to the provider, oldest first. Context only; never provider evidence. */
   recentOutboundMessages: v.array(v.string()),
   previousAssessment: v.union(providerAssessmentValidator, v.null()),
@@ -549,6 +551,7 @@ async function inputForEvent(ctx: QueryCtx, eventId: Id<"providerTurns">) {
       searchCenter: savedNeedLocationLabel(need) || undefined, searchRadiusKm: need.radiusKm,
     },
     evidence,
+    listingLocation: describeListingLocation(signal, need) || undefined,
     recentOutboundMessages: outboundMessages.sort((left, right) => right.at - left.at).slice(0, 8)
       .sort((left, right) => left.at - right.at).map((message) => message.text),
     previousAssessment: previous?.assessment ?? null, kind: event.kind, musicianStatements, musicianIdentity,
@@ -701,6 +704,9 @@ export const processEvent = internalAction({
           providerAssessmentContextInstructions(input.providerContext),
           input.kind === "opportunity" ? "For the first provider inquiry, write only the specific unanswered question and useful body details. Do not add a greeting or introduction; the server adds the canonical transparent introduction." : "",
           `Current musician search (data): ${JSON.stringify(input.need)}`,
+          input.listingLocation
+            ? `Listing location (place as listed; distance and radius computed by the server; not provider evidence, never cite it): ${input.listingLocation}`
+            : "",
           `Required constraint keys: ${JSON.stringify(offerConstraints(input.need))}`,
           delimitUntrustedData("previous_private_assessment", JSON.stringify(input.previousAssessment)),
           delimitUntrustedData("provider_evidence", JSON.stringify(input.evidence)),

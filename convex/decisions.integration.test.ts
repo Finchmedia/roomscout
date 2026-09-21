@@ -409,7 +409,9 @@ describe("Entscheidung from the provider assessment", () => {
 
   it("formulateQuestion falls back to a deterministic question when the model does not call the tool", async () => {
     const f = await mailFixture();
-    await f.record(f.asksMusician);
+    // A fact the provider can supply must never reach the musician as a question, not even on
+    // the deterministic path: without a constraint conflict the fallback asks the next step only.
+    await f.record({ ...f.asksMusician, uncertainties: ["The exact address is unknown, so the 15 km radius cannot be verified"] });
     await f.complete();
     const model = new MockLanguageModelV4({ doGenerate: [
       { content: [{ type: "text", text: "" }], finishReason: { unified: "stop", raw: undefined }, usage, warnings: [] },
@@ -417,7 +419,8 @@ describe("Entscheidung from the provider assessment", () => {
     await ai.withRoomScoutLanguageModelForTest(model, () =>
       f.t.finishAllScheduledFunctions(() => vi.runAllTimers()));
     const [decision] = await f.decisions();
-    expect(decision).toMatchObject({ status: "open", question: "I need your decision about “Controlled room”: Is Stuttgart-West acceptable instead of the centre? — how would you like to handle it?", options: [] });
+    expect(decision).toMatchObject({ status: "open", question: "I need your decision about “Controlled room” before I continue. How should I proceed?", options: [] });
+    expect(decision!.question).not.toContain("address");
     expect(decision!.threadMessageId).toBeTruthy();
   });
 

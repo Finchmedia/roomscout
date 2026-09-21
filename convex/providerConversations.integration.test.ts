@@ -321,6 +321,29 @@ describe("provider conversation and offer lifecycle", () => {
     expect(refreshed.evidence.map((item) => item.text).join("\n")).not.toContain("cancellation period");
   });
 
+  it("supplies the server-computed listing location instead of leaving the address open", async () => {
+    const f = await fixture();
+    // A listing without an address, half a kilometre from the search centre:
+    // the model must see that it is already inside the radius.
+    await f.t.run(async (ctx) => {
+      await ctx.db.patch(f.savedNeedId, {
+        locationQuery: "Berlin Marzahn", radiusKm: 15, centerLatitude: 52.54289, centerLongitude: 13.564462,
+      });
+      await ctx.db.patch(f.signalId, {
+        city: "Berlin", district: "Marzahn \u00b7 Alt-Marzahn",
+        latitude: 52.545, longitude: 13.558, locationPrecision: "unknown",
+      });
+    });
+
+    const refreshed = (await f.t.mutation(internal.providerConversations.prepareTurn, { eventId: f.eventId }))!;
+    expect(refreshed.listingLocation).toContain("Listing location: Berlin, Marzahn \u00b7 Alt-Marzahn.");
+    expect(refreshed.listingLocation).toContain("0.5 km");
+    expect(refreshed.listingLocation).toContain("inside the 15 km search radius");
+    expect(refreshed.listingLocation).toContain("no house number");
+    // It is context, never a citable provider/listing evidence source.
+    expect(refreshed.evidence.map((item) => item.text).join("\n")).not.toContain("search radius");
+  });
+
   it("deduplicates receipt and Agent prompts, and keeps private offers owner-scoped", async () => {
     const f = await fixture();
     expect(await f.t.mutation(internal.inbox.storeInboundMessage, f.inbound)).toBe(f.messageId);
