@@ -22,7 +22,7 @@ import {
   decisionKindValidator, decisionPublic, decisionPublicValidator, MESSAGE_DECISION_KINDS,
 } from "./lib/decisions";
 import { providerAssessmentValidator } from "./lib/providerAssessment";
-import { conversationProgress, conversationProgressValidator, messageOutcomeUnknown } from "./lib/conversationProgress";
+import { conversationProgress, conversationProgressValidator, conversationViewingValidator, messageOutcomeUnknown } from "./lib/conversationProgress";
 import { candidateDisposition, candidateDispositionValidator, candidateExclusionReasonValidator } from "./lib/candidateDisposition";
 import { signalMatchRevision } from "./lib/matchValidity";
 import { failedAssessmentRetryEligibility } from "./providerConversations";
@@ -64,6 +64,8 @@ const listRowValidator = v.object({
   channel: channelValidator,
   state: conversationStateValidator,
   progress: conversationProgressValidator,
+  /** Present exactly when a viewing is arranged; the surfaces label the row with it. */
+  viewing: v.optional(conversationViewingValidator),
   disposition: candidateDispositionValidator,
   exclusionReason: v.optional(candidateExclusionReasonValidator),
   hasProviderReply: v.boolean(),
@@ -116,6 +118,8 @@ const headerValidator = v.object({
   channel: channelValidator,
   state: conversationStateValidator,
   progress: conversationProgressValidator,
+  /** Present exactly when a viewing is arranged; the surfaces label the row with it. */
+  viewing: v.optional(conversationViewingValidator),
   hasProviderReply: v.boolean(),
   canRetryAssessment: v.boolean(),
   providerLabel: v.string(),

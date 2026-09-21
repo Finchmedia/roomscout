@@ -16,7 +16,8 @@ const originalModel = scoutAgent.options.languageModel;
 beforeEach(() => { vi.useFakeTimers(); vi.stubEnv("OPENAI_API_KEY", ""); });
 afterEach(() => { scoutAgent.options.languageModel = originalModel; vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllEnvs(); });
 
-const body = "Room available. Monthly total including all charges: EUR 220. Drums and storage allowed, Monday evenings available.";
+const body = "Room available. Monthly total including all charges: EUR 220. Drums and storage allowed, Monday evenings available. We can show you the room on Friday 25 September at 17:00.";
+const VIEWING_QUOTE = "We can show you the room on Friday 25 September at 17:00.";
 function declineAssessment(input: Awaited<ReturnType<typeof fixture>>["input"]): ProviderAssessment {
   return {
     summary: "The fixed slot conflicts with the musician's schedule.",
@@ -30,6 +31,7 @@ function declineAssessment(input: Awaited<ReturnType<typeof fixture>>["input"]):
     contradictions: [],
     nextAction: "decline",
     suggestedReply: { subject: "Rehearsal room", body: "Thanks, but the fixed slot does not fit our schedule." },
+    viewing: null,
   };
 }
 async function fixture() {
@@ -77,7 +79,7 @@ async function fixture() {
     monthlyPrice: { totalEur: 220, allRecurringCostsKnown: true, evidence: [citation] },
     terms: [{ key: "equipment", label: "Equipment", value: "Drums and storage allowed", evidence: [citation] }],
     constraints: offerConstraints(input.need).map(({ key }) => ({ key, verdict: "satisfied", explanation: "Confirmed by provider", evidence: [citation] })),
-    uncertainties: [], contradictions: [], nextAction: "present_offer", suggestedReply: null,
+    uncertainties: [], contradictions: [], nextAction: "present_offer", suggestedReply: null, viewing: null,
   };
   const recordArgs = { eventId, needRevision: input.needRevision, signalRevision: input.signalRevision, assessment };
   return { t, ...ids, inbound, messageId, eventId, input, assessment, recordArgs };
@@ -652,3 +654,143 @@ describe("provider conversation and offer lifecycle", () => {
     })).toMatchObject({ status: "not_eligible", reason: "candidate_not_contact_eligible" });
   });
 });
+
+describe("arranged viewing", () => {
+  const withViewing = (
+    base: ProviderAssessment,
+    viewing: { date: string; time: string; sourceId: string; quote?: string },
+  ): ProviderAssessment => ({
+    ...base,
+    nextAction: "present_offer",
+    viewing: { date: viewing.date, time: viewing.time, evidence: [{ sourceId: viewing.sourceId, quote: viewing.quote ?? VIEWING_QUOTE }] },
+  });
+
+  /** The provider writes again: complete the running turn, store the reply and prepare its turn. */
+  async function nextProviderReply(f: Awaited<ReturnType<typeof fixture>>, previousEventId: typeof f.eventId, index: number, replyBody: string) {
+    await f.t.mutation(internal.providerConversations.turnCompleted, {
+      workId: "test-work" as never, context: { eventId: previousEventId }, result: { kind: "success", returnValue: null },
+    });
+    const messageId = (await f.t.mutation(internal.inbox.storeInboundMessage, {
+      ...f.inbound, providerMessageId: `message-${index}`, providerEventId: `event-${index}`,
+      body: replyBody, receivedAt: Date.now() + index,
+    }))!;
+    const eventId = (await f.t.mutation(internal.providerConversations.enqueueMailReply, { messageId }))!;
+    const input = (await f.t.mutation(internal.providerConversations.prepareTurn, { eventId }))!;
+    return { messageId, eventId, input };
+  }
+  const viewings = (f: Awaited<ReturnType<typeof fixture>>) => f.t.run((ctx) => ctx.db.query("viewings").collect());
+
+  it("records exactly one viewing row from the provider's confirmed slot", async () => {
+    const f = await fixture();
+    const offerId = await f.t.mutation(internal.providerConversations.recordAssessment, {
+      ...f.recordArgs,
+      assessment: withViewing(f.assessment, { date: "2026-09-25", time: "17:00", sourceId: `mail:${f.messageId}` }),
+    });
+
+    const rows = await viewings(f);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      ownerId: f.ownerId, savedNeedId: f.savedNeedId, signalId: f.signalId,
+      conversationId: f.input.conversationId, roomTitle: "Controlled room",
+      date: "2026-09-25", time: "17:00", timeZone: "Europe/Berlin",
+      evidenceSourceId: `mail:${f.messageId}`, evidenceQuote: VIEWING_QUOTE, offerId,
+      providerLabel: "provider@example.test",
+    });
+    // The musician is told about the arranged viewing, not about another assessment.
+    expect((await f.t.run((ctx) => ctx.db.query("notifications").collect())).map((row) => row.title))
+      .toContain("Viewing arranged: Controlled room, 2026-09-25 17:00");
+  });
+
+  it("outranks every other progress label and travels with both conversation lists", async () => {
+    const f = await fixture();
+    await f.t.mutation(internal.providerConversations.recordAssessment, {
+      ...f.recordArgs,
+      assessment: withViewing(f.assessment, { date: "2026-09-25", time: "17:00", sourceId: `mail:${f.messageId}` }),
+    });
+    await f.t.mutation(internal.providerConversations.turnCompleted, {
+      workId: "test-work" as never, context: { eventId: f.eventId }, result: { kind: "success", returnValue: null },
+    });
+    const owner = f.t.withIdentity({ subject: f.ownerId });
+
+    expect((await owner.query(api.providerConversations.listMine, {}))[0]?.viewing).toEqual({ date: "2026-09-25", time: "17:00" });
+    expect((await owner.query(api.conversations.listMine, {}))[0]).toMatchObject({
+      progress: "viewing_arranged", viewing: { date: "2026-09-25", time: "17:00" },
+    });
+    // A closed conversation is history, so the closed label still wins.
+    await f.t.run((ctx) => ctx.db.patch(f.input.conversationId, { state: "closed" }));
+    expect((await owner.query(api.conversations.listMine, {}))[0]?.progress).toBe("closed");
+  });
+
+  it("leaves an identical slot untouched, overwrites a newer one and never deletes it", async () => {
+    const f = await fixture();
+    await f.t.mutation(internal.providerConversations.recordAssessment, {
+      ...f.recordArgs,
+      assessment: withViewing(f.assessment, { date: "2026-09-25", time: "17:00", sourceId: `mail:${f.messageId}` }),
+    });
+    const [first] = await viewings(f);
+
+    // The provider repeats the same slot: one row, byte for byte the same.
+    const repeated = await nextProviderReply(f, f.eventId, 2, "Confirming again: Friday works for us.");
+    await f.t.mutation(internal.providerConversations.recordAssessment, {
+      eventId: repeated.eventId, needRevision: repeated.input.needRevision, signalRevision: repeated.input.signalRevision,
+      assessment: withViewing(f.assessment, { date: "2026-09-25", time: "17:00", sourceId: `mail:${f.messageId}` }),
+    });
+    expect(await viewings(f)).toEqual([first]);
+
+    // A newer message repeats the same slot in its own words: the row follows
+    // the fresher citation, but one appointment is announced exactly once.
+    const echoQuote = "See you Friday at 17:00, the entrance is at the back.";
+    const echoed = await nextProviderReply(f, repeated.eventId, 3, echoQuote);
+    await f.t.mutation(internal.providerConversations.recordAssessment, {
+      eventId: echoed.eventId, needRevision: echoed.input.needRevision, signalRevision: echoed.input.signalRevision,
+      assessment: withViewing(f.assessment, { date: "2026-09-25", time: "17:00", sourceId: `mail:${echoed.messageId}`, quote: echoQuote }),
+    });
+    const afterEcho = await viewings(f);
+    expect(afterEcho).toHaveLength(1);
+    expect(afterEcho[0]).toMatchObject({
+      _id: first!._id, date: "2026-09-25", time: "17:00",
+      evidenceSourceId: `mail:${echoed.messageId}`, evidenceQuote: echoQuote,
+    });
+    expect((await f.t.run((ctx) => ctx.db.query("notifications").collect()))
+      .filter((row) => row.title.startsWith("Viewing arranged:"))).toHaveLength(1);
+
+    // The provider names a different time: the one row follows it.
+    const movedQuote = "Actually, Monday 28 September at 19:30 suits us better.";
+    const moved = await nextProviderReply(f, echoed.eventId, 4, movedQuote);
+    const movedOfferId = await f.t.mutation(internal.providerConversations.recordAssessment, {
+      eventId: moved.eventId, needRevision: moved.input.needRevision, signalRevision: moved.input.signalRevision,
+      assessment: withViewing(f.assessment, { date: "2026-09-28", time: "19:30", sourceId: `mail:${moved.messageId}`, quote: movedQuote }),
+    });
+    const afterMove = await viewings(f);
+    expect(afterMove).toHaveLength(1);
+    expect(afterMove[0]).toMatchObject({
+      _id: first!._id, date: "2026-09-28", time: "19:30",
+      evidenceSourceId: `mail:${moved.messageId}`, evidenceQuote: movedQuote, offerId: movedOfferId,
+    });
+
+    // A later assessment that reports no viewing is not a cancellation.
+    const later = await nextProviderReply(f, moved.eventId, 5, "One more thing: the bell is unmarked.");
+    await f.t.mutation(internal.providerConversations.recordAssessment, {
+      eventId: later.eventId, needRevision: later.input.needRevision, signalRevision: later.input.signalRevision,
+      assessment: f.assessment,
+    });
+    expect(await viewings(f)).toEqual(afterMove);
+  });
+
+  it("gives the case card the current Berlin date so a weekday can become one", async () => {
+    const f = await fixture();
+    const usage = { inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 10, text: 10, reasoning: 0 } };
+    const model = new MockLanguageModelV4({ doGenerate: [
+      { content: [{ type: "tool-call", toolCallId: "assessment-1", toolName: "recordProviderAssessment", input: JSON.stringify(f.assessment) }], finishReason: { unified: "tool-calls", raw: undefined }, usage, warnings: [] },
+      { content: [{ type: "text", text: "Assessment recorded." }], finishReason: { unified: "stop", raw: undefined }, usage, warnings: [] },
+    ] });
+    scoutAgent.options.languageModel = model;
+
+    await f.t.finishAllScheduledFunctions(() => vi.runAllTimers());
+
+    const prompt = JSON.stringify(model.doGenerateCalls[0]?.prompt);
+    expect(prompt).toContain("Current date and time in Europe/Berlin");
+    expect(prompt).toContain("Resolve relative dates (Friday, tomorrow, next week) from it.");
+  });
+});
+

@@ -1917,6 +1917,34 @@ export default defineSchema({
     .index("by_conversation_and_revision", ["conversationId", "revision"])
     .index("by_owner_and_created_at", ["ownerId", "createdAt"]),
 
+  /**
+   * Besichtigung: one arranged viewing per provider conversation, the happy
+   * end of a Scout run. Written only from a provider-confirmed time with its
+   * own quote, and overwritten when the provider names a newer slot. No
+   * rescheduling, cancellation or reminder lives here.
+   */
+  viewings: defineTable({
+    ownerId: v.id("users"),
+    savedNeedId: v.id("savedNeeds"),
+    conversationId: v.id("providerConversations"),
+    signalId: v.id("signals"),
+    roomTitle: v.string(),
+    providerLabel: v.optional(v.string()),
+    /** Berlin calendar date, "YYYY-MM-DD". */
+    date: v.string(),
+    /** Berlin wall clock, 24-hour "HH:MM". */
+    time: v.string(),
+    timeZone: v.literal("Europe/Berlin"),
+    /** The provider message the time was read from, plus its exact quote. */
+    evidenceSourceId: v.string(),
+    evidenceQuote: v.string(),
+    offerId: v.id("offerRevisions"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_owner_and_date", ["ownerId", "date"])
+    .index("by_conversation", ["conversationId"]),
+
   handoffs: defineTable({
     ownerId: v.id("users"),
     savedNeedId: v.id("savedNeeds"),

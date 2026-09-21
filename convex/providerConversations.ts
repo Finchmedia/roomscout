@@ -9,15 +9,16 @@ import { contentHash } from "./integrations/contentHash";
 import { requireUserId } from "./integrations/authz";
 import { signalMatchRevision, opportunityMatchIsCurrent } from "./lib/matchValidity";
 import { delimitUntrustedData } from "./lib/privacy";
-import { providerReplyExcerpt } from "./lib/conversationProgress";
+import { conversationViewingValidator, providerReplyExcerpt } from "./lib/conversationProgress";
 import { listingEvidence } from "./lib/matchAssessment";
 import {
   assessmentCitations, describeListingLocation, offerConstraints, offerEvidenceValidator, offerReadiness,
   providerAssessmentSchema, providerAssessmentValidator, providerCaseInstructions,
   providerAssessmentContextInstructions, providerAssessmentValidationIssue,
   PROVIDER_ASSESSMENT_VERSION, validateProviderAssessment,
-  type OfferEvidence,
+  type OfferEvidence, type ProviderAssessment,
 } from "./lib/providerAssessment";
+import { berlinNowLine } from "./lib/berlinTime";
 import { OFFER_OPTIONS, OFFER_READY_QUESTION, raiseDecision, musicianQuestionRoundStatement } from "./lib/decisions";
 import { savedNeedLocationLabel } from "./lib/savedNeedLocation";
 import { resolveProviderIdentity } from "./lib/musicianIdentity";
@@ -581,6 +582,74 @@ export const prepareTurn = internalMutation({
   },
 });
 
+/** "Anna Meier <anna@example.test>" → "Anna Meier". Kept local: importing it from conversations.ts would close an import cycle. */
+function providerDisplayLabel(from: string): string {
+  const match = /^\s*"?([^"<]*?)"?\s*<[^>]+>\s*$/.exec(from);
+  const name = match?.[1]?.trim();
+  return (name && name.length > 0 ? name : from.trim()).slice(0, 160);
+}
+
+/** The provider behind the cited message, for the viewing row's own label. */
+async function citedProviderLabel(ctx: MutationCtx, sourceId: string): Promise<string | undefined> {
+  const [kind, rawId] = sourceId.split(":");
+  if (kind === "mail") {
+    const id = ctx.db.normalizeId("mailMessages", rawId ?? "");
+    const row = id ? await ctx.db.get(id) : null;
+    return row && row.direction === "inbound" ? providerDisplayLabel(row.from) : undefined;
+  }
+  if (kind === "portal") {
+    const id = ctx.db.normalizeId("platformMessages", rawId ?? "");
+    const row = id ? await ctx.db.get(id) : null;
+    return row?.senderLabel ? row.senderLabel.slice(0, 160) : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Besichtigung vereinbart: exactly one row per provider conversation. A newer
+ * provider-confirmed slot overwrites the old one, an identical one is left
+ * untouched, and an assessment without a viewing never removes an existing row
+ * — there is no rescheduling or cancellation flow in this MVP.
+ */
+async function upsertViewing(ctx: MutationCtx, args: {
+  conversation: Doc<"providerConversations">;
+  viewing: NonNullable<ProviderAssessment["viewing"]>;
+  offerId: Id<"offerRevisions">;
+  now: number;
+}): Promise<{ changed: boolean; roomTitle: string; date: string; time: string }> {
+  const { conversation, viewing, offerId, now } = args;
+  const citation = viewing.evidence[0]!;
+  const signal = await ctx.db.get(conversation.signalId);
+  const roomTitle = (signal?.title ?? "").slice(0, 200);
+  const existing = await ctx.db.query("viewings").withIndex("by_conversation", (q) =>
+    q.eq("conversationId", conversation._id)).first();
+  const label = await citedProviderLabel(ctx, citation.sourceId);
+  const fields = {
+    roomTitle,
+    ...(label ? { providerLabel: label } : {}),
+    date: viewing.date, time: viewing.time, timeZone: "Europe/Berlin" as const,
+    evidenceSourceId: citation.sourceId, evidenceQuote: citation.quote.slice(0, 1_500),
+    offerId, updatedAt: now,
+  };
+  if (!existing) {
+    await ctx.db.insert("viewings", {
+      ownerId: conversation.ownerId, savedNeedId: conversation.savedNeedId,
+      conversationId: conversation._id, signalId: conversation.signalId,
+      ...fields, createdAt: now,
+    });
+    return { changed: true, roomTitle, date: viewing.date, time: viewing.time };
+  }
+  // Only the agreed slot decides whether an appointment was arranged: the row
+  // still follows a newer citation or a re-crawled room title, but repeating
+  // the same date and time is not a second arrangement to announce.
+  const slotChanged = existing.date !== viewing.date || existing.time !== viewing.time;
+  const unchanged = !slotChanged &&
+    existing.evidenceSourceId === fields.evidenceSourceId && existing.evidenceQuote === fields.evidenceQuote &&
+    existing.roomTitle === roomTitle;
+  if (!unchanged) await ctx.db.patch(existing._id, fields);
+  return { changed: slotChanged, roomTitle, date: viewing.date, time: viewing.time };
+}
+
 export const recordAssessment = internalMutation({
   args: { eventId: v.id("providerTurns"), needRevision: v.number(), signalRevision: v.string(), assessment: providerAssessmentValidator },
   returns: v.union(v.id("offerRevisions"), v.null()),
@@ -611,6 +680,11 @@ export const recordAssessment = internalMutation({
       });
     }
     const conversation = (await ctx.db.get(input.conversationId))!;
+    // A provider-confirmed viewing is the goal state of a Scout run: record it
+    // next to the offer revision it was read from, before any decision work.
+    const viewing = assessment.viewing
+      ? await upsertViewing(ctx, { conversation, viewing: assessment.viewing, offerId, now })
+      : null;
     await ctx.db.patch(input.conversationId, {
       currentOfferId: offerId, state: readiness.ready ? "offer_ready" : "needs_attention", updatedAt: now,
     });
@@ -641,7 +715,10 @@ export const recordAssessment = internalMutation({
     }
     if (!asksMusician) {
       await ctx.db.insert("notifications", {
-        ownerId: input.ownerId, kind: "system", title: readiness.ready ? "A room offer is ready to review" : "Your Scout has assessed a provider update",
+        ownerId: input.ownerId, kind: "system",
+        title: viewing?.changed
+          ? `Viewing arranged: ${viewing.roomTitle}, ${viewing.date} ${viewing.time}`
+          : readiness.ready ? "A room offer is ready to review" : "Your Scout has assessed a provider update",
         body: assessment.summary.slice(0, 240), createdAt: now,
       });
     }
@@ -684,7 +761,9 @@ export const processEvent = internalAction({
               ? "Replace this quote with one exact contiguous substring from the named source. Use separate citations for separate excerpts."
               : issue.code === "OFFER_EVIDENCE_SOURCE_NOT_FOUND"
                 ? "Use only a sourceId supplied in provider_evidence."
-                : "Correct the identified assessment field using only supplied evidence and constraint keys.",
+                : issue.code === "VIEWING_PROVIDER_EVIDENCE_REQUIRED"
+                  ? "A viewing needs the provider's own words: cite a mail: or portal: message in which they agree to that exact date and time, or set viewing to null."
+                  : "Correct the identified assessment field using only supplied evidence and constraint keys.",
           };
         }
         const id = await ctx.runMutation(internal.providerConversations.recordAssessment, {
@@ -700,6 +779,8 @@ export const processEvent = internalAction({
         ownerId: input.ownerId, threadId: input.threadId, origin: input.kind === "opportunity" ? "opportunity" : "provider",
         promptMessageId: input.promptMessageId, memoryQuery: `${input.need.title} ${input.need.requirements.join(" ")}`,
         caseCard: [providerCaseInstructions,
+          // Without it "Friday 17:00" cannot become a date; server clock, never citable evidence.
+          berlinNowLine(Date.now()),
           `Canonical musician identity (trusted data): ${JSON.stringify(input.musicianIdentity)}`,
           providerAssessmentContextInstructions(input.providerContext),
           input.kind === "opportunity" ? "For the first provider inquiry, write only the specific unanswered question and useful body details. Do not add a greeting or introduction; the server adds the canonical transparent introduction." : "",
@@ -808,6 +889,8 @@ export const listMine = query({
     replyStatus: v.optional(v.string()),
     acceptanceStatus: v.optional(v.string()), acceptanceRequestId: v.optional(v.id("actionRequests")),
     acceptedOfferId: v.optional(v.id("offerRevisions")), acceptedAt: v.optional(v.number()),
+    /** Present exactly when a viewing is arranged for this conversation. */
+    viewing: v.optional(conversationViewingValidator),
     offer: v.union(v.object({
       offerId: v.id("offerRevisions"), revision: v.number(), current: v.boolean(), ready: v.boolean(),
       contentHash: v.string(), assessment: providerAssessmentValidator, blockers: v.array(v.string()),
@@ -826,7 +909,7 @@ export const listMine = query({
       : await ctx.db.query("providerConversations").withIndex("by_need_and_updated_at", (q) => q.eq("savedNeedId", args.savedNeedId!)).order("desc").take(limit);
     return await Promise.all(conversations.map(async (conversation) => {
       if (conversation.ownerId !== ownerId) return null;
-      const [offer, need, signal, latestMessage] = await Promise.all([
+      const [offer, need, signal, latestMessage, arranged] = await Promise.all([
         conversation.currentOfferId ? ctx.db.get(conversation.currentOfferId) : null,
         ctx.db.get(conversation.savedNeedId), ctx.db.get(conversation.signalId),
         conversation.platformThreadId
@@ -836,6 +919,7 @@ export const listMine = query({
             ? ctx.db.query("mailMessages").withIndex("by_thread_and_received_at", (q) =>
               q.eq("threadId", conversation.mailThreadId!)).order("desc").first()
             : null,
+        ctx.db.query("viewings").withIndex("by_conversation", (q) => q.eq("conversationId", conversation._id)).first(),
       ]);
       const assessmentEvent = offer ? await ctx.db.get(offer.eventId) : null;
       const current = !!offer && !conversation.activeEventId && conversation.state !== "closed" && need?.ownerId === ownerId && need.status === "active" &&
@@ -860,6 +944,7 @@ export const listMine = query({
             : acceptance.status
           : undefined,
         acceptanceRequestId: conversation.acceptanceRequestId, acceptedOfferId: conversation.acceptedOfferId, acceptedAt: conversation.acceptedAt,
+        ...(arranged?.ownerId === ownerId ? { viewing: { date: arranged.date, time: arranged.time } } : {}),
         offer: offer?.ownerId === ownerId ? {
           offerId: offer._id, revision: offer.revision, current, ready: current && offer.ready,
           contentHash: offer.contentHash, assessment: offer.assessment,

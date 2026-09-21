@@ -9,7 +9,7 @@ import schema from "./schema";
 import * as ai from "./ai";
 import { DEFAULT_AUTONOMY_RULES, type AutonomyRules } from "./lib/autonomy";
 import { signalMatchRevision } from "./lib/matchValidity";
-import { type ProviderAssessment } from "./lib/providerAssessment";
+import { type ProviderAssessment, type StoredProviderAssessment } from "./lib/providerAssessment";
 import { scoutAgent } from "./scoutRuntime";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -57,7 +57,7 @@ async function fixture(rules: Partial<AutonomyRules> = {}) {
       availability: { status: "available", evidence: [] },
       monthlyPrice: { totalEur: 220, allRecurringCostsKnown: true, evidence: [] },
       terms: [], constraints: [], uncertainties: [], contradictions: [],
-      nextAction: "ask_provider", suggestedReply: { subject: "Raum", body: SCOUT_TEXT },
+      nextAction: "ask_provider", suggestedReply: { subject: "Raum", body: SCOUT_TEXT }, viewing: null,
     };
     const offerId = await ctx.db.insert("offerRevisions", { ownerId, savedNeedId: needId, conversationId, eventId: turnId, revision: 1, needRevision: 1, signalRevision, assessment, ready: false, blockers: ["Besichtigung offen"], contentHash: "offer-v1", model: ai.ROOMSCOUT_MODEL_ID, promptVersion: "test", schemaVersion: "test", createdAt: now - 7_000 });
     await ctx.db.patch(conversationId, { currentOfferId: offerId });
@@ -109,7 +109,7 @@ describe("Nachrichten list", () => {
     const f = await fixture();
     const initialOffer = (await f.t.run(ctx => ctx.db.get(f.offerId)))!;
     const read = async () => (await f.musician.query(api.conversations.listMine, { savedNeedId: f.needId, limit: 50 }))[0]!;
-    const setAssessment = (assessment: ProviderAssessment) => f.t.run(ctx => ctx.db.patch(f.offerId, { assessment }));
+    const setAssessment = (assessment: StoredProviderAssessment) => f.t.run(ctx => ctx.db.patch(f.offerId, { assessment }));
     await setAssessment({ ...initialOffer.assessment, availability: { status: "unavailable", evidence: [] }, nextAction: "stop", suggestedReply: null });
     expect(await read()).toMatchObject({ conversationId: f.conversationId, disposition: "not_fit", exclusionReason: "unavailable" });
     const alternative = { ...initialOffer.assessment, constraints: [{ key: "schedule", verdict: "conflict" as const, explanation: "Wednesday only", evidence: [] }], nextAction: "ask_musician" as const, suggestedReply: null };

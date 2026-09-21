@@ -24,7 +24,7 @@ async function fixture() {
       availability: { status: "available", evidence },
       monthlyPrice: { totalEur: 240, allRecurringCostsKnown: true, evidence },
       terms: [], constraints: [], uncertainties: [], contradictions: [],
-      nextAction: "present_offer", suggestedReply: null,
+      nextAction: "present_offer", suggestedReply: null, viewing: null,
     };
     const offerId = await ctx.db.insert("offerRevisions", { ownerId, savedNeedId: needId, conversationId, eventId, revision: 1, needRevision: 1, signalRevision: await signalMatchRevision(signal), assessment, ready: true, blockers: [], contentHash: "offer-hash", model: "test", promptVersion: "test", schemaVersion: "test", createdAt: now });
     await ctx.db.patch(conversationId, { currentOfferId: offerId });

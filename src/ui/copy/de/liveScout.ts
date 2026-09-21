@@ -124,6 +124,8 @@ export const liveScoutDe = {
     failed: "Prüfung fehlgeschlagen",
     reviewing: "Antwort wird geprüft",
     attention: "Deine Hilfe ist gefragt",
+    /** Das Ziel eines Laufs: steht eine Besichtigung, sagt die Zeile sie an. */
+    viewing: "Besichtigung vereinbart",
     closed: "Beendet",
     fit: "Passender Fund",
     nearBudget: "Über eurem aktuellen Budget",

@@ -46,7 +46,7 @@ async function fixture() {
         { key: "schedule", verdict: "satisfied", explanation: "Tuesday evenings are available.", evidence: providerEvidence },
         { key: "budget", verdict: "satisfied", explanation: "EUR 220 is within the EUR 250 budget.", evidence: providerEvidence },
       ],
-      uncertainties: [], contradictions: [], nextAction: "present_offer", suggestedReply: null,
+      uncertainties: [], contradictions: [], nextAction: "present_offer", suggestedReply: null, viewing: null,
     };
     const offerId = await ctx.db.insert("offerRevisions", { ownerId, savedNeedId: needId, conversationId, eventId, revision: 1, needRevision: 1, signalRevision, assessment, ready: true, blockers: [], contentHash: "offer-v1", model: ai.ROOMSCOUT_MODEL_ID, promptVersion: "test", schemaVersion: "test", createdAt: now });
     await ctx.db.patch(conversationId, { currentOfferId: offerId });

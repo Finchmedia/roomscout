@@ -1,12 +1,14 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { makeFunctionReference } from "convex/server";
-import { expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { signalMatchRevision } from "./lib/matchValidity";
 
 const modules = import.meta.glob("./**/*.ts");
+
+afterEach(() => { vi.useRealTimers(); });
 
 const inspectCandidate = makeFunctionReference<"query", {
   ownerId: Id<"users">;
@@ -197,4 +199,80 @@ it("keeps an existing owned provider conversation readable without a current mat
     savedNeedId: f.savedNeedId,
     signalId: f.conversationSignalId,
   })).toEqual({ opened: true, signalId: f.conversationSignalId, sent: false });
+});
+
+/** Today is a Monday in the demo week, so "upcoming" has a fixed meaning here. */
+const BERLIN_TODAY = Date.parse("2026-09-21T09:00:00Z");
+
+it("answers which viewings are arranged and which are coming up, earliest first", async () => {
+  const f = await fixture();
+  vi.useFakeTimers();
+  vi.setSystemTime(BERLIN_TODAY);
+  const extra = await f.t.run(async (ctx) => {
+    const now = 1_000;
+    const turnId = await ctx.db.insert("providerTurns", {
+      conversationId: f.conversationId, sourceKey: "portal:one", kind: "portal_reply",
+      revision: 0, status: "completed", createdAt: now,
+    });
+    const offerId = await ctx.db.insert("offerRevisions", {
+      ownerId: f.ownerId, savedNeedId: f.savedNeedId, conversationId: f.conversationId, eventId: turnId,
+      revision: 0, needRevision: 2, signalRevision: "rev", assessment: {
+        summary: "Viewing arranged.", availability: { status: "available", evidence: [] },
+        monthlyPrice: { totalEur: 280, allRecurringCostsKnown: true, evidence: [] },
+        terms: [], constraints: [], uncertainties: [], contradictions: [],
+        nextAction: "wait", suggestedReply: null, viewing: null,
+      }, ready: false, blockers: [], contentHash: "offer", model: "test", promptVersion: "test",
+      schemaVersion: "test", createdAt: now,
+    });
+    const otherConversation = async (key: string, title: string) => {
+      const signalId = await ctx.db.insert("signals", {
+        side: "supply", title, city: "Berlin", summary: "Another indexed room", arrangement: "shared",
+        requirements: [], unknowns: [], status: "published", verification: "observed",
+        sourceCount: 1, firstSeenAt: now, lastSeenAt: now,
+      });
+      return {
+        signalId,
+        conversationId: await ctx.db.insert("providerConversations", {
+          ownerId: f.ownerId, savedNeedId: f.savedNeedId, signalId, conversationKey: key,
+          agentThreadId: `thread-${key}`, revision: 0, state: "waiting", createdAt: now, updatedAt: now,
+        }),
+      };
+    };
+    const morning = await otherConversation("morning-room", "Morning room");
+    const monday = await otherConversation("monday-room", "Monday room");
+    const past = await otherConversation("past-room", "Past room");
+    const viewing = (
+      target: { conversationId: Id<"providerConversations">; signalId: Id<"signals"> },
+      roomTitle: string, date: string, time: string,
+    ) => ctx.db.insert("viewings", {
+      ownerId: f.ownerId, savedNeedId: f.savedNeedId, conversationId: target.conversationId, signalId: target.signalId,
+      roomTitle, date, time, timeZone: "Europe/Berlin",
+      evidenceSourceId: "portal:one", evidenceQuote: `${date} ${time} passt uns.`,
+      offerId, createdAt: now, updatedAt: now,
+    });
+    await viewing({ conversationId: f.conversationId, signalId: f.conversationSignalId }, "Existing conversation room", "2026-09-25", "17:00");
+    await viewing(morning, "Morning room", "2026-09-25", "09:30");
+    await viewing(monday, "Monday room", "2026-09-28", "19:30");
+    await viewing(past, "Past room", "2026-09-18", "18:00");
+    return { morning, monday, past };
+  });
+
+  const result = JSON.parse(await f.t.query(inspectCandidate, { ownerId: f.ownerId, savedNeedId: f.savedNeedId }));
+
+  expect(result.upcomingViewings).toEqual([
+    { roomTitle: "Morning room", conversationId: extra.morning.conversationId, date: "2026-09-25", time: "09:30", weekday: "Friday" },
+    { roomTitle: "Existing conversation room", conversationId: f.conversationId, date: "2026-09-25", time: "17:00", weekday: "Friday" },
+    { roomTitle: "Monday room", conversationId: extra.monday.conversationId, date: "2026-09-28", time: "19:30", weekday: "Monday" },
+  ]);
+  expect(result.conversations.find((row: { conversationId: string }) => row.conversationId === f.conversationId)).toMatchObject({
+    progress: "viewing_arranged",
+    viewing: { date: "2026-09-25", time: "17:00", weekday: "Friday" },
+  });
+
+  // The same answer is available while a single room is focused.
+  const focused = JSON.parse(await f.t.query(inspectCandidate, {
+    ownerId: f.ownerId, savedNeedId: f.savedNeedId, signalId: f.conversationSignalId,
+  }));
+  expect(focused.conversation).toMatchObject({ progress: "viewing_arranged", viewing: { date: "2026-09-25", time: "17:00", weekday: "Friday" } });
+  expect(focused.upcomingViewings).toHaveLength(3);
 });

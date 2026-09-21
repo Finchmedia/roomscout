@@ -14,6 +14,7 @@ const copy: CandidateListCopy = {
   failed: "Review failed",
   reviewing: "Reviewing reply",
   attention: "Needs attention",
+  viewing: "Viewing arranged",
   closed: "Closed",
   fit: "Indexed fit",
   nearBudget: "Above current budget",
@@ -163,6 +164,88 @@ describe("CandidateList", () => {
       />,
     );
     expect(screen.getByRole("button", { name: /Westend room/ })).toHaveTextContent("Offer ready");
+  });
+
+  it("says when the viewing is, ahead of every other in-play state", () => {
+    const formatViewing = vi.fn(({ date, time }: { date: string; time: string }) => `Viewing · Fri 25 Sep, ${time} (${date})`);
+    const { rerender } = render(
+      <CandidateList
+        copy={copy}
+        formatStamp={() => "now"}
+        formatViewing={formatViewing}
+        onOpen={vi.fn()}
+        candidates={[{
+          ...base, progress: "viewing_arranged", viewing: { date: "2026-09-25", time: "17:00" },
+          hasProviderReply: true, hasOpenDecision: true, state: "offer_ready",
+        }]}
+      />,
+    );
+    const row = screen.getByRole("button", { name: /Westend room/ });
+    expect(row).toHaveTextContent("Viewing · Fri 25 Sep, 17:00");
+    expect(row).not.toHaveTextContent("Question for you");
+    expect(row).not.toHaveTextContent("Offer ready");
+    expect(formatViewing).toHaveBeenCalledWith({ date: "2026-09-25", time: "17:00" });
+
+    // Über Budget is still in play: the slot wins on the row exactly as it does
+    // on the room card, and the group header keeps saying it is above budget.
+    rerender(
+      <CandidateList
+        copy={copy}
+        formatStamp={() => "now"}
+        formatViewing={formatViewing}
+        onOpen={vi.fn()}
+        candidates={[{
+          ...base, progress: "viewing_arranged", viewing: { date: "2026-09-25", time: "17:00" },
+          disposition: "above_budget",
+        }]}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /Westend room/ })).toHaveTextContent("Viewing · Fri 25 Sep, 17:00");
+    expect(screen.getByRole("button", { name: /Westend room/ })).not.toHaveTextContent("Above current budget");
+    expect(screen.getByText("Above budget").parentElement).toHaveTextContent("1");
+
+    // No slot on the row (or no formatter bound): the plain state, never a
+    // fabricated date.
+    rerender(
+      <CandidateList
+        copy={copy}
+        formatStamp={() => "now"}
+        onOpen={vi.fn()}
+        candidates={[{ ...base, progress: "viewing_arranged" }]}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /Westend room/ })).toHaveTextContent("Viewing arranged");
+
+    // A room that is out of the running keeps saying so.
+    rerender(
+      <CandidateList
+        copy={copy}
+        formatStamp={() => "now"}
+        formatViewing={formatViewing}
+        onOpen={vi.fn()}
+        candidates={[{
+          ...base, progress: "viewing_arranged", viewing: { date: "2026-09-25", time: "17:00" },
+          exclusionReason: "unavailable",
+        }]}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /Westend room/ })).toHaveTextContent("Unavailable");
+
+    // The row survives the room being closed afterwards; the rail then says so
+    // rather than presenting a closed room as an appointment.
+    rerender(
+      <CandidateList
+        copy={copy}
+        formatStamp={() => "now"}
+        formatViewing={formatViewing}
+        onOpen={vi.fn()}
+        candidates={[{
+          ...base, progress: "closed", state: "closed", viewing: { date: "2026-09-25", time: "17:00" },
+        }]}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /Westend room/ })).toHaveTextContent("Closed");
+    expect(screen.getByRole("button", { name: /Westend room/ })).not.toHaveTextContent("17:00");
   });
 
   it("keeps the real-contact boundary visible in the candidate rail", () => {

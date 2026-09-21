@@ -11,6 +11,7 @@ import type { Id } from "../../../convex/_generated/dataModel";
 import { getSavedNeedActivationReadiness } from "../../../convex/lib/savedNeedLocation";
 import { buildLiveDiscoveryContext } from "../../../convex/lib/liveDiscoveryContext";
 import { formatLiveDecisionAnnouncement } from "../../features/voice/liveDecisionAnnouncement";
+import { formatViewingLabel, formatViewingSentenceDate, type ViewingSlot } from "../../features/viewings/formatViewing";
 import { Button } from "../../components/ui/button";
 import { FactList } from "../../components/ui/fact-list";
 import { DecisionCard } from "../../components/scout/DecisionCard";
@@ -88,6 +89,27 @@ function formatLivePhaseInstruction(
   return context.discovery
     ? `${sameSession} Apply the latest authoritative app phase now: mode ${context.mode}, phase ${context.phase}. Lead discovery and ask one useful independent question at a time.`
     : `${sameSession} Apply the latest authoritative app phase now: mode ${context.mode}, phase ${context.phase}. Stop discovery questions and focus on the current search, candidate, or outreach task. Explicit corrections to saved facts are still delegated to the backend.`;
+}
+
+/**
+ * The one spoken congratulation for an arranged viewing — the goal state of a
+ * Scout run. It travels the same relay as the decision announcement: one
+ * background update per conversation, versioned by the agreed slot, so a
+ * moved viewing is said once more and an unchanged one never is. The room
+ * name is clipped like the decision announcement's, so the whole sentence
+ * stays a single commentary append.
+ */
+function formatLiveViewingAnnouncement(
+  room: string | undefined,
+  viewing: ViewingSlot,
+  locale: "en" | "de",
+): string {
+  const name = room?.replace(/\s+/g, " ").trim().slice(0, 48);
+  const day = formatViewingSentenceDate(viewing, locale);
+  if (locale === "de") {
+    return `Bestätigte App-Aktualisierung: Für ${name || "den Raum"} ist eine Besichtigung vereinbart, am ${day} um ${viewing.time}. Gratuliere dem Musiker einmal in einem Satz und nenne Raum, Tag und Uhrzeit; kündige es kein zweites Mal an.`;
+  }
+  return `Verified application update: a viewing is arranged for ${name || "the room"} on ${day} at ${viewing.time}. Congratulate the musician once in one sentence naming room, day and time; do not announce it again.`;
 }
 
 /** Live queries and actions; no scripted demo transitions or fabricated facts. */
@@ -190,6 +212,7 @@ export function ScoutPage() {
       signalId: row.signalId, source: "conversation", title: row.title || row.providerLabel,
       imageUrl: boundary?.imageUrl ?? candidateMap.get(key)?.imageUrl,
       subtitle: row.subtitle, state: row.state, progress: row.progress,
+      viewing: row.viewing,
       disposition: row.disposition, exclusionReason: row.exclusionReason,
       hasProviderReply: row.hasProviderReply, canRetryAssessment: row.canRetryAssessment,
       lastActivityAt: row.lastActivityAt, unread: row.unread, hasOpenDecision: row.openDecision !== undefined,
@@ -303,6 +326,15 @@ export function ScoutPage() {
   const focusedActivityAt = focusedCandidate?.lastActivityAt;
   const relayed = useRef(new Map<string, string>());
   const liveDiscoveryContextVersion = JSON.stringify(liveDiscoveryContext);
+  // A viewing row survives a room going out of the running; the voice Scout
+  // keeps quiet about exactly what the rail retires — otherwise the next
+  // connect congratulates about a room the UI calls „Beendet“.
+  const viewingSpokenFor = (row: (typeof conversations)[number]) => {
+    if (!row.viewing) return false;
+    const room = candidates.find(entry => entry.conversationId === row.conversationId);
+    return !(row.state === "closed" || room?.state === "closed" || room?.progress === "closed"
+      || room?.disposition === "not_fit" || room?.exclusionReason !== undefined);
+  };
   const backgroundUpdates = JSON.stringify([
     { id: "discovery-phase", version: `${locale}:${liveDiscoveryContext.mode}:${liveDiscoveryContext.phase}:${liveDiscoveryContext.discovery}`,
       speak: false, content: formatLivePhaseInstruction(liveDiscoveryContext, locale) },
@@ -338,8 +370,24 @@ export function ScoutPage() {
           content: formatLiveDecisionAnnouncement(decision, room ? (room.title || room.providerLabel) : undefined, locale),
         }];
       }),
+    // An arranged viewing is the goal state of the run: exactly one spoken
+    // congratulation per conversation of this search, versioned by the agreed
+    // slot so a later time is said once more and the same slot never is.
+    ...conversations.flatMap(row => {
+      const viewing = row.viewing;
+      if (!viewing || !viewingSpokenFor(row)) return [];
+      const room = candidates.find(entry => entry.conversationId === row.conversationId);
+      return [{
+        id: `viewing:${row.conversationId}`, speak: true, version: `${locale}:${viewing.date}:${viewing.time}`,
+        content: formatLiveViewingAnnouncement(room ? (room.title || room.providerLabel) : undefined, viewing, locale),
+      }];
+    }),
     ...conversations.filter(row => row.assessmentFromProviderReply || row.offer?.ready || row.acceptedAt !== undefined).map(row => ({
-      id: `provider:${row.conversationId}`, speak: true, version: `${locale}:${row.revision}:${row.offer?.contentHash ?? ""}:${row.acceptanceStatus ?? ""}`,
+      // The congratulation is the one spoken item for a conversation with an
+      // arranged viewing: the generic reply notice stays silent context there
+      // unless an offer or an acceptance needs the musician.
+      id: `provider:${row.conversationId}`, speak: !viewingSpokenFor(row) || Boolean(row.offer?.ready) || row.acceptedAt !== undefined,
+      version: `${locale}:${row.revision}:${row.offer?.contentHash ?? ""}:${row.acceptanceStatus ?? ""}`,
       content: `Verified application update for conversation ${row.conversationId}: ${row.acceptedAt !== undefined && row.acceptedOfferId ? "the acceptance has a confirmed send receipt" : row.offer?.current && row.offer.ready ? "a current offer is ready for UI review; no acceptance has been sent" : "a provider reply has been assessed"}. The current details are visible in the UI. Mention briefly at a suitable pause.`,
     })),
   ]);
@@ -566,7 +614,8 @@ export function ScoutPage() {
         reply: t("liveScout.candidateState.reply"), asked: t("liveScout.candidateState.asked"),
         checking: t("liveScout.candidateState.checking"), preparing: t("liveScout.candidateState.preparing"),
         failed: t("liveScout.candidateState.failed"), reviewing: t("liveScout.candidateState.reviewing"),
-        attention: t("liveScout.candidateState.attention"), closed: t("liveScout.candidateState.closed"),
+        attention: t("liveScout.candidateState.attention"), viewing: t("liveScout.candidateState.viewing"),
+        closed: t("liveScout.candidateState.closed"),
         fit: t("liveScout.candidateState.fit"), nearBudget: t("liveScout.candidateState.nearBudget"),
         showAboveBudget: t("liveScout.showAboveBudget"),
         groupActive: t("liveScout.candidateGroups.active"), groupAboveBudget: t("liveScout.candidateGroups.aboveBudget"),
@@ -577,6 +626,7 @@ export function ScoutPage() {
       showAboveBudget={showAboveBudget}
       onShowAboveBudgetChange={setShowAboveBudget}
       formatStamp={at => formatMessageStamp(locale, at, now, { short: true })}
+      formatViewing={viewing => formatViewingLabel(viewing, locale)}
       onOpen={targetId => { void openCandidate(targetId); }}
     />
   ) : undefined;
@@ -612,7 +662,13 @@ export function ScoutPage() {
     (focusedPublicSignal?.pricePeriod === "month" ? focusedPublicSignal.priceEur : undefined);
   const focusedDetail: IndexedCandidatePanelCandidate | undefined = context?.focusedSignalId && (focusedDetailSignal?.title || focusedRailCandidate?.title) ? {
     kind: focusedNotFit ? "room" : focusedRailCandidate?.disposition === "above_budget" ? "near_budget" : focusedIndexed?.kind ?? "room",
-    statusLabel: focusedNotFit ? exclusionLabels[focusedExclusion] : undefined,
+    // The room card says the same thing the rail row says: an arranged viewing
+    // outranks „Möglicherweise passend“, an exclusion still outranks both.
+    statusLabel: focusedNotFit
+      ? exclusionLabels[focusedExclusion]
+      : focusedRailCandidate?.viewing
+        ? formatViewingLabel(focusedRailCandidate.viewing, locale)
+        : undefined,
     title: focusedDetailSignal?.title ?? focusedRailCandidate?.title ?? "",
     imageUrl: focusedDetailSignal?.imageUrl ?? focusedRailCandidate?.imageUrl,
     subtitle: focusedDetailSignal

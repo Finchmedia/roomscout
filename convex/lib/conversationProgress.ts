@@ -5,8 +5,11 @@ import type { QueryCtx } from "../_generated/server";
 export const conversationProgressValidator = v.union(
   v.literal("checking"), v.literal("preparing_inquiry"), v.literal("assessment_failed"),
   v.literal("inquiry_sent"), v.literal("reply_received"), v.literal("reviewing_reply"),
-  v.literal("needs_attention"), v.literal("closed"),
+  v.literal("needs_attention"), v.literal("viewing_arranged"), v.literal("closed"),
 );
+
+/** The arranged slot in Berlin wall-clock time, surfaced next to the progress value. */
+export const conversationViewingValidator = v.object({ date: v.string(), time: v.string() });
 
 const PROVIDER_REPLY_EXCERPT_CHARS = 400;
 
@@ -36,9 +39,18 @@ export function messageOutcomeUnknown(request: Pick<Doc<"actionRequests">, "stat
     ["SUBMIT_RESULT_UNKNOWN", "EXECUTION_STALE_PROVIDER_OUTCOME_UNKNOWN"].includes(request.error ?? "");
 }
 
-/** Read actual inbound messages: needs_attention also covers failures before first contact. */
+/**
+ * Read actual inbound messages: needs_attention also covers failures before
+ * first contact. An arranged viewing is the goal state of a run, so it
+ * outranks every other in-flight label while the conversation stays open.
+ */
 export async function conversationProgress(ctx: QueryCtx, conversation: Doc<"providerConversations">,
   requests: Doc<"actionRequests">[]) {
+  const arranged = await ctx.db.query("viewings").withIndex("by_conversation", (q) =>
+    q.eq("conversationId", conversation._id)).first();
+  const viewing = arranged && arranged.ownerId === conversation.ownerId
+    ? { date: arranged.date, time: arranged.time }
+    : null;
   const [inbound, outbound] = conversation.platformThreadId
     ? await Promise.all([
       ctx.db.query("platformMessages").withIndex("by_thread_and_direction_and_sent_at", q =>
@@ -62,6 +74,7 @@ export async function conversationProgress(ctx: QueryCtx, conversation: Doc<"pro
   const evaluatingReply = active?.kind === "mail_reply" || active?.kind === "portal_reply";
   const messageRequests = requests.filter(r => r.payload.kind === "platform_message" || r.payload.kind === "email_message");
   const progress = conversation.state === "closed" ? "closed" as const
+    : viewing ? "viewing_arranged" as const
     : conversation.lastErrorCode ? "assessment_failed" as const
     : active || conversation.state === "thinking"
       ? hasProviderReply && evaluatingReply ? "reviewing_reply" as const : "checking" as const
@@ -72,5 +85,5 @@ export async function conversationProgress(ctx: QueryCtx, conversation: Doc<"pro
     : hasProviderReply && !awaitingProviderReply ? "reply_received" as const
     : messageRequests.some(r => r.status === "executed") ? "inquiry_sent" as const
     : conversation.currentOfferId ? "needs_attention" as const : "checking" as const;
-  return { progress, hasProviderReply };
+  return { progress, hasProviderReply, ...(viewing ? { viewing } : {}) };
 }

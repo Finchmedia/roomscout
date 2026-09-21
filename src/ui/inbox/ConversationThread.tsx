@@ -20,6 +20,7 @@ import {
 import { ChatComposer } from "../chat/ChatComposer";
 import { useCopy } from "../copy";
 import { formatMessageStamp } from "../copy/format";
+import { formatViewingLabel } from "../../features/viewings/formatViewing";
 
 type ThreadPayload = NonNullable<FunctionReturnType<typeof api.conversations.getMine>>;
 type ThreadHeader = ThreadPayload["header"];
@@ -288,6 +289,12 @@ export function ConversationThread({
               <div>
                 <h1 className="text-[length:var(--text-lead-size)] text-rs-ink">{title}</h1>
                 {subtitle ? <p className="mt-[var(--space-2)] text-[length:var(--text-caption-size)] text-rs-ink-4">{subtitle}</p> : null}
+                {/* An arranged viewing is what the run was for: the day and the
+                    time the Anbieter agreed to stay at the top of the thread —
+                    but a closed room is history here exactly as it is in the rail. */}
+                {header.viewing && header.progress !== "closed" && header.state !== "closed" ? <p role="status" className="mt-[var(--space-3)] inline-flex rounded-chip bg-rs-surface-subtle-2 px-3 py-1 text-[length:var(--text-caption-size)] text-rs-ink-2">
+                  {formatViewingLabel(header.viewing, locale)}
+                </p> : null}
               </div>
             </MessageScrollerItem>
 

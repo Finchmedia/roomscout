@@ -79,6 +79,7 @@ import type * as integrations_urlCanonicalization from "../integrations/urlCanon
 import type * as lib_actionPayload from "../lib/actionPayload.js";
 import type * as lib_autonomy from "../lib/autonomy.js";
 import type * as lib_autonomyGate from "../lib/autonomyGate.js";
+import type * as lib_berlinTime from "../lib/berlinTime.js";
 import type * as lib_candidateDisposition from "../lib/candidateDisposition.js";
 import type * as lib_conversationProgress from "../lib/conversationProgress.js";
 import type * as lib_corroboration from "../lib/corroboration.js";
@@ -232,6 +233,7 @@ declare const fullApi: ApiFromModules<{
   "lib/actionPayload": typeof lib_actionPayload;
   "lib/autonomy": typeof lib_autonomy;
   "lib/autonomyGate": typeof lib_autonomyGate;
+  "lib/berlinTime": typeof lib_berlinTime;
   "lib/candidateDisposition": typeof lib_candidateDisposition;
   "lib/conversationProgress": typeof lib_conversationProgress;
   "lib/corroboration": typeof lib_corroboration;

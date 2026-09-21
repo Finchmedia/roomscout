@@ -882,6 +882,132 @@ describe("live Scout route", () => {
     expect(fixtures.voice.setFocus).toHaveBeenLastCalledWith(expect.objectContaining({ decisionId: "decision-conversation-2" }));
   });
 
+  /** Every relayed update for one conversation's arranged viewing. */
+  const viewingUpdates = () => fixtures.voice.appendVerifiedBackgroundUpdate.mock.calls
+    .map(([update]) => update as { id: string; version: string; speak?: boolean; content: string })
+    .filter((update) => update.id.startsWith("viewing:"));
+
+  it("congratulates once by voice when a viewing is arranged, and again only for a new time", async () => {
+    fixtures.needs = [need("active")]; fixtures.voice.connected = true;
+    fixtures.conversations = [{ ...providerConversation(), viewing: { date: "2026-09-25", time: "17:00" } }];
+    fixtures.inbox = [candidate({ id: "conversation-2", title: "Raum West" })];
+    const view = renderPage();
+
+    await waitFor(() => expect(viewingUpdates()).toHaveLength(1));
+    const [update] = viewingUpdates();
+    expect(update).toEqual(expect.objectContaining({
+      id: "viewing:conversation-2", version: "en:2026-09-25:17:00", speak: true,
+    }));
+    expect(update!.content).toContain("a viewing is arranged for Raum West");
+    expect(update!.content).toContain("Friday");
+    expect(update!.content).toContain("September");
+    expect(update!.content).toContain("at 17:00");
+    expect(update!.content).toContain("Congratulate the musician once");
+    expect(update!.content).toContain("do not announce it again");
+    // One commentary append, so the congratulation is one speakable item.
+    expect(splitLiveAppendContent(update!.content)).toHaveLength(1);
+
+    // The same slot on a later render says nothing new.
+    view.rerender(<MemoryRouter><ScoutPage /></MemoryRouter>);
+    expect(viewingUpdates()).toHaveLength(1);
+
+    // The Anbieter named a later time; the row was overwritten, so the version
+    // moves and the Scout may say it once more.
+    fixtures.conversations = [{ ...providerConversation(), viewing: { date: "2026-09-25", time: "20:00" } }];
+    view.rerender(<MemoryRouter><ScoutPage /></MemoryRouter>);
+    await waitFor(() => expect(viewingUpdates()).toHaveLength(2));
+    expect(viewingUpdates()[1]).toEqual(expect.objectContaining({
+      id: "viewing:conversation-2", version: "en:2026-09-25:20:00", speak: true,
+    }));
+    expect(viewingUpdates()[1]!.content).toContain("at 20:00");
+  });
+
+  it("congratulates in German with the same room, day and time", async () => {
+    fixtures.needs = [need("active")]; fixtures.voice.connected = true;
+    fixtures.conversations = [{ ...providerConversation(), viewing: { date: "2026-09-25", time: "17:00" } }];
+    fixtures.inbox = [candidate({ id: "conversation-2", title: "Raum West" })];
+    render(
+      <LocaleCtx.Provider value={{ locale: "de", dict: de, availableLocales: ["en", "de"], setLocale: vi.fn() }}>
+        <MemoryRouter><ScoutPage /></MemoryRouter>
+      </LocaleCtx.Provider>,
+    );
+    await waitFor(() => expect(viewingUpdates()).toHaveLength(1));
+    const [update] = viewingUpdates();
+    expect(update!.version).toBe("de:2026-09-25:17:00");
+    expect(update!.content).toContain("Für Raum West ist eine Besichtigung vereinbart");
+    expect(update!.content).toContain("Freitag, 25. September 2026");
+    expect(update!.content).toContain("um 17:00");
+    expect(update!.content).toContain("Gratuliere dem Musiker einmal in einem Satz");
+    expect(splitLiveAppendContent(update!.content)).toHaveLength(1);
+  });
+
+  it("says nothing by voice about a room the rail has retired", async () => {
+    // The viewing row survives the room going out of the running, so voice and
+    // rail must retire it together — otherwise the next connect congratulates
+    // about a room the UI already calls „Beendet“.
+    fixtures.needs = [need("active")]; fixtures.voice.connected = true;
+    fixtures.conversations = [{
+      ...providerConversation({ accepted: true }), state: "closed",
+      viewing: { date: "2026-09-25", time: "17:00" },
+    }];
+    fixtures.inbox = [{
+      ...candidate({ id: "conversation-2", title: "Raum West", state: "closed" }),
+      progress: "closed", disposition: "not_fit", exclusionReason: "closed",
+    }];
+    renderPage();
+    await waitFor(() => expect(fixtures.voice.appendVerifiedBackgroundUpdate).toHaveBeenCalled());
+    expect(viewingUpdates()).toEqual([]);
+    expect(await screen.findByRole("button", { name: /Raum West/ })).not.toHaveTextContent("17:00");
+  });
+
+  it("says nothing by voice about a conversation without an arranged viewing", async () => {
+    fixtures.needs = [need("active")]; fixtures.voice.connected = true;
+    fixtures.conversations = [providerConversation()];
+    fixtures.inbox = [candidate({ id: "conversation-2", title: "Raum West" })];
+    renderPage();
+    await waitFor(() => expect(fixtures.voice.appendVerifiedBackgroundUpdate).toHaveBeenCalled());
+    expect(viewingUpdates()).toEqual([]);
+  });
+
+  it("lets the congratulation be the only spoken relay for the reply that arranged the viewing", async () => {
+    // The same provider reply that arranged the viewing is also "a provider
+    // reply that has been assessed": that generic notice stays silent context
+    // so Live is not prompted to comment twice on one event.
+    fixtures.needs = [need("active")]; fixtures.voice.connected = true;
+    fixtures.conversations = [{ ...providerConversation({ ready: false }), viewing: { date: "2026-09-25", time: "17:00" } }];
+    fixtures.inbox = [candidate({ id: "conversation-2", title: "Raum West" })];
+    const view = renderPage();
+    await waitFor(() => expect(viewingUpdates()).toHaveLength(1));
+    const updates = () => fixtures.voice.appendVerifiedBackgroundUpdate.mock.calls
+      .map(([update]) => update as { id: string; speak?: boolean });
+    const spokenForRoom = updates().filter((update) => update.speak && update.id.endsWith(":conversation-2"));
+    expect(spokenForRoom.map((update) => update.id)).toEqual(["viewing:conversation-2"]);
+    expect(updates().find((update) => update.id === "provider:conversation-2")).toEqual(expect.objectContaining({ speak: false }));
+
+    // An offer that is ready for review is the musician’s business again: it
+    // speaks. A ready offer arrives as a new assessment, so its hash moves.
+    const readyConversation = providerConversation({ ready: true });
+    fixtures.conversations = [{
+      ...readyConversation, offer: { ...readyConversation.offer, contentHash: "offer-hash-ready" },
+      viewing: { date: "2026-09-25", time: "17:00" },
+    }];
+    view.rerender(<MemoryRouter><ScoutPage /></MemoryRouter>);
+    await waitFor(() => expect(updates().filter((update) => update.id === "provider:conversation-2" && update.speak)).toHaveLength(1));
+  });
+
+  it("puts the arranged viewing on the candidate row instead of its background progress", async () => {
+    fixtures.needs = [need("active")];
+    fixtures.inbox = [{
+      ...candidate({ id: "conversation-2", title: "Raum West" }),
+      progress: "viewing_arranged", viewing: { date: "2026-09-25", time: "17:00" },
+    }];
+    renderPage();
+    const row = await screen.findByRole("button", { name: /Raum West/ });
+    expect(row).toHaveTextContent("Viewing");
+    expect(row).toHaveTextContent("25");
+    expect(row).toHaveTextContent("17:00");
+  });
+
   it("keeps an open Entscheidung answerable above the focused room after a reload without voice", () => {
     // After a reload the voice session is gone but the server still remembers the
     // focused room, so the page lands on the room panel, not the voice companion.

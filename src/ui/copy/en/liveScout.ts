@@ -113,6 +113,7 @@ export const liveScoutEn = {
     failed: "Review failed",
     reviewing: "Reviewing reply",
     attention: "Needs attention",
+    viewing: "Viewing arranged",
     closed: "Closed",
     fit: "Indexed fit",
     nearBudget: "Above current budget",

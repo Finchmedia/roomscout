@@ -16,7 +16,7 @@ afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllEnvs(); v
 /** Every owner-scoped table the demo reset empties, in stage order. */
 const WIPED_TABLES = [
   "decisions", "providerConversations", "messageSafetyAssessments", "actionExecutions", "actionApprovals",
-  "actionRequests", "handoffs", "offerRevisions", "platformMessages", "platformThreads", "mailThreads",
+  "actionRequests", "handoffs", "viewings", "offerRevisions", "platformMessages", "platformThreads", "mailThreads",
   "outreachApprovals", "outreachDrafts", "notifications", "voiceTranscriptEvents", "voiceSessions",
   "savedNeedEmbeddings", "matchAssessments", "signalMatches", "opportunities", "scoutContexts",
   "memoryEvents", "memoryFacts", "memoryProfiles", "memoryEntities", "savedNeeds",
@@ -31,6 +31,7 @@ const assessment: ProviderAssessment = {
   terms: [], constraints: [], uncertainties: ["Availability"], contradictions: [],
   nextAction: "ask_provider",
   suggestedReply: { subject: "Room availability", body: "Is the room still available?" },
+  viewing: null,
 };
 
 function setup() {
@@ -62,6 +63,7 @@ async function seed(t: Harness) {
       const turnId = await ctx.db.insert("providerTurns", { conversationId, sourceKey: "portal:one", kind: "portal_reply", revision: 1, status: "completed", createdAt: now });
       const offerId = await ctx.db.insert("offerRevisions", { ownerId, savedNeedId: needId, conversationId, eventId: turnId, revision: 1, needRevision: 1, signalRevision: "rev-1", assessment, ready: false, blockers: ["Availability unknown"], contentHash: `offer-${username}`, model: "test-model", promptVersion: "test", schemaVersion: "test", createdAt: now });
       await ctx.db.patch(conversationId, { currentOfferId: offerId });
+      await ctx.db.insert("viewings", { ownerId, savedNeedId: needId, conversationId, signalId, roomTitle: "Shared room", providerLabel: "Provider", date: "2026-09-25", time: "17:00", timeZone: "Europe/Berlin", evidenceSourceId: "portal:one", evidenceQuote: "Freitag, 25.09., 17:00 passt uns.", offerId, createdAt: now, updatedAt: now });
       await ctx.db.insert("decisions", { ownerId, savedNeedId: needId, conversationId, kind: "scout_question", status: "open", question: "Still interested?", options: [{ id: "yes", label: "Yes" }], refs: { offerId }, createdAt: now, updatedAt: now });
       const payload = { kind: "platform_message" as const, threadId: platformThreadId, recipients: ["Provider"], body: "Hello" };
       const requestId = await ctx.db.insert("actionRequests", { ownerId, connectionId, savedNeedId: needId, matchingSignalId: signalId, automationMode: "exact_once", requestedActionType: "send_platform_dm", personalDataScopes: [], payload, contentVersion: 1, contentHash: `hash-${username}`, status: "drafted", createdAt: now, updatedAt: now });

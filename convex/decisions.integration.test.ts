@@ -46,7 +46,7 @@ async function portalScenario(rules: Partial<AutonomyRules>) {
     const threadId = await ctx.db.insert("platformThreads", { connectionId, ownerId, providerThreadId: "thread-1", participants: ["Test provider"], lastMessageAt: now, status: "open", createdAt: now, updatedAt: now });
     const conversationId = await ctx.db.insert("providerConversations", { ownerId, savedNeedId: needId, signalId, conversationKey: "controlled", agentThreadId: "test-agent-thread", platformThreadId: threadId, revision: 1, state: "needs_attention", createdAt: now, updatedAt: now });
     const eventId = await ctx.db.insert("providerTurns", { conversationId, sourceKey: "portal:one", kind: "portal_reply", revision: 1, status: "completed", createdAt: now });
-    const assessment: ProviderAssessment = { summary: "Ask whether the room is still free", availability: { status: "unknown", evidence: [] }, monthlyPrice: { totalEur: null, allRecurringCostsKnown: false, evidence: [] }, terms: [], constraints: [], uncertainties: ["Availability"], contradictions: [], nextAction: "ask_provider", suggestedReply: { subject: "Room availability", body: "Is the room still available?" } };
+    const assessment: ProviderAssessment = { summary: "Ask whether the room is still free", availability: { status: "unknown", evidence: [] }, monthlyPrice: { totalEur: null, allRecurringCostsKnown: false, evidence: [] }, terms: [], constraints: [], uncertainties: ["Availability"], contradictions: [], nextAction: "ask_provider", suggestedReply: { subject: "Room availability", body: "Is the room still available?" }, viewing: null };
     const offerId = await ctx.db.insert("offerRevisions", { ownerId, savedNeedId: needId, conversationId, eventId, revision: 1, needRevision: 1, signalRevision, assessment, ready: false, blockers: ["Availability unknown"], contentHash: "offer-v1", model: ai.ROOMSCOUT_MODEL_ID, promptVersion: "test", schemaVersion: "test", createdAt: now });
     await ctx.db.patch(conversationId, { currentOfferId: offerId });
     return { ownerId, needId, connectionId, threadId, conversationId, offerId };
@@ -268,7 +268,7 @@ async function mailFixture(replyBody = body) {
     monthlyPrice: { totalEur: 220, allRecurringCostsKnown: true, evidence: [citation] },
     terms: [],
     constraints: offerConstraints(input.need).map(({ key }) => ({ key, verdict: "satisfied", explanation: "Confirmed by provider", evidence: [citation] })),
-    uncertainties: [], contradictions: [], nextAction: "present_offer", suggestedReply: null,
+    uncertainties: [], contradictions: [], nextAction: "present_offer", suggestedReply: null, viewing: null,
   };
   const asksMusician: ProviderAssessment = {
     ...ready,

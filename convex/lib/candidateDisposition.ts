@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import type { ProviderAssessment } from "./providerAssessment";
+import type { StoredProviderAssessment } from "./providerAssessment";
 
 export const candidateDispositionValidator = v.union(v.literal("active"), v.literal("above_budget"), v.literal("not_fit"));
 export const candidateExclusionReasonValidator = v.union(
@@ -9,7 +9,7 @@ export const candidateExclusionReasonValidator = v.union(
 /** Assessment is supplied only when its conversation, search and listing revisions are current. */
 export function candidateDisposition(args: {
   closed: boolean;
-  assessment?: ProviderAssessment;
+  assessment?: StoredProviderAssessment;
   maxBudgetEur?: number;
   indexedAboveBudget: boolean;
 }): { disposition: "active" | "above_budget" | "not_fit"; exclusionReason?: "unavailable" | "schedule" | "requirements" | "closed" | "not_fit" } {

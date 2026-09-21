@@ -125,6 +125,37 @@ describe("prompt construction: backend answers and voice decisions", () => {
     expect(prompt).toContain(uiOnly);
     expect(prompt).toContain(noSend);
   });
+
+  it.each([
+    [
+      "en",
+      "read which viewings are arranged and which are coming up",
+      "which viewings are arranged or coming up",
+      "When the backend reports viewings, say weekday, room and time, one sentence per viewing, and never invent, move or add one.",
+    ],
+    [
+      "de",
+      "welche Besichtigungen vereinbart sind und anstehen",
+      "welche Besichtigungen vereinbart sind oder anstehen",
+      "Meldet das Backend Besichtigungen, nenne Wochentag, Raum und Uhrzeit, einen Satz je Besichtigung, und erfinde, verschiebe oder ergänze nie eine.",
+    ],
+  ] as const)("delegates %s viewing questions and speaks weekday, room and time back", (locale, tools, delegate, delivery) => {
+    const prompt = liveInstructions(locale, "phase=offer; focused candidate=Modul Ost", {
+      hasPriorContext: true,
+      discovery: false,
+    });
+
+    expect(prompt).toContain(tools);
+    expect(prompt).toContain(delegate);
+    expect(prompt).toContain(delivery);
+  });
+
+  it.each([
+    ["en", "Answer a question about arranged or upcoming viewings only from an inspectCandidates result"],
+    ["de", "Beantworte Fragen nach vereinbarten oder anstehenden Besichtigungen ausschließlich aus einem inspectCandidates-Ergebnis"],
+  ] as const)("sources the %s voice result's viewing answer from the backend alone", (locale, rule) => {
+    expect(scoutVoiceInstructions(locale)).toContain(rule);
+  });
 });
 
 describe("prompt construction: GPT Live session opening", () => {

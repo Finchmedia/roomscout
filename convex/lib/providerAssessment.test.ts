@@ -15,7 +15,7 @@ function assessment(): ProviderAssessment {
     monthlyPrice: { totalEur: 220, allRecurringCostsKnown: true, evidence: [citation] },
     terms: [{ key: "equipment", label: "Equipment", value: "Drums and storage allowed", evidence: [citation] }],
     constraints: offerConstraints(need).map(({ key }) => ({ key, verdict: "satisfied", explanation: "Confirmed", evidence: [citation] })),
-    uncertainties: [], contradictions: [], nextAction: "present_offer", suggestedReply: null,
+    uncertainties: [], contradictions: [], nextAction: "present_offer", suggestedReply: null, viewing: null,
   };
 }
 
@@ -168,6 +168,67 @@ describe("evidence-backed provider offers", () => {
   it("does not create an outgoing proposal when handing an offer to the musician", () => {
     const input = assessment(); input.suggestedReply = { subject: "Reply", body: "We accept." };
     expect(() => validateProviderAssessment(input, evidence, need)).toThrow("UNEXPECTED_REPLY_PROPOSAL");
+  });
+});
+
+describe("a viewing the provider agreed to", () => {
+  const viewingQuote = "Freitag, den 25. September um 17:00 passt uns.";
+  const viewingEvidence = [
+    { sourceId: "portal:one", text: `${quote} ${viewingQuote}` },
+    { sourceId: "listing", text: `Proberaum frei. ${viewingQuote}` },
+  ];
+  const withViewing = (citation: { sourceId: string; quote: string }) => {
+    const input = assessment();
+    input.nextAction = "wait";
+    input.viewing = { date: "2026-09-25", time: "17:00", evidence: [citation] };
+    return input;
+  };
+
+  it("keeps null when nothing is agreed and accepts a slot quoted from the provider's own message", () => {
+    expect(validateProviderAssessment(assessment(), evidence, need).viewing).toBeNull();
+    const parsed = validateProviderAssessment(withViewing({ sourceId: "portal:one", quote: viewingQuote }), viewingEvidence, need);
+    expect(parsed.viewing).toEqual({
+      date: "2026-09-25", time: "17:00",
+      evidence: [{ sourceId: "portal:one", quote: viewingQuote }],
+    });
+  });
+
+  it("checks the viewing quote like every other citation", () => {
+    let issue = null;
+    try {
+      validateProviderAssessment(withViewing({ sourceId: "portal:one", quote: "Freitag um 18:00 passt uns." }), viewingEvidence, need);
+    } catch (error) {
+      issue = providerAssessmentValidationIssue(error);
+    }
+    expect(issue).toEqual({ code: "OFFER_EVIDENCE_NOT_CONTIGUOUS", fieldPath: "viewing.evidence[0]", sourceId: "portal:one" });
+  });
+
+  it("never lets the public listing or an unsourced slot establish a viewing", () => {
+    let issue = null;
+    try {
+      validateProviderAssessment(withViewing({ sourceId: "listing", quote: viewingQuote }), viewingEvidence, need);
+    } catch (error) {
+      issue = providerAssessmentValidationIssue(error);
+    }
+    expect(issue).toEqual({ code: "VIEWING_PROVIDER_EVIDENCE_REQUIRED", fieldPath: "viewing.evidence[0]", sourceId: "listing" });
+    const unsourced = withViewing({ sourceId: "portal:one", quote: viewingQuote });
+    unsourced.viewing!.evidence = [];
+    expect(() => validateProviderAssessment(unsourced, viewingEvidence, need)).toThrow();
+  });
+
+  it("rejects a date or time that is not a Berlin calendar slot", () => {
+    const wrongDate = withViewing({ sourceId: "portal:one", quote: viewingQuote });
+    wrongDate.viewing!.date = "25.09.2026";
+    expect(() => validateProviderAssessment(wrongDate, viewingEvidence, need)).toThrow();
+    const wrongTime = withViewing({ sourceId: "portal:one", quote: viewingQuote });
+    wrongTime.viewing!.time = "5 pm";
+    expect(() => validateProviderAssessment(wrongTime, viewingEvidence, need)).toThrow();
+  });
+
+  it("tells the model when a viewing may be recorded at all", () => {
+    expect(providerCaseInstructions).toContain("VIEWING: Fill viewing only when the provider has explicitly agreed to one specific viewing date and time");
+    expect(providerCaseInstructions).toContain("current Berlin date given in the case card");
+    expect(providerCaseInstructions).toContain("Once a viewing is agreed, do not list it as an uncertainty");
   });
 });
 

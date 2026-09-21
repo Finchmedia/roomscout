@@ -31,6 +31,12 @@ export const providerAssessmentSchema = z.object({
   contradictions: z.array(z.object({ explanation: z.string().max(700), evidence: citations })).max(10),
   nextAction: z.enum(nextActions),
   suggestedReply: z.object({ subject: z.string().max(250), body: z.string().min(1).max(8_000) }).nullable(),
+  /** A viewing the provider themselves agreed to, in Europe/Berlin wall-clock time; null whenever no exact slot is settled. */
+  viewing: z.object({
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+    evidence: citations.min(1),
+  }).nullable(),
 });
 
 export const providerAssessmentValidator = v.object({
@@ -46,15 +52,23 @@ export const providerAssessmentValidator = v.object({
   contradictions: v.array(v.object({ explanation: v.string(), evidence: v.array(citationValidator) })),
   nextAction: v.union(...nextActions.map((value) => v.literal(value))),
   suggestedReply: v.union(v.object({ subject: v.string(), body: v.string() }), v.null()),
+  /** Optional, never required: offer revisions recorded before viewings existed must keep validating. */
+  viewing: v.optional(v.union(v.object({ date: v.string(), time: v.string(), evidence: v.array(citationValidator) }), v.null())),
 });
 
 export type ProviderAssessment = z.infer<typeof providerAssessmentSchema>;
+/**
+ * An assessment as it comes back out of the database. `viewing` was added
+ * later and the stored validator keeps it optional, so every helper that only
+ * reads older fields accepts this wider shape instead of forcing a migration.
+ */
+export type StoredProviderAssessment = Omit<ProviderAssessment, "viewing"> & { viewing?: ProviderAssessment["viewing"] };
 export type OfferEvidence = { sourceId: string; text: string };
 export const offerEvidenceValidator = v.object({ sourceId: v.string(), text: v.string() });
 export type OfferNeed = { requirements: string[]; schedule: string[]; maxBudgetEur?: number };
 export type ProviderAssessmentContext = { controlledAiSimulation: boolean };
 export type ProviderAssessmentClarificationContext = {
-  previousAssessment: ProviderAssessment;
+  previousAssessment: StoredProviderAssessment;
   answeredConstraintKeys: string[];
   retainedConstraintKeys?: string[];
 };
@@ -81,7 +95,8 @@ export type ProviderAssessmentValidationIssue = {
     | "UNANSWERED_CONSTRAINT_CONCESSION"
     | "MUSICIANS_CONSTRAINT_RETAINED"
     | "REPLY_PROPOSAL_REQUIRED"
-    | "UNEXPECTED_REPLY_PROPOSAL";
+    | "UNEXPECTED_REPLY_PROPOSAL"
+    | "VIEWING_PROVIDER_EVIDENCE_REQUIRED";
   fieldPath: string;
   sourceId?: string;
 };
@@ -117,12 +132,14 @@ export function offerConstraints(need: OfferNeed) {
   ];
 }
 
-export function assessmentCitations(assessment: ProviderAssessment) {
+export function assessmentCitations(assessment: StoredProviderAssessment) {
   return [
     ...assessment.availability.evidence, ...assessment.monthlyPrice.evidence,
     ...assessment.terms.flatMap((term) => term.evidence),
     ...assessment.constraints.flatMap((condition) => condition.evidence),
     ...assessment.contradictions.flatMap((conflict) => conflict.evidence),
+    // The message an agreed viewing was read from stays retrievable for later turns.
+    ...(assessment.viewing?.evidence ?? []),
   ];
 }
 
@@ -133,6 +150,7 @@ function assessmentCitationEntries(assessment: ProviderAssessment) {
     ...assessment.terms.flatMap((term, termIndex) => term.evidence.map((citation, index) => ({ citation, fieldPath: `terms[${termIndex}].evidence[${index}]` }))),
     ...assessment.constraints.flatMap((constraint, constraintIndex) => constraint.evidence.map((citation, index) => ({ citation, fieldPath: `constraints[${constraintIndex}].evidence[${index}]` }))),
     ...assessment.contradictions.flatMap((contradiction, contradictionIndex) => contradiction.evidence.map((citation, index) => ({ citation, fieldPath: `contradictions[${contradictionIndex}].evidence[${index}]` }))),
+    ...(assessment.viewing?.evidence ?? []).map((citation, index) => ({ citation, fieldPath: `viewing.evidence[${index}]` })),
   ];
 }
 
@@ -189,6 +207,15 @@ export function validateProviderAssessment(
       }
     }
   }
+  // A viewing only exists once the provider said the time themselves: the
+  // public listing and our own proposals can never establish one.
+  if (result.viewing) {
+    for (const [index, citation] of result.viewing.evidence.entries()) {
+      if (!citation.sourceId.startsWith("mail:") && !citation.sourceId.startsWith("portal:")) {
+        invalidAssessment("VIEWING_PROVIDER_EVIDENCE_REQUIRED", `viewing.evidence[${index}]`, citation.sourceId);
+      }
+    }
+  }
   if (["ask_provider", "decline"].includes(result.nextAction) && !result.suggestedReply) invalidAssessment("REPLY_PROPOSAL_REQUIRED", "suggestedReply");
   if (["present_offer", "ask_musician", "wait", "stop"].includes(result.nextAction) && result.suggestedReply !== null) invalidAssessment("UNEXPECTED_REPLY_PROPOSAL", "suggestedReply");
   return result;
@@ -200,7 +227,7 @@ export function validateProviderAssessment(
  * `blockers` is the model's own open point, which is usually the band's
  * internal choice and therefore an Entscheidung for the musician.
  */
-export function offerReadiness(assessment: ProviderAssessment, need: OfferNeed) {
+export function offerReadiness(assessment: StoredProviderAssessment, need: OfferNeed) {
   const blockers = [...assessment.uncertainties, ...assessment.contradictions.map((item) => item.explanation)];
   const hardBlockers: string[] = [];
   if (assessment.availability.status === "unavailable") hardBlockers.push("The provider reports the room as not available.");
@@ -286,6 +313,7 @@ Record deposit, minimum term and cancellation terms when supplied. Do not invent
 Read outgoing_messages as messages already sent by the Scout/musician, not provider-confirmed facts. Never repeat an answered question or re-send the same unanswered request after the provider says they cannot resolve it in chat. Ask at most one or two useful, related questions in a reply; do not append a standard contract checklist to every message.
 If only public listing evidence has been supplied and the room is incompatible, choose stop with suggestedReply=null so the candidate is dismissed internally; never send a decline as the first contact. In an established provider conversation, one concise decline is allowed when ending a pursuit. If outgoing_messages already contains that decline and the provider merely acknowledges it, choose stop with suggestedReply=null; do not send another decline or farewell.
 When the practical fit is promising and only nonessential contract/admin details remain, choose ask_musician with suggestedReply=null: briefly name what can be clarified at a viewing and ask whether they want to arrange one. Preserve those unknown details in uncertainties; do not mark them confirmed or present a binding-ready offer. If the musician already requested a viewing, choose ask_provider with a concise non-binding request for viewing times, without again demanding those details. One viewing time from the musician is enough: propose exactly that time to the provider; never ask the musician for a second or alternative date and never invent a rule that two options are required. If the provider cannot make that time they will say so, and the musician decides again. If a viewing request is already sent and there is no new answer, choose wait. Keep ownership explicit: retrieving the band's own kit does not mean borrowing the provider's kit.
+VIEWING: Fill viewing only when the provider has explicitly agreed to one specific viewing date and time, in the provider's own words. A time that only the Scout or the musician proposed, a range, a weekday without a time, "any evening works", or a mere willingness to arrange something is not an agreement: viewing stays null. Resolve weekday words such as "Friday", "tomorrow" or "next week" against the current Berlin date given in the case card, and record date as YYYY-MM-DD and time as 24-hour HH:MM in Europe/Berlin. Cite the provider sentence that names that date and time; a listing quote, your own draft or the musician's wish never establishes a viewing. If the provider later confirms a different slot, record that newer slot. Once a viewing is agreed, do not list it as an uncertainty and prefer wait unless something else is genuinely still open.
 NEVER ask the musician whether you should ask the provider something. Requesting a fact the provider can supply (a price detail, availability, house rules, or an address only when the Location rule above genuinely needs one) is your own job: choose ask_provider and ask for it. ask_musician is reserved for choices only the band can make: accepting a deviation, choosing between offered slots, dropping a requirement, or whether to pursue a viewing.
 When the provider has answered everything and only the band's own choice remains (which offered slot or whether to pursue a viewing), choose ask_musician and put that choice into uncertainties; present_offer is only for an offer the musician can accept without any further choice.
 A generic request for drums or a drum kit does not establish consent to electronic-only or headphone-only rehearsal. If acoustic drums are prohibited, surface that equipment restriction as a separate material choice unless the musician already explicitly accepted an electronic kit.

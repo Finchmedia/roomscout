@@ -13,6 +13,7 @@ import type * as React from "react";
 import { Overline } from "@/components/ui/overline";
 import { StatusDot } from "@/components/ui/status-dot";
 import { Switch } from "@/components/ui/switch";
+import type { ViewingSlot } from "@/features/viewings/formatViewing";
 
 export type CandidateProgress =
   | "checking"
@@ -22,6 +23,7 @@ export type CandidateProgress =
   | "reply_received"
   | "reviewing_reply"
   | "needs_attention"
+  | "viewing_arranged"
   | "closed";
 
 /** A provider conversation or indexed match, narrowed to the rail. */
@@ -43,6 +45,8 @@ export interface CandidateRow {
   subtitle: string;
   state?: "waiting" | "thinking" | "needs_attention" | "offer_ready" | "closed";
   progress?: CandidateProgress;
+  /** The arranged slot, Berlin wall clock; present exactly with `viewing_arranged`. */
+  viewing?: ViewingSlot;
   hasProviderReply?: boolean;
   /** A translated status supplied by the screen wins over fallback mapping. */
   statusLabel?: string;
@@ -67,6 +71,8 @@ export interface CandidateListCopy {
   failed?: string;
   reviewing?: string;
   attention?: string;
+  /** Plain fallback for an arranged viewing whose slot the row does not carry. */
+  viewing?: string;
   closed?: string;
   fit?: string;
   nearBudget?: string;
@@ -85,6 +91,8 @@ export interface CandidateListProps {
   copy: CandidateListCopy;
   /** `formatMessageStamp(locale, at, now, { short: true })`, bound by the screen. */
   formatStamp: (timestamp: number) => string;
+  /** `formatViewingLabel(viewing, locale)`, bound by the screen like `formatStamp`. */
+  formatViewing?: (viewing: ViewingSlot) => string;
   onOpen: (targetId: string, candidate: CandidateRow) => void;
   /** Controlled so the desktop rail and its mobile sheet share one filter. */
   showAboveBudget?: boolean;
@@ -92,8 +100,17 @@ export interface CandidateListProps {
   ref?: React.Ref<HTMLElement>;
 }
 
-/** Show exclusion before delivery activity; active rooms prioritize the musician's decision. */
-function stateLabel(row: CandidateRow, copy: CandidateListCopy): string {
+/**
+ * Show exclusion before delivery activity; active rooms prioritize the
+ * musician's decision — except an arranged viewing, which is the goal state of
+ * a run and outranks every other in-play label, so the row keeps saying when
+ * the musician is expected at the room.
+ */
+function stateLabel(
+  row: CandidateRow,
+  copy: CandidateListCopy,
+  formatViewing?: (viewing: ViewingSlot) => string,
+): string {
   switch (row.exclusionReason) {
     case "unavailable": return copy.unavailable ?? copy.notFit ?? copy.closed ?? copy.asked;
     case "schedule": return copy.scheduleConflict ?? copy.notFit ?? copy.closed ?? copy.asked;
@@ -102,6 +119,14 @@ function stateLabel(row: CandidateRow, copy: CandidateListCopy): string {
     case "not_fit": return copy.notFit ?? copy.closed ?? copy.asked;
   }
   if (row.disposition === "not_fit") return copy.notFit ?? copy.closed ?? copy.asked;
+  // A conversation that was closed afterwards keeps its viewing row in the
+  // database, but the rail must not present a room that is out of the running
+  // as an appointment. Über Budget is still in play, so the slot outranks it —
+  // the room card says the same, and the budget group header stays the warning.
+  if ((row.viewing || row.progress === "viewing_arranged") && row.progress !== "closed" && row.state !== "closed") {
+    const slot = row.viewing && formatViewing ? formatViewing(row.viewing) : undefined;
+    return slot ?? copy.viewing ?? copy.offer;
+  }
   if (row.disposition === "above_budget") return copy.nearBudget ?? copy.fit ?? copy.asked;
   if (row.hasOpenDecision) return copy.question;
   if (row.state === "offer_ready") return copy.offer;
@@ -134,6 +159,7 @@ export function CandidateList({
   candidates,
   copy,
   formatStamp,
+  formatViewing,
   onOpen,
   showAboveBudget = true,
   onShowAboveBudgetChange,
@@ -155,7 +181,7 @@ export function CandidateList({
   for (const row of visibleCandidates) groups.find(group => group.key === candidateGroup(row))?.rows.push(row);
 
   const renderRow = (row: CandidateRow) => {
-    const label = stateLabel(row, copy);
+    const label = stateLabel(row, copy, formatViewing);
     const group = candidateGroup(row);
     const attention = group !== "not_fit" && (row.unread || row.hasOpenDecision || row.canRetryAssessment === true || row.progress === "needs_attention");
     const key = row.candidateKey ?? (row.savedNeedId && row.signalId ? `${row.savedNeedId}:${row.signalId}` : row.conversationId);

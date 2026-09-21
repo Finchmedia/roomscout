@@ -51,6 +51,7 @@ const stages = [
   "actionApprovals",
   "actionRequests",
   "handoffs",
+  "viewings",
   "offerRevisions",
   "platformMessages",
   "platformThreads",
@@ -395,6 +396,7 @@ async function eraseStage(
     case "actionApprovals": return await eraseRows(ctx, await ctx.db.query("actionApprovals").withIndex("by_owner_and_decided_at", (q) => q.eq("ownerId", ownerId)).take(DELETE_BATCH_SIZE));
     case "actionRequests": return await eraseRows(ctx, await ctx.db.query("actionRequests").withIndex("by_owner_and_status_and_updated_at", (q) => q.eq("ownerId", ownerId)).take(DELETE_BATCH_SIZE));
     case "handoffs": return await eraseRows(ctx, await ctx.db.query("handoffs").withIndex("by_owner_and_status_and_updated_at", (q) => q.eq("ownerId", ownerId)).take(DELETE_BATCH_SIZE));
+    case "viewings": return await eraseRows(ctx, await ctx.db.query("viewings").withIndex("by_owner_and_date", (q) => q.eq("ownerId", ownerId)).take(DELETE_BATCH_SIZE));
     case "offerRevisions": return await eraseRows(ctx, await ctx.db.query("offerRevisions").withIndex("by_owner_and_created_at", (q) => q.eq("ownerId", ownerId)).take(DELETE_BATCH_SIZE));
     case "platformMessages": return await eraseRows(ctx, await ctx.db.query("platformMessages").withIndex("by_owner", (q) => q.eq("ownerId", ownerId)).take(DELETE_BATCH_SIZE));
     case "platformThreads": return await eraseRows(ctx, await ctx.db.query("platformThreads").withIndex("by_owner_and_last_message_at", (q) => q.eq("ownerId", ownerId)).take(DELETE_BATCH_SIZE));

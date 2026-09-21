@@ -373,6 +373,36 @@ describe("ConversationThread", () => {
     expect(screen.getByText("Berlin · Portal")).toBeVisible();
   });
 
+  it("says when the arranged viewing is, at the top of the thread", () => {
+    renderThread({
+      head: header({
+        progress: "viewing_arranged",
+        viewing: { date: "2026-09-25", time: "17:00" },
+      } as Partial<ThreadHeader>),
+    });
+    // The day and the time the Anbieter agreed to; the exact month
+    // abbreviation is ICU's.
+    const shown = screen.getByText(/17:00/);
+    expect(shown).toHaveTextContent(/Fri/);
+    expect(shown).toHaveTextContent("25");
+    expect(shown).toHaveAttribute("role", "status");
+
+    // A room that was closed afterwards keeps its row in the database, but the
+    // thread retires the appointment exactly as the candidate rail does.
+    cleanup();
+    renderThread({
+      head: header({
+        progress: "closed", state: "closed",
+        viewing: { date: "2026-09-25", time: "17:00" },
+      } as Partial<ThreadHeader>),
+    });
+    expect(screen.queryByText(/17:00/)).not.toBeInTheDocument();
+
+    cleanup();
+    renderThread();
+    expect(screen.queryByText(/17:00/)).not.toBeInTheDocument();
+  });
+
   it("shows the composer's hint for a closed conversation instead of a send path", () => {
     renderThread({
       head: header({ state: "closed", composer: { enabled: false, reason: "closed" } } as Partial<ThreadHeader>),

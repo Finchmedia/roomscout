@@ -7,7 +7,31 @@ import { canonicalizeUrl } from "./integrations/urlCanonicalization";
 import { signalMatchRevision } from "./lib/matchValidity";
 import { assertVoiceClaim, syncVoiceSessionFocus, voiceClaimValidator } from "./lib/voiceClaim";
 import { conversationProgress, latestProviderReplyExcerpt } from "./lib/conversationProgress";
+import { berlinParts, berlinWeekdayOfDate } from "./lib/berlinTime";
 import { delimitUntrustedData } from "./lib/privacy";
+
+/** A viewing as the Scout says it out loud: weekday, room and 24-hour time. */
+function spokenViewing(viewing: { date: string; time: string }) {
+  return { ...viewing, weekday: berlinWeekdayOfDate(viewing.date) };
+}
+
+/**
+ * Every viewing of this search from today onwards, earliest first, so the
+ * Scout can answer "which viewings are coming up?" in one tool call. Today is
+ * the Berlin calendar day; a query may read the transaction's clock.
+ */
+async function upcomingViewings(ctx: QueryCtx, ownerId: Id<"users">, savedNeedId: Id<"savedNeeds">) {
+  const today = berlinParts(Date.now()).date;
+  const rows = await ctx.db.query("viewings").withIndex("by_owner_and_date", (q) =>
+    q.eq("ownerId", ownerId).gte("date", today)).take(50);
+  return rows
+    .filter((row) => row.savedNeedId === savedNeedId)
+    .map((row) => ({
+      roomTitle: row.roomTitle, conversationId: row.conversationId,
+      ...spokenViewing({ date: row.date, time: row.time }),
+    }))
+    .sort((left, right) => left.date === right.date ? left.time.localeCompare(right.time) : left.date.localeCompare(right.date));
+}
 
 async function ownedNeed(ctx: QueryCtx, ownerId: Id<"users">, savedNeedId: Id<"savedNeeds">) {
   const need = await ctx.db.get(savedNeedId);
@@ -36,6 +60,7 @@ export const inspect = internalQuery({
         ctx.db.query("providerConversations").withIndex("by_need_and_updated_at", (q) =>
           q.eq("savedNeedId", args.savedNeedId)).order("desc").take(20),
       ]);
+      const arranged = await upcomingViewings(ctx, args.ownerId, args.savedNeedId);
       const conversations = (await Promise.all(conversationRows.map(async (conversation) => {
         if (conversation.ownerId !== args.ownerId) return null;
         const [signal, requests] = await Promise.all([
@@ -44,16 +69,18 @@ export const inspect = internalQuery({
             q.eq("providerConversationId", conversation._id)).order("desc").take(20),
         ]);
         const excerpt = await latestProviderReplyExcerpt(ctx, conversation);
+        const status = await conversationProgress(ctx, conversation, requests);
         return {
           conversationId: conversation._id,
           signalId: conversation.signalId,
           title: signal?.title ?? "",
           state: conversation.state,
-          ...await conversationProgress(ctx, conversation, requests),
+          ...status,
+          ...(status.viewing ? { viewing: spokenViewing(status.viewing) } : {}),
           latestProviderReplyExcerpt: excerpt === null ? null : delimitUntrustedData("provider_reply_excerpt", excerpt),
         };
       }))).filter((row): row is NonNullable<typeof row> => row !== null);
-      return JSON.stringify({ status: "indexed_candidates", candidates, conversations, manualContact: "candidate_panel_only" });
+      return JSON.stringify({ status: "indexed_candidates", candidates, conversations, upcomingViewings: arranged, manualContact: "candidate_panel_only" });
     }
     const signal = await ctx.db.get(signalId);
     if (!signal || !["published", "stale"].includes(signal.status)) return JSON.stringify({ status: "not_found" });
@@ -63,14 +90,17 @@ export const inspect = internalQuery({
     const ownedConversation = conversation?.ownerId === args.ownerId ? conversation : null;
     const requests = ownedConversation ? await ctx.db.query("actionRequests").withIndex("by_provider_conversation_and_updated_at", q => q.eq("providerConversationId", ownedConversation._id)).order("desc").take(20) : [];
     const excerpt = ownedConversation ? await latestProviderReplyExcerpt(ctx, ownedConversation) : null;
+    const status = ownedConversation ? await conversationProgress(ctx, ownedConversation, requests) : null;
     return JSON.stringify({
       status: "indexed", signal: projectSignal(signal),
       match: current ? { eligible: match.eligible, contactEligible: match.contactEligible, reasons: match.reasons, uncertainties: match.uncertainties, dismissed: match.status === "dismissed" } : null,
-      conversation: ownedConversation ? {
+      conversation: ownedConversation && status ? {
         conversationId: ownedConversation._id,
-        ...await conversationProgress(ctx, ownedConversation, requests),
+        ...status,
+        ...(status.viewing ? { viewing: spokenViewing(status.viewing) } : {}),
         latestProviderReplyExcerpt: excerpt === null ? null : delimitUntrustedData("provider_reply_excerpt", excerpt),
       } : null,
+      upcomingViewings: await upcomingViewings(ctx, args.ownerId, need._id),
       manualContact: "candidate_panel_only", source: "public_index",
     });
   },
