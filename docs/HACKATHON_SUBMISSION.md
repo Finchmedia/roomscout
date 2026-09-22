@@ -73,18 +73,35 @@ A fresh production account previously completed portal registration, an inquiry,
 an AI provider reply, email notification, inbox import and Scout assessment
 through the normal application flow.
 
+Turnstile blocked signup in our Firecrawl tests, so it is disabled on the demo
+portal we own. That limitation remains unresolved; the demo does not demonstrate
+automated signup through CAPTCHA-protected third-party portals.
+
 ### Why I built it and what was difficult
 
 I built RoomScout to give musicians time back from fragmented searches and
-repetitive coordination. The challenge was making an agent's actions dependable:
-keeping voice and text consistent, separating provider facts from band
-preferences, and handling browser failures without sending duplicate messages.
+repetitive coordination. Two early integration challenges shaped the project:
 
-One concrete bug was Firecrawl returning an intermediate result before a browser
-program finished. Invocation-specific completion tokens and bounded read-only
-polling recover the result without repeating the original action. Serialized
-browser work, delivery evidence and explicit uncertain states make failures
-visible and recoverable.
+- **Structured Outputs through the Convex AI Gateway.** Requests initially
+  failed because the provider adapter did not advertise Structured Outputs
+  support: the AI SDK discarded the JSON Schema and downgraded the request to
+  plain JSON mode. A minimal reproduction isolated the missing
+  `supportsStructuredOutputs` flag. A small local adapter fix restored strict
+  schema-based extraction and parsing. The finding was shared through the
+  Convex Discord and subsequently fixed upstream.
+- **Extending the official Firecrawl Convex component.** The published version
+  we started with exposed crawling and scraping but did not yet expose Interact
+  or Native Monitoring. We vendored the official component as a local fork,
+  preserved its existing API, tests and MIT license, and added those interfaces.
+  That made browser-based registration, verification and messaging available
+  through the same Convex component as public-web discovery.
+
+Browser orchestration also needed a redesign: translating every small browser
+step into a separate remote call made a message take 16–46 API round trips.
+Grouping work into one browser session and one Interact program per phase
+reduced the standard message workflow to four calls: open, prepare, send and
+close. This reduced network overhead while retaining the final authorization
+check and delivery evidence.
 
 ### Tech stack
 
