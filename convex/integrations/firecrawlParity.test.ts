@@ -74,6 +74,10 @@ function recordingTransport(results: unknown[]): {
         calls.push({ kind: "interact", mutating: options.mutating, keepalive, code: options.code });
         const next = keepalive ? { url: "https://roomscout.dev/" } : queue.shift();
         if (next instanceof Error) throw next;
+        const completionKey = options.code.match(/__roomscoutRun_[A-Za-z0-9_-]+/)?.[0];
+        const completed = completionKey === undefined ? next : {
+          __roomscoutCompletion: { id: completionKey, state: "done", value: next },
+        };
         // Firecrawl's own `result` field is deliberately left unrelated: the
         // marker line in `output` is the authoritative channel (slice S0).
         return {
@@ -81,7 +85,7 @@ function recordingTransport(results: unknown[]): {
           exitCode: 0,
           killed: false,
           result: { unrelated: "provider structured value" },
-          output: `some provider chatter\n${RESULT_MARKER}${JSON.stringify(next)}\n`,
+          output: `some provider chatter\n${RESULT_MARKER}${JSON.stringify(completed)}\n`,
         };
       },
       async stop() {

@@ -160,6 +160,43 @@ describe("Firecrawl write failure reporting", () => {
     vi.unstubAllEnvs();
   });
 
+  it("reports a rejected final claim as an unsent failure and preserves its code", async () => {
+    const opened = session("write_rejected");
+    mocks.createSession.mockResolvedValue(opened);
+    const click = vi.fn();
+    mocks.send.mockImplementation(async (input: { beforeSubmit: () => Promise<void> }) => {
+      await input.beforeSubmit();
+      click();
+    });
+    const beforeSubmit = vi.fn(async () => {
+      throw new ConvexError({ code: "ACTION_SEARCH_CHANGED" });
+    });
+    await expect(executeFirecrawlApprovedWrite({} as never, {
+      baseUrl: "https://roomscout.dev", adapterKey: "roomscout-dev-v1", profileName: "profile_1",
+      body: "Hallo", providerThreadId: "thread_1", beforeSubmit,
+    })).rejects.toThrow("FIRECRAWL_PORTAL_WRITE_FAILED:ACTION_SEARCH_CHANGED");
+    expect(click).not.toHaveBeenCalled();
+    expect(mocks.createSession).toHaveBeenCalledOnce();
+    expect(opened.stop).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a failure after the final claim uncertain without repeating the send", async () => {
+    const opened = session("write_unconfirmed");
+    mocks.createSession.mockResolvedValue(opened);
+    mocks.send.mockImplementation(async (input: { beforeSubmit: () => Promise<void> }) => {
+      await input.beforeSubmit();
+      throw new Error("FIRECRAWL_INTERACT_RESULT_INVALID");
+    });
+    const beforeSubmit = vi.fn(async () => undefined);
+    await expect(executeFirecrawlApprovedWrite({} as never, {
+      baseUrl: "https://roomscout.dev", adapterKey: "roomscout-dev-v1", profileName: "profile_1",
+      body: "Hallo", providerThreadId: "thread_1", beforeSubmit,
+    })).resolves.toMatchObject({ outcome: "unknown", submitted: true, errorCode: "SUBMIT_RESULT_UNKNOWN" });
+    expect(beforeSubmit).toHaveBeenCalledOnce();
+    expect(mocks.send).toHaveBeenCalledOnce();
+    expect(opened.stop).toHaveBeenCalledOnce();
+  });
+
   it("carries the sandbox reason into the thrown write failure", async () => {
     const sessions = [session("write_1"), session("write_2"), session("write_3")];
     for (const opened of sessions) mocks.createSession.mockResolvedValueOnce(opened);

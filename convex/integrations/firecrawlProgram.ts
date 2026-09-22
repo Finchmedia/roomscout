@@ -6,6 +6,7 @@ const SANDBOX_ERROR_CODE = "SANDBOX_ERROR";
 const MAX_SANDBOX_MESSAGE_LENGTH = 400;
 /** How much of a sandbox message survives into our error code. */
 const MAX_SURFACED_MESSAGE_LENGTH = 120;
+export const FIRECRAWL_COMPLETION_FIELD = "__roomscoutCompletion";
 
 /**
  * One page probe, evaluated only when the program throws. Mirrors the local
@@ -36,6 +37,7 @@ const DIAGNOSTIC_SOURCE = String.raw`const __roomscoutDiag = async () => {
 export function buildFirecrawlProgram(
   body: string,
   vars: Record<string, unknown>,
+  completionKey?: string,
 ): string {
   if (!body.trim() || body.length > MAX_PROGRAM_BODY_LENGTH) {
     throw new Error("FIRECRAWL_PROGRAM_INVALID");
@@ -49,7 +51,15 @@ export function buildFirecrawlProgram(
   if (!serialized || serialized.length > MAX_PROGRAM_VARS_LENGTH) {
     throw new Error("FIRECRAWL_PROGRAM_VARS_INVALID");
   }
+  if (completionKey !== undefined && !/^__roomscoutRun_[A-Za-z0-9_-]{1,100}$/.test(completionKey)) {
+    throw new Error("FIRECRAWL_PROGRAM_COMPLETION_KEY_INVALID");
+  }
+  const completionStart = completionKey === undefined ? "" :
+    `globalThis[${JSON.stringify(completionKey)}] = JSON.stringify({ ${JSON.stringify(FIRECRAWL_COMPLETION_FIELD)}: { id: ${JSON.stringify(completionKey)}, state: "pending" } });`;
+  const completionFinish = completionKey === undefined ? "" :
+    `__roomscoutResult = { ${JSON.stringify(FIRECRAWL_COMPLETION_FIELD)}: { id: ${JSON.stringify(completionKey)}, state: "done", value: __roomscoutResult } };\nglobalThis[${JSON.stringify(completionKey)}] = JSON.stringify(__roomscoutResult);`;
   return `await (async () => {
+${completionStart}
 const vars = ${serialized};
 const __roomscoutPartial = {};
 ${DIAGNOSTIC_SOURCE}
@@ -61,6 +71,7 @@ ${body}
 } catch (error) {
 __roomscoutResult = { __roomscoutError: { code: ${JSON.stringify(SANDBOX_ERROR_CODE)}, message: String(error?.message ?? error).slice(0, ${MAX_SANDBOX_MESSAGE_LENGTH}), partial: __roomscoutPartial, diag: await __roomscoutDiag() } };
 }
+${completionFinish}
 const __roomscoutEncoded = JSON.stringify(__roomscoutResult);
 console.log(${JSON.stringify(RESULT_MARKER)} + __roomscoutEncoded);
 return __roomscoutEncoded;
@@ -137,7 +148,9 @@ export function parseInteractEnvelope(envelope: unknown): unknown {
   if (typeof result === "function" || typeof result === "symbol") {
     throw new Error("FIRECRAWL_INTERACT_RESULT_INVALID");
   }
-  const sandboxError = record(record(result)?.__roomscoutError);
+  const completion = record(record(result)?.[FIRECRAWL_COMPLETION_FIELD]);
+  const completedValue = completion?.state === "done" ? completion.value : result;
+  const sandboxError = record(record(completedValue)?.__roomscoutError);
   if (sandboxError) {
     const message = sanitisedSandboxMessage(sandboxError.message);
     // Keys only plus the sanitised message: the page snapshot stays out of the

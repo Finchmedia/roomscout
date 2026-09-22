@@ -53,6 +53,39 @@ describe("Interact result decoding", () => {
     expect(parseInteractEnvelope(envelope)).toEqual({ stage: "sign_up" });
   });
 
+  test("uses the complete provider result when marker output was truncated", async () => {
+    const envelope = await runInteract({
+      success: true,
+      exitCode: 0,
+      result: '{"threads":[{"providerThreadId":"thread_1"}],"truncated":false}',
+      // A real provider stdout cap can cut a large inbox result in the middle
+      // of its JSON while leaving the Node last-expression result complete.
+      stdout: 'diagnostic line\n__ROOMSCOUT_RESULT__{"threads":[{"providerThreadId":"thread_',
+    });
+
+    expect(envelope.result).toBe(
+      '{"threads":[{"providerThreadId":"thread_1"}],"truncated":false}',
+    );
+    expect(parseInteractEnvelope(envelope)).toEqual({
+      threads: [{ providerThreadId: "thread_1" }],
+      truncated: false,
+    });
+  });
+
+  test("skips a malformed output marker when stdout has a complete marker", async () => {
+    const envelope = await runInteract({
+      success: true,
+      exitCode: 0,
+      result: { logs: [], sessionId: "provider-object" },
+      output: '__ROOMSCOUT_RESULT__{"receipt":{"status":"sent"',
+      stdout: '__ROOMSCOUT_RESULT__{"receipt":{"status":"sent"}}\n',
+    });
+
+    expect(parseInteractEnvelope(envelope)).toEqual({
+      receipt: { status: "sent" },
+    });
+  });
+
   test("reports a missing result when neither a marker nor a result exists", async () => {
     const shapeLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const envelope = await runInteract({

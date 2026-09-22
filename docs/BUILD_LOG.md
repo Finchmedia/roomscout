@@ -2411,3 +2411,238 @@ passed 57 tests, and 10 focused coordinate checks passed. The deployed orange
 Mapbox landing was visually checked in EN and DE with no browser errors; its
 real-research layer truthfully contains zero pins. No broad real-market coverage
 is claimed.
+
+## 2026-09-19 — MCP and delegated OAuth implementation plan
+
+Created [MCP_IMPLEMENTATION_PLAN.md](MCP_IMPLEMENTATION_PLAN.md) for a portable
+RoomScout MCP interface using both Codefox OAuth Provider and Convex MCP Gateway.
+The design preserves Convex Auth v2, account-level autonomy and first-party
+approval, with explicit tools over shared domain helpers and existing Workpools.
+
+Inspected the published component APIs and current backend seams. The first
+implementation gate must prove that a delegated bearer reaches the gateway's
+custom resolver without adding global OAuth trust. The plan also covers atomic
+grant generations, indexed token lookup/cleanup, ownership and scope checks,
+idempotency, asynchronous provenance and disconnect behavior.
+
+Two bounded architecture reviews corrected routing, private-question scope and
+search-adoption details. At that planning stage only documentation was changed; components were not
+installed, functional tests were not run, and no deployment or provider contact
+was performed. The implementation plan calls for focused functional checks,
+not the full historical test suite.
+
+Following the voice discussion, added the bounded
+[hello-world companion](MCP_HELLO_WORLD_PLAN.md) and linked it from Phase 0.
+It uses a separate minimal deployment, synthetic users, stock components and
+one authenticated tool connected through ChatGPT. The result separates a
+working client connection from authorization and revocation findings. Its
+explicit stopping point is a report; component rewrites, real tools and changes
+to existing deployments require a separate instruction. That step was planning
+only; the subsequently authorized execution is recorded below.
+
+### Isolated companion execution
+
+Executed the companion in a separate sibling project and seven-day Convex
+deployment `precise-chinchilla-292`. Stock Codefox OAuth Provider 0.4.2 and
+Convex MCP Gateway 2.0.0 work with Auth 2.0.0-alpha.1: an actual ChatGPT
+connection completed new-account signup, consent and PKCE, then invoked the
+authenticated hello tool. No manual band onboarding was needed. The main
+plan now reserves a scoped profile tool for later confirmed band details.
+
+Standalone build/typecheck passed; the focused functional smoke passed 19/20
+checks. The failing reconnect check, corroborated by the Gateway audit, showed
+that a pre-revocation access token became usable after regrant. Recorded this
+stock grant-existence limitation and disabled MCP access, verifying HTTP 503;
+also revoked the actual ChatGPT synthetic account's grant. No component patch,
+real RoomScout tool, provider contact or change to existing dev/prod was made.
+The companion ends here with [execution results](MCP_HELLO_WORLD_RESULTS.md),
+not an automatic continuation into production integration.
+
+## 2026-09-20 — Isolated OAuth revocation follow-up
+
+Implemented the separately authorized revocation fix in `roomscout-mcp-proof`.
+A local Codefox 0.4.2 component extension binds codes/tokens to immutable grant
+IDs, resolves exact hashed tokens, and rejects revoked generations after reconnect.
+Published the OAuth revocation endpoint and discovery metadata. The proof account
+can also revoke access directly. No existing RoomScout dev/prod runtime changed.
+
+The narrow revocation smoke passed 21/21; typecheck/build and isolated deployment
+passed. A freshly registered ChatGPT app called the endpoint on Trennen; the
+server confirmed revocation and the account page showed no grant. An older app
+produced no observed callback, possibly because of cached metadata. Earlier
+immediate post-click observations were premature; the later callback is recorded
+in the [updated report](MCP_HELLO_WORLD_RESULTS.md). The hello-only endpoint is
+enabled again. No broad suite, production integration or provider contact ran.
+
+
+## 2026-09-20 — Claude Code demo flow, provider replies and self-service reset
+
+Backfilled the recent main-app and companion-portal commits. Their commit
+messages credit Claude Fable 5.1 as co-author; these are Claude Code changes
+alongside the Codex regression work recorded below. Dates here use UTC.
+The September 19 bundle (`12e8190`) and browser Workpool cutover (`e2520b8`)
+are already covered by the earlier entries.
+
+Live voice now opens only once per session, avoids a queue label for ordinary
+single-turn waiting, and keeps unanswered decisions visible after reload even
+without an active call (`72799b8`). Demo buttons lead into sign-in and the real
+Scout flow with disclosure; explicit budget and other search corrections update
+active or paused searches. Candidate state reflects exclusions and availability,
+and voice/card layouts are steadier (`b6c6a28`). Evidence:
+`src/ui/chat/LiveVoiceChat.tsx`, `src/routes/musician/ScoutPage.tsx`,
+`src/routes/public/LandingPage.tsx`, `convex/scout.ts`.
+
+Band-owned equipment and urgency no longer become provider requirements or
+unnecessary questions to the musician (`c43e3e1`). One offered date and time
+is enough to proceed with a viewing choice (`9102edf`). Evidence:
+`convex/lib/providerAssessment.ts`, `convex/decisions.ts`.
+
+The companion portal now attempts one repair for a rejected simulated-provider
+reply, then uses a neutral reply in the participant's locale instead of silently
+dropping the turn (`6606bef`). Providers can agree to a musician-proposed viewing,
+and three demo rooms support an immediate-start path (`c83c431`). Practical
+parking and facility facts were added to those scenarios (`b44f982`). Canonical
+price and scenario constraints still govern the replies. Evidence in
+`roomscout-dev`: `convex/providerScenarioEngine.ts`,
+`convex/simulatedProviderActions.ts`, `providerScenarios/berlin.ts`.
+
+Settings gained a self-service reset that pauses the search and deletes the
+owner's search, candidate, conversation, decision, voice, memory and Scout-thread
+state in resumable pages, preserving the account, profile, portal registration,
+mailbox and settings (`06df746`). The app requests a scoped portal reset before
+local deletion (`9e4f28c`); the portal authenticates that request and removes the
+participant's conversations and provider-agent state while keeping users and
+listings (`9306cf1`). Portal cleanup failures are recorded without blocking the
+local reset. Evidence: `convex/demoReset.ts`, `convex/lib/portalReset.ts`,
+`src/routes/musician/LiveSettingsPage.tsx`; portal `convex/participantReset.ts`.
+
+Commit-reported validation: the main demo-flow changes passed 195 tests across
+12 files and both typechecks; the Settings reset passed 108 tests across nine
+files and both typechecks; its portal-reset follow-up passed 10 integration
+tests and backend typechecking. The companion portal reset commit reports
+82 tests, TypeScript and ESLint passing. These are recorded historical results,
+not tests rerun during this documentation update.
+
+## 2026-09-21 — Conversational decisions and arranged viewings
+
+Live voice announces an open Scout question once in the saved locale and accepts a natural-language
+answer through the shared decision tool. Explicit delivery envelopes distinguish
+results that should be spoken from silent updates; uncertain write outcomes
+direct the musician to the panel instead of inviting a repeated send
+(`ae878b9`). Messages requiring exact approval still use the panel.
+
+Trusted listing location and computed distance avoid needless questions about
+whether to ask for an address. Missing provider facts are the Scout's follow-up
+work; musician questions concern actual choices (`d1a8156`). The companion
+portal gives each Berlin provider a private precise-location fact to share on
+request or for an agreed viewing, without changing public listing detail
+(`4894c54`). The brief review card was also centered beneath its headline
+(`16b35a5`). Evidence: `convex/lib/providerAssessment.ts`, `convex/decisions.ts`,
+`convex/providerConversations.ts`, `convex/scoutRuntime.ts`,
+`src/hooks/useGptLiveVoiceScout.ts`; portal `providerScenarios/berlin.ts`.
+
+The latest main commit, `4e0bbc0`, makes an arranged viewing a durable outcome.
+Provider assessment must cite the provider's own message with an explicit
+agreed time; relative dates resolve against the current Berlin date. One
+viewing is stored per conversation with owner/date and conversation indexes.
+Candidate rows, room cards and conversation threads display the appointment,
+and Scout can inspect upcoming viewings and answer schedule questions by voice.
+Live congratulates once per viewing and avoids a duplicate generic reply
+announcement. Retired rooms are not announced, and demo reset removes viewing
+rows. Evidence: `convex/schema.ts`, `convex/providerConversations.ts`,
+`convex/scoutCandidates.ts`, `src/features/viewings/formatViewing.ts`.
+
+These commits credit Claude Fable 5.1 as co-author. Commit-reported validation:
+the voice-decision work passed 259 tests across 14 files and both typechecks;
+the provider-fact correction passed 98 tests across six files and backend
+typechecking; the viewing milestone passed 277 backend tests across 18 files,
+196 frontend tests across nine files, and both typechecks. These overlapping
+historical runs are not a new aggregate test run. Arranged viewings do not
+constitute a rental contract, payment, or completed binding acceptance.
+
+## 2026-09-21 — Public-web discovery and landing research coverage
+
+The current working tree extends source gathering into a bounded pipeline:
+600 city-scoped queries across 150 German cities, named-venue resolution,
+domain-level AI triage from saved search evidence, candidate promotion,
+explicit source activation, and one-time page/detail ingestion. Search and
+social hosts are filtered; restricted marketplaces carry a terms-review
+marker. Scheduled batches retain their remaining query budget, and a persisted
+stop flag prevents a running worker from scheduling another batch after stop.
+Promotion creates paused targets, and ordinary activation keeps recurring
+monitoring off unless it is explicitly requested.
+
+The maintainer confirmed that Firecrawl gathered real public-room data for the
+landing map. The local public snapshot records 496 indexed listings at
+`2026-09-21T15:44:08Z`, with source-domain attribution and a separate city/pin
+projection. This is a dated source artifact, not a fresh production count or
+proof that every listing is still available. The snapshot query excludes demo
+signals and applies placeholder and location checks; the suppression helper
+preserves provenance and skips authored demo signals.
+
+The demo candidate filter now checks `isDemo` while controlled-portal mode is
+active. Real public-web results stay available to the map; seeded portal rooms
+remain eligible for the controlled demo. The `Indexed fit` label describes a
+match state and does not determine provenance. This replaces the older CLI
+note's workaround of deactivating real Berlin sources for recording.
+
+Evidence: `convex/sourceDiscoveryActions.ts`, `convex/sourcePipeline.ts`,
+`convex/sourcePipelineActions.ts`, `convex/sourceTriage.ts`,
+`convex/lib/sourceHostPolicy.ts`, `convex/lib/listingQuality.ts`,
+`convex/matches.ts`, and `src/ui/landing/researchCoverageSnapshot.ts`.
+These additions are uncommitted working-tree evidence. No new crawl,
+production data query, or frontend deployment was performed for this log update.
+
+## 2026-09-22 — Demo regression investigation
+
+The September 19 inbox recovery handled an intermediate Firecrawl result with
+one immediate read-back. Read-only live probing reproduced a successful
+provider response containing an intermediate number before the original async
+program had finished. The new runtime correlates each invocation with a unique
+completion slot, waits with bounded read-only polls, and never replays the
+original program to recover its result. Completed slots are cleaned in the next
+program or when the session closes, preserving normal HTTP round-trip counts.
+The component also preserves a complete native result when the marker line
+has been truncated.
+
+Inbox navigation now waits for terminal owned DOM state instead of interpreting
+a streaming shell as a missing thread. A final authorization rejection before
+click is an unsent failure with its safe error code; failures after that gate
+remain uncertain. Portal/profile setup failures now project as needs-attention
+instead of claiming a completed room assessment failed.
+
+The existing public-room filter operates on demo provenance, independently of
+the Indexed fit label. Added a mixed-source regression proving real rooms stay
+on the landing map while only controlled-demo rooms reach demo candidates.
+Sharing normalization now makes an open-to-sharing brief accept permanent and
+shared rooms in every writer. Behavioral tests cover all three writers,
+separate field updates, and the Scout-to-permanent-room matching path.
+
+Validation: 172 tests in 16 focused files passed; application and explicit
+Convex backend typechecks, scoped ESLint, and diff whitespace checks passed.
+The patched runtime recovered the live early-result case through pending
+states to a complete inbox result. The investigation performed no production
+data repair or provider inquiry; the authorized deployment followed below.
+
+### Authorized production deployment
+
+At the user's request, deployed the tested backend changes to production
+`fleet-jackal-83`. The dry run and final push passed schema validation and
+backend typechecking, with no index deletions. The deployed
+`firecrawlPortal:registrationPreflight` returned ready after a read-only
+Firecrawl page inspection. A separate saved-profile inbox probe using the
+deployed source recovered a real intermediate response into a complete batch
+with no missing/failed threads. Both public app routes returned HTTP 200.
+
+No static frontend deployment was needed for these backend fixes, and no
+provider message was sent or retried. Existing unknown deliveries were not
+replayed.
+
+### Demo recorded and documentation handoff
+
+After the deployment, the maintainer confirmed that the demo recording is
+complete and requested no further code changes. Updated this build log and
+`hackathon.md` to include the latest Claude Code commits, the public discovery
+work, the deployed regression fixes, and the recorded-demo milestone. The
+recording itself has not been inspected here, and no publication or hackathon
+submission is claimed. This follow-up changes documentation only.

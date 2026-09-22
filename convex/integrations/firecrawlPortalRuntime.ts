@@ -2,7 +2,11 @@
 
 import type { GenericActionCtx, GenericDataModel } from "convex/server";
 import type { FirecrawlRoomScoutClient } from "../components/firecrawlRoomScout/client";
-import { buildFirecrawlProgram, parseInteractEnvelope } from "./firecrawlProgram";
+import {
+  buildFirecrawlProgram,
+  FIRECRAWL_COMPLETION_FIELD,
+  parseInteractEnvelope,
+} from "./firecrawlProgram";
 import { reviewedPortalUrl } from "./reviewedPortalUrl";
 
 export type FirecrawlInteractOptions = {
@@ -101,6 +105,8 @@ const MIN_STOP_TIMEOUT_MS = 5_000;
 const TRANSPORT_GRACE_MS = 30_000;
 /** Bound for the remembered inner failure code reported on a run event. */
 const MAX_RECORDED_ERROR_CODE_LENGTH = 120;
+const COMPLETION_POLL_INTERVAL_MS = 500;
+const MAX_COMPLETION_POLLS = 30;
 /** Reads the current page URL and nothing else; used as a session keepalive. */
 export const FIRECRAWL_PORTAL_URL_PROGRAM = "return { url: await page.url() };";
 
@@ -123,6 +129,19 @@ function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+function completionState(value: unknown, completionKey: string):
+  | { state: "pending" }
+  | { state: "done"; value: unknown }
+  | null {
+  const completion = record(record(value)?.[FIRECRAWL_COMPLETION_FIELD]);
+  if (completion?.id !== completionKey) return null;
+  if (completion.state === "pending") return { state: "pending" };
+  if (completion.state === "done" && Object.prototype.hasOwnProperty.call(completion, "value")) {
+    return { state: "done", value: completion.value };
+  }
+  return null;
 }
 
 function providerStatus(error: unknown): number | undefined {
@@ -218,6 +237,7 @@ export async function createFirecrawlPortalSession(input: {
     lastDispatchAt = now();
   };
   let lastErrorCode: string | null = null;
+  let previousCompletionKey: string | null = null;
   const recordFailure = (code: string) => {
     const trimmed = code.trim().slice(0, MAX_RECORDED_ERROR_CODE_LENGTH);
     if (trimmed) lastErrorCode = trimmed;
@@ -237,20 +257,41 @@ export async function createFirecrawlPortalSession(input: {
       boundedTimeoutMs(timeoutOverrideMs ?? Math.min(timeout, MAX_PROGRAM_TIMEOUT_MS), MAX_PROGRAM_TIMEOUT_MS),
       remainingMs(),
     );
-    const requestTimeoutMs = Math.min(
-      sandboxTimeoutMs + TRANSPORT_GRACE_MS,
-      Math.max(remainingMs(), sandboxTimeoutMs),
-    );
-    let envelope: unknown;
-    try {
-      envelope = await input.transport.interact(scrapeId, {
-        code: buildFirecrawlProgram(body, vars),
+    const programDeadlineAt = now() + sandboxTimeoutMs;
+    const completionRemainingMs = () => {
+      const remaining = Math.min(remainingMs(), Math.floor(programDeadlineAt - now()));
+      if (remaining <= 0) {
+        recordFailure("FIRECRAWL_PORTAL_COMPLETION_TIMEOUT");
+        throw new Error("FIRECRAWL_PORTAL_COMPLETION_TIMEOUT");
+      }
+      return remaining;
+    };
+    const completionKey = `__roomscoutRun_${crypto.randomUUID().replaceAll("-", "")}`;
+    const interact = async (code: string, requestMutating: boolean, programTimeoutMs: number) => {
+      const requestTimeoutMs = Math.min(
+        programTimeoutMs + TRANSPORT_GRACE_MS,
+        Math.max(remainingMs(), programTimeoutMs),
+      );
+      return await input.transport.interact(scrapeId, {
+        code,
         language: "node",
-        timeout: interactTimeoutSeconds(sandboxTimeoutMs),
+        timeout: interactTimeoutSeconds(programTimeoutMs),
         requestTimeoutMs,
-        mutating,
+        mutating: requestMutating,
         allowUnsuccessfulBody: true,
       });
+    };
+    let envelope: unknown;
+    try {
+      envelope = await interact(
+        buildFirecrawlProgram(
+          `${previousCompletionKey === null ? "" : `delete globalThis[${JSON.stringify(previousCompletionKey)}];\n`}${body}`,
+          vars,
+          completionKey,
+        ),
+        mutating,
+        sandboxTimeoutMs,
+      );
     } catch (error) {
       const code = firecrawlTransportErrorCode(error, "INTERACT");
       recordFailure(code);
@@ -265,7 +306,44 @@ export async function createFirecrawlPortalSession(input: {
       recordFailure(error instanceof Error ? error.message : "FIRECRAWL_INTERACT_RESULT_INVALID");
       throw error;
     }
-    return parsed;
+    let completion = completionState(parsed, completionKey);
+    let completionPolls = 0;
+    while (completion?.state !== "done") {
+      completionPolls += 1;
+      if (completionPolls > MAX_COMPLETION_POLLS) {
+        recordFailure("FIRECRAWL_PORTAL_COMPLETION_TIMEOUT");
+        throw new Error("FIRECRAWL_PORTAL_COMPLETION_TIMEOUT");
+      }
+      const waitMs = Math.min(COMPLETION_POLL_INTERVAL_MS, completionRemainingMs());
+      if (waitMs > 0) await sleep(waitMs);
+      await pace();
+      const pollTimeoutMs = Math.min(10_000, completionRemainingMs());
+      let pollEnvelope: unknown;
+      try {
+        pollEnvelope = await interact(
+          `await (async () => globalThis[${JSON.stringify(completionKey)}] ?? null)()`,
+          false,
+          pollTimeoutMs,
+        );
+      } catch (error) {
+        const code = firecrawlTransportErrorCode(error, "INTERACT");
+        recordFailure(code);
+        // eslint-disable-next-line preserve-caught-error -- Provider diagnostics must not cross the credential boundary.
+        throw new Error(code);
+      }
+      try {
+        parsed = parseInteractEnvelope(pollEnvelope);
+      } catch (error) {
+        recordFailure(error instanceof Error ? error.message : "FIRECRAWL_INTERACT_RESULT_INVALID");
+        throw error;
+      }
+      completion = completionState(parsed, completionKey);
+    }
+    // Delete this slot in the next program's prelude. The final slot disappears
+    // when stop closes the short-lived browser session, preserving the normal
+    // round-trip budget without deleting a raced completion before validation.
+    previousCompletionKey = completionKey;
+    return completion.value;
   };
   return {
     scrapeId,

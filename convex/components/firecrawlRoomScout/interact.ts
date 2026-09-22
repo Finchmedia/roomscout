@@ -22,7 +22,16 @@ function markerResult(value: unknown): string | undefined {
   const markerIndex = value.lastIndexOf(RESULT_MARKER);
   if (markerIndex < 0) return undefined;
   const line = value.slice(markerIndex + RESULT_MARKER.length).split(/\r?\n/, 1)[0];
-  return line === undefined || line.length === 0 ? undefined : line;
+  if (line === undefined || line.length === 0) return undefined;
+  // Firecrawl can cap stdout independently from the program's last-expression
+  // result. Never let a marker whose JSON was cut off displace that complete
+  // native result at this component boundary.
+  try {
+    JSON.parse(line);
+    return line;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Provider fallback: a JSON string stays a string, a structured value passes through. */

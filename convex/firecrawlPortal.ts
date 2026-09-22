@@ -74,6 +74,10 @@ const WRITE_FAILURE_ERROR_MAX = 500;
  * (see `parseInteractEnvelope`); the classification ignores it.
  */
 function inboxSyncInnerCode(error: unknown): string {
+  if (error instanceof ConvexError && typeof error.data === "object" && error.data !== null && "code" in error.data) {
+    const code = error.data.code;
+    if (typeof code === "string" && /^[A-Z0-9_]{3,80}$/.test(code)) return code;
+  }
   const message = error instanceof Error ? error.message : "";
   const code = message.split(":", 1)[0] ?? "";
   return /^[A-Z0-9_]{3,80}$/.test(code) ? code : "UNKNOWN";
@@ -85,7 +89,9 @@ function inboxSyncInnerCode(error: unknown): string {
  * reaches a stored record.
  */
 function firecrawlErrorDetail(error: unknown, maxLength: number): string {
-  if (inboxSyncInnerCode(error) === "UNKNOWN") return "UNKNOWN";
+  const code = inboxSyncInnerCode(error);
+  if (code === "UNKNOWN") return "UNKNOWN";
+  if (error instanceof ConvexError) return code;
   return (error as Error).message.trim().slice(0, maxLength);
 }
 
@@ -480,8 +486,10 @@ export async function executeFirecrawlApprovedWrite(
         targetPath: input.targetPath,
         senderLabel: input.senderLabel,
         beforeSubmit: async () => {
-          submissionMayHaveOccurred = true;
           await input.beforeSubmit();
+          // A rejected final claim prevents the click. Only failures after
+          // this gate can leave delivery uncertain.
+          submissionMayHaveOccurred = true;
         },
       });
       let profileStopFailed = false;

@@ -168,6 +168,27 @@ describe("Nachrichten list", () => {
       composer: { enabled: false, reason: "channel_not_ready" },
     });
   });
+
+  it.each(["PORTAL_CONNECTION_REQUIRED", "MUSICIAN_PROFILE_REQUIRED"])(
+    "keeps the room assessment intact when provider readiness needs attention: %s",
+    async (lastErrorCode) => {
+      const f = await fixture();
+      await f.t.run(async (ctx) => {
+        for (const requestId of [f.sentRequestId, f.humanRequestId, f.pendingRequestId]) {
+          await ctx.db.delete(requestId);
+        }
+        await ctx.db.patch(f.conversationId, {
+          platformThreadId: undefined,
+          state: "needs_attention",
+          lastErrorCode,
+        });
+      });
+      const rows = await f.musician.query(api.conversations.listMine, {});
+      expect(rows[0]).toMatchObject({ progress: "needs_attention", hasProviderReply: false });
+      const thread = await f.musician.query(api.conversations.getMine, { conversationId: f.conversationId });
+      expect(thread?.header.progress).toBe("needs_attention");
+    },
+  );
   it("lists the conversation with title, preview and unread, and markRead clears it", async () => {
     const s = await fixture();
     await s.t.run((ctx) => ctx.db.patch(s.pendingRequestId, { status: "rejected" }));

@@ -26,6 +26,15 @@ describe("Firecrawl program transport", () => {
     expect(code).toMatch(/\}\)\(\)$/);
   });
 
+  it("stores a matching completion token only after the body settles", () => {
+    const key = "__roomscoutRun_test123";
+    const code = buildFirecrawlProgram("return { ok: true };", {}, key);
+    expect(code).toContain(`globalThis["${key}"]`);
+    expect(code).toContain('state: "pending"');
+    expect(code).toContain('state: "done"');
+    expect(code.indexOf('state: "done"')).toBeGreaterThan(code.indexOf("return { ok: true };"));
+  });
+
   it.each(["output", "stdout"])("accepts only marker-delimited structured %s", (field) => {
     expect(parseInteractEnvelope({
       success: true, exitCode: 0, killed: false,
@@ -81,6 +90,24 @@ describe("Firecrawl program transport", () => {
       diagKeys: ["url", "authenticated", "formErrors"],
       partialKeys: ["navigated"],
     });
+  });
+
+  it("surfaces a sandbox failure nested in a correlated completion", () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(() => parseInteractEnvelope(markerEnvelope({
+      __roomscoutCompletion: {
+        id: "__roomscoutRun_test123",
+        state: "done",
+        value: {
+          __roomscoutError: {
+            code: "SANDBOX_ERROR",
+            message: "synthetic failure",
+            partial: {},
+            diag: {},
+          },
+        },
+      },
+    }))).toThrow("FIRECRAWL_INTERACT_EXECUTION_FAILED:synthetic failure");
   });
 
   it("keeps URLs with query strings out of the surfaced failure message", () => {

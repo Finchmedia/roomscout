@@ -3,6 +3,10 @@ import {
   canonicalDomain,
   canonicalizeUrl,
 } from "../integrations/urlCanonicalization";
+import {
+  isBlockedDiscoveryHost,
+  requiresTosReview,
+} from "./sourceHostPolicy";
 
 export type RawDiscoveryHit = {
   url: string;
@@ -16,24 +20,20 @@ export type NormalizedDiscoveryCandidate = {
   canonicalDomain: string;
   title: string;
   snippet: string;
+  /** The domain restricts automated access; an operator resolves it. */
+  tosReviewRequired: boolean;
 };
-
-const NON_SOURCE_HOSTS = new Set([
-  "google.com",
-  "bing.com",
-  "duckduckgo.com",
-  "youtube.com",
-  "facebook.com",
-  "instagram.com",
-  "tiktok.com",
-]);
 
 export function normalizeDiscoveryHit(
   hit: RawDiscoveryHit,
 ): NormalizedDiscoveryCandidate | null {
   const canonicalUrl = canonicalizeUrl(hit.url);
   const domain = canonicalDomain(hit.url);
-  if (canonicalUrl === null || domain === null || NON_SOURCE_HOSTS.has(domain)) {
+  if (
+    canonicalUrl === null ||
+    domain === null ||
+    isBlockedDiscoveryHost(domain)
+  ) {
     return null;
   }
   const title = redactPublicText(hit.title ?? "").slice(0, 500);
@@ -44,5 +44,6 @@ export function normalizeDiscoveryHit(
     canonicalDomain: domain,
     title: title || domain,
     snippet,
+    tosReviewRequired: requiresTosReview(domain),
   };
 }

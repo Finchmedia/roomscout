@@ -7,8 +7,12 @@ import {
 } from "./firecrawlPortalRuntime";
 import type { FirecrawlRoomScoutClient } from "../components/firecrawlRoomScout/client";
 
-function successful(result: unknown, liveViewUrl?: string) {
-  return { success: true, exitCode: 0, killed: false, result, ...(liveViewUrl ? { liveViewUrl } : {}) };
+function successful(code: string, result: unknown, liveViewUrl?: string) {
+  const completionKey = code.match(/__roomscoutRun_[A-Za-z0-9_-]+/)?.[0];
+  const completed = completionKey === undefined ? result : {
+    __roomscoutCompletion: { id: completionKey, state: "done", value: result },
+  };
+  return { success: true, exitCode: 0, killed: false, result: completed, ...(liveViewUrl ? { liveViewUrl } : {}) };
 }
 
 describe("firecrawlPortalRuntime", () => {
@@ -17,7 +21,7 @@ describe("firecrawlPortalRuntime", () => {
     const interact = vi.fn(async (_ctx: unknown, _id: string, _options: { code: string }) =>
       {
         void _ctx; void _id; void _options;
-        return successful({ url: "https://roomscout.dev/inbox" });
+        return successful(_options.code, { url: "https://roomscout.dev/inbox" });
       });
     const stopInteraction = vi.fn(async () => ({}));
     const transport = firecrawlComponentPortalTransport({
@@ -49,7 +53,7 @@ describe("firecrawlPortalRuntime", () => {
   it("creates one reviewed scrape with the stable profile and stops idempotently", async () => {
     const transport: FirecrawlPortalTransport = {
       scrape: vi.fn(async () => ({ metadata: { scrapeId: "scrape_1" } })),
-      interact: vi.fn(async () => successful({ url: "https://roomscout.dev/inbox" }, "https://liveview.firecrawl.dev/session")),
+      interact: vi.fn(async (_id, options) => successful(options.code, { url: "https://roomscout.dev/inbox" }, "https://liveview.firecrawl.dev/session")),
       stop: vi.fn(async () => ({})),
     };
     const session = await createFirecrawlPortalSession({
@@ -72,7 +76,7 @@ describe("firecrawlPortalRuntime", () => {
       scrape: async () => ({ metadata: { scrapeId: "scrape_1" } }),
       interact: async (_id, options) => {
         programs.push(options);
-        return successful({ ok: true });
+        return successful(options.code, { ok: true });
       },
       stop: async () => ({}),
     };
@@ -95,9 +99,9 @@ describe("firecrawlPortalRuntime", () => {
 
   it("gives every program its own sandbox budget and the request thirty seconds more", async () => {
     const dispatched: unknown[] = [];
-    const interact = vi.fn(async (_scrapeId: string, options: unknown) => {
+    const interact = vi.fn(async (_scrapeId: string, options: { code: string }) => {
       dispatched.push(options);
-      return successful({ ok: true });
+      return successful(options.code, { ok: true });
     });
     const session = await createFirecrawlPortalSession({
       transport: { scrape: async () => ({ metadata: { scrapeId: "scrape_1" } }), interact, stop: async () => ({}) },
@@ -113,7 +117,7 @@ describe("firecrawlPortalRuntime", () => {
   });
 
   it("caps one program at two minutes even inside a long registration session", async () => {
-    const interact = vi.fn(async () => successful({ ok: true }));
+    const interact = vi.fn(async (_id: string, options: { code: string }) => successful(options.code, { ok: true }));
     const session = await createFirecrawlPortalSession({
       transport: { scrape: async () => ({ metadata: { scrapeId: "scrape_1" } }), interact, stop: async () => ({}) },
       url: "https://roomscout.dev", profileName: "profile_1", saveChanges: true,
@@ -136,7 +140,7 @@ describe("firecrawlPortalRuntime", () => {
 
   it("shares one absolute deadline and refuses a later program before dispatch", async () => {
     let now = 1_000;
-    const interact = vi.fn(async () => successful({ url: "https://roomscout.dev/inbox" }));
+    const interact = vi.fn(async (_id: string, options: { code: string }) => successful(options.code, { url: "https://roomscout.dev/inbox" }));
     const session = await createFirecrawlPortalSession({
       transport: {
         scrape: async () => ({ metadata: { scrapeId: "scrape_1" } }),
@@ -173,7 +177,7 @@ describe("firecrawlPortalRuntime", () => {
     const session = await createFirecrawlPortalSession({
       transport: {
         scrape: async () => ({ metadata: { scrapeId: "scrape_1" } }),
-        interact: async () => { dispatchedAt.push(Date.now()); return successful({ ok: true }); },
+        interact: async (_id, options) => { dispatchedAt.push(Date.now()); return successful(options.code, { ok: true }); },
         stop: async () => ({}),
       },
       url: "https://roomscout.dev", profileName: "profile_1", saveChanges: false, timeoutMs: 30_000,
@@ -182,7 +186,73 @@ describe("firecrawlPortalRuntime", () => {
     await session.runProgram("return { ok: true };", {}, true);
     await session.runProgram("return { ok: true };", {}, true);
     expect(dispatchedAt).toHaveLength(2);
-    expect(dispatchedAt[1]! - dispatchedAt[0]!).toBeGreaterThanOrEqual(55);
+    for (let index = 1; index < dispatchedAt.length; index += 1) {
+      expect(dispatchedAt[index]! - dispatchedAt[index - 1]!).toBeGreaterThanOrEqual(55);
+    }
+  });
+
+  it("polls one correlated completion without repeating a mutating program", async () => {
+    const calls: Array<{ code: string; mutating: boolean }> = [];
+    let poll = 0;
+    const session = await createFirecrawlPortalSession({
+      transport: {
+        scrape: async () => ({ metadata: { scrapeId: "scrape_1" } }),
+        interact: async (_id, options) => {
+          calls.push({ code: options.code, mutating: options.mutating });
+          const key = options.code.match(/__roomscoutRun_[A-Za-z0-9_-]+/)?.[0];
+          if (options.mutating) return { success: true, exitCode: 0, killed: false, result: "1", stdout: "" };
+          poll += 1;
+          if (poll === 1) {
+            return { success: true, exitCode: 0, killed: false, result: {
+              __roomscoutCompletion: { id: "__roomscoutRun_stale", state: "done", value: { stale: true } },
+            } };
+          }
+          if (poll === 2) {
+            return { success: true, exitCode: 0, killed: false, result: {
+              __roomscoutCompletion: { id: key, state: "pending" },
+            } };
+          }
+          return { success: true, exitCode: 0, killed: false, result: {
+            __roomscoutCompletion: { id: key, state: "done", value: { receipt: "sent" } },
+          } };
+        },
+        stop: async () => ({}),
+      },
+      url: "https://roomscout.dev",
+      profileName: "profile_1",
+      saveChanges: false,
+      timeoutMs: 5_000,
+    });
+
+    await expect(session.runProgram("return { receipt: 'sent' };", {}, true, 2_000))
+      .resolves.toEqual({ receipt: "sent" });
+    expect(calls.filter((call) => call.mutating)).toHaveLength(1);
+    expect(calls.filter((call) => call.code.includes("return { receipt: 'sent' };"))).toHaveLength(1);
+    expect(calls.filter((call) => !call.mutating && !call.code.includes("delete globalThis"))).toHaveLength(3);
+    expect(calls.at(-1)?.code).not.toContain("return { receipt: 'sent' };");
+  });
+
+  it("bounds a missing completion by the original program deadline", async () => {
+    let now = 0;
+    const session = await createFirecrawlPortalSession({
+      transport: {
+        scrape: async () => ({ metadata: { scrapeId: "scrape_1" } }),
+        interact: async () => {
+          now = 3_000;
+          return { success: true, exitCode: 0, killed: false, result: "1", stdout: "" };
+        },
+        stop: async () => ({}),
+      },
+      url: "https://roomscout.dev",
+      profileName: "profile_1",
+      saveChanges: false,
+      timeoutMs: 5_000,
+      now: () => now,
+    });
+
+    await expect(session.runProgram("return { ok: true };", {}, false, 2_000))
+      .rejects.toThrow("FIRECRAWL_PORTAL_COMPLETION_TIMEOUT");
+    expect(session.lastErrorCode()).toBe("FIRECRAWL_PORTAL_COMPLETION_TIMEOUT");
   });
 
   it("names a profile write lock instead of a generic rejection", async () => {

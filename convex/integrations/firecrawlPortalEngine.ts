@@ -84,13 +84,28 @@ export async function readFirecrawlPortalInboxBatch(input: {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: vars.limits.navigationTimeoutMs });
       await assertOrigin();
     };
-    const authenticated = async (kind, id) => await page.evaluate(({ kind, id }) => {
-      if (kind === "inbox") return document.querySelectorAll('[data-roomscout-inbox-state="ready"], [data-roomscout-inbox-state="empty"]').length === 1;
-      const rows = Array.from(document.querySelectorAll('[data-roomscout-thread-state="ready"]'));
-      return rows.length === 1 && rows[0].dataset.roomscoutThreadId === id;
+    const ownedState = async (kind, id) => await page.evaluate(({ kind, id }) => {
+      if (location.pathname.startsWith("/sign-in") || document.querySelector('[data-roomscout-authenticated="false"]')) return "auth";
+      if (kind === "inbox") {
+        return document.querySelectorAll('[data-roomscout-inbox-state="ready"], [data-roomscout-inbox-state="empty"]').length === 1 ? "ready" : "pending";
+      }
+      const ready = Array.from(document.querySelectorAll('[data-roomscout-thread-state="ready"]'));
+      if (ready.length === 1 && ready[0].dataset.roomscoutThreadId === id) return "ready";
+      if (document.querySelector('[data-roomscout-thread-state="unavailable"]')) return "missing";
+      return "pending";
     }, { kind, id });
+    const waitForOwnedState = async (kind, id) => {
+      const timeout = Math.min(vars.limits.navigationTimeoutMs, Math.max(1, deadline - Date.now()));
+      await page.waitForFunction(({ kind, id }) => {
+        if (location.pathname.startsWith("/sign-in") || document.querySelector('[data-roomscout-authenticated="false"]')) return true;
+        if (kind === "inbox") return document.querySelectorAll('[data-roomscout-inbox-state="ready"], [data-roomscout-inbox-state="empty"]').length === 1;
+        const ready = Array.from(document.querySelectorAll('[data-roomscout-thread-state="ready"]'));
+        return (ready.length === 1 && ready[0].dataset.roomscoutThreadId === id) || Boolean(document.querySelector('[data-roomscout-thread-state="unavailable"]'));
+      }, { kind, id }, { timeout });
+      return await ownedState(kind, id);
+    };
     await navigate(origin + "/inbox");
-    if (!(await authenticated("inbox", null))) throw new Error("PORTAL_AUTH_REQUIRED");
+    if ((await waitForOwnedState("inbox", null)) !== "ready") throw new Error("PORTAL_AUTH_REQUIRED");
     const discovered = await page.evaluate(() => Array.from(document.querySelectorAll('a[data-roomscout-thread-id][href]')).map((row) => row.dataset.roomscoutThreadId ?? ""));
     const valid = (value) => /^[A-Za-z0-9_-]{1,160}$/.test(value);
     const allDiscoveredIds = [...new Set(discovered.filter(valid))];
@@ -108,7 +123,9 @@ export async function readFirecrawlPortalInboxBatch(input: {
       if (Date.now() >= deadline) { timedOut = true; break; }
       try {
         await navigate(origin + "/inbox/" + encodeURIComponent(id));
-        if (!(await authenticated("thread", id))) {
+        const state = await waitForOwnedState("thread", id);
+        if (state === "auth") throw new Error("PORTAL_AUTH_REQUIRED");
+        if (state === "missing") {
           missingThreadIds.push(id);
         } else {
         const read = await page.evaluate(({ maxMessages, maxBodyChars }) => {
@@ -135,10 +152,11 @@ export async function readFirecrawlPortalInboxBatch(input: {
           threads.push(read.thread);
           if (read.bodyTruncated) bodyTruncatedThreadIds.push(id);
           if (read.historyTruncated) historyTruncatedThreadIds.push(id);
-        } else missingThreadIds.push(id);
+        } else throw new Error("PORTAL_THREAD_READ_EMPTY");
         }
-      } catch {
+      } catch (error) {
         if (new URL(await page.url()).origin !== origin) throw new Error("PORTAL_NAVIGATION_ESCAPED");
+        if (error instanceof Error && error.message === "PORTAL_AUTH_REQUIRED") throw error;
         failedThreadIds.push(id);
       }
     }

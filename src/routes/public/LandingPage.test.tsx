@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { researchCoverageSnapshot } from "@/ui/landing/researchCoverageSnapshot";
 import { LocaleProvider } from "@/ui/copy";
 
 import { LandingPage } from "./LandingPage";
@@ -83,8 +84,11 @@ describe("public landing route", () => {
     expect(screen.getByText("Sample offer")).toBeInTheDocument();
     expect(screen.getByText("Sample search · flow shortened for the demo")).toBeInTheDocument();
     expect(screen.getByText("Currently a controlled demo. No inquiries to third-party providers.")).toBeInTheDocument();
-    expect(screen.getByText("0 real rehearsal rooms found")).toBeInTheDocument();
-    expect(screen.getByText(/currently no real rehearsal rooms listed here/i)).toBeInTheDocument();
+    // The coverage panel reports the shipped research snapshot; the scripted
+    // parts of the page above must stay marked as examples regardless of it.
+    expect(
+      screen.getByText(`${researchCoverageSnapshot.realListingCount} real rehearsal rooms found`),
+    ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Try fictional rooms in Berlin →" })).toHaveAttribute("href", "/sign-up?returnTo=%2Fapp%2Fscout");
   });
 });

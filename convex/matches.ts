@@ -14,6 +14,7 @@ import {
 } from "./_generated/server";
 import { requireActionUserId, requireUserId } from "./integrations/authz";
 import { distanceKm, scoreSignalMatch } from "./matchingCore";
+import { controlledPortalOnly } from "./autonomyGate";
 import { createOpenAIEmbedding, OPENAI_EMBEDDING_MODEL } from "./openaiEmbeddings";
 import { isCurrentMatch, signalMatchRevision } from "./lib/matchValidity";
 import { generateRoomScoutObject } from "./ai";
@@ -50,8 +51,13 @@ type ReadCtx = Pick<QueryCtx, "db">;
 async function signalIsExcludedForNeed(
   ctx: ReadCtx,
   savedNeedId: Id<"savedNeeds">,
-  signal: { sourceEntryId?: Id<"sourceEntries"> },
+  signal: { sourceEntryId?: Id<"sourceEntries">; isDemo?: boolean },
 ): Promise<boolean> {
+  // While the product runs in controlled-portal mode, only the controlled
+  // demo portal's rooms may reach a search. Publicly indexed rooms cannot be
+  // contacted in that mode, so surfacing them offers the user nothing and
+  // misrepresents what the demo can actually do.
+  if (controlledPortalOnly() && signal.isDemo !== true) return true;
   if (!signal.sourceEntryId) return false;
   const entry = await ctx.db.get(signal.sourceEntryId);
   const source = entry ? await ctx.db.get(entry.sourceId) : null;

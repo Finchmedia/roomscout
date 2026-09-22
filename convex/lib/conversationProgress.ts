@@ -39,6 +39,16 @@ export function messageOutcomeUnknown(request: Pick<Doc<"actionRequests">, "stat
     ["SUBMIT_RESULT_UNKNOWN", "EXECUTION_STALE_PROVIDER_OUTCOME_UNKNOWN"].includes(request.error ?? "");
 }
 
+/** Readiness failures happen after or outside provider assessment and must not
+ * be presented as a failed room review. Every other conversation error is
+ * currently written by the assessment worker, including its validation codes. */
+export function assessmentFailed(lastErrorCode?: string): boolean {
+  return Boolean(lastErrorCode && ![
+    "MUSICIAN_PROFILE_REQUIRED",
+    "PORTAL_CONNECTION_REQUIRED",
+  ].includes(lastErrorCode));
+}
+
 /**
  * Read actual inbound messages: needs_attention also covers failures before
  * first contact. An arranged viewing is the goal state of a run, so it
@@ -75,7 +85,7 @@ export async function conversationProgress(ctx: QueryCtx, conversation: Doc<"pro
   const messageRequests = requests.filter(r => r.payload.kind === "platform_message" || r.payload.kind === "email_message");
   const progress = conversation.state === "closed" ? "closed" as const
     : viewing ? "viewing_arranged" as const
-    : conversation.lastErrorCode ? "assessment_failed" as const
+    : assessmentFailed(conversation.lastErrorCode) ? "assessment_failed" as const
     : active || conversation.state === "thinking"
       ? hasProviderReply && evaluatingReply ? "reviewing_reply" as const : "checking" as const
     : messageRequests.some(r => messageOutcomeUnknown(r) || r.status === "failed" || r.status === "blocked" || r.status === "awaiting_approval")

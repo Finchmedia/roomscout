@@ -1,5 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
+import { widenArrangementForSharing } from "./lib/needArrangement";
 import type { Doc } from "./_generated/dataModel";
 import { internalMutation, internalQuery, mutation, query, type MutationCtx } from "./_generated/server";
 import { requireUserId } from "./integrations/authz";
@@ -180,7 +181,10 @@ export const create = mutation({
       locationQuery,
       locationLabel,
       maxBudgetEur: validBudget(args.maxBudgetEur),
-      arrangement: [...new Set(args.arrangement)],
+      arrangement: widenArrangementForSharing(
+        args.arrangement,
+        args.openToSharing,
+      ),
       schedule: normalizedList(args.schedule),
       requirements: normalizedList(args.requirements),
       openToSharing: args.openToSharing,
@@ -288,8 +292,13 @@ export const update = mutation({
       ...(args.maxBudgetEur !== undefined
         ? { maxBudgetEur: validBudget(args.maxBudgetEur) }
         : {}),
-      ...(args.arrangement !== undefined
-        ? { arrangement: [...new Set(args.arrangement)] }
+      ...(args.arrangement !== undefined || args.openToSharing !== undefined
+        ? {
+            arrangement: widenArrangementForSharing(
+              args.arrangement ?? need.arrangement,
+              args.openToSharing ?? need.openToSharing,
+            ),
+          }
         : {}),
       ...(args.schedule !== undefined
         ? { schedule: normalizedList(args.schedule) }
@@ -458,7 +467,14 @@ export const updateFromScout = internalMutation({
         ? { locationLabel: requiredText(args.locationLabel, "locationLabel") }
         : {}),
       ...(args.maxBudgetEur !== undefined ? { maxBudgetEur: validBudget(args.maxBudgetEur) } : {}),
-      ...(args.arrangement !== undefined ? { arrangement: [...new Set(args.arrangement)] } : {}),
+      ...(args.arrangement !== undefined || args.openToSharing !== undefined
+        ? {
+            arrangement: widenArrangementForSharing(
+              args.arrangement ?? need.arrangement,
+              args.openToSharing ?? need.openToSharing,
+            ),
+          }
+        : {}),
       ...(args.schedule !== undefined ? { schedule: normalizedList(args.schedule) } : {}),
       ...(args.requirements !== undefined ? { requirements: normalizedList(args.requirements) } : {}),
       ...(args.openToSharing !== undefined ? { openToSharing: args.openToSharing } : {}),
@@ -497,8 +513,13 @@ export const updateFromScout = internalMutation({
       ...(args.maxBudgetEur !== undefined
         ? { maxBudgetEur: validBudget(args.maxBudgetEur) }
         : {}),
-      ...(args.arrangement !== undefined
-        ? { arrangement: [...new Set(args.arrangement)] }
+      ...(args.arrangement !== undefined || args.openToSharing !== undefined
+        ? {
+            arrangement: widenArrangementForSharing(
+              args.arrangement ?? need.arrangement,
+              args.openToSharing ?? need.openToSharing,
+            ),
+          }
         : {}),
       ...(args.schedule !== undefined
         ? { schedule: normalizedList(args.schedule) }

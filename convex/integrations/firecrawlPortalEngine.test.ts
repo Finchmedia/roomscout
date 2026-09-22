@@ -444,9 +444,13 @@ describe("Firecrawl portal registration programs", () => {
         interact: async (_id, options) => {
           const keepalive = options.code.includes(FIRECRAWL_PORTAL_URL_PROGRAM);
           interactions.push(keepalive ? "keepalive" : "interact");
+          const completionKey = options.code.match(/__roomscoutRun_[A-Za-z0-9_-]+/)?.[0];
+          const value = keepalive ? { url: "https://roomscout.dev/sign-up" } : results.shift();
           return {
             success: true, exitCode: 0, killed: false,
-            result: JSON.stringify(keepalive ? { url: "https://roomscout.dev/sign-up" } : results.shift()),
+            result: JSON.stringify({
+              __roomscoutCompletion: { id: completionKey, state: "done", value },
+            }),
           };
         },
         stop: async () => { stops += 1; return {}; },

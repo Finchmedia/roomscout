@@ -18,9 +18,20 @@ function renderCoverage(snapshot: ResearchCoverageSnapshot = researchCoverageSna
   return render(<LocaleProvider><ResearchCoverage demoHref="/design/scout" mapAccessToken="pk.test-public-token" snapshot={snapshot} /></LocaleProvider>)
 }
 
+const emptySnapshot: ResearchCoverageSnapshot = {
+  schemaVersion: 1,
+  snapshotId: "fixture-empty",
+  observedAt: "2026-09-17T00:00:00.000Z",
+  realListingCount: 0,
+  cities: [],
+  indexedSources: [],
+}
+
 describe("landing research coverage", () => {
   it("renders the existing map with no markers when no real signal qualifies", async () => {
-    renderCoverage()
+    // The empty state is a property of the component, not of whatever the
+    // current production snapshot happens to contain.
+    renderCoverage(emptySnapshot)
     expect(screen.getByText("0 real rehearsal rooms found")).toBeInTheDocument()
     expect(screen.getByText(/currently no real rehearsal rooms listed here/i)).toBeInTheDocument()
     expect(screen.getByText(/No public source links are available yet/)).toBeInTheDocument()
@@ -46,6 +57,33 @@ describe("landing research coverage", () => {
     expect(screen.queryByText(/no real rehearsal rooms listed here/i)).not.toBeInTheDocument()
     expect(await screen.findByTestId("market-globe")).toHaveAttribute("data-signal-count", "1")
     expect(screen.getByTestId("market-globe")).toHaveAttribute("data-signal-titles", "Hamburg")
+  })
+
+  it("renders the shipped production snapshot with its cities and sources", async () => {
+    renderCoverage()
+    expect(researchCoverageSnapshot.realListingCount).toBeGreaterThan(0)
+    expect(researchCoverageSnapshot.cities.length).toBeGreaterThan(0)
+    expect(
+      screen.getByText(`${researchCoverageSnapshot.realListingCount} real rehearsal rooms found`),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/currently no real rehearsal rooms listed here/i)).not.toBeInTheDocument()
+    expect(await screen.findByTestId("market-globe")).toHaveAttribute(
+      "data-signal-count",
+      String(researchCoverageSnapshot.cities.length),
+    )
+  })
+
+  it("never ships a snapshot city that cannot be placed on the map", () => {
+    // A geocoder will resolve "unknown" to a real point, so a placeholder city
+    // would silently become a pin in the middle of the country.
+    for (const city of researchCoverageSnapshot.cities) {
+      expect(city.city.trim().length).toBeGreaterThan(1)
+      expect(["unknown", "unbekannt", "deutschland", "germany"]).not.toContain(
+        city.city.trim().toLowerCase(),
+      )
+      expect(Number.isFinite(city.latitude)).toBe(true)
+      expect(Number.isFinite(city.longitude)).toBe(true)
+    }
   })
 
   it("shows a friendly state when the public Mapbox token is missing", () => {

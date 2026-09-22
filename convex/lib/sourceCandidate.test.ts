@@ -19,5 +19,16 @@ describe("source discovery candidates", () => {
   it("drops search and social hosts rather than treating them as sources", () => {
     expect(normalizeDiscoveryHit({ url: "https://www.google.com/search?q=room" })).toBeNull();
     expect(normalizeDiscoveryHit({ url: "https://instagram.com/a" })).toBeNull();
+    expect(normalizeDiscoveryHit({ url: "https://m.yelp.com/biz/room" })).toBeNull();
+    expect(normalizeDiscoveryHit({ url: "https://www.facebook.com/groups/1" })).toBeNull();
+  });
+
+  it("keeps restricted marketplaces but marks them for a terms review", () => {
+    expect(
+      normalizeDiscoveryHit({ url: "https://www.kleinanzeigen.de/s-dortmund/proberaum/k0l1085" }),
+    ).toMatchObject({ canonicalDomain: "kleinanzeigen.de", tosReviewRequired: true });
+    expect(
+      normalizeDiscoveryHit({ url: "https://proberaum-dortmund.de/" }),
+    ).toMatchObject({ tosReviewRequired: false });
   });
 });

@@ -1203,6 +1203,18 @@ export default defineSchema({
       "normalizedName",
     ]),
 
+  /**
+   * Stop switch for the self-chaining discovery workers. A chained action
+   * re-arms itself at the end of its run, so cancelling the queued job only
+   * works in the gap between runs. The flag is checked before each re-arm,
+   * which stops a chain even while a batch is mid-flight.
+   */
+  pipelineControl: defineTable({
+    key: v.string(),
+    stopRequestedAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
   sourceDiscoveryBatches: defineTable({
     batchKey: v.string(),
     geoAreaId: v.optional(v.id("geoAreas")),

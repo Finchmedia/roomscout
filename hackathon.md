@@ -12,7 +12,7 @@
 - **Auth:** Convex Auth
 - **AI models:** `openai/gpt-5.6-terra` and `openai/gpt-5.6-luna` through Convex AI Gateway, `text-embedding-3-small`, `gpt-live-1` for voice
 - **Started:** 2026-08-26T13:55:26Z
-- **Last updated:** 2026-09-18T01:43:04Z
+- **Last updated:** 2026-09-22T01:21:40Z
 
 ## Log
 
@@ -725,3 +725,118 @@ Audited existing Workpool usage and documented a [portal browser coordination pl
 Passive reads already use Workpool; approved writes and manual refresh currently bypass its concurrency limit.
 The proposal combines per-connection admission, explicit retry rules and reactive work/delivery status, preserving write receipts and uncertain-outcome reconciliation.
 Checked the installed 0.4.11 API against the documentation; this step changes documentation only and was not deployed.
+
+### 2026-09-19 - e2520b8
+
+Completed the browser Workpool cutover: approved portal writes and inbox reads
+share one concurrency limit, with automatic retries disabled for writes.
+Claims stranded before a provider call can be safely released; uncertain
+delivery remains unreplayed. The commit records 193 focused tests and backend
+typechecking passing (`convex/portalWriteQueue.ts`, `convex/firecrawlPortal.ts`;
+[build details](docs/BUILD_LOG.md)). The commit credits Claude Fable 5.1 as co-author.
+
+### 2026-09-19 - working tree
+
+Documented the [MCP implementation plan](docs/MCP_IMPLEMENTATION_PLAN.md) and executed its bounded [hello-world companion](docs/MCP_HELLO_WORLD_PLAN.md) in a separate seven-day Convex deployment using stock Codefox OAuth Provider and Convex MCP Gateway with Auth v2.
+An actual ChatGPT connection completed new-account signup, consent and PKCE, then called the authenticated hello tool; manual band onboarding was unnecessary. A scoped profile tool remains later integration work.
+Standalone build/typecheck passed and the focused smoke passed 19/20 checks. The failing reconnect check showed old-token revival after regrant, corroborated by the Gateway audit.
+Disabled the isolated MCP endpoint and verified HTTP 503; revoked the actual ChatGPT synthetic account's grant. No component patch, real provider contact or existing RoomScout dev/prod change was made.
+Evidence: [execution results](docs/MCP_HELLO_WORLD_RESULTS.md); isolated source in sibling `roomscout-mcp-proof`. The companion is complete; durable revocation remains a blocker before integration.
+
+### 2026-09-20 - working tree
+
+Fixed durable OAuth revocation in the isolated hello proof using a documented local Codefox component extension: old tokens and authorization codes stay invalid after reconnect.
+Added an advertised revocation endpoint; a newly registered ChatGPT app called it on disconnect, and the account grant disappeared. An older app produced no observed callback; cached metadata remains a possible explanation.
+The focused revocation smoke passed 21/21 and typecheck/build passed. Reenabled the hello-only proof; existing RoomScout dev/prod remain untouched.
+Evidence: [updated execution results](docs/MCP_HELLO_WORLD_RESULTS.md), sibling `roomscout-mcp-proof/convex/http.ts` and `vendor/oauth-provider`.
+
+
+### 2026-09-20 - b6c6a28
+
+Claude Code refined the demo flow: landing demo buttons enter sign-in, search
+corrections update an existing brief, open decisions survive reload, and Live
+voice opens once with calmer status and layout (`72799b8`, `b6c6a28`).
+The companion portal repairs invalid simulated replies before a localized
+fallback and supports three immediately available viewing scenarios
+(`roomscout-dev`: `6606bef`, `c83c431`; [build details](docs/BUILD_LOG.md)).
+
+### 2026-09-20 - 9102edf
+
+Band context no longer becomes a provider requirement or an unnecessary
+musician question (`c43e3e1`). One proposed viewing time is sufficient; Scout
+no longer demands an alternative slot (`9102edf`). Both commits credit
+Claude Fable 5.1 as co-author (`convex/lib/providerAssessment.ts`,
+`convex/decisions.ts`).
+
+### 2026-09-20 - 9e4f28c
+
+Added a self-service Settings reset for search, conversations, decisions,
+voice and Scout memory while retaining account, profile and portal setup.
+The reset also requests authenticated cleanup of the participant's portal
+threads and provider-agent state (`06df746`, `9e4f28c`; portal `9306cf1`).
+The commits record focused integration checks and typechecks passing
+(`convex/demoReset.ts`, `src/routes/musician/LiveSettingsPage.tsx`).
+
+### 2026-09-21 - d1a8156
+
+Live voice now speaks backend results and asks the Scout's open questions once;
+musicians can answer conversationally. Messages requiring approval use the panel.
+Missing provider facts are Scout's own follow-up work; musician questions
+concern actual choices. Commits `ae878b9` and `d1a8156` credit Claude Fable 5.1
+(`convex/decisions.ts`, `convex/lib/providerAssessment.ts`, `convex/voiceLive.ts`).
+
+### 2026-09-21 - 4e0bbc0
+
+Arranged viewings are persisted from explicit provider-message evidence, shown
+in room cards and threads, and available to Scout as upcoming appointments.
+Live voice congratulates once per viewing; reset removes the appointments too.
+The commit credits Claude Fable 5.1 and records 277 backend and 196 frontend checks plus both
+typechecks passing (`convex/providerConversations.ts`, `convex/scoutCandidates.ts`,
+`src/features/viewings/formatViewing.ts`; [build details](docs/BUILD_LOG.md)).
+
+### 2026-09-21 - working tree
+
+Expanded public-web discovery with bounded city searches, named-venue lookup,
+AI domain triage, source promotion and one-time scrapes. Recurring monitoring
+requires separate activation. The local landing snapshot dated September 21
+records 496 public listings with source attribution; this is snapshot evidence,
+not a freshly verified live count. Real research stays on the map while demo
+candidates use controlled-portal provenance (`convex/sourcePipeline.ts`,
+`convex/sourceTriage.ts`, `src/ui/landing/researchCoverageSnapshot.ts`).
+
+### 2026-09-22 - working tree
+
+Traced demo regressions through recent commits, current source changes, and
+bounded read-only portal probes. Firecrawl can return an intermediate value
+while an async program continues; a single recovery read was insufficient.
+Programs now publish a unique completion token and the runtime polls that
+result without repeating the original program or a provider write. Inbox reads
+wait for terminal owned DOM markers before deciding a thread is missing.
+Normal successful operation keeps the existing HTTP round-trip budget.
+
+Open-to-sharing briefs accept both shared and permanent rooms through create,
+manual update, and Scout update, including separate field updates. Tests prove
+real public rooms remain on the map while controlled demo rooms remain eligible
+for demo candidates. Portal/profile readiness failures no longer claim the
+room assessment failed, and a rejected final send gate is recorded as unsent
+rather than uncertain delivery.
+
+Verification: 172 targeted tests across 16 files, application and backend
+TypeScript checks, scoped ESLint, and whitespace checks passed. A read-only
+live probe recovered an actual intermediate result through pending states to a
+completed inbox batch. No provider inquiry was sent by these checks. Evidence:
+`convex/integrations/firecrawlPortalRuntime.ts`,
+`convex/integrations/firecrawlPortalEngine.ts`, `convex/firecrawlPortal.ts`,
+`convex/lib/needArrangement.ts`, `convex/lib/conversationProgress.ts`.
+
+Deployment follow-up: with explicit user authorization, deployed the backend
+fixes to production. Deployment typechecking and schema validation passed with
+no index deletions. The deployed Firecrawl preflight returned ready, and a
+read-only saved-profile inbox check recovered an intermediate response into a
+complete batch. The existing frontend remained available at both the root and
+Scout routes; no frontend release was needed. No provider messages were sent
+or retried by these checks.
+
+The maintainer confirmed that the demo recording is complete. This records the
+user-confirmed milestone; the video contents and hackathon submission have not
+been independently checked. Further work in this session is documentation only.

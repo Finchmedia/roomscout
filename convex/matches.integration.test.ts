@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import { signalMatchRevision } from "./lib/matchValidity";
@@ -12,6 +12,12 @@ vi.mock("./ai", async (importOriginal) => ({
 }));
 
 const modules = import.meta.glob("./**/*.ts");
+
+// These suites prove public-index matching, not demo mode: the controlled
+// portal restriction hides every non-demo signal by design.
+beforeEach(() => {
+  vi.stubEnv("SCOUT_CONTROLLED_PORTAL_ONLY", "false");
+});
 afterEach(() => {
   vi.useRealTimers(); vi.unstubAllEnvs();
   vi.mocked(generateRoomScoutObject).mockReset().mockRejectedValue(new Error("Model disabled in deterministic tests"));
@@ -459,4 +465,35 @@ it("recreates a missing opportunity for a still-current match on recomputation",
   expect(after?.status).toBe("new");
   expect(after?.signalId).toBe(f.signalId);
   expect(await f.t.run(async (ctx) => (await ctx.db.query("signalMatches").collect()).length)).toBe(1);
+});
+
+it("keeps controlled demo candidates while hiding equally eligible public rooms from the search only", async () => {
+  // In controlled-portal mode a publicly indexed room cannot be contacted, so
+  // surfacing it as a disabled card misrepresents what the product can do.
+  vi.useFakeTimers();
+  vi.stubEnv("OPENAI_API_KEY", "");
+  vi.stubEnv("SCOUT_CONTROLLED_PORTAL_ONLY", "true");
+  const f = await fixture();
+  const demoSignalId = await f.t.run(async (ctx) => {
+    await ctx.db.patch(f.signalId, { latitude: 48.78, longitude: 9.18, locationPrecision: "exact" });
+    return await ctx.db.insert("signals", {
+      side: "supply", title: "Controlled portal room", city: "Stuttgart", summary: "Room to share",
+      arrangement: "shared", priceEur: 220, pricePeriod: "month", requirements: [], unknowns: [],
+      status: "published", verification: "observed", sourceCount: 1, firstSeenAt: 1, lastSeenAt: 1,
+      latitude: 48.79, longitude: 9.19, locationPrecision: "exact", isDemo: true,
+    });
+  });
+  await f.owner.mutation(api.savedNeeds.activate, { savedNeedId: f.savedNeedId });
+  await f.t.finishAllScheduledFunctions(vi.runAllTimers);
+
+  expect((await f.owner.query(api.matches.listMine, {})).map((row) => row.signalId)).toEqual([demoSignalId]);
+  expect((await f.owner.query(api.matches.listCandidatesMine, { savedNeedId: f.savedNeedId }))
+    .map((row) => row.signalId)).toEqual([demoSignalId]);
+
+  // Candidate filtering must not remove genuine public supply from the public
+  // market index that powers the landing map.
+  const pins = await f.t.query(api.map.listPins, { city: "Stuttgart", limit: 300 });
+  expect(pins.map((pin) => pin.signalId)).toEqual(expect.arrayContaining([f.signalId, demoSignalId]));
+  expect(pins.find((pin) => pin.signalId === f.signalId)?.isDemo).not.toBe(true);
+  expect(pins.find((pin) => pin.signalId === demoSignalId)?.isDemo).toBe(true);
 });
